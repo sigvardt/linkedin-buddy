@@ -38,6 +38,7 @@ export interface ViewProfileInput {
 
 export interface LinkedInProfileRuntime {
   auth: LinkedInAuthService;
+  cdpUrl?: string | undefined;
   profileManager: ProfileManager;
   logger: JsonEventLogger;
 }
@@ -490,12 +491,18 @@ export class LinkedInProfileService {
     const profileName = input.profileName ?? "default";
     const profileUrl = resolveProfileUrl(input.target);
 
-    await this.runtime.auth.ensureAuthenticated({ profileName });
+    await this.runtime.auth.ensureAuthenticated({
+      profileName,
+      cdpUrl: this.runtime.cdpUrl
+    });
 
     try {
-      return await this.runtime.profileManager.runWithPersistentContext(
-        profileName,
-        { headless: true },
+      return await this.runtime.profileManager.runWithContext(
+        {
+          cdpUrl: this.runtime.cdpUrl,
+          profileName,
+          headless: true
+        },
         async (context) => {
           const page = await getOrCreatePage(context);
           await page.goto(profileUrl, { waitUntil: "domcontentloaded" });

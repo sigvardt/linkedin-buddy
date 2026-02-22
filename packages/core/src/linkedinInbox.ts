@@ -105,6 +105,7 @@ export interface PrepareReplyResult {
 export interface LinkedInMessagingRuntime {
   runId: string;
   auth: LinkedInAuthService;
+  cdpUrl?: string | undefined;
   profileManager: ProfileManager;
   artifacts: ArtifactHelpers;
   rateLimiter: RateLimiter;
@@ -571,12 +572,18 @@ export class LinkedInInboxService {
     const limit = input.limit ?? 20;
     const unreadOnly = input.unreadOnly ?? false;
 
-    await this.runtime.auth.ensureAuthenticated({ profileName });
+    await this.runtime.auth.ensureAuthenticated({
+      profileName,
+      cdpUrl: this.runtime.cdpUrl
+    });
 
     try {
-      const threads = await this.runtime.profileManager.runWithPersistentContext(
-        profileName,
-        { headless: true },
+      const threads = await this.runtime.profileManager.runWithContext(
+        {
+          cdpUrl: this.runtime.cdpUrl,
+          profileName,
+          headless: true
+        },
         async (context) => {
           const page = await getOrCreatePage(context);
           await page.goto(LINKEDIN_MESSAGING_URL, { waitUntil: "domcontentloaded" });
@@ -602,12 +609,18 @@ export class LinkedInInboxService {
     const threadUrl = resolveThreadUrl(input.thread);
     const messageLimit = input.limit ?? 20;
 
-    await this.runtime.auth.ensureAuthenticated({ profileName });
+    await this.runtime.auth.ensureAuthenticated({
+      profileName,
+      cdpUrl: this.runtime.cdpUrl
+    });
 
     try {
-      const detail = await this.runtime.profileManager.runWithPersistentContext(
-        profileName,
-        { headless: true },
+      const detail = await this.runtime.profileManager.runWithContext(
+        {
+          cdpUrl: this.runtime.cdpUrl,
+          profileName,
+          headless: true
+        },
         async (context) => {
           const page = await getOrCreatePage(context);
           await page.goto(threadUrl, { waitUntil: "domcontentloaded" });
@@ -637,12 +650,18 @@ export class LinkedInInboxService {
       );
     }
 
-    await this.runtime.auth.ensureAuthenticated({ profileName });
+    await this.runtime.auth.ensureAuthenticated({
+      profileName,
+      cdpUrl: this.runtime.cdpUrl
+    });
 
     try {
-      const prepared = await this.runtime.profileManager.runWithPersistentContext(
-        profileName,
-        { headless: true },
+      const prepared = await this.runtime.profileManager.runWithContext(
+        {
+          cdpUrl: this.runtime.cdpUrl,
+          profileName,
+          headless: true
+        },
         async (context) => {
           const page = await getOrCreatePage(context);
           await page.goto(threadUrl, { waitUntil: "domcontentloaded" });
@@ -736,11 +755,17 @@ class SendMessageActionExecutor
     const tracePath = `linkedin/trace-confirm-${Date.now()}.zip`;
     const artifactPaths: string[] = [tracePath];
 
-    await runtime.auth.ensureAuthenticated({ profileName });
-
-    return runtime.profileManager.runWithPersistentContext(
+    await runtime.auth.ensureAuthenticated({
       profileName,
-      { headless: true },
+      cdpUrl: runtime.cdpUrl
+    });
+
+    return runtime.profileManager.runWithContext(
+      {
+        cdpUrl: runtime.cdpUrl,
+        profileName,
+        headless: true
+      },
       async (context) => {
         const page = await getOrCreatePage(context);
         let tracingStarted = false;

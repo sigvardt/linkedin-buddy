@@ -91,4 +91,46 @@ export class ProfileManager {
       }
     });
   }
+
+  async runWithCDP<T>(
+    cdpUrl: string,
+    callback: (context: BrowserContext) => Promise<T>
+  ): Promise<T> {
+    let browser:
+      | Awaited<ReturnType<typeof chromium.connectOverCDP>>
+      | undefined;
+    try {
+      browser = await chromium.connectOverCDP(cdpUrl);
+      const context = browser.contexts()[0];
+      if (!context) {
+        throw new Error("No browser context found on CDP connection");
+      }
+      return await callback(context);
+    } catch (error) {
+      throw withPlaywrightInstallHint(error);
+    } finally {
+      if (browser) {
+        await browser.close();
+      }
+    }
+  }
+
+  async runWithContext<T>(
+    options: {
+      cdpUrl?: string | undefined;
+      profileName: string;
+      headless?: boolean;
+    },
+    callback: (context: BrowserContext) => Promise<T>
+  ): Promise<T> {
+    if (options.cdpUrl) {
+      return this.runWithCDP(options.cdpUrl, callback);
+    }
+
+    return this.runWithPersistentContext(
+      options.profileName,
+      { headless: options.headless ?? true },
+      callback
+    );
+  }
 }

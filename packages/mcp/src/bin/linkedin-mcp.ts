@@ -110,8 +110,28 @@ function readTargetProfileName(target: Record<string, unknown>): string | undefi
   return undefined;
 }
 
+const cdpUrlInputSchemaProperty = {
+  type: "string",
+  description:
+    "Connect to an existing browser via CDP endpoint (for example http://127.0.0.1:18800)."
+} as const;
+
+function withCdpSchemaProperties(
+  properties: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    ...properties,
+    cdpUrl: cdpUrlInputSchemaProperty
+  };
+}
+
+function createRuntime(args: ToolArgs) {
+  const cdpUrl = readString(args, "cdpUrl", "");
+  return createCoreRuntime(cdpUrl ? { cdpUrl } : {});
+}
+
 async function handleSessionStatus(args: ToolArgs): Promise<ToolResult> {
-  const runtime = createCoreRuntime();
+  const runtime = createRuntime(args);
 
   try {
     const profileName = readString(args, "profileName", "default");
@@ -140,7 +160,7 @@ async function handleSessionStatus(args: ToolArgs): Promise<ToolResult> {
 }
 
 async function handleSessionOpenLogin(args: ToolArgs): Promise<ToolResult> {
-  const runtime = createCoreRuntime();
+  const runtime = createRuntime(args);
 
   try {
     const profileName = readString(args, "profileName", "default");
@@ -173,7 +193,7 @@ async function handleSessionOpenLogin(args: ToolArgs): Promise<ToolResult> {
 }
 
 async function handleListThreads(args: ToolArgs): Promise<ToolResult> {
-  const runtime = createCoreRuntime();
+  const runtime = createRuntime(args);
 
   try {
     const profileName = readString(args, "profileName", "default");
@@ -209,7 +229,7 @@ async function handleListThreads(args: ToolArgs): Promise<ToolResult> {
 }
 
 async function handleGetThread(args: ToolArgs): Promise<ToolResult> {
-  const runtime = createCoreRuntime();
+  const runtime = createRuntime(args);
 
   try {
     const profileName = readString(args, "profileName", "default");
@@ -244,7 +264,7 @@ async function handleGetThread(args: ToolArgs): Promise<ToolResult> {
 }
 
 async function handlePrepareReply(args: ToolArgs): Promise<ToolResult> {
-  const runtime = createCoreRuntime();
+  const runtime = createRuntime(args);
 
   try {
     const profileName = readString(args, "profileName", "default");
@@ -284,7 +304,7 @@ async function handlePrepareReply(args: ToolArgs): Promise<ToolResult> {
 }
 
 async function handleProfileView(args: ToolArgs): Promise<ToolResult> {
-  const runtime = createCoreRuntime();
+  const runtime = createRuntime(args);
 
   try {
     const profileName = readString(args, "profileName", "default");
@@ -316,7 +336,7 @@ async function handleProfileView(args: ToolArgs): Promise<ToolResult> {
 }
 
 async function handleConnectionsList(args: ToolArgs): Promise<ToolResult> {
-  const runtime = createCoreRuntime();
+  const runtime = createRuntime(args);
 
   try {
     const profileName = readString(args, "profileName", "default");
@@ -349,7 +369,7 @@ async function handleConnectionsList(args: ToolArgs): Promise<ToolResult> {
 }
 
 async function handleConnectionsPending(args: ToolArgs): Promise<ToolResult> {
-  const runtime = createCoreRuntime();
+  const runtime = createRuntime(args);
 
   try {
     const profileName = readString(args, "profileName", "default");
@@ -386,7 +406,7 @@ async function handleConnectionsPending(args: ToolArgs): Promise<ToolResult> {
 }
 
 async function handleConnectionsInvite(args: ToolArgs): Promise<ToolResult> {
-  const runtime = createCoreRuntime();
+  const runtime = createRuntime(args);
 
   try {
     const profileName = readString(args, "profileName", "default");
@@ -422,7 +442,7 @@ async function handleConnectionsInvite(args: ToolArgs): Promise<ToolResult> {
 }
 
 async function handleConnectionsAccept(args: ToolArgs): Promise<ToolResult> {
-  const runtime = createCoreRuntime();
+  const runtime = createRuntime(args);
 
   try {
     const profileName = readString(args, "profileName", "default");
@@ -456,7 +476,7 @@ async function handleConnectionsAccept(args: ToolArgs): Promise<ToolResult> {
 }
 
 async function handleConnectionsWithdraw(args: ToolArgs): Promise<ToolResult> {
-  const runtime = createCoreRuntime();
+  const runtime = createRuntime(args);
 
   try {
     const profileName = readString(args, "profileName", "default");
@@ -490,7 +510,7 @@ async function handleConnectionsWithdraw(args: ToolArgs): Promise<ToolResult> {
 }
 
 async function handleFeedList(args: ToolArgs): Promise<ToolResult> {
-  const runtime = createCoreRuntime();
+  const runtime = createRuntime(args);
 
   try {
     const profileName = readString(args, "profileName", "default");
@@ -523,7 +543,7 @@ async function handleFeedList(args: ToolArgs): Promise<ToolResult> {
 }
 
 async function handleFeedViewPost(args: ToolArgs): Promise<ToolResult> {
-  const runtime = createCoreRuntime();
+  const runtime = createRuntime(args);
 
   try {
     const profileName = readString(args, "profileName", "default");
@@ -555,7 +575,7 @@ async function handleFeedViewPost(args: ToolArgs): Promise<ToolResult> {
 }
 
 async function handleFeedLike(args: ToolArgs): Promise<ToolResult> {
-  const runtime = createCoreRuntime();
+  const runtime = createRuntime(args);
 
   try {
     const profileName = readString(args, "profileName", "default");
@@ -589,7 +609,7 @@ async function handleFeedLike(args: ToolArgs): Promise<ToolResult> {
 }
 
 async function handleFeedComment(args: ToolArgs): Promise<ToolResult> {
-  const runtime = createCoreRuntime();
+  const runtime = createRuntime(args);
 
   try {
     const profileName = readString(args, "profileName", "default");
@@ -625,7 +645,7 @@ async function handleFeedComment(args: ToolArgs): Promise<ToolResult> {
 }
 
 async function handleConfirm(args: ToolArgs): Promise<ToolResult> {
-  const runtime = createCoreRuntime();
+  const runtime = createRuntime(args);
 
   try {
     const profileName = readString(args, "profileName", "default");
@@ -692,12 +712,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: "object",
           additionalProperties: false,
-          properties: {
+          properties: withCdpSchemaProperties({
             profileName: {
               type: "string",
               description: "Persistent Playwright profile name. Defaults to default."
             }
-          }
+          })
         }
       },
       {
@@ -706,7 +726,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: "object",
           additionalProperties: false,
-          properties: {
+          properties: withCdpSchemaProperties({
             profileName: {
               type: "string",
               description: "Persistent Playwright profile name. Defaults to default."
@@ -715,7 +735,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "number",
               description: "Maximum time to wait for authentication, in milliseconds."
             }
-          }
+          })
         }
       },
       {
@@ -724,7 +744,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: "object",
           additionalProperties: false,
-          properties: {
+          properties: withCdpSchemaProperties({
             profileName: {
               type: "string",
               description: "Persistent Playwright profile name. Defaults to default."
@@ -737,7 +757,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "boolean",
               description: "If true, only unread threads are returned."
             }
-          }
+          })
         }
       },
       {
@@ -747,7 +767,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           additionalProperties: false,
           required: ["thread"],
-          properties: {
+          properties: withCdpSchemaProperties({
             profileName: {
               type: "string",
               description: "Persistent Playwright profile name. Defaults to default."
@@ -760,7 +780,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "number",
               description: "Maximum number of messages to include."
             }
-          }
+          })
         }
       },
       {
@@ -770,7 +790,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           additionalProperties: false,
           required: ["thread", "text"],
-          properties: {
+          properties: withCdpSchemaProperties({
             profileName: {
               type: "string",
               description: "Persistent Playwright profile name. Defaults to default."
@@ -787,7 +807,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "Optional note attached to the prepared action."
             }
-          }
+          })
         }
       },
       {
@@ -797,7 +817,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: "object",
           additionalProperties: false,
-          properties: {
+          properties: withCdpSchemaProperties({
             profileName: {
               type: "string",
               description: "Persistent Playwright profile name. Defaults to default."
@@ -807,7 +827,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               description:
                 "Vanity name (e.g. 'johndoe'), profile URL, or 'me' for own profile. Defaults to 'me'."
             }
-          }
+          })
         }
       },
       {
@@ -817,7 +837,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: "object",
           additionalProperties: false,
-          properties: {
+          properties: withCdpSchemaProperties({
             profileName: {
               type: "string",
               description:
@@ -827,7 +847,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "number",
               description: "Maximum number of connections to return. Defaults to 40."
             }
-          }
+          })
         }
       },
       {
@@ -837,7 +857,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: "object",
           additionalProperties: false,
-          properties: {
+          properties: withCdpSchemaProperties({
             profileName: {
               type: "string",
               description:
@@ -849,7 +869,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               description:
                 "Filter invitations by direction. Defaults to all."
             }
-          }
+          })
         }
       },
       {
@@ -860,7 +880,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           additionalProperties: false,
           required: ["targetProfile"],
-          properties: {
+          properties: withCdpSchemaProperties({
             profileName: {
               type: "string",
               description:
@@ -879,7 +899,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "Internal note for audit."
             }
-          }
+          })
         }
       },
       {
@@ -890,7 +910,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           additionalProperties: false,
           required: ["targetProfile"],
-          properties: {
+          properties: withCdpSchemaProperties({
             profileName: {
               type: "string",
               description:
@@ -905,7 +925,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "Internal note for audit."
             }
-          }
+          })
         }
       },
       {
@@ -916,7 +936,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           additionalProperties: false,
           required: ["targetProfile"],
-          properties: {
+          properties: withCdpSchemaProperties({
             profileName: {
               type: "string",
               description:
@@ -931,7 +951,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "Internal note for audit."
             }
-          }
+          })
         }
       },
       {
@@ -941,7 +961,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: "object",
           additionalProperties: false,
-          properties: {
+          properties: withCdpSchemaProperties({
             profileName: {
               type: "string",
               description:
@@ -951,7 +971,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "number",
               description: "Maximum number of feed posts to return. Defaults to 10."
             }
-          }
+          })
         }
       },
       {
@@ -961,7 +981,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           additionalProperties: false,
           required: ["postUrl"],
-          properties: {
+          properties: withCdpSchemaProperties({
             profileName: {
               type: "string",
               description:
@@ -971,7 +991,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "LinkedIn post URL, URN, or activity/share identifier."
             }
-          }
+          })
         }
       },
       {
@@ -982,7 +1002,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           additionalProperties: false,
           required: ["postUrl"],
-          properties: {
+          properties: withCdpSchemaProperties({
             profileName: {
               type: "string",
               description:
@@ -996,7 +1016,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "Internal note for audit."
             }
-          }
+          })
         }
       },
       {
@@ -1007,7 +1027,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           additionalProperties: false,
           required: ["postUrl", "text"],
-          properties: {
+          properties: withCdpSchemaProperties({
             profileName: {
               type: "string",
               description:
@@ -1025,7 +1045,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "Internal note for audit."
             }
-          }
+          })
         }
       },
       {
@@ -1035,7 +1055,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           additionalProperties: false,
           required: ["token"],
-          properties: {
+          properties: withCdpSchemaProperties({
             profileName: {
               type: "string",
               description: "Persistent profile expected for this action."
@@ -1044,7 +1064,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "Confirmation token in ct_... format."
             }
-          }
+          })
         }
       }
     ]

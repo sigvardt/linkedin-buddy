@@ -11,6 +11,7 @@ export interface SessionStatus {
 
 export interface SessionOptions {
   profileName?: string;
+  cdpUrl?: string | undefined;
 }
 
 export interface OpenLoginOptions extends SessionOptions {
@@ -93,14 +94,21 @@ async function getPage(context: BrowserContext): Promise<Page> {
 }
 
 export class LinkedInAuthService {
-  constructor(private readonly profileManager: ProfileManager) {}
+  constructor(
+    private readonly profileManager: ProfileManager,
+    private readonly cdpUrl?: string
+  ) {}
 
   async status(options: SessionOptions = {}): Promise<SessionStatus> {
     const profileName = options.profileName ?? "default";
+    const cdpUrl = options.cdpUrl ?? this.cdpUrl;
 
-    return this.profileManager.runWithPersistentContext(
-      profileName,
-      { headless: true },
+    return this.profileManager.runWithContext(
+      {
+        cdpUrl,
+        profileName,
+        headless: true
+      },
       async (context) => {
         const page = await getPage(context);
         await page.goto("https://www.linkedin.com/feed/", {
@@ -134,12 +142,16 @@ export class LinkedInAuthService {
 
   async openLogin(options: OpenLoginOptions = {}): Promise<OpenLoginResult> {
     const profileName = options.profileName ?? "default";
+    const cdpUrl = options.cdpUrl ?? this.cdpUrl;
     const timeoutMs = options.timeoutMs ?? 5 * 60_000;
     const pollIntervalMs = options.pollIntervalMs ?? 2_000;
 
-    return this.profileManager.runWithPersistentContext(
-      profileName,
-      { headless: false },
+    return this.profileManager.runWithContext(
+      {
+        cdpUrl,
+        profileName,
+        headless: false
+      },
       async (context) => {
         const page = await getPage(context);
         await page.goto("https://www.linkedin.com/login", {

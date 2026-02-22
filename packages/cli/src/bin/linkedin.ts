@@ -23,6 +23,10 @@ function printJson(value: unknown): void {
   console.log(JSON.stringify(value, null, 2));
 }
 
+function createRuntime(cdpUrl?: string) {
+  return createCoreRuntime(cdpUrl ? { cdpUrl } : {});
+}
+
 async function promptYesNo(question: string): Promise<boolean> {
   const readline = createInterface({
     input: stdin,
@@ -37,8 +41,8 @@ async function promptYesNo(question: string): Promise<boolean> {
   }
 }
 
-async function runStatus(profileName: string): Promise<void> {
-  const runtime = createCoreRuntime();
+async function runStatus(profileName: string, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.status.start", { profileName });
@@ -55,9 +59,10 @@ async function runStatus(profileName: string): Promise<void> {
 
 async function runLogin(
   profileName: string,
-  timeoutMinutes: number
+  timeoutMinutes: number,
+  cdpUrl?: string
 ): Promise<void> {
-  const runtime = createCoreRuntime();
+  const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.login.start", {
@@ -90,8 +95,8 @@ async function runInboxList(input: {
   profileName: string;
   limit: number;
   unreadOnly: boolean;
-}): Promise<void> {
-  const runtime = createCoreRuntime();
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.inbox.list.start", {
@@ -126,8 +131,8 @@ async function runInboxShow(input: {
   profileName: string;
   thread: string;
   limit: number;
-}): Promise<void> {
-  const runtime = createCoreRuntime();
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.inbox.show.start", {
@@ -161,8 +166,8 @@ async function runPrepareReply(input: {
   profileName: string;
   thread: string;
   text: string;
-}): Promise<void> {
-  const runtime = createCoreRuntime();
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.inbox.prepare_reply.start", {
@@ -194,8 +199,8 @@ async function runPrepareReply(input: {
 async function runConnectionsList(input: {
   profileName: string;
   limit: number;
-}): Promise<void> {
-  const runtime = createCoreRuntime();
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.connections.list.start", {
@@ -227,8 +232,8 @@ async function runConnectionsList(input: {
 async function runConnectionsPending(input: {
   profileName: string;
   filter: "sent" | "received" | "all";
-}): Promise<void> {
-  const runtime = createCoreRuntime();
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.connections.pending.start", {
@@ -262,8 +267,8 @@ async function runConnectionsInvite(input: {
   profileName: string;
   targetProfile: string;
   note?: string;
-}): Promise<void> {
-  const runtime = createCoreRuntime();
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.connections.invite.start", {
@@ -295,8 +300,8 @@ async function runConnectionsInvite(input: {
 async function runConnectionsAccept(input: {
   profileName: string;
   targetProfile: string;
-}): Promise<void> {
-  const runtime = createCoreRuntime();
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.connections.accept.start", {
@@ -327,8 +332,8 @@ async function runConnectionsAccept(input: {
 async function runConnectionsWithdraw(input: {
   profileName: string;
   targetProfile: string;
-}): Promise<void> {
-  const runtime = createCoreRuntime();
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.connections.withdraw.start", {
@@ -359,8 +364,8 @@ async function runConnectionsWithdraw(input: {
 async function runFeedList(input: {
   profileName: string;
   limit: number;
-}): Promise<void> {
-  const runtime = createCoreRuntime();
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.feed.list.start", {
@@ -392,8 +397,8 @@ async function runFeedList(input: {
 async function runFeedView(input: {
   profileName: string;
   postUrl: string;
-}): Promise<void> {
-  const runtime = createCoreRuntime();
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.feed.view.start", {
@@ -425,8 +430,8 @@ async function runFeedLike(input: {
   profileName: string;
   postUrl: string;
   operatorNote?: string;
-}): Promise<void> {
-  const runtime = createCoreRuntime();
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.feed.like.start", {
@@ -460,8 +465,8 @@ async function runFeedComment(input: {
   postUrl: string;
   text: string;
   operatorNote?: string;
-}): Promise<void> {
-  const runtime = createCoreRuntime();
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.feed.comment.start", {
@@ -494,8 +499,8 @@ async function runFeedComment(input: {
 async function runProfileView(input: {
   profileName: string;
   target: string;
-}): Promise<void> {
-  const runtime = createCoreRuntime();
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.profile.view.start", {
@@ -535,8 +540,8 @@ async function runConfirmAction(input: {
   profileName: string;
   token: string;
   yes: boolean;
-}): Promise<void> {
-  const runtime = createCoreRuntime();
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.actions.confirm.start", {
@@ -616,14 +621,25 @@ async function main(): Promise<void> {
   program
     .name("linkedin")
     .description("LinkedIn assistant CLI")
-    .version("0.1.0");
+    .version("0.1.0")
+    .option(
+      "--cdp-url <url>",
+      "Connect to existing browser via CDP endpoint (e.g., http://127.0.0.1:18800)"
+    );
+
+  const readCdpUrl = (): string | undefined => {
+    const options = program.opts<{ cdpUrl?: string }>();
+    return typeof options.cdpUrl === "string" && options.cdpUrl.trim().length > 0
+      ? options.cdpUrl.trim()
+      : undefined;
+  };
 
   program
     .command("status")
     .description("Check whether the persistent LinkedIn profile is authenticated")
     .option("-p, --profile <profile>", "Profile name", "default")
     .action(async (options: { profile: string }) => {
-      await runStatus(options.profile);
+      await runStatus(options.profile, readCdpUrl());
     });
 
   program
@@ -641,7 +657,7 @@ async function main(): Promise<void> {
           options.timeoutMinutes,
           "timeout-minutes"
         );
-        await runLogin(options.profile, timeoutMinutes);
+        await runLogin(options.profile, timeoutMinutes, readCdpUrl());
       }
     );
 
@@ -661,7 +677,7 @@ async function main(): Promise<void> {
           profileName: options.profile,
           unreadOnly: options.unread,
           limit: coercePositiveInt(options.limit, "limit")
-        });
+        }, readCdpUrl());
       }
     );
 
@@ -677,7 +693,7 @@ async function main(): Promise<void> {
           profileName: options.profile,
           thread: options.thread,
           limit: coercePositiveInt(options.limit, "limit")
-        });
+        }, readCdpUrl());
       }
     );
 
@@ -693,7 +709,7 @@ async function main(): Promise<void> {
           profileName: options.profile,
           thread: options.thread,
           text: options.text
-        });
+        }, readCdpUrl());
       }
     );
 
@@ -711,7 +727,7 @@ async function main(): Promise<void> {
         await runConnectionsList({
           profileName: options.profile,
           limit: coercePositiveInt(options.limit, "limit")
-        });
+        }, readCdpUrl());
       }
     );
 
@@ -736,7 +752,7 @@ async function main(): Promise<void> {
         await runConnectionsPending({
           profileName: options.profile,
           filter
-        });
+        }, readCdpUrl());
       }
     );
 
@@ -752,7 +768,7 @@ async function main(): Promise<void> {
           profileName: options.profile,
           targetProfile: target,
           ...(options.note ? { note: options.note } : {})
-        });
+        }, readCdpUrl());
       }
     );
 
@@ -765,7 +781,7 @@ async function main(): Promise<void> {
       await runConnectionsAccept({
         profileName: options.profile,
         targetProfile: target
-      });
+      }, readCdpUrl());
     });
 
   connectionsCommand
@@ -777,7 +793,7 @@ async function main(): Promise<void> {
       await runConnectionsWithdraw({
         profileName: options.profile,
         targetProfile: target
-      });
+      }, readCdpUrl());
     });
 
   const feedCommand = program
@@ -794,7 +810,7 @@ async function main(): Promise<void> {
         await runFeedList({
           profileName: options.profile,
           limit: coercePositiveInt(options.limit, "limit")
-        });
+        }, readCdpUrl());
       }
     );
 
@@ -807,7 +823,7 @@ async function main(): Promise<void> {
       await runFeedView({
         profileName: options.profile,
         postUrl: post
-      });
+      }, readCdpUrl());
     });
 
   feedCommand
@@ -825,7 +841,7 @@ async function main(): Promise<void> {
           profileName: options.profile,
           postUrl: post,
           ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
-        });
+        }, readCdpUrl());
       }
     );
 
@@ -846,7 +862,7 @@ async function main(): Promise<void> {
           postUrl: post,
           text: options.text,
           ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
-        });
+        }, readCdpUrl());
       }
     );
 
@@ -867,7 +883,7 @@ async function main(): Promise<void> {
       await runProfileView({
         profileName: options.profile,
         target
-      });
+      }, readCdpUrl());
     });
 
   const actionsCommand = program
@@ -886,7 +902,7 @@ async function main(): Promise<void> {
           profileName: options.profile,
           token: options.token,
           yes: options.yes
-        });
+        }, readCdpUrl());
       }
     );
 

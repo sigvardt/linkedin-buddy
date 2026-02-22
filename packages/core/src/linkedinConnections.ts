@@ -61,6 +61,7 @@ export interface PrepareWithdrawInvitationInput {
  */
 export interface LinkedInConnectionsExecutorRuntime {
   auth: LinkedInAuthService;
+  cdpUrl?: string | undefined;
   profileManager: ProfileManager;
   logger: JsonEventLogger;
   artifacts: ArtifactHelpers;
@@ -260,9 +261,12 @@ async function executeSendInvitation(
   const profileName = String(target.profile_name ?? "default");
   const profileUrl = resolveProfileUrl(targetProfile);
 
-  return runtime.profileManager.runWithPersistentContext(
-    profileName,
-    { headless: true },
+  return runtime.profileManager.runWithContext(
+    {
+      cdpUrl: runtime.cdpUrl,
+      profileName,
+      headless: true
+    },
     async (context) => {
       const page = await getOrCreatePage(context);
       await page.goto(profileUrl, { waitUntil: "domcontentloaded" });
@@ -353,9 +357,12 @@ async function executeAcceptInvitation(
   const targetProfile = String(target.target_profile ?? "");
   const profileName = String(target.profile_name ?? "default");
 
-  return runtime.profileManager.runWithPersistentContext(
-    profileName,
-    { headless: true },
+  return runtime.profileManager.runWithContext(
+    {
+      cdpUrl: runtime.cdpUrl,
+      profileName,
+      headless: true
+    },
     async (context) => {
       const page = await getOrCreatePage(context);
       await page.goto(INVITATIONS_RECEIVED_URL, { waitUntil: "domcontentloaded" });
@@ -395,9 +402,12 @@ async function executeWithdrawInvitation(
   const targetProfile = String(target.target_profile ?? "");
   const profileName = String(target.profile_name ?? "default");
 
-  return runtime.profileManager.runWithPersistentContext(
-    profileName,
-    { headless: true },
+  return runtime.profileManager.runWithContext(
+    {
+      cdpUrl: runtime.cdpUrl,
+      profileName,
+      headless: true
+    },
     async (context) => {
       const page = await getOrCreatePage(context);
       await page.goto(INVITATIONS_SENT_URL, { waitUntil: "domcontentloaded" });
@@ -514,12 +524,18 @@ export class LinkedInConnectionsService {
     const profileName = input.profileName ?? "default";
     const limit = input.limit ?? 40;
 
-    await this.runtime.auth.ensureAuthenticated({ profileName });
+    await this.runtime.auth.ensureAuthenticated({
+      profileName,
+      cdpUrl: this.runtime.cdpUrl
+    });
 
     try {
-      return await this.runtime.profileManager.runWithPersistentContext(
-        profileName,
-        { headless: true },
+      return await this.runtime.profileManager.runWithContext(
+        {
+          cdpUrl: this.runtime.cdpUrl,
+          profileName,
+          headless: true
+        },
         async (context) => {
           const page = await getOrCreatePage(context);
           await page.goto(CONNECTIONS_URL, { waitUntil: "domcontentloaded" });
@@ -545,15 +561,21 @@ export class LinkedInConnectionsService {
     const profileName = input.profileName ?? "default";
     const filter = input.filter ?? "all";
 
-    await this.runtime.auth.ensureAuthenticated({ profileName });
+    await this.runtime.auth.ensureAuthenticated({
+      profileName,
+      cdpUrl: this.runtime.cdpUrl
+    });
 
     try {
       const results: LinkedInPendingInvitation[] = [];
 
       if (filter === "all" || filter === "received") {
-        const received = await this.runtime.profileManager.runWithPersistentContext(
-          profileName,
-          { headless: true },
+        const received = await this.runtime.profileManager.runWithContext(
+          {
+            cdpUrl: this.runtime.cdpUrl,
+            profileName,
+            headless: true
+          },
           async (context) => {
             const page = await getOrCreatePage(context);
             await page.goto(INVITATIONS_RECEIVED_URL, {
@@ -567,9 +589,12 @@ export class LinkedInConnectionsService {
       }
 
       if (filter === "all" || filter === "sent") {
-        const sent = await this.runtime.profileManager.runWithPersistentContext(
-          profileName,
-          { headless: true },
+        const sent = await this.runtime.profileManager.runWithContext(
+          {
+            cdpUrl: this.runtime.cdpUrl,
+            profileName,
+            headless: true
+          },
           async (context) => {
             const page = await getOrCreatePage(context);
             await page.goto(INVITATIONS_SENT_URL, {

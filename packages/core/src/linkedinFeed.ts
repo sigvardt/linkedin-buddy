@@ -50,6 +50,7 @@ export interface CommentOnPostInput {
 
 export interface LinkedInFeedExecutorRuntime {
   auth: LinkedInAuthService;
+  cdpUrl?: string | undefined;
   profileManager: ProfileManager;
   logger: JsonEventLogger;
   rateLimiter: RateLimiter;
@@ -640,11 +641,17 @@ export class LikePostActionExecutor
       "target"
     );
 
-    await runtime.auth.ensureAuthenticated({ profileName });
-
-    return runtime.profileManager.runWithPersistentContext(
+    await runtime.auth.ensureAuthenticated({
       profileName,
-      { headless: true },
+      cdpUrl: runtime.cdpUrl
+    });
+
+    return runtime.profileManager.runWithContext(
+      {
+        cdpUrl: runtime.cdpUrl,
+        profileName,
+        headless: true
+      },
       async (context) => {
         const page = await getOrCreatePage(context);
 
@@ -751,11 +758,17 @@ export class CommentOnPostActionExecutor
     );
     const text = getRequiredStringField(action.payload, "text", action.id, "payload");
 
-    await runtime.auth.ensureAuthenticated({ profileName });
-
-    return runtime.profileManager.runWithPersistentContext(
+    await runtime.auth.ensureAuthenticated({
       profileName,
-      { headless: true },
+      cdpUrl: runtime.cdpUrl
+    });
+
+    return runtime.profileManager.runWithContext(
+      {
+        cdpUrl: runtime.cdpUrl,
+        profileName,
+        headless: true
+      },
       async (context) => {
         const page = await getOrCreatePage(context);
 
@@ -932,12 +945,18 @@ export class LinkedInFeedService {
     const profileName = input.profileName ?? "default";
     const limit = readFeedLimit(input.limit);
 
-    await this.runtime.auth.ensureAuthenticated({ profileName });
+    await this.runtime.auth.ensureAuthenticated({
+      profileName,
+      cdpUrl: this.runtime.cdpUrl
+    });
 
     try {
-      return await this.runtime.profileManager.runWithPersistentContext(
-        profileName,
-        { headless: true },
+      return await this.runtime.profileManager.runWithContext(
+        {
+          cdpUrl: this.runtime.cdpUrl,
+          profileName,
+          headless: true
+        },
         async (context) => {
           const page = await getOrCreatePage(context);
           await page.goto(LINKEDIN_FEED_URL, { waitUntil: "domcontentloaded" });
@@ -962,12 +981,18 @@ export class LinkedInFeedService {
     const profileName = input.profileName ?? "default";
     const postUrl = resolvePostUrl(input.postUrl);
 
-    await this.runtime.auth.ensureAuthenticated({ profileName });
+    await this.runtime.auth.ensureAuthenticated({
+      profileName,
+      cdpUrl: this.runtime.cdpUrl
+    });
 
     try {
-      return await this.runtime.profileManager.runWithPersistentContext(
-        profileName,
-        { headless: true },
+      return await this.runtime.profileManager.runWithContext(
+        {
+          cdpUrl: this.runtime.cdpUrl,
+          profileName,
+          headless: true
+        },
         async (context) => {
           const page = await getOrCreatePage(context);
           await page.goto(postUrl, { waitUntil: "domcontentloaded" });

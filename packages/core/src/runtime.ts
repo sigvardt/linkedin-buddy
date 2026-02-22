@@ -10,7 +10,6 @@ import {
 import {
   createFeedActionExecutors,
   LinkedInFeedService,
-  type LinkedInFeedExecutorRuntime,
   type LinkedInFeedRuntime
 } from "./linkedinFeed.js";
 import {
@@ -38,11 +37,13 @@ export interface CreateCoreRuntimeOptions {
   baseDir?: string;
   dbPath?: string;
   runId?: string;
+  cdpUrl?: string | undefined;
 }
 
 export interface CoreRuntime {
   paths: ConfigPaths;
   runId: string;
+  cdpUrl?: string | undefined;
   db: AssistantDatabase;
   logger: JsonEventLogger;
   artifacts: ArtifactHelpers;
@@ -95,13 +96,14 @@ export function createCoreRuntime(
   runtime = {
     paths,
     runId,
+    cdpUrl: options.cdpUrl,
     db,
     logger,
     artifacts,
     twoPhaseCommit,
     rateLimiter: new RateLimiter(db),
     profileManager,
-    auth: new LinkedInAuthService(profileManager),
+    auth: new LinkedInAuthService(profileManager, options.cdpUrl),
     profile: undefined as unknown as LinkedInProfileService,
     connections: undefined as unknown as LinkedInConnectionsService,
     feed: undefined as unknown as LinkedInFeedService,
