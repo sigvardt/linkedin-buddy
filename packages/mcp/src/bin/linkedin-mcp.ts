@@ -2,7 +2,8 @@
 import {
   LinkedInAssistantError,
   createCoreRuntime,
-  toLinkedInAssistantErrorPayload
+  toLinkedInAssistantErrorPayload,
+  type SearchCategory
 } from "@linkedin-assistant/core";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -26,6 +27,7 @@ import {
   LINKEDIN_INBOX_LIST_THREADS_TOOL,
   LINKEDIN_INBOX_PREPARE_REPLY_TOOL,
   LINKEDIN_PROFILE_VIEW_TOOL,
+  LINKEDIN_SEARCH_TOOL,
   LINKEDIN_SESSION_OPEN_LOGIN_TOOL,
   LINKEDIN_SESSION_STATUS_TOOL
 } from "../index.js";
@@ -74,6 +76,27 @@ function readPositiveNumber(
 function readBoolean(args: ToolArgs, key: string, fallback: boolean): boolean {
   const value = args[key];
   return typeof value === "boolean" ? value : fallback;
+}
+
+function readSearchCategory(
+  args: ToolArgs,
+  key: string,
+  fallback: SearchCategory
+): SearchCategory {
+  const value = args[key];
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return fallback;
+  }
+
+  const category = value.trim();
+  if (category === "people" || category === "companies" || category === "jobs") {
+    return category;
+  }
+
+  throw new LinkedInAssistantError(
+    "ACTION_PRECONDITION_FAILED",
+    `${key} must be one of: people, companies, jobs.`
+  );
 }
 
 function toToolResult(payload: unknown): ToolResult {
@@ -329,6 +352,45 @@ async function handleProfileView(args: ToolArgs): Promise<ToolResult> {
       run_id: runtime.runId,
       profile_name: profileName,
       profile
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleSearch(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const query = readRequiredString(args, "query");
+    const category = readSearchCategory(args, "category", "people");
+    const limit = readPositiveNumber(args, "limit", 10);
+
+    runtime.logger.log("info", "mcp.search.start", {
+      profileName,
+      query,
+      category,
+      limit
+    });
+
+    const search = await runtime.search.search({
+      profileName,
+      query,
+      category,
+      limit
+    });
+
+    runtime.logger.log("info", "mcp.search.done", {
+      profileName,
+      category: search.category,
+      count: search.count
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...search
     });
   } finally {
     runtime.close();
@@ -831,6 +893,35 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
+        name: LINKEDIN_SEARCH_TOOL,
+        description: "Search LinkedIn for people, companies, or jobs.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["query"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            query: {
+              type: "string",
+              description: "Search keywords."
+            },
+            category: {
+              type: "string",
+              enum: ["people", "companies", "jobs"],
+              description: "Search category. Defaults to people."
+            },
+            limit: {
+              type: "number",
+              description: "Max results. Defaults to 10."
+            }
+          })
+        }
+      },
+      {
         name: LINKEDIN_CONNECTIONS_LIST_TOOL,
         description:
           "List your LinkedIn connections. Returns connection names, headlines, profile URLs, and when connected.",
@@ -1100,6 +1191,10 @@ server.setRequestHandler(
 
       if (name === LINKEDIN_PROFILE_VIEW_TOOL) {
         return await handleProfileView(args);
+      }
+
+      if (name === LINKEDIN_SEARCH_TOOL) {
+        return await handleSearch(args);
       }
 
       if (name === LINKEDIN_CONNECTIONS_LIST_TOOL) {

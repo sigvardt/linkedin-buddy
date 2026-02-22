@@ -21,6 +21,10 @@ import {
   LinkedInProfileService,
   type LinkedInProfileRuntime
 } from "./linkedinProfile.js";
+import {
+  LinkedInSearchService,
+  type LinkedInSearchRuntime
+} from "./linkedinSearch.js";
 import { JsonEventLogger } from "./logging.js";
 import { ProfileManager } from "./profileManager.js";
 import { RateLimiter } from "./rateLimiter.js";
@@ -52,6 +56,7 @@ export interface CoreRuntime {
   profileManager: ProfileManager;
   auth: LinkedInAuthService;
   profile: LinkedInProfileService;
+  search: LinkedInSearchService;
   connections: LinkedInConnectionsService;
   feed: LinkedInFeedService;
   inbox: LinkedInInboxService;
@@ -105,6 +110,7 @@ export function createCoreRuntime(
     profileManager,
     auth: new LinkedInAuthService(profileManager, options.cdpUrl),
     profile: undefined as unknown as LinkedInProfileService,
+    search: undefined as unknown as LinkedInSearchService,
     connections: undefined as unknown as LinkedInConnectionsService,
     feed: undefined as unknown as LinkedInFeedService,
     inbox: undefined as unknown as LinkedInInboxService,
@@ -117,6 +123,8 @@ export function createCoreRuntime(
 
   const profileRuntime: LinkedInProfileRuntime = runtime;
   runtime.profile = new LinkedInProfileService(profileRuntime);
+  const searchRuntime: LinkedInSearchRuntime = runtime;
+  runtime.search = new LinkedInSearchService(searchRuntime);
   const connectionsRuntime: LinkedInConnectionsRuntime = runtime;
   runtime.connections = new LinkedInConnectionsService(connectionsRuntime);
   const feedRuntime: LinkedInFeedRuntime = runtime;

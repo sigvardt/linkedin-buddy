@@ -8,6 +8,7 @@ export * from "./linkedinConnections.js";
 export * from "./linkedinFeed.js";
 export * from "./linkedinInbox.js";
 export * from "./linkedinProfile.js";
+export * from "./linkedinSearch.js";
 export * from "./logging.js";
 export * from "./profileManager.js";
 export * from "./rateLimiter.js";

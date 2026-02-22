@@ -5,7 +5,8 @@ import { Command } from "commander";
 import {
   LinkedInAssistantError,
   createCoreRuntime,
-  toLinkedInAssistantErrorPayload
+  toLinkedInAssistantErrorPayload,
+  type SearchCategory
 } from "@linkedin-assistant/core";
 
 function coercePositiveInt(value: string, label: string): number {
@@ -17,6 +18,17 @@ function coercePositiveInt(value: string, label: string): number {
     );
   }
   return parsed;
+}
+
+function coerceSearchCategory(value: string): SearchCategory {
+  if (value === "people" || value === "companies" || value === "jobs") {
+    return value;
+  }
+
+  throw new LinkedInAssistantError(
+    "ACTION_PRECONDITION_FAILED",
+    "category must be one of: people, companies, jobs."
+  );
 }
 
 function printJson(value: unknown): void {
@@ -528,6 +540,48 @@ async function runProfileView(input: {
   }
 }
 
+async function runSearch(input: {
+  profileName: string;
+  query: string;
+  category?: SearchCategory;
+  limit?: number;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    const category = input.category ?? "people";
+    const limit = input.limit ?? 10;
+
+    runtime.logger.log("info", "cli.search.start", {
+      profileName: input.profileName,
+      query: input.query,
+      category,
+      limit
+    });
+
+    const result = await runtime.search.search({
+      profileName: input.profileName,
+      query: input.query,
+      ...(input.category ? { category: input.category } : {}),
+      ...(typeof input.limit === "number" ? { limit: input.limit } : {})
+    });
+
+    runtime.logger.log("info", "cli.search.done", {
+      profileName: input.profileName,
+      category: result.category,
+      count: result.count
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...result
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 function readTargetProfileName(target: Record<string, unknown>): string | undefined {
   const value = target.profile_name;
   if (typeof value === "string" && value.trim().length > 0) {
@@ -658,6 +712,31 @@ async function main(): Promise<void> {
           "timeout-minutes"
         );
         await runLogin(options.profile, timeoutMinutes, readCdpUrl());
+      }
+    );
+
+  program
+    .command("search")
+    .description("Search LinkedIn")
+    .argument("<query>", "Search keywords")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option(
+      "-c, --category <category>",
+      "Search category: people, companies, or jobs",
+      "people"
+    )
+    .option("-l, --limit <limit>", "Max results", "10")
+    .action(
+      async (
+        query: string,
+        options: { profile: string; category: string; limit: string }
+      ) => {
+        await runSearch({
+          profileName: options.profile,
+          query,
+          category: coerceSearchCategory(options.category),
+          limit: coercePositiveInt(options.limit, "limit")
+        }, readCdpUrl());
       }
     );
 
