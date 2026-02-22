@@ -6,6 +6,11 @@ export default defineConfig({
     include: [
       "packages/**/test/**/*.test.ts",
       "packages/**/src/__tests__/**/*.test.ts"
+    ],
+    exclude: [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/*.e2e.test.ts"
     ]
   }
 });

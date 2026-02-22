@@ -1143,6 +1143,23 @@ async function main(): Promise<void> {
       }
     );
 
+  program
+    .command("health")
+    .description("Check browser and LinkedIn session health")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(async (options: { profile: string }) => {
+      const runtime = createRuntime(readCdpUrl());
+      try {
+        const health = await runtime.healthCheck({ profileName: options.profile });
+        printJson({ run_id: runtime.runId, ...health });
+        if (!health.browser.healthy || !health.session.authenticated) {
+          process.exitCode = 1;
+        }
+      } finally {
+        runtime.close();
+      }
+    });
+
   await program.parseAsync(process.argv);
 }
 

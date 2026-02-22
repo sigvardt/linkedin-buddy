@@ -37,6 +37,7 @@ import { JsonEventLogger } from "./logging.js";
 import { ProfileManager } from "./profileManager.js";
 import { RateLimiter } from "./rateLimiter.js";
 import { createRunId } from "./run.js";
+import { checkFullHealth, type FullHealthStatus } from "./healthCheck.js";
 import {
   TwoPhaseCommitService,
   TestEchoActionExecutor,
@@ -71,6 +72,7 @@ export interface CoreRuntime {
   feed: LinkedInFeedService;
   inbox: LinkedInInboxService;
   testAutoConfirm: TestAutoConfirmConfig;
+  healthCheck: (options?: { profileName?: string }) => Promise<FullHealthStatus>;
   close: () => void;
 }
 
@@ -127,6 +129,19 @@ export function createCoreRuntime(
     feed: undefined as unknown as LinkedInFeedService,
     inbox: undefined as unknown as LinkedInInboxService,
     testAutoConfirm,
+    healthCheck: async (
+      healthOptions: { profileName?: string } = {}
+    ): Promise<FullHealthStatus> => {
+      const profileName = healthOptions.profileName ?? "default";
+      return profileManager.runWithContext(
+        {
+          cdpUrl: options.cdpUrl,
+          profileName,
+          headless: true
+        },
+        (context) => checkFullHealth(context)
+      );
+    },
     close: () => {
       logger.log("info", "runtime.closed", { runId });
       db.close();

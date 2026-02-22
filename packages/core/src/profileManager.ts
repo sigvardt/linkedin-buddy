@@ -115,6 +115,39 @@ export class ProfileManager {
     }
   }
 
+  async runWithCDPResilient<T>(
+    cdpUrl: string,
+    callback: (context: BrowserContext) => Promise<T>,
+    options?: { maxRetries?: number; retryDelayMs?: number }
+  ): Promise<T> {
+    const maxRetries = options?.maxRetries ?? 1;
+    const retryDelayMs = options?.retryDelayMs ?? 1_000;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+      try {
+        return await this.runWithCDP(cdpUrl, callback);
+      } catch (error) {
+        const isDisconnect =
+          error instanceof Error &&
+          (error.message.includes("Target closed") ||
+            error.message.includes("Connection refused") ||
+            error.message.includes("Browser has been closed") ||
+            error.message.includes("WebSocket error") ||
+            error.message.includes("ECONNREFUSED"));
+
+        if (!isDisconnect || attempt >= maxRetries) {
+          throw error;
+        }
+
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, retryDelayMs);
+        });
+      }
+    }
+
+    throw new Error("Unreachable");
+  }
+
   async runWithContext<T>(
     options: {
       cdpUrl?: string | undefined;
@@ -124,7 +157,7 @@ export class ProfileManager {
     callback: (context: BrowserContext) => Promise<T>
   ): Promise<T> {
     if (options.cdpUrl) {
-      return this.runWithCDP(options.cdpUrl, callback);
+      return this.runWithCDPResilient(options.cdpUrl, callback);
     }
 
     return this.runWithPersistentContext(
