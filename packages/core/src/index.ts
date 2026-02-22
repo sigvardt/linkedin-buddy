@@ -3,6 +3,7 @@ export * from "./auth/session.js";
 export * from "./config.js";
 export * from "./db/database.js";
 export * from "./errors.js";
+export * from "./humanize.js";
 export * from "./linkedinConnections.js";
 export * from "./linkedinFeed.js";
 export * from "./linkedinInbox.js";
