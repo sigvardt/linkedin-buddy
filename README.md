@@ -108,3 +108,59 @@ npm run lint
 npm run typecheck
 npm run build
 ```
+
+## E2E Testing (Real Browser)
+
+Unit tests use mocks. After all features are implemented, run E2E tests against a real authenticated LinkedIn session in a headless browser.
+
+### Prerequisites
+
+- Authenticated LinkedIn session in the openclaw browser profile (CDP port 18800)
+- Or: any Chromium instance with an active LinkedIn session exposed via CDP
+
+### E2E Test Plan
+
+Connect the CLI to a live CDP session and exercise every feature against real LinkedIn:
+
+```bash
+# Status check (verify session is authenticated)
+npm exec -w @linkedin-assistant/cli -- linkedin status --profile default --cdp-url http://localhost:18800
+
+# Profile viewing
+npm exec -w @linkedin-assistant/cli -- linkedin profile view --profile default --cdp-url http://localhost:18800
+npm exec -w @linkedin-assistant/cli -- linkedin profile view --profile default --cdp-url http://localhost:18800 --user "realsimonmiller"
+
+# Search (people, companies, jobs)
+npm exec -w @linkedin-assistant/cli -- linkedin search --profile default --cdp-url http://localhost:18800 --type people --query "Simon Miller"
+npm exec -w @linkedin-assistant/cli -- linkedin search --profile default --cdp-url http://localhost:18800 --type companies --query "Power International"
+npm exec -w @linkedin-assistant/cli -- linkedin search --profile default --cdp-url http://localhost:18800 --type jobs --query "engineering manager"
+
+# Connections
+npm exec -w @linkedin-assistant/cli -- linkedin connections list --profile default --cdp-url http://localhost:18800 --limit 10
+
+# Feed
+npm exec -w @linkedin-assistant/cli -- linkedin feed view --profile default --cdp-url http://localhost:18800 --limit 5
+
+# Inbox
+npm exec -w @linkedin-assistant/cli -- linkedin inbox list --profile default --cdp-url http://localhost:18800 --limit 10
+
+# Notifications (when implemented)
+npm exec -w @linkedin-assistant/cli -- linkedin notifications list --profile default --cdp-url http://localhost:18800 --limit 10
+```
+
+### E2E Acceptance Criteria
+
+- Each command returns structured JSON (not errors)
+- Profile view returns real profile data (name, headline, etc.)
+- Search returns real results matching the query
+- Connections list returns actual connections
+- Feed returns real posts
+- Inbox returns real message threads
+- No `AUTH_REQUIRED` or `UI_CHANGED_SELECTOR_FAILED` errors
+- Screenshots/trace artifacts are captured where applicable
+
+### Test Account
+
+- LinkedIn account: joakim@sigvardt.eu (authenticated in openclaw browser profile)
+- Safe interaction target: Simon Miller (linkedin.com/in/realsimonmiller)
+- **Do not** send unsolicited messages or connection requests during E2E testing without explicit approval
