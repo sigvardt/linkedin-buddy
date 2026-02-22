@@ -8,6 +8,12 @@ import {
   type LinkedInConnectionsRuntime
 } from "./linkedinConnections.js";
 import {
+  createFeedActionExecutors,
+  LinkedInFeedService,
+  type LinkedInFeedExecutorRuntime,
+  type LinkedInFeedRuntime
+} from "./linkedinFeed.js";
+import {
   createLinkedInActionExecutors,
   LinkedInInboxService,
   type LinkedInMessagingRuntime
@@ -46,6 +52,7 @@ export interface CoreRuntime {
   auth: LinkedInAuthService;
   profile: LinkedInProfileService;
   connections: LinkedInConnectionsService;
+  feed: LinkedInFeedService;
   inbox: LinkedInInboxService;
   testAutoConfirm: TestAutoConfirmConfig;
   close: () => void;
@@ -70,11 +77,16 @@ export function createCoreRuntime(
     string,
     import("./twoPhaseCommit.js").ActionExecutor<LinkedInMessagingRuntime>
   >;
+  const feedExecutors = createFeedActionExecutors() as unknown as Record<
+    string,
+    import("./twoPhaseCommit.js").ActionExecutor<LinkedInMessagingRuntime>
+  >;
   const testEchoExecutor = new TestEchoActionExecutor<LinkedInMessagingRuntime>();
   const twoPhaseCommit = new TwoPhaseCommitService<LinkedInMessagingRuntime>(db, {
     executors: {
       ...linkedInExecutors,
       ...connectionExecutors,
+      ...feedExecutors,
       [TEST_ECHO_ACTION_TYPE]: testEchoExecutor
     },
     getRuntime: () => runtime
@@ -92,6 +104,7 @@ export function createCoreRuntime(
     auth: new LinkedInAuthService(profileManager),
     profile: undefined as unknown as LinkedInProfileService,
     connections: undefined as unknown as LinkedInConnectionsService,
+    feed: undefined as unknown as LinkedInFeedService,
     inbox: undefined as unknown as LinkedInInboxService,
     testAutoConfirm,
     close: () => {
@@ -104,6 +117,8 @@ export function createCoreRuntime(
   runtime.profile = new LinkedInProfileService(profileRuntime);
   const connectionsRuntime: LinkedInConnectionsRuntime = runtime;
   runtime.connections = new LinkedInConnectionsService(connectionsRuntime);
+  const feedRuntime: LinkedInFeedRuntime = runtime;
+  runtime.feed = new LinkedInFeedService(feedRuntime);
   runtime.inbox = new LinkedInInboxService(runtime);
 
   logger.log("info", "runtime.started", {

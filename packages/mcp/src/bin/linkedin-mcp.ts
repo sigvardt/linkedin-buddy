@@ -18,6 +18,10 @@ import {
   LINKEDIN_CONNECTIONS_LIST_TOOL,
   LINKEDIN_CONNECTIONS_PENDING_TOOL,
   LINKEDIN_CONNECTIONS_WITHDRAW_TOOL,
+  LINKEDIN_FEED_COMMENT_TOOL,
+  LINKEDIN_FEED_LIKE_TOOL,
+  LINKEDIN_FEED_LIST_TOOL,
+  LINKEDIN_FEED_VIEW_POST_TOOL,
   LINKEDIN_INBOX_GET_THREAD_TOOL,
   LINKEDIN_INBOX_LIST_THREADS_TOOL,
   LINKEDIN_INBOX_PREPARE_REPLY_TOOL,
@@ -485,6 +489,141 @@ async function handleConnectionsWithdraw(args: ToolArgs): Promise<ToolResult> {
   }
 }
 
+async function handleFeedList(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createCoreRuntime();
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const limit = readPositiveNumber(args, "limit", 10);
+
+    runtime.logger.log("info", "mcp.feed.list.start", {
+      profileName,
+      limit
+    });
+
+    const posts = await runtime.feed.viewFeed({
+      profileName,
+      limit
+    });
+
+    runtime.logger.log("info", "mcp.feed.list.done", {
+      profileName,
+      count: posts.length
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      count: posts.length,
+      posts
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleFeedViewPost(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createCoreRuntime();
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const postUrl = readRequiredString(args, "postUrl");
+
+    runtime.logger.log("info", "mcp.feed.view_post.start", {
+      profileName,
+      postUrl
+    });
+
+    const post = await runtime.feed.viewPost({
+      profileName,
+      postUrl
+    });
+
+    runtime.logger.log("info", "mcp.feed.view_post.done", {
+      profileName,
+      postId: post.post_id
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      post
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleFeedLike(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createCoreRuntime();
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const postUrl = readRequiredString(args, "postUrl");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.feed.like.start", {
+      profileName,
+      postUrl
+    });
+
+    const prepared = runtime.feed.prepareLikePost({
+      profileName,
+      postUrl,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.feed.like.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleFeedComment(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createCoreRuntime();
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const postUrl = readRequiredString(args, "postUrl");
+    const text = readRequiredString(args, "text");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.feed.comment.start", {
+      profileName,
+      postUrl
+    });
+
+    const prepared = runtime.feed.prepareCommentOnPost({
+      profileName,
+      postUrl,
+      text,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.feed.comment.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 async function handleConfirm(args: ToolArgs): Promise<ToolResult> {
   const runtime = createCoreRuntime();
 
@@ -796,6 +935,100 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
+        name: LINKEDIN_FEED_LIST_TOOL,
+        description:
+          "List posts from your LinkedIn feed with author, text, and engagement counts.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            limit: {
+              type: "number",
+              description: "Maximum number of feed posts to return. Defaults to 10."
+            }
+          }
+        }
+      },
+      {
+        name: LINKEDIN_FEED_VIEW_POST_TOOL,
+        description: "View one LinkedIn feed post by URL, URN, or activity id.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["postUrl"],
+          properties: {
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            postUrl: {
+              type: "string",
+              description: "LinkedIn post URL, URN, or activity/share identifier."
+            }
+          }
+        }
+      },
+      {
+        name: LINKEDIN_FEED_LIKE_TOOL,
+        description:
+          "Prepare to like a LinkedIn post (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["postUrl"],
+          properties: {
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            postUrl: {
+              type: "string",
+              description: "LinkedIn post URL, URN, or activity/share identifier."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          }
+        }
+      },
+      {
+        name: LINKEDIN_FEED_COMMENT_TOOL,
+        description:
+          "Prepare to comment on a LinkedIn post (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["postUrl", "text"],
+          properties: {
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            postUrl: {
+              type: "string",
+              description: "LinkedIn post URL, URN, or activity/share identifier."
+            },
+            text: {
+              type: "string",
+              description: "Comment text to prepare."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          }
+        }
+      },
+      {
         name: LINKEDIN_ACTIONS_CONFIRM_TOOL,
         description: "Confirm and execute a prepared action by confirm token.",
         inputSchema: {
@@ -867,6 +1100,22 @@ server.setRequestHandler(
 
       if (name === LINKEDIN_CONNECTIONS_WITHDRAW_TOOL) {
         return await handleConnectionsWithdraw(args);
+      }
+
+      if (name === LINKEDIN_FEED_LIST_TOOL) {
+        return await handleFeedList(args);
+      }
+
+      if (name === LINKEDIN_FEED_VIEW_POST_TOOL) {
+        return await handleFeedViewPost(args);
+      }
+
+      if (name === LINKEDIN_FEED_LIKE_TOOL) {
+        return await handleFeedLike(args);
+      }
+
+      if (name === LINKEDIN_FEED_COMMENT_TOOL) {
+        return await handleFeedComment(args);
       }
 
       if (name === LINKEDIN_ACTIONS_CONFIRM_TOOL) {

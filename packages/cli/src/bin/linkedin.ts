@@ -356,6 +356,141 @@ async function runConnectionsWithdraw(input: {
   }
 }
 
+async function runFeedList(input: {
+  profileName: string;
+  limit: number;
+}): Promise<void> {
+  const runtime = createCoreRuntime();
+
+  try {
+    runtime.logger.log("info", "cli.feed.list.start", {
+      profileName: input.profileName,
+      limit: input.limit
+    });
+
+    const posts = await runtime.feed.viewFeed({
+      profileName: input.profileName,
+      limit: input.limit
+    });
+
+    runtime.logger.log("info", "cli.feed.list.done", {
+      profileName: input.profileName,
+      count: posts.length
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      count: posts.length,
+      posts
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runFeedView(input: {
+  profileName: string;
+  postUrl: string;
+}): Promise<void> {
+  const runtime = createCoreRuntime();
+
+  try {
+    runtime.logger.log("info", "cli.feed.view.start", {
+      profileName: input.profileName,
+      postUrl: input.postUrl
+    });
+
+    const post = await runtime.feed.viewPost({
+      profileName: input.profileName,
+      postUrl: input.postUrl
+    });
+
+    runtime.logger.log("info", "cli.feed.view.done", {
+      profileName: input.profileName,
+      postId: post.post_id
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      post
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runFeedLike(input: {
+  profileName: string;
+  postUrl: string;
+  operatorNote?: string;
+}): Promise<void> {
+  const runtime = createCoreRuntime();
+
+  try {
+    runtime.logger.log("info", "cli.feed.like.start", {
+      profileName: input.profileName,
+      postUrl: input.postUrl
+    });
+
+    const prepared = runtime.feed.prepareLikePost({
+      profileName: input.profileName,
+      postUrl: input.postUrl,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "cli.feed.like.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runFeedComment(input: {
+  profileName: string;
+  postUrl: string;
+  text: string;
+  operatorNote?: string;
+}): Promise<void> {
+  const runtime = createCoreRuntime();
+
+  try {
+    runtime.logger.log("info", "cli.feed.comment.start", {
+      profileName: input.profileName,
+      postUrl: input.postUrl
+    });
+
+    const prepared = runtime.feed.prepareCommentOnPost({
+      profileName: input.profileName,
+      postUrl: input.postUrl,
+      text: input.text,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "cli.feed.comment.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 async function runProfileView(input: {
   profileName: string;
   target: string;
@@ -644,6 +779,76 @@ async function main(): Promise<void> {
         targetProfile: target
       });
     });
+
+  const feedCommand = program
+    .command("feed")
+    .description("Browse and prepare actions for LinkedIn feed posts");
+
+  feedCommand
+    .command("list")
+    .description("List posts from your LinkedIn feed")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-l, --limit <limit>", "Max posts to return", "10")
+    .action(
+      async (options: { profile: string; limit: string }) => {
+        await runFeedList({
+          profileName: options.profile,
+          limit: coercePositiveInt(options.limit, "limit")
+        });
+      }
+    );
+
+  feedCommand
+    .command("view")
+    .description("View details for one LinkedIn feed post")
+    .argument("<post>", "Post URL, URN, or activity id")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(async (post: string, options: { profile: string }) => {
+      await runFeedView({
+        profileName: options.profile,
+        postUrl: post
+      });
+    });
+
+  feedCommand
+    .command("like")
+    .description("Prepare to like a LinkedIn post (two-phase)")
+    .argument("<post>", "Post URL, URN, or activity id")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-o, --operator-note <note>", "Optional operator note")
+    .action(
+      async (
+        post: string,
+        options: { profile: string; operatorNote?: string }
+      ) => {
+        await runFeedLike({
+          profileName: options.profile,
+          postUrl: post,
+          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
+        });
+      }
+    );
+
+  feedCommand
+    .command("comment")
+    .description("Prepare to comment on a LinkedIn post (two-phase)")
+    .argument("<post>", "Post URL, URN, or activity id")
+    .requiredOption("--text <text>", "Comment text")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-o, --operator-note <note>", "Optional operator note")
+    .action(
+      async (
+        post: string,
+        options: { profile: string; text: string; operatorNote?: string }
+      ) => {
+        await runFeedComment({
+          profileName: options.profile,
+          postUrl: post,
+          text: options.text,
+          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
+        });
+      }
+    );
 
   const profileCommand = program
     .command("profile")

@@ -10,3 +10,7 @@ export const LINKEDIN_CONNECTIONS_PENDING_TOOL = "linkedin.connections.pending";
 export const LINKEDIN_CONNECTIONS_INVITE_TOOL = "linkedin.connections.invite";
 export const LINKEDIN_CONNECTIONS_ACCEPT_TOOL = "linkedin.connections.accept";
 export const LINKEDIN_CONNECTIONS_WITHDRAW_TOOL = "linkedin.connections.withdraw";
+export const LINKEDIN_FEED_LIST_TOOL = "linkedin.feed.list";
+export const LINKEDIN_FEED_VIEW_POST_TOOL = "linkedin.feed.view_post";
+export const LINKEDIN_FEED_LIKE_TOOL = "linkedin.feed.like";
+export const LINKEDIN_FEED_COMMENT_TOOL = "linkedin.feed.comment";
