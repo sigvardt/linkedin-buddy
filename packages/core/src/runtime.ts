@@ -22,6 +22,14 @@ import {
   type LinkedInProfileRuntime
 } from "./linkedinProfile.js";
 import {
+  LinkedInJobsService,
+  type LinkedInJobsRuntime
+} from "./linkedinJobs.js";
+import {
+  LinkedInNotificationsService,
+  type LinkedInNotificationsRuntime
+} from "./linkedinNotifications.js";
+import {
   LinkedInSearchService,
   type LinkedInSearchRuntime
 } from "./linkedinSearch.js";
@@ -57,6 +65,8 @@ export interface CoreRuntime {
   auth: LinkedInAuthService;
   profile: LinkedInProfileService;
   search: LinkedInSearchService;
+  jobs: LinkedInJobsService;
+  notifications: LinkedInNotificationsService;
   connections: LinkedInConnectionsService;
   feed: LinkedInFeedService;
   inbox: LinkedInInboxService;
@@ -111,6 +121,8 @@ export function createCoreRuntime(
     auth: new LinkedInAuthService(profileManager, options.cdpUrl),
     profile: undefined as unknown as LinkedInProfileService,
     search: undefined as unknown as LinkedInSearchService,
+    jobs: undefined as unknown as LinkedInJobsService,
+    notifications: undefined as unknown as LinkedInNotificationsService,
     connections: undefined as unknown as LinkedInConnectionsService,
     feed: undefined as unknown as LinkedInFeedService,
     inbox: undefined as unknown as LinkedInInboxService,
@@ -125,6 +137,10 @@ export function createCoreRuntime(
   runtime.profile = new LinkedInProfileService(profileRuntime);
   const searchRuntime: LinkedInSearchRuntime = runtime;
   runtime.search = new LinkedInSearchService(searchRuntime);
+  const jobsRuntime: LinkedInJobsRuntime = runtime;
+  runtime.jobs = new LinkedInJobsService(jobsRuntime);
+  const notificationsRuntime: LinkedInNotificationsRuntime = runtime;
+  runtime.notifications = new LinkedInNotificationsService(notificationsRuntime);
   const connectionsRuntime: LinkedInConnectionsRuntime = runtime;
   runtime.connections = new LinkedInConnectionsService(connectionsRuntime);
   const feedRuntime: LinkedInFeedRuntime = runtime;

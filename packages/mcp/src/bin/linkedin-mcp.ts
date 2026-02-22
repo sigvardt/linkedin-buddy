@@ -27,6 +27,9 @@ import {
   LINKEDIN_INBOX_LIST_THREADS_TOOL,
   LINKEDIN_INBOX_PREPARE_REPLY_TOOL,
   LINKEDIN_PROFILE_VIEW_TOOL,
+  LINKEDIN_JOBS_SEARCH_TOOL,
+  LINKEDIN_JOBS_VIEW_TOOL,
+  LINKEDIN_NOTIFICATIONS_LIST_TOOL,
   LINKEDIN_SEARCH_TOOL,
   LINKEDIN_SESSION_OPEN_LOGIN_TOOL,
   LINKEDIN_SESSION_STATUS_TOOL
@@ -352,6 +355,109 @@ async function handleProfileView(args: ToolArgs): Promise<ToolResult> {
       run_id: runtime.runId,
       profile_name: profileName,
       profile
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleNotificationsList(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const limit = readPositiveNumber(args, "limit", 20);
+
+    runtime.logger.log("info", "mcp.notifications.list.start", {
+      profileName,
+      limit
+    });
+
+    const notifications = await runtime.notifications.listNotifications({
+      profileName,
+      limit
+    });
+
+    runtime.logger.log("info", "mcp.notifications.list.done", {
+      profileName,
+      count: notifications.length
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      count: notifications.length,
+      notifications
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleJobsSearch(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const query = readRequiredString(args, "query");
+    const location = readString(args, "location", "");
+    const limit = readPositiveNumber(args, "limit", 10);
+
+    runtime.logger.log("info", "mcp.jobs.search.start", {
+      profileName,
+      query,
+      location,
+      limit
+    });
+
+    const result = await runtime.jobs.searchJobs({
+      profileName,
+      query,
+      ...(location ? { location } : {}),
+      limit
+    });
+
+    runtime.logger.log("info", "mcp.jobs.search.done", {
+      profileName,
+      count: result.count
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...result
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleJobsView(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const jobId = readRequiredString(args, "jobId");
+
+    runtime.logger.log("info", "mcp.jobs.view.start", {
+      profileName,
+      jobId
+    });
+
+    const job = await runtime.jobs.viewJob({
+      profileName,
+      jobId
+    });
+
+    runtime.logger.log("info", "mcp.jobs.view.done", {
+      profileName,
+      jobId: job.job_id
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      job
     });
   } finally {
     runtime.close();
@@ -1140,6 +1246,76 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
+        name: LINKEDIN_NOTIFICATIONS_LIST_TOOL,
+        description:
+          "List your LinkedIn notifications. Returns notification type, message, timestamp, link, and read/unread status.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            limit: {
+              type: "number",
+              description: "Maximum number of notifications to return. Defaults to 20."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_JOBS_SEARCH_TOOL,
+        description:
+          "Search for LinkedIn job postings by keyword and optional location.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["query"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            query: {
+              type: "string",
+              description: "Search keywords for jobs."
+            },
+            location: {
+              type: "string",
+              description: "Location filter for jobs."
+            },
+            limit: {
+              type: "number",
+              description: "Maximum number of results to return. Defaults to 10."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_JOBS_VIEW_TOOL,
+        description:
+          "View details of a specific LinkedIn job posting by job ID.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["jobId"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            jobId: {
+              type: "string",
+              description: "LinkedIn job ID."
+            }
+          })
+        }
+      },
+      {
         name: LINKEDIN_ACTIONS_CONFIRM_TOOL,
         description: "Confirm and execute a prepared action by confirm token.",
         inputSchema: {
@@ -1231,6 +1407,18 @@ server.setRequestHandler(
 
       if (name === LINKEDIN_FEED_COMMENT_TOOL) {
         return await handleFeedComment(args);
+      }
+
+      if (name === LINKEDIN_NOTIFICATIONS_LIST_TOOL) {
+        return await handleNotificationsList(args);
+      }
+
+      if (name === LINKEDIN_JOBS_SEARCH_TOOL) {
+        return await handleJobsSearch(args);
+      }
+
+      if (name === LINKEDIN_JOBS_VIEW_TOOL) {
+        return await handleJobsView(args);
       }
 
       if (name === LINKEDIN_ACTIONS_CONFIRM_TOOL) {

@@ -582,6 +582,109 @@ async function runSearch(input: {
   }
 }
 
+async function runNotificationsList(input: {
+  profileName: string;
+  limit: number;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.notifications.list.start", {
+      profileName: input.profileName,
+      limit: input.limit
+    });
+
+    const notifications = await runtime.notifications.listNotifications({
+      profileName: input.profileName,
+      limit: input.limit
+    });
+
+    runtime.logger.log("info", "cli.notifications.list.done", {
+      profileName: input.profileName,
+      count: notifications.length
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      count: notifications.length,
+      notifications
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runJobsSearch(input: {
+  profileName: string;
+  query: string;
+  location?: string;
+  limit: number;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.jobs.search.start", {
+      profileName: input.profileName,
+      query: input.query,
+      location: input.location ?? "",
+      limit: input.limit
+    });
+
+    const result = await runtime.jobs.searchJobs({
+      profileName: input.profileName,
+      query: input.query,
+      ...(input.location ? { location: input.location } : {}),
+      limit: input.limit
+    });
+
+    runtime.logger.log("info", "cli.jobs.search.done", {
+      profileName: input.profileName,
+      count: result.count
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...result
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runJobsView(input: {
+  profileName: string;
+  jobId: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.jobs.view.start", {
+      profileName: input.profileName,
+      jobId: input.jobId
+    });
+
+    const job = await runtime.jobs.viewJob({
+      profileName: input.profileName,
+      jobId: input.jobId
+    });
+
+    runtime.logger.log("info", "cli.jobs.view.done", {
+      profileName: input.profileName,
+      jobId: job.job_id
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      job
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 function readTargetProfileName(target: Record<string, unknown>): string | undefined {
   const value = target.profile_name;
   if (typeof value === "string" && value.trim().length > 0) {
@@ -944,6 +1047,61 @@ async function main(): Promise<void> {
         }, readCdpUrl());
       }
     );
+
+  const notificationsCommand = program
+    .command("notifications")
+    .description("Browse LinkedIn notifications");
+
+  notificationsCommand
+    .command("list")
+    .description("List your LinkedIn notifications")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-l, --limit <limit>", "Max notifications to return", "20")
+    .action(
+      async (options: { profile: string; limit: string }) => {
+        await runNotificationsList({
+          profileName: options.profile,
+          limit: coercePositiveInt(options.limit, "limit")
+        }, readCdpUrl());
+      }
+    );
+
+  const jobsCommand = program
+    .command("jobs")
+    .description("Search and view LinkedIn job postings");
+
+  jobsCommand
+    .command("search")
+    .description("Search for LinkedIn jobs")
+    .argument("<query>", "Search keywords")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("--location <location>", "Location filter")
+    .option("-l, --limit <limit>", "Max results", "10")
+    .action(
+      async (
+        query: string,
+        options: { profile: string; location?: string; limit: string }
+      ) => {
+        await runJobsSearch({
+          profileName: options.profile,
+          query,
+          ...(options.location ? { location: options.location } : {}),
+          limit: coercePositiveInt(options.limit, "limit")
+        }, readCdpUrl());
+      }
+    );
+
+  jobsCommand
+    .command("view")
+    .description("View details for a LinkedIn job posting")
+    .argument("<jobId>", "LinkedIn job ID")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(async (jobId: string, options: { profile: string }) => {
+      await runJobsView({
+        profileName: options.profile,
+        jobId
+      }, readCdpUrl());
+    });
 
   const profileCommand = program
     .command("profile")

@@ -15,3 +15,6 @@ export const LINKEDIN_FEED_LIST_TOOL = "linkedin.feed.list";
 export const LINKEDIN_FEED_VIEW_POST_TOOL = "linkedin.feed.view_post";
 export const LINKEDIN_FEED_LIKE_TOOL = "linkedin.feed.like";
 export const LINKEDIN_FEED_COMMENT_TOOL = "linkedin.feed.comment";
+export const LINKEDIN_NOTIFICATIONS_LIST_TOOL = "linkedin.notifications.list";
+export const LINKEDIN_JOBS_SEARCH_TOOL = "linkedin.jobs.search";
+export const LINKEDIN_JOBS_VIEW_TOOL = "linkedin.jobs.view";
