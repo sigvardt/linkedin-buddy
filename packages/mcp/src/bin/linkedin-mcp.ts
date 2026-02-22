@@ -16,6 +16,7 @@ import {
   LINKEDIN_INBOX_GET_THREAD_TOOL,
   LINKEDIN_INBOX_LIST_THREADS_TOOL,
   LINKEDIN_INBOX_PREPARE_REPLY_TOOL,
+  LINKEDIN_PROFILE_VIEW_TOOL,
   LINKEDIN_SESSION_OPEN_LOGIN_TOOL,
   LINKEDIN_SESSION_STATUS_TOOL
 } from "../index.js";
@@ -273,6 +274,38 @@ async function handlePrepareReply(args: ToolArgs): Promise<ToolResult> {
   }
 }
 
+async function handleProfileView(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createCoreRuntime();
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const target = readString(args, "target", "me");
+
+    runtime.logger.log("info", "mcp.profile.view.start", {
+      profileName,
+      target
+    });
+
+    const profile = await runtime.profile.viewProfile({
+      profileName,
+      target
+    });
+
+    runtime.logger.log("info", "mcp.profile.view.done", {
+      profileName,
+      fullName: profile.full_name
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      profile
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 async function handleConfirm(args: ToolArgs): Promise<ToolResult> {
   const runtime = createCoreRuntime();
 
@@ -440,6 +473,26 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
+        name: LINKEDIN_PROFILE_VIEW_TOOL,
+        description:
+          "View a LinkedIn profile. Returns structured profile data including name, headline, location, about, experience, and education.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            },
+            target: {
+              type: "string",
+              description:
+                "Vanity name (e.g. 'johndoe'), profile URL, or 'me' for own profile. Defaults to 'me'."
+            }
+          }
+        }
+      },
+      {
         name: LINKEDIN_ACTIONS_CONFIRM_TOOL,
         description: "Confirm and execute a prepared action by confirm token.",
         inputSchema: {
@@ -487,6 +540,10 @@ server.setRequestHandler(
 
       if (name === LINKEDIN_INBOX_PREPARE_REPLY_TOOL) {
         return await handlePrepareReply(args);
+      }
+
+      if (name === LINKEDIN_PROFILE_VIEW_TOOL) {
+        return await handleProfileView(args);
       }
 
       if (name === LINKEDIN_ACTIONS_CONFIRM_TOOL) {

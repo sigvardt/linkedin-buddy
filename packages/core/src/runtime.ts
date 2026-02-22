@@ -7,6 +7,10 @@ import {
   LinkedInInboxService,
   type LinkedInMessagingRuntime
 } from "./linkedinInbox.js";
+import {
+  LinkedInProfileService,
+  type LinkedInProfileRuntime
+} from "./linkedinProfile.js";
 import { JsonEventLogger } from "./logging.js";
 import { ProfileManager } from "./profileManager.js";
 import { RateLimiter } from "./rateLimiter.js";
@@ -29,6 +33,7 @@ export interface CoreRuntime {
   rateLimiter: RateLimiter;
   profileManager: ProfileManager;
   auth: LinkedInAuthService;
+  profile: LinkedInProfileService;
   inbox: LinkedInInboxService;
   close: () => void;
 }
@@ -61,6 +66,7 @@ export function createCoreRuntime(
     rateLimiter: new RateLimiter(db),
     profileManager,
     auth: new LinkedInAuthService(profileManager),
+    profile: undefined as unknown as LinkedInProfileService,
     inbox: undefined as unknown as LinkedInInboxService,
     close: () => {
       logger.log("info", "runtime.closed", { runId });
@@ -68,6 +74,8 @@ export function createCoreRuntime(
     }
   };
 
+  const profileRuntime: LinkedInProfileRuntime = runtime;
+  runtime.profile = new LinkedInProfileService(profileRuntime);
   runtime.inbox = new LinkedInInboxService(runtime);
 
   logger.log("info", "runtime.started", {

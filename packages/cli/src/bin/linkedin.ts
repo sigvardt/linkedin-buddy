@@ -191,6 +191,38 @@ async function runPrepareReply(input: {
   }
 }
 
+async function runProfileView(input: {
+  profileName: string;
+  target: string;
+}): Promise<void> {
+  const runtime = createCoreRuntime();
+
+  try {
+    runtime.logger.log("info", "cli.profile.view.start", {
+      profileName: input.profileName,
+      target: input.target
+    });
+
+    const profile = await runtime.profile.viewProfile({
+      profileName: input.profileName,
+      target: input.target
+    });
+
+    runtime.logger.log("info", "cli.profile.view.done", {
+      profileName: input.profileName,
+      fullName: profile.full_name
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      profile
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 function readTargetProfileName(target: Record<string, unknown>): string | undefined {
   const value = target.profile_name;
   if (typeof value === "string" && value.trim().length > 0) {
@@ -364,6 +396,26 @@ async function main(): Promise<void> {
         });
       }
     );
+
+  const profileCommand = program
+    .command("profile")
+    .description("View LinkedIn profiles");
+
+  profileCommand
+    .command("view")
+    .description("View a LinkedIn profile")
+    .argument(
+      "[target]",
+      "Vanity name, profile URL, or 'me' for own profile",
+      "me"
+    )
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(async (target: string, options: { profile: string }) => {
+      await runProfileView({
+        profileName: options.profile,
+        target
+      });
+    });
 
   const actionsCommand = program
     .command("actions")
