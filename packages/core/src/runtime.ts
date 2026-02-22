@@ -3,6 +3,11 @@ import { ensureConfigPaths, resolveConfigPaths, type ConfigPaths } from "./confi
 import { AssistantDatabase } from "./db/database.js";
 import { LinkedInAuthService } from "./auth/session.js";
 import {
+  createConnectionActionExecutors,
+  LinkedInConnectionsService,
+  type LinkedInConnectionsRuntime
+} from "./linkedinConnections.js";
+import {
   createLinkedInActionExecutors,
   LinkedInInboxService,
   type LinkedInMessagingRuntime
@@ -40,6 +45,7 @@ export interface CoreRuntime {
   profileManager: ProfileManager;
   auth: LinkedInAuthService;
   profile: LinkedInProfileService;
+  connections: LinkedInConnectionsService;
   inbox: LinkedInInboxService;
   testAutoConfirm: TestAutoConfirmConfig;
   close: () => void;
@@ -60,10 +66,15 @@ export function createCoreRuntime(
 
   const testAutoConfirm = createDefaultTestAutoConfirmConfig();
   const linkedInExecutors = createLinkedInActionExecutors();
+  const connectionExecutors = createConnectionActionExecutors() as unknown as Record<
+    string,
+    import("./twoPhaseCommit.js").ActionExecutor<LinkedInMessagingRuntime>
+  >;
   const testEchoExecutor = new TestEchoActionExecutor<LinkedInMessagingRuntime>();
   const twoPhaseCommit = new TwoPhaseCommitService<LinkedInMessagingRuntime>(db, {
     executors: {
       ...linkedInExecutors,
+      ...connectionExecutors,
       [TEST_ECHO_ACTION_TYPE]: testEchoExecutor
     },
     getRuntime: () => runtime
@@ -80,6 +91,7 @@ export function createCoreRuntime(
     profileManager,
     auth: new LinkedInAuthService(profileManager),
     profile: undefined as unknown as LinkedInProfileService,
+    connections: undefined as unknown as LinkedInConnectionsService,
     inbox: undefined as unknown as LinkedInInboxService,
     testAutoConfirm,
     close: () => {
@@ -90,6 +102,8 @@ export function createCoreRuntime(
 
   const profileRuntime: LinkedInProfileRuntime = runtime;
   runtime.profile = new LinkedInProfileService(profileRuntime);
+  const connectionsRuntime: LinkedInConnectionsRuntime = runtime;
+  runtime.connections = new LinkedInConnectionsService(connectionsRuntime);
   runtime.inbox = new LinkedInInboxService(runtime);
 
   logger.log("info", "runtime.started", {

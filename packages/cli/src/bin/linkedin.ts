@@ -191,6 +191,171 @@ async function runPrepareReply(input: {
   }
 }
 
+async function runConnectionsList(input: {
+  profileName: string;
+  limit: number;
+}): Promise<void> {
+  const runtime = createCoreRuntime();
+
+  try {
+    runtime.logger.log("info", "cli.connections.list.start", {
+      profileName: input.profileName,
+      limit: input.limit
+    });
+
+    const connections = await runtime.connections.listConnections({
+      profileName: input.profileName,
+      limit: input.limit
+    });
+
+    runtime.logger.log("info", "cli.connections.list.done", {
+      profileName: input.profileName,
+      count: connections.length
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      count: connections.length,
+      connections
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runConnectionsPending(input: {
+  profileName: string;
+  filter: "sent" | "received" | "all";
+}): Promise<void> {
+  const runtime = createCoreRuntime();
+
+  try {
+    runtime.logger.log("info", "cli.connections.pending.start", {
+      profileName: input.profileName,
+      filter: input.filter
+    });
+
+    const invitations = await runtime.connections.listPendingInvitations({
+      profileName: input.profileName,
+      filter: input.filter
+    });
+
+    runtime.logger.log("info", "cli.connections.pending.done", {
+      profileName: input.profileName,
+      count: invitations.length
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      filter: input.filter,
+      count: invitations.length,
+      invitations
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runConnectionsInvite(input: {
+  profileName: string;
+  targetProfile: string;
+  note?: string;
+}): Promise<void> {
+  const runtime = createCoreRuntime();
+
+  try {
+    runtime.logger.log("info", "cli.connections.invite.start", {
+      profileName: input.profileName,
+      targetProfile: input.targetProfile
+    });
+
+    const prepared = runtime.connections.prepareSendInvitation({
+      profileName: input.profileName,
+      targetProfile: input.targetProfile,
+      ...(input.note ? { note: input.note } : {})
+    });
+
+    runtime.logger.log("info", "cli.connections.invite.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runConnectionsAccept(input: {
+  profileName: string;
+  targetProfile: string;
+}): Promise<void> {
+  const runtime = createCoreRuntime();
+
+  try {
+    runtime.logger.log("info", "cli.connections.accept.start", {
+      profileName: input.profileName,
+      targetProfile: input.targetProfile
+    });
+
+    const prepared = runtime.connections.prepareAcceptInvitation({
+      profileName: input.profileName,
+      targetProfile: input.targetProfile
+    });
+
+    runtime.logger.log("info", "cli.connections.accept.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runConnectionsWithdraw(input: {
+  profileName: string;
+  targetProfile: string;
+}): Promise<void> {
+  const runtime = createCoreRuntime();
+
+  try {
+    runtime.logger.log("info", "cli.connections.withdraw.start", {
+      profileName: input.profileName,
+      targetProfile: input.targetProfile
+    });
+
+    const prepared = runtime.connections.prepareWithdrawInvitation({
+      profileName: input.profileName,
+      targetProfile: input.targetProfile
+    });
+
+    runtime.logger.log("info", "cli.connections.withdraw.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 async function runProfileView(input: {
   profileName: string;
   target: string;
@@ -396,6 +561,89 @@ async function main(): Promise<void> {
         });
       }
     );
+
+  const connectionsCommand = program
+    .command("connections")
+    .description("Manage LinkedIn connections");
+
+  connectionsCommand
+    .command("list")
+    .description("List your LinkedIn connections")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-l, --limit <limit>", "Max connections to return", "40")
+    .action(
+      async (options: { profile: string; limit: string }) => {
+        await runConnectionsList({
+          profileName: options.profile,
+          limit: coercePositiveInt(options.limit, "limit")
+        });
+      }
+    );
+
+  connectionsCommand
+    .command("pending")
+    .description("List pending connection invitations")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option(
+      "-f, --filter <filter>",
+      "Filter: sent, received, or all",
+      "all"
+    )
+    .action(
+      async (options: { profile: string; filter: string }) => {
+        const filter = options.filter as "sent" | "received" | "all";
+        if (!["sent", "received", "all"].includes(filter)) {
+          throw new LinkedInAssistantError(
+            "ACTION_PRECONDITION_FAILED",
+            "Filter must be 'sent', 'received', or 'all'."
+          );
+        }
+        await runConnectionsPending({
+          profileName: options.profile,
+          filter
+        });
+      }
+    );
+
+  connectionsCommand
+    .command("invite")
+    .description("Prepare a connection invitation (two-phase)")
+    .argument("<target>", "Vanity name or profile URL")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-n, --note <note>", "Optional invitation note")
+    .action(
+      async (target: string, options: { profile: string; note?: string }) => {
+        await runConnectionsInvite({
+          profileName: options.profile,
+          targetProfile: target,
+          ...(options.note ? { note: options.note } : {})
+        });
+      }
+    );
+
+  connectionsCommand
+    .command("accept")
+    .description("Prepare to accept a connection invitation (two-phase)")
+    .argument("<target>", "Vanity name or profile URL of the sender")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(async (target: string, options: { profile: string }) => {
+      await runConnectionsAccept({
+        profileName: options.profile,
+        targetProfile: target
+      });
+    });
+
+  connectionsCommand
+    .command("withdraw")
+    .description("Prepare to withdraw a sent invitation (two-phase)")
+    .argument("<target>", "Vanity name or profile URL")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(async (target: string, options: { profile: string }) => {
+      await runConnectionsWithdraw({
+        profileName: options.profile,
+        targetProfile: target
+      });
+    });
 
   const profileCommand = program
     .command("profile")

@@ -13,6 +13,11 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import {
   LINKEDIN_ACTIONS_CONFIRM_TOOL,
+  LINKEDIN_CONNECTIONS_ACCEPT_TOOL,
+  LINKEDIN_CONNECTIONS_INVITE_TOOL,
+  LINKEDIN_CONNECTIONS_LIST_TOOL,
+  LINKEDIN_CONNECTIONS_PENDING_TOOL,
+  LINKEDIN_CONNECTIONS_WITHDRAW_TOOL,
   LINKEDIN_INBOX_GET_THREAD_TOOL,
   LINKEDIN_INBOX_LIST_THREADS_TOOL,
   LINKEDIN_INBOX_PREPARE_REPLY_TOOL,
@@ -306,6 +311,180 @@ async function handleProfileView(args: ToolArgs): Promise<ToolResult> {
   }
 }
 
+async function handleConnectionsList(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createCoreRuntime();
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const limit = readPositiveNumber(args, "limit", 40);
+
+    runtime.logger.log("info", "mcp.connections.list.start", {
+      profileName,
+      limit
+    });
+
+    const connections = await runtime.connections.listConnections({
+      profileName,
+      limit
+    });
+
+    runtime.logger.log("info", "mcp.connections.list.done", {
+      profileName,
+      count: connections.length
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      count: connections.length,
+      connections
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleConnectionsPending(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createCoreRuntime();
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const filterRaw = readString(args, "filter", "all");
+    const filter = (["sent", "received", "all"].includes(filterRaw)
+      ? filterRaw
+      : "all") as "sent" | "received" | "all";
+
+    runtime.logger.log("info", "mcp.connections.pending.start", {
+      profileName,
+      filter
+    });
+
+    const invitations = await runtime.connections.listPendingInvitations({
+      profileName,
+      filter
+    });
+
+    runtime.logger.log("info", "mcp.connections.pending.done", {
+      profileName,
+      count: invitations.length
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      filter,
+      count: invitations.length,
+      invitations
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleConnectionsInvite(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createCoreRuntime();
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const targetProfile = readRequiredString(args, "targetProfile");
+    const note = readString(args, "note", "");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.connections.invite.start", {
+      profileName,
+      targetProfile
+    });
+
+    const prepared = runtime.connections.prepareSendInvitation({
+      profileName,
+      targetProfile,
+      ...(note ? { note } : {}),
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.connections.invite.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleConnectionsAccept(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createCoreRuntime();
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const targetProfile = readRequiredString(args, "targetProfile");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.connections.accept.start", {
+      profileName,
+      targetProfile
+    });
+
+    const prepared = runtime.connections.prepareAcceptInvitation({
+      profileName,
+      targetProfile,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.connections.accept.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleConnectionsWithdraw(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createCoreRuntime();
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const targetProfile = readRequiredString(args, "targetProfile");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.connections.withdraw.start", {
+      profileName,
+      targetProfile
+    });
+
+    const prepared = runtime.connections.prepareWithdrawInvitation({
+      profileName,
+      targetProfile,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.connections.withdraw.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 async function handleConfirm(args: ToolArgs): Promise<ToolResult> {
   const runtime = createCoreRuntime();
 
@@ -493,6 +672,130 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
+        name: LINKEDIN_CONNECTIONS_LIST_TOOL,
+        description:
+          "List your LinkedIn connections. Returns connection names, headlines, profile URLs, and when connected.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            limit: {
+              type: "number",
+              description: "Maximum number of connections to return. Defaults to 40."
+            }
+          }
+        }
+      },
+      {
+        name: LINKEDIN_CONNECTIONS_PENDING_TOOL,
+        description:
+          "List pending LinkedIn connection invitations (sent, received, or both).",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            filter: {
+              type: "string",
+              enum: ["sent", "received", "all"],
+              description:
+                "Filter invitations by direction. Defaults to all."
+            }
+          }
+        }
+      },
+      {
+        name: LINKEDIN_CONNECTIONS_INVITE_TOOL,
+        description:
+          "Prepare a connection invitation to a LinkedIn user (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["targetProfile"],
+          properties: {
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            targetProfile: {
+              type: "string",
+              description:
+                "Vanity name (e.g. 'johndoe') or full profile URL."
+            },
+            note: {
+              type: "string",
+              description: "Optional invitation note (max 300 chars)."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          }
+        }
+      },
+      {
+        name: LINKEDIN_CONNECTIONS_ACCEPT_TOOL,
+        description:
+          "Prepare to accept a pending connection invitation (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["targetProfile"],
+          properties: {
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            targetProfile: {
+              type: "string",
+              description:
+                "Vanity name or profile URL of the person who sent the invitation."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          }
+        }
+      },
+      {
+        name: LINKEDIN_CONNECTIONS_WITHDRAW_TOOL,
+        description:
+          "Prepare to withdraw a sent connection invitation (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["targetProfile"],
+          properties: {
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            targetProfile: {
+              type: "string",
+              description:
+                "Vanity name or profile URL of the person to withdraw the invitation from."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          }
+        }
+      },
+      {
         name: LINKEDIN_ACTIONS_CONFIRM_TOOL,
         description: "Confirm and execute a prepared action by confirm token.",
         inputSchema: {
@@ -544,6 +847,26 @@ server.setRequestHandler(
 
       if (name === LINKEDIN_PROFILE_VIEW_TOOL) {
         return await handleProfileView(args);
+      }
+
+      if (name === LINKEDIN_CONNECTIONS_LIST_TOOL) {
+        return await handleConnectionsList(args);
+      }
+
+      if (name === LINKEDIN_CONNECTIONS_PENDING_TOOL) {
+        return await handleConnectionsPending(args);
+      }
+
+      if (name === LINKEDIN_CONNECTIONS_INVITE_TOOL) {
+        return await handleConnectionsInvite(args);
+      }
+
+      if (name === LINKEDIN_CONNECTIONS_ACCEPT_TOOL) {
+        return await handleConnectionsAccept(args);
+      }
+
+      if (name === LINKEDIN_CONNECTIONS_WITHDRAW_TOOL) {
+        return await handleConnectionsWithdraw(args);
       }
 
       if (name === LINKEDIN_ACTIONS_CONFIRM_TOOL) {
