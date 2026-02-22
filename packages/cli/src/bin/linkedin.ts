@@ -103,6 +103,50 @@ async function runLogin(
   }
 }
 
+async function runHeadlessLogin(input: {
+  profileName: string;
+  email: string;
+  password: string;
+  mfaCode?: string;
+  mfaCallback?: () => Promise<string | undefined>;
+  timeoutMinutes: number;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.login.headless.start", {
+      profileName: input.profileName,
+      email: input.email
+    });
+
+    const result = await runtime.auth.headlessLogin({
+      profileName: input.profileName,
+      email: input.email,
+      password: input.password,
+      ...(typeof input.mfaCode === "string" ? { mfaCode: input.mfaCode } : {}),
+      ...(input.mfaCallback ? { mfaCallback: input.mfaCallback } : {}),
+      timeoutMs: input.timeoutMinutes * 60_000
+    });
+
+    runtime.logger.log("info", "cli.login.headless.done", {
+      profileName: input.profileName,
+      authenticated: result.authenticated,
+      timedOut: result.timedOut,
+      checkpoint: result.checkpoint,
+      checkpointType: result.checkpointType,
+      mfaRequired: result.mfaRequired
+    });
+
+    printJson({ run_id: runtime.runId, ...result });
+
+    if (!result.authenticated) {
+      process.exitCode = 1;
+    }
+  } finally {
+    runtime.close();
+  }
+}
+
 async function runInboxList(input: {
   profileName: string;
   limit: number;
@@ -808,13 +852,78 @@ async function main(): Promise<void> {
       "How long to wait for successful login",
       "10"
     )
+    .option("--headless", "Authenticate headlessly with email and password", false)
+    .option("--email <email>", "LinkedIn email (or set LINKEDIN_EMAIL env var)")
+    .option(
+      "--password <password>",
+      "LinkedIn password (or set LINKEDIN_PASSWORD env var)"
+    )
+    .option(
+      "--mfa-code <code>",
+      "MFA verification code (or set LINKEDIN_MFA_CODE env var)"
+    )
+    .option("--mfa-interactive", "Prompt for MFA code interactively via stdin", false)
     .action(
-      async (options: { profile: string; timeoutMinutes: string }) => {
+      async (options: {
+        profile: string;
+        timeoutMinutes: string;
+        headless: boolean;
+        email?: string;
+        password?: string;
+        mfaCode?: string;
+        mfaInteractive: boolean;
+      }) => {
         const timeoutMinutes = coercePositiveInt(
           options.timeoutMinutes,
           "timeout-minutes"
         );
-        await runLogin(options.profile, timeoutMinutes, readCdpUrl());
+
+        if (options.headless) {
+          const email = options.email ?? process.env.LINKEDIN_EMAIL;
+          const password = options.password ?? process.env.LINKEDIN_PASSWORD;
+          const mfaCode = options.mfaCode ?? process.env.LINKEDIN_MFA_CODE;
+
+          let mfaCallback: (() => Promise<string | undefined>) | undefined;
+          if (options.mfaInteractive && !mfaCode) {
+            mfaCallback = async () => {
+              const rl = createInterface({ input: stdin, output: process.stderr });
+              try {
+                const code = await rl.question("LinkedIn verification code: ");
+                return code.trim() || undefined;
+              } finally {
+                rl.close();
+              }
+            };
+          }
+
+          if (!email) {
+            throw new LinkedInAssistantError(
+              "ACTION_PRECONDITION_FAILED",
+              "Headless login requires --email or LINKEDIN_EMAIL environment variable."
+            );
+          }
+
+          if (!password) {
+            throw new LinkedInAssistantError(
+              "ACTION_PRECONDITION_FAILED",
+              "Headless login requires --password or LINKEDIN_PASSWORD environment variable."
+            );
+          }
+
+          await runHeadlessLogin(
+            {
+              profileName: options.profile,
+              email,
+              password,
+              ...(typeof mfaCode === "string" ? { mfaCode } : {}),
+              ...(mfaCallback ? { mfaCallback } : {}),
+              timeoutMinutes
+            },
+            readCdpUrl()
+          );
+        } else {
+          await runLogin(options.profile, timeoutMinutes, readCdpUrl());
+        }
       }
     );
 
