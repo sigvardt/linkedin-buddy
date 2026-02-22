@@ -2,6 +2,11 @@ import { ArtifactHelpers } from "./artifacts.js";
 import { ensureConfigPaths, resolveConfigPaths, type ConfigPaths } from "./config.js";
 import { AssistantDatabase } from "./db/database.js";
 import { LinkedInAuthService } from "./auth/session.js";
+import {
+  createLinkedInActionExecutors,
+  LinkedInInboxService,
+  type LinkedInMessagingRuntime
+} from "./linkedinInbox.js";
 import { JsonEventLogger } from "./logging.js";
 import { ProfileManager } from "./profileManager.js";
 import { RateLimiter } from "./rateLimiter.js";
@@ -20,10 +25,11 @@ export interface CoreRuntime {
   db: AssistantDatabase;
   logger: JsonEventLogger;
   artifacts: ArtifactHelpers;
-  twoPhaseCommit: TwoPhaseCommitService;
+  twoPhaseCommit: TwoPhaseCommitService<LinkedInMessagingRuntime>;
   rateLimiter: RateLimiter;
   profileManager: ProfileManager;
   auth: LinkedInAuthService;
+  inbox: LinkedInInboxService;
   close: () => void;
 }
 
@@ -38,22 +44,31 @@ export function createCoreRuntime(
   const logger = new JsonEventLogger(paths, runId, db);
   const artifacts = new ArtifactHelpers(paths, runId, db);
   const profileManager = new ProfileManager(paths);
+  let runtime: CoreRuntime;
 
-  const runtime: CoreRuntime = {
+  const twoPhaseCommit = new TwoPhaseCommitService<LinkedInMessagingRuntime>(db, {
+    executors: createLinkedInActionExecutors(),
+    getRuntime: () => runtime
+  });
+
+  runtime = {
     paths,
     runId,
     db,
     logger,
     artifacts,
-    twoPhaseCommit: new TwoPhaseCommitService(db),
+    twoPhaseCommit,
     rateLimiter: new RateLimiter(db),
     profileManager,
     auth: new LinkedInAuthService(profileManager),
+    inbox: undefined as unknown as LinkedInInboxService,
     close: () => {
       logger.log("info", "runtime.closed", { runId });
       db.close();
     }
   };
+
+  runtime.inbox = new LinkedInInboxService(runtime);
 
   logger.log("info", "runtime.started", {
     runId,

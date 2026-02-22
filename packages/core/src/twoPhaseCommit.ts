@@ -1,16 +1,18 @@
-import {
-  createHash,
-  randomBytes,
-  randomUUID,
-  timingSafeEqual
-} from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { AssistantDatabase, PreparedActionRow } from "./db/database.js";
+import {
+  LinkedInAssistantError,
+  asLinkedInAssistantError
+} from "./errors.js";
 
 export const DEFAULT_CONFIRM_TOKEN_TTL_MS = 30 * 60 * 1000;
 
 export interface PrepareActionInput {
   actionType: string;
+  target: Record<string, unknown>;
   payload: Record<string, unknown>;
+  preview: Record<string, unknown>;
+  operatorNote?: string;
   expiresInMs?: number;
   nowMs?: number;
 }
@@ -19,20 +21,76 @@ export interface PreparedActionResult {
   preparedActionId: string;
   confirmToken: string;
   expiresAtMs: number;
+  preview: Record<string, unknown>;
 }
 
-export interface ConfirmActionInput {
-  preparedActionId: string;
+export interface ConfirmByTokenInput {
   confirmToken: string;
   nowMs?: number;
 }
 
-export interface ConfirmActionResult {
-  preparedActionId: string;
-  status: "confirmed";
-  executed: false;
+export interface ActionExecutorResult {
+  ok: true;
+  result: Record<string, unknown>;
+  artifacts: string[];
+}
+
+export interface ActionExecutorInput<TRuntime> {
+  runtime: TRuntime;
+  action: PreparedAction;
+}
+
+export interface ActionExecutor<TRuntime> {
+  execute(input: ActionExecutorInput<TRuntime>):
+    | ActionExecutorResult
+    | Promise<ActionExecutorResult>;
+}
+
+export type ActionExecutorRegistry<TRuntime> = Record<
+  string,
+  ActionExecutor<TRuntime>
+>;
+
+export interface PreparedAction {
+  id: string;
   actionType: string;
+  target: Record<string, unknown>;
   payload: Record<string, unknown>;
+  preview: Record<string, unknown>;
+  payloadHash: string;
+  previewHash: string;
+  status: string;
+  expiresAtMs: number;
+  createdAtMs: number;
+  confirmedAtMs: number | null;
+  operatorNote: string | null;
+  executedAtMs: number | null;
+  executionResult: Record<string, unknown> | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+}
+
+export interface ConfirmByTokenResult {
+  preparedActionId: string;
+  status: "executed";
+  actionType: string;
+  result: Record<string, unknown>;
+  artifacts: string[];
+}
+
+export interface PreparedActionPreview {
+  preparedActionId: string;
+  status: string;
+  actionType: string;
+  expiresAtMs: number;
+  preview: Record<string, unknown>;
+  target: Record<string, unknown>;
+  operatorNote: string | null;
+}
+
+export interface TwoPhaseCommitServiceOptions<TRuntime> {
+  executors?: ActionExecutorRegistry<TRuntime>;
+  getRuntime?: () => TRuntime;
 }
 
 export function generateConfirmToken(entropyBytes: number = 24): string {
@@ -43,38 +101,126 @@ export function hashConfirmToken(token: string): string {
   return createHash("sha256").update(token).digest("base64url");
 }
 
+export function hashJsonPayload(json: string): string {
+  return createHash("sha256").update(json).digest("base64url");
+}
+
 export function isTokenExpired(expiresAtMs: number, nowMs: number = Date.now()): boolean {
   return nowMs > expiresAtMs;
 }
 
-function tokenHashMatches(rawToken: string, storedHash: string): boolean {
-  const candidate = Buffer.from(hashConfirmToken(rawToken));
-  const expected = Buffer.from(storedHash);
-
-  if (candidate.length !== expected.length) {
-    return false;
+function parseJsonObject(
+  label: string,
+  value: string,
+  actionId: string
+): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      throw new Error(`${label} must be an object.`);
+    }
+    return parsed as Record<string, unknown>;
+  } catch (error) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `Prepared action ${actionId} has invalid ${label}.`,
+      {
+        action_id: actionId,
+        label
+      },
+      { cause: error instanceof Error ? error : undefined }
+    );
   }
-
-  return timingSafeEqual(candidate, expected);
 }
 
-function assertPreparedActionReady(
-  action: PreparedActionRow | undefined,
-  preparedActionId: string
+function parseExecutionResult(
+  executionResultJson: string | null,
+  actionId: string
+): Record<string, unknown> | null {
+  if (!executionResultJson) {
+    return null;
+  }
+
+  return parseJsonObject("execution_result_json", executionResultJson, actionId);
+}
+
+function mapPreparedActionRow(row: PreparedActionRow): PreparedAction {
+  return {
+    id: row.id,
+    actionType: row.action_type,
+    target: parseJsonObject("target_json", row.target_json, row.id),
+    payload: parseJsonObject("payload_json", row.payload_json, row.id),
+    preview: parseJsonObject("preview_json", row.preview_json, row.id),
+    payloadHash: row.payload_hash,
+    previewHash: row.preview_hash,
+    status: row.status,
+    expiresAtMs: row.expires_at,
+    createdAtMs: row.created_at,
+    confirmedAtMs: row.confirmed_at,
+    operatorNote: row.operator_note,
+    executedAtMs: row.executed_at,
+    executionResult: parseExecutionResult(row.execution_result_json, row.id),
+    errorCode: row.error_code,
+    errorMessage: row.error_message
+  };
+}
+
+function assertPreparedActionByToken(
+  row: PreparedActionRow | undefined,
+  confirmTokenHash: string
 ): PreparedActionRow {
-  if (!action) {
-    throw new Error(`Prepared action not found: ${preparedActionId}`);
+  if (!row) {
+    throw new LinkedInAssistantError(
+      "TARGET_NOT_FOUND",
+      "Prepared action not found for the provided confirmation token.",
+      {
+        confirm_token_hash: confirmTokenHash
+      }
+    );
   }
 
-  if (action.status !== "prepared") {
-    throw new Error(`Prepared action is not pending confirmation: ${preparedActionId}`);
-  }
-
-  return action;
+  return row;
 }
 
-export class TwoPhaseCommitService {
-  constructor(private readonly db: AssistantDatabase) {}
+function assertPreparedActionIsReady(
+  action: PreparedAction,
+  nowMs: number
+): void {
+  if (action.status !== "prepared") {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `Prepared action ${action.id} is not pending confirmation.`,
+      {
+        action_id: action.id,
+        status: action.status
+      }
+    );
+  }
+
+  if (isTokenExpired(action.expiresAtMs, nowMs)) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `Confirmation token expired for action ${action.id}.`,
+      {
+        action_id: action.id,
+        expires_at_ms: action.expiresAtMs,
+        now_ms: nowMs
+      }
+    );
+  }
+}
+
+export class TwoPhaseCommitService<TRuntime = unknown> {
+  private readonly executors: ActionExecutorRegistry<TRuntime>;
+  private readonly getRuntime: (() => TRuntime) | undefined;
+
+  constructor(
+    private readonly db: AssistantDatabase,
+    options: TwoPhaseCommitServiceOptions<TRuntime> = {}
+  ) {
+    this.executors = options.executors ?? {};
+    this.getRuntime = options.getRuntime;
+  }
 
   prepare(input: PrepareActionInput): PreparedActionResult {
     const nowMs = input.nowMs ?? Date.now();
@@ -84,47 +230,143 @@ export class TwoPhaseCommitService {
     const confirmTokenHash = hashConfirmToken(confirmToken);
     const expiresAtMs = nowMs + expiresInMs;
 
+    const targetJson = JSON.stringify(input.target);
+    const payloadJson = JSON.stringify(input.payload);
+    const previewJson = JSON.stringify(input.preview);
+    const payloadHash = hashJsonPayload(payloadJson);
+    const previewHash = hashJsonPayload(previewJson);
+
     this.db.insertPreparedAction({
       id: preparedActionId,
       actionType: input.actionType,
-      payloadJson: JSON.stringify(input.payload),
+      targetJson,
+      payloadJson,
+      previewJson,
+      payloadHash,
+      previewHash,
       status: "prepared",
       confirmTokenHash,
       expiresAtMs,
-      createdAtMs: nowMs
+      createdAtMs: nowMs,
+      operatorNote: input.operatorNote ?? null
     });
 
     return {
       preparedActionId,
       confirmToken,
-      expiresAtMs
+      expiresAtMs,
+      preview: input.preview
     };
   }
 
-  confirm(input: ConfirmActionInput): ConfirmActionResult {
-    const action = assertPreparedActionReady(
-      this.db.getPreparedActionById(input.preparedActionId),
-      input.preparedActionId
+  getPreparedActionPreviewByToken(input: ConfirmByTokenInput): PreparedActionPreview {
+    const confirmTokenHash = hashConfirmToken(input.confirmToken);
+    const row = assertPreparedActionByToken(
+      this.db.getPreparedActionByConfirmTokenHash(confirmTokenHash),
+      confirmTokenHash
     );
-
-    const nowMs = input.nowMs ?? Date.now();
-
-    if (isTokenExpired(action.expires_at, nowMs)) {
-      throw new Error(`Confirmation token expired for action: ${input.preparedActionId}`);
-    }
-
-    if (!tokenHashMatches(input.confirmToken, action.confirm_token_hash)) {
-      throw new Error("Confirmation token mismatch.");
-    }
-
-    this.db.markPreparedActionConfirmed(input.preparedActionId, nowMs);
+    const action = mapPreparedActionRow(row);
 
     return {
-      preparedActionId: input.preparedActionId,
-      status: "confirmed",
-      executed: false,
-      actionType: action.action_type,
-      payload: JSON.parse(action.payload_json) as Record<string, unknown>
+      preparedActionId: action.id,
+      status: action.status,
+      actionType: action.actionType,
+      expiresAtMs: action.expiresAtMs,
+      preview: action.preview,
+      target: action.target,
+      operatorNote: action.operatorNote
+    };
+  }
+
+  async confirmByToken(input: ConfirmByTokenInput): Promise<ConfirmByTokenResult> {
+    const confirmTokenHash = hashConfirmToken(input.confirmToken);
+    const row = assertPreparedActionByToken(
+      this.db.getPreparedActionByConfirmTokenHash(confirmTokenHash),
+      confirmTokenHash
+    );
+    const action = mapPreparedActionRow(row);
+    const nowMs = input.nowMs ?? Date.now();
+
+    assertPreparedActionIsReady(action, nowMs);
+
+    const executor = this.executors[action.actionType];
+    if (!executor) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        `No executor registered for action type "${action.actionType}".`,
+        {
+          action_id: action.id,
+          action_type: action.actionType
+        }
+      );
+    }
+
+    if (!this.getRuntime) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        "No runtime provider configured for action execution.",
+        {
+          action_id: action.id
+        }
+      );
+    }
+
+    let executionResult: ActionExecutorResult;
+
+    try {
+      executionResult = await executor.execute({
+        runtime: this.getRuntime(),
+        action
+      });
+    } catch (error) {
+      const assistantError = asLinkedInAssistantError(error);
+      const updated = this.db.markPreparedActionFailed({
+        id: action.id,
+        confirmedAtMs: nowMs,
+        executedAtMs: nowMs,
+        errorCode: assistantError.code,
+        errorMessage: assistantError.message
+      });
+
+      if (!updated) {
+        throw new LinkedInAssistantError(
+          "ACTION_PRECONDITION_FAILED",
+          `Prepared action ${action.id} is no longer executable.`,
+          {
+            action_id: action.id
+          }
+        );
+      }
+
+      throw assistantError;
+    }
+
+    const updated = this.db.markPreparedActionExecuted({
+      id: action.id,
+      confirmedAtMs: nowMs,
+      executedAtMs: nowMs,
+      executionResultJson: JSON.stringify({
+        result: executionResult.result,
+        artifacts: executionResult.artifacts
+      })
+    });
+
+    if (!updated) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        `Prepared action ${action.id} could not be marked as executed.`,
+        {
+          action_id: action.id
+        }
+      );
+    }
+
+    return {
+      preparedActionId: action.id,
+      status: "executed",
+      actionType: action.actionType,
+      result: executionResult.result,
+      artifacts: executionResult.artifacts
     };
   }
 }

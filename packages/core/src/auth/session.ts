@@ -1,4 +1,5 @@
 import type { BrowserContext, Page } from "playwright-core";
+import { LinkedInAssistantError } from "../errors.js";
 import { ProfileManager } from "../profileManager.js";
 
 export interface SessionStatus {
@@ -114,7 +115,18 @@ export class LinkedInAuthService {
     const status = await this.status(options);
 
     if (!status.authenticated) {
-      throw new Error(`${status.reason} Run "linkedin login" first.`);
+      const code = status.currentUrl.includes("/checkpoint")
+        ? "CAPTCHA_OR_CHALLENGE"
+        : "AUTH_REQUIRED";
+      throw new LinkedInAssistantError(
+        code,
+        `${status.reason} Run "linkedin login --profile ${options.profileName ?? "default"}" first.`,
+        {
+          profile_name: options.profileName ?? "default",
+          current_url: status.currentUrl,
+          checked_at: status.checkedAt
+        }
+      );
     }
 
     return status;

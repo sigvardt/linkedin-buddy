@@ -61,6 +61,16 @@ export class ArtifactHelpers {
     );
   }
 
+  registerArtifact(
+    relativePath: string,
+    artifactType: string,
+    metadata: Record<string, unknown> = {}
+  ): string {
+    const artifactPath = this.resolve(relativePath);
+    this.indexArtifact(relativePath, artifactType, metadata);
+    return artifactPath;
+  }
+
   private indexArtifact(
     relativePath: string,
     artifactType: string,

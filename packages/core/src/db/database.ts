@@ -26,22 +26,51 @@ export interface ArtifactIndexInsert {
 export interface PreparedActionInsert {
   id: string;
   actionType: string;
+  targetJson: string;
   payloadJson: string;
+  previewJson: string;
+  payloadHash: string;
+  previewHash: string;
   status: string;
   confirmTokenHash: string;
   expiresAtMs: number;
   createdAtMs: number;
+  operatorNote: string | null;
 }
 
 export interface PreparedActionRow {
   id: string;
   action_type: string;
+  target_json: string;
   payload_json: string;
+  preview_json: string;
+  payload_hash: string;
+  preview_hash: string;
   status: string;
   confirm_token_hash: string;
   expires_at: number;
   created_at: number;
   confirmed_at: number | null;
+  operator_note: string | null;
+  executed_at: number | null;
+  execution_result_json: string | null;
+  error_code: string | null;
+  error_message: string | null;
+}
+
+export interface PreparedActionExecutedUpdate {
+  id: string;
+  confirmedAtMs: number;
+  executedAtMs: number;
+  executionResultJson: string;
+}
+
+export interface PreparedActionFailedUpdate {
+  id: string;
+  confirmedAtMs: number;
+  executedAtMs: number;
+  errorCode: string;
+  errorMessage: string;
 }
 
 export interface RateLimitCounterRow {
@@ -99,8 +128,34 @@ VALUES (@runId, @artifactPath, @artifactType, @metadataJson, @createdAtMs)
     this.db
       .prepare(
         `
-INSERT INTO prepared_action (id, action_type, payload_json, status, confirm_token_hash, expires_at, created_at)
-VALUES (@id, @actionType, @payloadJson, @status, @confirmTokenHash, @expiresAtMs, @createdAtMs)
+INSERT INTO prepared_action (
+  id,
+  action_type,
+  target_json,
+  payload_json,
+  preview_json,
+  payload_hash,
+  preview_hash,
+  status,
+  confirm_token_hash,
+  expires_at,
+  created_at,
+  operator_note
+)
+VALUES (
+  @id,
+  @actionType,
+  @targetJson,
+  @payloadJson,
+  @previewJson,
+  @payloadHash,
+  @previewHash,
+  @status,
+  @confirmTokenHash,
+  @expiresAtMs,
+  @createdAtMs,
+  @operatorNote
+)
 `
       )
       .run(input);
@@ -110,7 +165,24 @@ VALUES (@id, @actionType, @payloadJson, @status, @confirmTokenHash, @expiresAtMs
     return this.db
       .prepare<unknown[], PreparedActionRow>(
         `
-SELECT id, action_type, payload_json, status, confirm_token_hash, expires_at, created_at, confirmed_at
+SELECT
+  id,
+  action_type,
+  target_json,
+  payload_json,
+  preview_json,
+  payload_hash,
+  preview_hash,
+  status,
+  confirm_token_hash,
+  expires_at,
+  created_at,
+  confirmed_at,
+  operator_note,
+  executed_at,
+  execution_result_json,
+  error_code,
+  error_message
 FROM prepared_action
 WHERE id = ?
 `
@@ -118,16 +190,77 @@ WHERE id = ?
       .get(id);
   }
 
-  markPreparedActionConfirmed(id: string, confirmedAtMs: number): void {
-    this.db
+  getPreparedActionByConfirmTokenHash(
+    confirmTokenHash: string
+  ): PreparedActionRow | undefined {
+    return this.db
+      .prepare<unknown[], PreparedActionRow>(
+        `
+SELECT
+  id,
+  action_type,
+  target_json,
+  payload_json,
+  preview_json,
+  payload_hash,
+  preview_hash,
+  status,
+  confirm_token_hash,
+  expires_at,
+  created_at,
+  confirmed_at,
+  operator_note,
+  executed_at,
+  execution_result_json,
+  error_code,
+  error_message
+FROM prepared_action
+WHERE confirm_token_hash = ?
+ORDER BY created_at DESC
+LIMIT 1
+`
+      )
+      .get(confirmTokenHash);
+  }
+
+  markPreparedActionExecuted(input: PreparedActionExecutedUpdate): boolean {
+    const result = this.db
       .prepare(
         `
 UPDATE prepared_action
-SET status = 'confirmed', confirmed_at = @confirmedAtMs
-WHERE id = @id
+SET
+  status = 'executed',
+  confirmed_at = @confirmedAtMs,
+  executed_at = @executedAtMs,
+  execution_result_json = @executionResultJson,
+  error_code = NULL,
+  error_message = NULL
+WHERE id = @id AND status = 'prepared'
 `
       )
-      .run({ id, confirmedAtMs });
+      .run(input);
+
+    return result.changes === 1;
+  }
+
+  markPreparedActionFailed(input: PreparedActionFailedUpdate): boolean {
+    const result = this.db
+      .prepare(
+        `
+UPDATE prepared_action
+SET
+  status = 'failed',
+  confirmed_at = @confirmedAtMs,
+  executed_at = @executedAtMs,
+  execution_result_json = NULL,
+  error_code = @errorCode,
+  error_message = @errorMessage
+WHERE id = @id AND status = 'prepared'
+`
+      )
+      .run(input);
+
+    return result.changes === 1;
   }
 
   getRateLimitCounter(counterKey: string): RateLimitCounterRow | undefined {

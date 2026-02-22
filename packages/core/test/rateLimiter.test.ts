@@ -87,4 +87,42 @@ describe("rate limit counters", () => {
 
     db.close();
   });
+
+  it("peek does not consume and get mirrors peek state", () => {
+    const db = new AssistantDatabase(":memory:");
+    const limiter = new RateLimiter(db);
+
+    const peekBefore = limiter.peek({
+      counterKey: "tool.peek",
+      windowSizeMs: 60_000,
+      limit: 2,
+      nowMs: 1_000
+    });
+    const getBefore = limiter.get({
+      counterKey: "tool.peek",
+      windowSizeMs: 60_000,
+      limit: 2,
+      nowMs: 1_000
+    });
+    const consume = limiter.consume({
+      counterKey: "tool.peek",
+      windowSizeMs: 60_000,
+      limit: 2,
+      nowMs: 1_000
+    });
+    const peekAfter = limiter.peek({
+      counterKey: "tool.peek",
+      windowSizeMs: 60_000,
+      limit: 2,
+      nowMs: 1_000
+    });
+
+    expect(peekBefore.count).toBe(0);
+    expect(getBefore.count).toBe(0);
+    expect(consume.count).toBe(1);
+    expect(peekAfter.count).toBe(1);
+    expect(peekAfter.remaining).toBe(1);
+
+    db.close();
+  });
 });

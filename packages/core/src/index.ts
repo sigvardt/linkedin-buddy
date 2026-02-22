@@ -2,6 +2,8 @@ export * from "./artifacts.js";
 export * from "./auth/session.js";
 export * from "./config.js";
 export * from "./db/database.js";
+export * from "./errors.js";
+export * from "./linkedinInbox.js";
 export * from "./logging.js";
 export * from "./profileManager.js";
 export * from "./rateLimiter.js";

@@ -1,5 +1,9 @@
 #!/usr/bin/env node
-import { createCoreRuntime } from "@linkedin-assistant/core";
+import {
+  LinkedInAssistantError,
+  createCoreRuntime,
+  toLinkedInAssistantErrorPayload
+} from "@linkedin-assistant/core";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -8,19 +12,31 @@ import {
   type CallToolRequest
 } from "@modelcontextprotocol/sdk/types.js";
 import {
-  LINKEDIN_OPEN_LOGIN_TOOL,
-  LINKEDIN_STATUS_TOOL
+  LINKEDIN_ACTIONS_CONFIRM_TOOL,
+  LINKEDIN_INBOX_GET_THREAD_TOOL,
+  LINKEDIN_INBOX_LIST_THREADS_TOOL,
+  LINKEDIN_INBOX_PREPARE_REPLY_TOOL
 } from "../index.js";
 
 type ToolArgs = Record<string, unknown>;
+type ToolResult = { content: Array<{ type: "text"; text: string }> };
 
-function readString(
-  args: ToolArgs,
-  key: string,
-  fallback: string
-): string {
+function readString(args: ToolArgs, key: string, fallback: string): string {
   const value = args[key];
-  return typeof value === "string" && value.length > 0 ? value : fallback;
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : fallback;
+}
+
+function readRequiredString(args: ToolArgs, key: string): string {
+  const value = args[key];
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value.trim();
+  }
+  throw new LinkedInAssistantError(
+    "ACTION_PRECONDITION_FAILED",
+    `${key} is required.`
+  );
 }
 
 function readPositiveNumber(
@@ -34,13 +50,21 @@ function readPositiveNumber(
   }
 
   if (!Number.isFinite(value) || value <= 0) {
-    throw new Error(`${key} must be a positive number.`);
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `${key} must be a positive number.`
+    );
   }
 
   return value;
 }
 
-function toToolResult(payload: unknown): { content: Array<{ type: "text"; text: string }> } {
+function readBoolean(args: ToolArgs, key: string, fallback: boolean): boolean {
+  const value = args[key];
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function toToolResult(payload: unknown): ToolResult {
   return {
     content: [
       {
@@ -55,64 +79,178 @@ function toErrorResult(error: unknown): {
   isError: true;
   content: Array<{ type: "text"; text: string }>;
 } {
-  const message = error instanceof Error ? error.message : String(error);
   return {
     isError: true,
     content: [
       {
         type: "text",
-        text: message
+        text: JSON.stringify(toLinkedInAssistantErrorPayload(error), null, 2)
       }
     ]
   };
 }
 
-async function handleStatus(args: ToolArgs): Promise<{ content: Array<{ type: "text"; text: string }> }> {
+function readTargetProfileName(target: Record<string, unknown>): string | undefined {
+  const value = target.profile_name;
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value.trim();
+  }
+  return undefined;
+}
+
+async function handleListThreads(args: ToolArgs): Promise<ToolResult> {
   const runtime = createCoreRuntime();
 
   try {
     const profileName = readString(args, "profileName", "default");
-    runtime.logger.log("info", "mcp.status.start", { profileName });
+    const limit = readPositiveNumber(args, "limit", 20);
+    const unreadOnly = readBoolean(args, "unreadOnly", false);
 
-    const status = await runtime.auth.status({ profileName });
-
-    runtime.logger.log("info", "mcp.status.done", {
+    runtime.logger.log("info", "mcp.inbox.list_threads.start", {
       profileName,
-      authenticated: status.authenticated
+      limit,
+      unreadOnly
     });
 
-    return toToolResult({ run_id: runtime.runId, ...status });
+    const threads = await runtime.inbox.listThreads({
+      profileName,
+      limit,
+      unreadOnly
+    });
+
+    runtime.logger.log("info", "mcp.inbox.list_threads.done", {
+      profileName,
+      count: threads.length
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      count: threads.length,
+      threads
+    });
   } finally {
     runtime.close();
   }
 }
 
-async function handleOpenLogin(
-  args: ToolArgs
-): Promise<{ content: Array<{ type: "text"; text: string }> }> {
+async function handleGetThread(args: ToolArgs): Promise<ToolResult> {
   const runtime = createCoreRuntime();
 
   try {
     const profileName = readString(args, "profileName", "default");
-    const timeoutMs = readPositiveNumber(args, "timeoutMs", 10 * 60_000);
+    const thread = readRequiredString(args, "thread");
+    const limit = readPositiveNumber(args, "limit", 20);
 
-    runtime.logger.log("info", "mcp.open_login.start", {
+    runtime.logger.log("info", "mcp.inbox.get_thread.start", {
       profileName,
-      timeoutMs
+      thread,
+      limit
     });
 
-    const status = await runtime.auth.openLogin({
+    const detail = await runtime.inbox.getThread({
       profileName,
-      timeoutMs
+      thread,
+      limit
     });
 
-    runtime.logger.log("info", "mcp.open_login.done", {
+    runtime.logger.log("info", "mcp.inbox.get_thread.done", {
       profileName,
-      authenticated: status.authenticated,
-      timedOut: status.timedOut
+      threadId: detail.thread_id
     });
 
-    return toToolResult({ run_id: runtime.runId, ...status });
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      thread: detail
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handlePrepareReply(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createCoreRuntime();
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const thread = readRequiredString(args, "thread");
+    const text = readRequiredString(args, "text");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.inbox.prepare_reply.start", {
+      profileName,
+      thread
+    });
+
+    const prepared = await runtime.inbox.prepareReply({
+      profileName,
+      thread,
+      text,
+      ...(operatorNote
+        ? {
+            operatorNote
+          }
+        : {})
+    });
+
+    runtime.logger.log("info", "mcp.inbox.prepare_reply.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleConfirm(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createCoreRuntime();
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const token = readRequiredString(args, "token");
+
+    runtime.logger.log("info", "mcp.actions.confirm.start", {
+      profileName
+    });
+
+    const preview = runtime.twoPhaseCommit.getPreparedActionPreviewByToken({
+      confirmToken: token
+    });
+
+    const preparedProfileName = readTargetProfileName(preview.target);
+    if (preparedProfileName && preparedProfileName !== profileName) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        `Prepared action belongs to profile "${preparedProfileName}", but "${profileName}" was provided.`,
+        {
+          expected_profile_name: preparedProfileName,
+          provided_profile_name: profileName
+        }
+      );
+    }
+
+    const result = await runtime.twoPhaseCommit.confirmByToken({
+      confirmToken: token
+    });
+
+    runtime.logger.log("info", "mcp.actions.confirm.done", {
+      profileName,
+      preparedActionId: result.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      preview,
+      result
+    });
   } finally {
     runtime.close();
   }
@@ -134,23 +272,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
       {
-        name: LINKEDIN_STATUS_TOOL,
-        description: "Checks whether the profile has an authenticated LinkedIn session.",
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            profileName: {
-              type: "string",
-              description: "Persistent Playwright profile name. Defaults to default."
-            }
-          }
-        }
-      },
-      {
-        name: LINKEDIN_OPEN_LOGIN_TOOL,
-        description:
-          "Opens LinkedIn login using a persistent profile and waits for authentication.",
+        name: LINKEDIN_INBOX_LIST_THREADS_TOOL,
+        description: "List LinkedIn inbox threads for a profile.",
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -159,9 +282,82 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "Persistent Playwright profile name. Defaults to default."
             },
-            timeoutMs: {
+            limit: {
               type: "number",
-              description: "How long to wait before timing out login check."
+              description: "Maximum number of threads to return."
+            },
+            unreadOnly: {
+              type: "boolean",
+              description: "If true, only unread threads are returned."
+            }
+          }
+        }
+      },
+      {
+        name: LINKEDIN_INBOX_GET_THREAD_TOOL,
+        description: "Get one LinkedIn thread with recent messages.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["thread"],
+          properties: {
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            },
+            thread: {
+              type: "string",
+              description: "Thread id or LinkedIn thread URL."
+            },
+            limit: {
+              type: "number",
+              description: "Maximum number of messages to include."
+            }
+          }
+        }
+      },
+      {
+        name: LINKEDIN_INBOX_PREPARE_REPLY_TOOL,
+        description: "Prepare a two-phase send_message action for a thread.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["thread", "text"],
+          properties: {
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            },
+            thread: {
+              type: "string",
+              description: "Thread id or LinkedIn thread URL."
+            },
+            text: {
+              type: "string",
+              description: "Message text to prepare for sending."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Optional note attached to the prepared action."
+            }
+          }
+        }
+      },
+      {
+        name: LINKEDIN_ACTIONS_CONFIRM_TOOL,
+        description: "Confirm and execute a prepared action by confirm token.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["token"],
+          properties: {
+            profileName: {
+              type: "string",
+              description: "Persistent profile expected for this action."
+            },
+            token: {
+              type: "string",
+              description: "Confirmation token in ct_... format."
             }
           }
         }
@@ -177,12 +373,20 @@ server.setRequestHandler(
     const args = (request.params.arguments ?? {}) as ToolArgs;
 
     try {
-      if (name === LINKEDIN_STATUS_TOOL) {
-        return await handleStatus(args);
+      if (name === LINKEDIN_INBOX_LIST_THREADS_TOOL) {
+        return await handleListThreads(args);
       }
 
-      if (name === LINKEDIN_OPEN_LOGIN_TOOL) {
-        return await handleOpenLogin(args);
+      if (name === LINKEDIN_INBOX_GET_THREAD_TOOL) {
+        return await handleGetThread(args);
+      }
+
+      if (name === LINKEDIN_INBOX_PREPARE_REPLY_TOOL) {
+        return await handlePrepareReply(args);
+      }
+
+      if (name === LINKEDIN_ACTIONS_CONFIRM_TOOL) {
+        return await handleConfirm(args);
       }
 
       return toErrorResult(`Unknown tool: ${name}`);
@@ -198,7 +402,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(message);
+  console.error(JSON.stringify(toLinkedInAssistantErrorPayload(error), null, 2));
   process.exit(1);
 });

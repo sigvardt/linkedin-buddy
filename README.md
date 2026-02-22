@@ -1,120 +1,108 @@
 # linkedin-owa-agentools
 
-LinkedIn automation scaffold with a shared TypeScript core, a local CLI, and an MCP stdio server.
+LinkedIn automation monorepo with a shared TypeScript core, local CLI, and MCP stdio server.
 
 ## Monorepo Layout
 
-- `packages/core`: runtime foundation (paths/config, run IDs, JSONL event logs, artifacts, SQLite, two-phase commit, rate limiting, Playwright profile/auth helpers).
-- `packages/cli`: `linkedin` binary (`login`, `status`) using the core package.
-- `packages/mcp`: `linkedin-mcp` stdio server exposing MCP tools:
-  - `linkedin.session.status`
-  - `linkedin.session.open_login`
-
-## Architecture Rationale
-
-- Shared stateful behavior lives in `@linkedin-assistant/core` so CLI and MCP stay thin and consistent.
-- Runtime writes deterministic run artifacts under `~/.linkedin-assistant/artifacts/<run_id>/` including `events.jsonl`.
-- SQLite (`better-sqlite3`) centralizes durable state and migrations in one place.
-- Browser profile access is protected by `proper-lockfile` to avoid concurrent profile corruption.
-- `playwright-core` is used intentionally to keep browser binaries decoupled from package install size.
+- `packages/core` (`@linkedin-assistant/core`)
+- `packages/cli` (`@linkedin-assistant/cli`) with `linkedin` bin
+- `packages/mcp` (`@linkedin-assistant/mcp`) with `linkedin-mcp` bin
 
 ## Requirements
 
 - Node.js 22+
 - npm 10+
 
-## Setup
+Install dependencies:
 
 ```bash
 npm install
 ```
 
-`playwright-core` does **not** download browsers automatically. Install Chromium separately:
+`playwright-core` does not bundle browsers. Install Chromium:
 
 ```bash
 npx playwright install chromium
 ```
 
-If needed, set a custom executable path:
+Optional browser path override:
 
 ```bash
 export PLAYWRIGHT_EXECUTABLE_PATH=/path/to/chrome-or-chromium
 ```
 
-## Usage
+## CLI Usage
 
-### CLI
-
-Build first:
+Run commands via workspace binaries:
 
 ```bash
-npm run build
+npm exec -w @linkedin-assistant/cli -- linkedin status --profile default
+npm exec -w @linkedin-assistant/cli -- linkedin login --profile default --timeout-minutes 10
 ```
 
-Check authentication status:
+Inbox MVP commands:
 
 ```bash
-npx linkedin status
+npm exec -w @linkedin-assistant/cli -- linkedin inbox list --profile default --limit 20
+npm exec -w @linkedin-assistant/cli -- linkedin inbox show --profile default --thread <thread_id_or_url> --limit 20
+npm exec -w @linkedin-assistant/cli -- linkedin inbox prepare-reply --profile default --thread <thread_id_or_url> --text "Hi there"
 ```
 
-Open login flow with persistent profile:
+Confirm prepared actions by token:
 
 ```bash
-npx linkedin login --profile default --timeout-minutes 10
+npm exec -w @linkedin-assistant/cli -- linkedin actions confirm --profile default --token ct_...
 ```
 
-### MCP Stdio Server
+- Confirmation prints preview details and prompts for explicit operator approval.
+- Use `--yes` to skip prompt in automation/non-interactive runs.
+
+## MCP Usage
+
+Start MCP server:
 
 ```bash
-npx linkedin-mcp
+npm exec -w @linkedin-assistant/mcp -- linkedin-mcp
 ```
 
-Available tools:
+Exposed tools:
 
-- `linkedin.session.status`
-- `linkedin.session.open_login`
+- `linkedin.inbox.list_threads`
+- `linkedin.inbox.get_thread`
+- `linkedin.inbox.prepare_reply`
+- `linkedin.actions.confirm`
 
-Example tool arguments:
+## MVP Flow
 
-- `linkedin.session.status`: `{ "profileName": "default" }`
-- `linkedin.session.open_login`: `{ "profileName": "default", "timeoutMs": 600000 }`
+1. Prepare send:
+   - `linkedin inbox prepare-reply ...`
+   - captures pre-send screenshot artifact
+   - stores prepared action with preview JSON + payload/preview hashes
+   - returns `preparedActionId` and `confirmToken`
+2. Confirm send:
+   - `linkedin actions confirm --token ct_...`
+   - resolves action by `confirm_token_hash`
+   - executes `send_message` with target validation
+   - consumes send rate limit on confirm only
+   - captures post-send screenshot + Playwright trace zip
 
-## Core Behavior Summary
+## Core Notes
 
-- Config base directory: `~/.linkedin-assistant`
-- Run IDs: generated per runtime/session
-- JSON event logs: `artifacts/<run_id>/events.jsonl`
-- Artifact helpers: safe per-run file writing + optional `artifact_index` DB indexing
-- SQLite migrations + schema tables:
-  - `account`
-  - `prepared_action`
-  - `run_log`
-  - `artifact_index`
-  - `rate_limit_counter`
-- Two-phase commit framework:
-  - confirm token format: `ct_<base64url>`
-  - only token hash is persisted
-  - default expiry: 30 minutes
-  - prepare + confirm execution stub
-- Profile manager:
-  - lock-protected profile directories
-  - persistent Playwright `userDataDir`
-- Auth helpers:
-  - `status` / `ensureAuthenticated`
-  - `openLogin`
-  - minimal practical LinkedIn page heuristics
+- Two-phase commit stores:
+  - `target_json`, `payload_json`, `preview_json`
+  - `payload_hash` and `preview_hash` (`sha256` base64url)
+  - confirmation and execution metadata (`confirmed_at`, `executed_at`, result/error fields)
+- Errors use structured taxonomy:
+  - `AUTH_REQUIRED`, `CAPTCHA_OR_CHALLENGE`, `RATE_LIMITED`, `UI_CHANGED_SELECTOR_FAILED`, `NETWORK_ERROR`, `TIMEOUT`, `TARGET_NOT_FOUND`, `ACTION_PRECONDITION_FAILED`, `UNKNOWN`
+- CLI and MCP return structured JSON errors (`code`, `message`, `details`).
 
 ## Quality Gates
 
-Run locally:
+Run from repo root:
 
 ```bash
+npm test
 npm run lint
 npm run typecheck
-npm test
 npm run build
 ```
-
-CI (`.github/workflows/ci.yml`) runs lint + typecheck + test with:
-
-- `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`
