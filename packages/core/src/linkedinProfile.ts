@@ -97,6 +97,7 @@ async function getOrCreatePage(context: BrowserContext): Promise<Page> {
   return context.newPage();
 }
 
+/* eslint-disable no-undef -- DOM types (ParentNode, Element) are valid inside page.evaluate() */
 async function extractProfileData(page: Page): Promise<LinkedInProfile> {
   const extracted = await page.evaluate(() => {
     const normalize = (value: string | null | undefined): string =>
@@ -480,6 +481,7 @@ async function extractProfileData(page: Page): Promise<LinkedInProfile> {
     }))
   };
 }
+/* eslint-enable no-undef */
 
 export class LinkedInProfileService {
   constructor(private readonly runtime: LinkedInProfileRuntime) {}

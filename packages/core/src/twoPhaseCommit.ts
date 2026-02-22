@@ -7,6 +7,55 @@ import {
 
 export const DEFAULT_CONFIRM_TOKEN_TTL_MS = 30 * 60 * 1000;
 
+export const TEST_ECHO_ACTION_TYPE = "test.echo";
+
+export interface TestAutoConfirmConfig {
+  enabled: boolean;
+  ttlMs: number;
+  expiresAtMs: number;
+  allowedTargets: string[];
+}
+
+export function createDefaultTestAutoConfirmConfig(): TestAutoConfirmConfig {
+  const enabled =
+    process.env.LINKEDIN_TEST_AUTO_CONFIRM_ENABLED === "true" ||
+    process.env.LINKEDIN_TEST_AUTO_CONFIRM_ENABLED === "1";
+  const ttlMs = Number.parseInt(
+    process.env.LINKEDIN_TEST_AUTO_CONFIRM_TTL_MS ?? "0",
+    10
+  ) || 0;
+  const allowedTargetsRaw = process.env.LINKEDIN_TEST_AUTO_CONFIRM_TARGETS ?? "";
+  const allowedTargets = allowedTargetsRaw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  const expiresAtMs = enabled && ttlMs > 0 ? Date.now() + ttlMs : 0;
+
+  return { enabled, ttlMs, expiresAtMs, allowedTargets };
+}
+
+export function isTestAutoConfirmActive(config: TestAutoConfirmConfig): boolean {
+  if (!config.enabled) {
+    return false;
+  }
+  if (config.expiresAtMs > 0 && Date.now() > config.expiresAtMs) {
+    return false;
+  }
+  return true;
+}
+
+export function isTestAutoConfirmAllowedTarget(
+  config: TestAutoConfirmConfig,
+  targetUrl: string
+): boolean {
+  if (config.allowedTargets.length === 0) {
+    return true;
+  }
+  return config.allowedTargets.some(
+    (allowed) => targetUrl.includes(allowed)
+  );
+}
+
 export interface PrepareActionInput {
   actionType: string;
   target: Record<string, unknown>;
@@ -278,6 +327,10 @@ export class TwoPhaseCommitService<TRuntime = unknown> {
     };
   }
 
+  async confirm(input: ConfirmByTokenInput): Promise<ConfirmByTokenResult> {
+    return this.confirmByToken(input);
+  }
+
   async confirmByToken(input: ConfirmByTokenInput): Promise<ConfirmByTokenResult> {
     const confirmTokenHash = hashConfirmToken(input.confirmToken);
     const row = assertPreparedActionByToken(
@@ -367,6 +420,23 @@ export class TwoPhaseCommitService<TRuntime = unknown> {
       actionType: action.actionType,
       result: executionResult.result,
       artifacts: executionResult.artifacts
+    };
+  }
+}
+
+export class TestEchoActionExecutor<TRuntime = unknown>
+  implements ActionExecutor<TRuntime>
+{
+  execute(input: ActionExecutorInput<TRuntime>): ActionExecutorResult {
+    const text =
+      typeof input.action.payload.text === "string"
+        ? input.action.payload.text
+        : JSON.stringify(input.action.payload);
+
+    return {
+      ok: true,
+      result: { echo: text },
+      artifacts: []
     };
   }
 }

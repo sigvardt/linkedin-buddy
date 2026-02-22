@@ -15,7 +15,13 @@ import { JsonEventLogger } from "./logging.js";
 import { ProfileManager } from "./profileManager.js";
 import { RateLimiter } from "./rateLimiter.js";
 import { createRunId } from "./run.js";
-import { TwoPhaseCommitService } from "./twoPhaseCommit.js";
+import {
+  TwoPhaseCommitService,
+  TestEchoActionExecutor,
+  TEST_ECHO_ACTION_TYPE,
+  createDefaultTestAutoConfirmConfig,
+  type TestAutoConfirmConfig
+} from "./twoPhaseCommit.js";
 
 export interface CreateCoreRuntimeOptions {
   baseDir?: string;
@@ -35,6 +41,7 @@ export interface CoreRuntime {
   auth: LinkedInAuthService;
   profile: LinkedInProfileService;
   inbox: LinkedInInboxService;
+  testAutoConfirm: TestAutoConfirmConfig;
   close: () => void;
 }
 
@@ -51,8 +58,14 @@ export function createCoreRuntime(
   const profileManager = new ProfileManager(paths);
   let runtime: CoreRuntime;
 
+  const testAutoConfirm = createDefaultTestAutoConfirmConfig();
+  const linkedInExecutors = createLinkedInActionExecutors();
+  const testEchoExecutor = new TestEchoActionExecutor<LinkedInMessagingRuntime>();
   const twoPhaseCommit = new TwoPhaseCommitService<LinkedInMessagingRuntime>(db, {
-    executors: createLinkedInActionExecutors(),
+    executors: {
+      ...linkedInExecutors,
+      [TEST_ECHO_ACTION_TYPE]: testEchoExecutor
+    },
     getRuntime: () => runtime
   });
 
@@ -68,6 +81,7 @@ export function createCoreRuntime(
     auth: new LinkedInAuthService(profileManager),
     profile: undefined as unknown as LinkedInProfileService,
     inbox: undefined as unknown as LinkedInInboxService,
+    testAutoConfirm,
     close: () => {
       logger.log("info", "runtime.closed", { runId });
       db.close();

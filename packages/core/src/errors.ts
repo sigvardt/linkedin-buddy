@@ -78,6 +78,8 @@ export function toLinkedInAssistantErrorPayload(
   };
 }
 
+export { toLinkedInAssistantErrorPayload as toAssistantErrorPayload };
+
 export function asLinkedInAssistantError(
   error: unknown,
   fallbackCode: LinkedInAssistantErrorCode = "UNKNOWN",
