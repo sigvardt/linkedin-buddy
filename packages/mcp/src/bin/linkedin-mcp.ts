@@ -15,7 +15,9 @@ import {
   LINKEDIN_ACTIONS_CONFIRM_TOOL,
   LINKEDIN_INBOX_GET_THREAD_TOOL,
   LINKEDIN_INBOX_LIST_THREADS_TOOL,
-  LINKEDIN_INBOX_PREPARE_REPLY_TOOL
+  LINKEDIN_INBOX_PREPARE_REPLY_TOOL,
+  LINKEDIN_SESSION_OPEN_LOGIN_TOOL,
+  LINKEDIN_SESSION_STATUS_TOOL
 } from "../index.js";
 
 type ToolArgs = Record<string, unknown>;
@@ -96,6 +98,68 @@ function readTargetProfileName(target: Record<string, unknown>): string | undefi
     return value.trim();
   }
   return undefined;
+}
+
+async function handleSessionStatus(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createCoreRuntime();
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+
+    runtime.logger.log("info", "mcp.session.status.start", {
+      profileName
+    });
+
+    const status = await runtime.auth.status({
+      profileName
+    });
+
+    runtime.logger.log("info", "mcp.session.status.done", {
+      profileName,
+      authenticated: status.authenticated
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      status
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleSessionOpenLogin(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createCoreRuntime();
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const timeoutMs = readPositiveNumber(args, "timeoutMs", 5 * 60_000);
+
+    runtime.logger.log("info", "mcp.session.open_login.start", {
+      profileName,
+      timeoutMs
+    });
+
+    const status = await runtime.auth.openLogin({
+      profileName,
+      timeoutMs
+    });
+
+    runtime.logger.log("info", "mcp.session.open_login.done", {
+      profileName,
+      authenticated: status.authenticated,
+      timedOut: status.timedOut
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      status
+    });
+  } finally {
+    runtime.close();
+  }
 }
 
 async function handleListThreads(args: ToolArgs): Promise<ToolResult> {
@@ -272,6 +336,38 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
       {
+        name: LINKEDIN_SESSION_STATUS_TOOL,
+        description: "Check LinkedIn session authentication status for a profile.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            }
+          }
+        }
+      },
+      {
+        name: LINKEDIN_SESSION_OPEN_LOGIN_TOOL,
+        description: "Open LinkedIn login and wait for authentication in a profile.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            },
+            timeoutMs: {
+              type: "number",
+              description: "Maximum time to wait for authentication, in milliseconds."
+            }
+          }
+        }
+      },
+      {
         name: LINKEDIN_INBOX_LIST_THREADS_TOOL,
         description: "List LinkedIn inbox threads for a profile.",
         inputSchema: {
@@ -373,6 +469,14 @@ server.setRequestHandler(
     const args = (request.params.arguments ?? {}) as ToolArgs;
 
     try {
+      if (name === LINKEDIN_SESSION_STATUS_TOOL) {
+        return await handleSessionStatus(args);
+      }
+
+      if (name === LINKEDIN_SESSION_OPEN_LOGIN_TOOL) {
+        return await handleSessionOpenLogin(args);
+      }
+
       if (name === LINKEDIN_INBOX_LIST_THREADS_TOOL) {
         return await handleListThreads(args);
       }

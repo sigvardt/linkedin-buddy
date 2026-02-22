@@ -67,6 +67,8 @@ npm exec -w @linkedin-assistant/mcp -- linkedin-mcp
 
 Exposed tools:
 
+- `linkedin.session.status`
+- `linkedin.session.open_login`
 - `linkedin.inbox.list_threads`
 - `linkedin.inbox.get_thread`
 - `linkedin.inbox.prepare_reply`
