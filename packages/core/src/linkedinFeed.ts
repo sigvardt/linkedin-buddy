@@ -4,7 +4,7 @@ import type { LinkedInAuthService } from "./auth/session.js";
 import { LinkedInAssistantError, asLinkedInAssistantError } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import type { ProfileManager } from "./profileManager.js";
-import type { RateLimiter, RateLimitState } from "./rateLimiter.js";
+import type { RateLimiter, RateLimiterState } from "./rateLimiter.js";
 import type {
   ActionExecutor,
   ActionExecutorInput,
@@ -226,7 +226,9 @@ function toFeedPost(snapshot: FeedPostSnapshot): LinkedInFeedPost {
   };
 }
 
-function formatRateLimitState(state: RateLimitState): Record<string, number | boolean | string> {
+function formatRateLimitState(
+  state: RateLimiterState
+): Record<string, number | boolean | string> {
   return {
     counter_key: state.counterKey,
     window_start_ms: state.windowStartMs,

@@ -31,6 +31,11 @@ Optional browser path override:
 export PLAYWRIGHT_EXECUTABLE_PATH=/path/to/chrome-or-chromium
 ```
 
+Default tool-owned state home (profiles, DB, artifacts):
+
+- `~/.linkedin-assistant/linkedin-owa-agentools`
+- Override with `LINKEDIN_ASSISTANT_HOME=/custom/path`
+
 ## CLI Usage
 
 Run commands via workspace binaries:
@@ -39,6 +44,21 @@ Run commands via workspace binaries:
 npm exec -w @linkedin-assistant/cli -- linkedin status --profile default
 npm exec -w @linkedin-assistant/cli -- linkedin login --profile default --timeout-minutes 10
 ```
+
+Isolation note:
+
+- Omitting `--cdp-url` uses a dedicated Playwright persistent profile owned by this tool.
+- Passing `--cdp-url` attaches to an existing browser and can share session/cookie state.
+
+Session keepalive daemon (isolated profile):
+
+```bash
+npm exec -w @linkedin-assistant/cli -- linkedin keepalive start --profile default
+npm exec -w @linkedin-assistant/cli -- linkedin keepalive status --profile default
+npm exec -w @linkedin-assistant/cli -- linkedin keepalive stop --profile default
+```
+
+- Keepalive state/log files are stored under `~/.linkedin-assistant/linkedin-owa-agentools/keepalive/`.
 
 Inbox MVP commands:
 

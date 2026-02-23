@@ -12,7 +12,7 @@ import {
 } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import type { ProfileManager } from "./profileManager.js";
-import type { RateLimiter, RateLimitState } from "./rateLimiter.js";
+import type { RateLimiter, RateLimiterState } from "./rateLimiter.js";
 import type {
   ActionExecutor,
   ActionExecutorRegistry,
@@ -265,7 +265,9 @@ function toAutomationError(
   return asLinkedInAssistantError(error, "UNKNOWN", message);
 }
 
-function formatRateLimitState(state: RateLimitState): Record<string, number | boolean | string> {
+function formatRateLimitState(
+  state: RateLimiterState
+): Record<string, number | boolean | string> {
   return {
     counter_key: state.counterKey,
     window_start_ms: state.windowStartMs,

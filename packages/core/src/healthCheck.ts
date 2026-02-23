@@ -1,4 +1,5 @@
 import type { BrowserContext, Page } from "playwright-core";
+import { inspectLinkedInSession } from "./auth/sessionInspection.js";
 
 export interface BrowserHealthStatus {
   healthy: boolean;
@@ -26,14 +27,6 @@ async function getFirstPage(context: BrowserContext): Promise<Page> {
   }
 
   return context.newPage();
-}
-
-async function isVisibleSafe(page: Page, selector: string): Promise<boolean> {
-  try {
-    return await page.locator(selector).first().isVisible({ timeout: 1_000 });
-  } catch {
-    return false;
-  }
 }
 
 export async function checkBrowserHealth(
@@ -64,63 +57,15 @@ export async function checkBrowserHealth(
 export async function checkLinkedInSession(
   context: BrowserContext
 ): Promise<SessionHealthStatus> {
-  const checkedAt = new Date().toISOString();
-
   try {
     const page = await getFirstPage(context);
     await page.goto("https://www.linkedin.com/feed/", {
       waitUntil: "domcontentloaded"
     });
 
-    const currentUrl = page.url();
-    const loginFormVisible = await isVisibleSafe(
-      page,
-      "input[name='session_key'], input#username"
-    );
-    const checkpointVisible =
-      currentUrl.includes("/checkpoint") ||
-      (await isVisibleSafe(page, "form[action*='checkpoint']"));
-
-    if (checkpointVisible) {
-      return {
-        authenticated: false,
-        checkedAt,
-        currentUrl,
-        reason: "LinkedIn checkpoint detected. Manual verification is required."
-      };
-    }
-
-    if (loginFormVisible || currentUrl.includes("/login")) {
-      return {
-        authenticated: false,
-        checkedAt,
-        currentUrl,
-        reason: "Login form is visible."
-      };
-    }
-
-    const navVisible = await isVisibleSafe(page, "nav.global-nav");
-    const feedLikeRoute =
-      currentUrl.includes("/feed") ||
-      currentUrl.includes("/mynetwork") ||
-      currentUrl.includes("/jobs");
-
-    if (navVisible || feedLikeRoute) {
-      return {
-        authenticated: true,
-        checkedAt,
-        currentUrl,
-        reason: "LinkedIn session appears authenticated."
-      };
-    }
-
-    return {
-      authenticated: false,
-      checkedAt,
-      currentUrl,
-      reason: "Could not confirm an authenticated LinkedIn session."
-    };
+    return inspectLinkedInSession(page);
   } catch (error) {
+    const checkedAt = new Date().toISOString();
     const currentUrl = context.pages()[0]?.url() ?? "";
     const reason =
       error instanceof Error

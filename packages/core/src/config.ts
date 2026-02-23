@@ -2,6 +2,12 @@ import { mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+export const DEFAULT_LINKEDIN_ASSISTANT_HOME = path.join(
+  os.homedir(),
+  ".linkedin-assistant",
+  "linkedin-owa-agentools"
+);
+
 export interface ConfigPaths {
   baseDir: string;
   artifactsDir: string;
@@ -13,7 +19,7 @@ export function resolveConfigPaths(baseDir?: string): ConfigPaths {
   const resolvedBaseDir =
     baseDir ??
     process.env.LINKEDIN_ASSISTANT_HOME ??
-    path.join(os.homedir(), ".linkedin-assistant");
+    DEFAULT_LINKEDIN_ASSISTANT_HOME;
 
   return {
     baseDir: resolvedBaseDir,

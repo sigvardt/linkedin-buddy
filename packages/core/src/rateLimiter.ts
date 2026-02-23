@@ -7,7 +7,7 @@ export interface ConsumeRateLimitInput {
   nowMs?: number;
 }
 
-export interface RateLimitState {
+export interface RateLimiterState {
   counterKey: string;
   windowStartMs: number;
   windowSizeMs: number;
@@ -20,7 +20,7 @@ export interface RateLimitState {
 export class RateLimiter {
   constructor(private readonly db: AssistantDatabase) {}
 
-  peek(input: ConsumeRateLimitInput): RateLimitState {
+  peek(input: ConsumeRateLimitInput): RateLimiterState {
     const nowMs = input.nowMs ?? Date.now();
     const windowStartMs = Math.floor(nowMs / input.windowSizeMs) * input.windowSizeMs;
     const existing = this.db.getRateLimitCounter(input.counterKey);
@@ -43,11 +43,11 @@ export class RateLimiter {
     };
   }
 
-  get(input: ConsumeRateLimitInput): RateLimitState {
+  get(input: ConsumeRateLimitInput): RateLimiterState {
     return this.peek(input);
   }
 
-  consume(input: ConsumeRateLimitInput): RateLimitState {
+  consume(input: ConsumeRateLimitInput): RateLimiterState {
     const nowMs = input.nowMs ?? Date.now();
     const windowStartMs = Math.floor(nowMs / input.windowSizeMs) * input.windowSizeMs;
     const existing = this.db.getRateLimitCounter(input.counterKey);

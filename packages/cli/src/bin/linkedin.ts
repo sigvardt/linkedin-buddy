@@ -1,10 +1,16 @@
 #!/usr/bin/env node
+import { spawn } from "node:child_process";
+import { appendFile, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { Command } from "commander";
 import {
+  clearRateLimitState,
+  isInRateLimitCooldown,
   LinkedInAssistantError,
   createCoreRuntime,
+  resolveConfigPaths,
   toLinkedInAssistantErrorPayload,
   type SearchCategory
 } from "@linkedin-assistant/core";
@@ -36,7 +42,176 @@ function printJson(value: unknown): void {
 }
 
 function createRuntime(cdpUrl?: string) {
+  if (cdpUrl) {
+    process.stderr.write(
+      [
+        "[linkedin] Warning: --cdp-url attaches to an existing browser session.",
+        "This can share cookies/state with other Chrome sessions.",
+        "For an isolated tool-only profile, omit --cdp-url."
+      ].join(" ")
+    );
+    process.stderr.write("\n");
+  }
   return createCoreRuntime(cdpUrl ? { cdpUrl } : {});
+}
+
+interface KeepAliveState {
+  pid: number;
+  profileName: string;
+  startedAt: string;
+  updatedAt: string;
+  status: "starting" | "running" | "degraded" | "stopped";
+  intervalMs: number;
+  jitterMs: number;
+  maxConsecutiveFailures: number;
+  consecutiveFailures: number;
+  lastTickAt?: string;
+  lastHealthyAt?: string;
+  authenticated?: boolean;
+  browserHealthy?: boolean;
+  currentUrl?: string;
+  reason?: string;
+  lastError?: string;
+  cdpUrl?: string;
+  stoppedAt?: string;
+}
+
+interface KeepAliveFiles {
+  dir: string;
+  pidPath: string;
+  statePath: string;
+  logPath: string;
+}
+
+function profileSlug(profileName: string): string {
+  return profileName.replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+function getKeepAliveFiles(profileName: string): KeepAliveFiles {
+  const baseDir = resolveConfigPaths().baseDir;
+  const slug = profileSlug(profileName);
+  const dir = path.join(baseDir, "keepalive");
+  return {
+    dir,
+    pidPath: path.join(dir, `${slug}.pid`),
+    statePath: path.join(dir, `${slug}.state.json`),
+    logPath: path.join(dir, `${slug}.events.jsonl`)
+  };
+}
+
+async function ensureKeepAliveDir(files: KeepAliveFiles): Promise<void> {
+  await mkdir(files.dir, { recursive: true });
+}
+
+async function readJsonFile<T>(filePath: string): Promise<T | null> {
+  try {
+    const raw = await readFile(filePath, "utf8");
+    return JSON.parse(raw) as T;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "ENOENT"
+    ) {
+      return null;
+    }
+    if (error instanceof SyntaxError) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function writeJsonFile(filePath: string, value: unknown): Promise<void> {
+  await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+async function readKeepAlivePid(profileName: string): Promise<number | null> {
+  const files = getKeepAliveFiles(profileName);
+  try {
+    const raw = await readFile(files.pidPath, "utf8");
+    const pid = Number.parseInt(raw.trim(), 10);
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "ENOENT"
+    ) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function writeKeepAlivePid(profileName: string, pid: number): Promise<void> {
+  const files = getKeepAliveFiles(profileName);
+  await ensureKeepAliveDir(files);
+  await writeFile(files.pidPath, `${pid}\n`, "utf8");
+}
+
+async function removeKeepAlivePid(profileName: string): Promise<void> {
+  const files = getKeepAliveFiles(profileName);
+  try {
+    await unlink(files.pidPath);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "ENOENT"
+    ) {
+      return;
+    }
+    throw error;
+  }
+}
+
+async function readKeepAliveState(
+  profileName: string
+): Promise<KeepAliveState | null> {
+  const files = getKeepAliveFiles(profileName);
+  return readJsonFile<KeepAliveState>(files.statePath);
+}
+
+async function writeKeepAliveState(
+  profileName: string,
+  state: KeepAliveState
+): Promise<void> {
+  const files = getKeepAliveFiles(profileName);
+  await ensureKeepAliveDir(files);
+  await writeJsonFile(files.statePath, state);
+}
+
+async function appendKeepAliveEvent(
+  profileName: string,
+  event: Record<string, unknown>
+): Promise<void> {
+  const files = getKeepAliveFiles(profileName);
+  await ensureKeepAliveDir(files);
+  await appendFile(files.logPath, `${JSON.stringify(event)}\n`, "utf8");
+}
+
+function isProcessRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && "code" in error) {
+      if (error.code === "EPERM") {
+        return true;
+      }
+      if (error.code === "ESRCH") {
+        return false;
+      }
+    }
+    return false;
+  }
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 async function promptYesNo(question: string): Promise<boolean> {
@@ -65,6 +240,356 @@ async function runStatus(profileName: string, cdpUrl?: string): Promise<void> {
     });
     printJson({ run_id: runtime.runId, ...status });
   } finally {
+    runtime.close();
+  }
+}
+
+async function runRateLimitStatus(clear: boolean): Promise<void> {
+  if (clear) {
+    await clearRateLimitState();
+    printJson({
+      cleared: true
+    });
+    return;
+  }
+
+  const status = await isInRateLimitCooldown();
+  printJson(status);
+}
+
+async function runKeepAliveStart(input: {
+  profileName: string;
+  intervalSeconds: number;
+  jitterSeconds: number;
+  maxConsecutiveFailures: number;
+}, cdpUrl?: string): Promise<void> {
+  const existingPid = await readKeepAlivePid(input.profileName);
+  if (existingPid && isProcessRunning(existingPid)) {
+    const currentState = await readKeepAliveState(input.profileName);
+    printJson({
+      started: false,
+      reason: "Keepalive daemon is already running for this profile.",
+      profile_name: input.profileName,
+      pid: existingPid,
+      state: currentState
+    });
+    return;
+  }
+
+  if (existingPid && !isProcessRunning(existingPid)) {
+    await removeKeepAlivePid(input.profileName);
+  }
+
+  const cliEntrypoint = process.argv[1];
+  if (!cliEntrypoint) {
+    throw new LinkedInAssistantError(
+      "UNKNOWN",
+      "Could not resolve CLI entrypoint for keepalive daemon startup."
+    );
+  }
+
+  const daemonArgs = [cliEntrypoint];
+  if (cdpUrl) {
+    daemonArgs.push("--cdp-url", cdpUrl);
+  }
+  daemonArgs.push(
+    "keepalive",
+    "__run",
+    "--profile",
+    input.profileName,
+    "--interval-seconds",
+    String(input.intervalSeconds),
+    "--jitter-seconds",
+    String(input.jitterSeconds),
+    "--max-consecutive-failures",
+    String(input.maxConsecutiveFailures)
+  );
+
+  const daemon = spawn(process.execPath, daemonArgs, {
+    detached: true,
+    stdio: "ignore",
+    env: process.env
+  });
+  daemon.unref();
+
+  if (!daemon.pid) {
+    throw new LinkedInAssistantError(
+      "UNKNOWN",
+      "Keepalive daemon did not return a process id."
+    );
+  }
+
+  const now = new Date().toISOString();
+  const initialState: KeepAliveState = {
+    pid: daemon.pid,
+    profileName: input.profileName,
+    startedAt: now,
+    updatedAt: now,
+    status: "starting",
+    intervalMs: input.intervalSeconds * 1_000,
+    jitterMs: input.jitterSeconds * 1_000,
+    maxConsecutiveFailures: input.maxConsecutiveFailures,
+    consecutiveFailures: 0,
+    ...(cdpUrl ? { cdpUrl } : {})
+  };
+
+  await writeKeepAlivePid(input.profileName, daemon.pid);
+  await writeKeepAliveState(input.profileName, initialState);
+
+  printJson({
+    started: true,
+    profile_name: input.profileName,
+    pid: daemon.pid,
+    state_path: getKeepAliveFiles(input.profileName).statePath
+  });
+}
+
+async function runKeepAliveStatus(profileName: string): Promise<void> {
+  const pid = await readKeepAlivePid(profileName);
+  const state = await readKeepAliveState(profileName);
+  const running = typeof pid === "number" ? isProcessRunning(pid) : false;
+
+  printJson({
+    profile_name: profileName,
+    running,
+    pid,
+    state,
+    stale_pid_file: Boolean(pid && !running)
+  });
+}
+
+async function runKeepAliveStop(profileName: string): Promise<void> {
+  const pid = await readKeepAlivePid(profileName);
+  const previousState = await readKeepAliveState(profileName);
+
+  if (!pid) {
+    printJson({
+      stopped: false,
+      profile_name: profileName,
+      reason: "No keepalive daemon pid file found."
+    });
+    return;
+  }
+
+  if (!isProcessRunning(pid)) {
+    await removeKeepAlivePid(profileName);
+    const now = new Date().toISOString();
+    if (previousState) {
+      await writeKeepAliveState(profileName, {
+        ...previousState,
+        status: "stopped",
+        updatedAt: now,
+        stoppedAt: now,
+        lastError: "Recovered from stale pid file."
+      });
+    }
+    printJson({
+      stopped: true,
+      profile_name: profileName,
+      pid,
+      reason: "Recovered stale keepalive pid file."
+    });
+    return;
+  }
+
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch (error) {
+    throw new LinkedInAssistantError(
+      "UNKNOWN",
+      "Failed to send SIGTERM to keepalive daemon.",
+      {
+        profile_name: profileName,
+        pid,
+        cause: error instanceof Error ? error.message : String(error)
+      }
+    );
+  }
+
+  const deadline = Date.now() + 5_000;
+  let running = true;
+  while (Date.now() < deadline) {
+    await sleep(200);
+    running = isProcessRunning(pid);
+    if (!running) {
+      break;
+    }
+  }
+
+  if (running) {
+    process.kill(pid, "SIGKILL");
+  }
+
+  await removeKeepAlivePid(profileName);
+  const now = new Date().toISOString();
+  if (previousState) {
+    await writeKeepAliveState(profileName, {
+      ...previousState,
+      status: "stopped",
+      updatedAt: now,
+      stoppedAt: now,
+      ...(running
+        ? { lastError: "Keepalive daemon required SIGKILL to stop." }
+        : {})
+    });
+  }
+
+  printJson({
+    stopped: true,
+    profile_name: profileName,
+    pid,
+    forced: running
+  });
+}
+
+async function runKeepAliveDaemon(input: {
+  profileName: string;
+  intervalSeconds: number;
+  jitterSeconds: number;
+  maxConsecutiveFailures: number;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createCoreRuntime(cdpUrl ? { cdpUrl } : {});
+  const profileName = input.profileName;
+  let stopRequested = false;
+  let consecutiveFailures = 0;
+
+  const requestStop = () => {
+    stopRequested = true;
+  };
+  process.on("SIGTERM", requestStop);
+  process.on("SIGINT", requestStop);
+
+  const initialState: KeepAliveState = {
+    pid: process.pid,
+    profileName,
+    startedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    status: "running",
+    intervalMs: input.intervalSeconds * 1_000,
+    jitterMs: input.jitterSeconds * 1_000,
+    maxConsecutiveFailures: input.maxConsecutiveFailures,
+    consecutiveFailures: 0,
+    ...(cdpUrl ? { cdpUrl } : {})
+  };
+
+  await writeKeepAlivePid(profileName, process.pid);
+  await writeKeepAliveState(profileName, initialState);
+  await appendKeepAliveEvent(profileName, {
+    ts: new Date().toISOString(),
+    event: "keepalive.daemon.started",
+    pid: process.pid,
+    profile_name: profileName,
+    cdp_url: cdpUrl ?? null
+  });
+
+  try {
+    while (!stopRequested) {
+      const tickAt = new Date().toISOString();
+
+      try {
+        const health = await runtime.healthCheck({ profileName });
+        const healthy = health.browser.healthy && health.session.authenticated;
+        consecutiveFailures = healthy ? 0 : consecutiveFailures + 1;
+
+        const priorState = (await readKeepAliveState(profileName)) ?? initialState;
+        const nextState: KeepAliveState = {
+          ...priorState,
+          pid: process.pid,
+          profileName,
+          updatedAt: tickAt,
+          status:
+            consecutiveFailures >= input.maxConsecutiveFailures
+              ? "degraded"
+              : "running",
+          intervalMs: input.intervalSeconds * 1_000,
+          jitterMs: input.jitterSeconds * 1_000,
+          maxConsecutiveFailures: input.maxConsecutiveFailures,
+          consecutiveFailures,
+          lastTickAt: tickAt,
+          authenticated: health.session.authenticated,
+          browserHealthy: health.browser.healthy,
+          currentUrl: health.session.currentUrl,
+          reason: health.session.reason
+        };
+        if (healthy) {
+          nextState.lastHealthyAt = tickAt;
+          delete nextState.lastError;
+        }
+
+        await writeKeepAliveState(profileName, nextState);
+        await appendKeepAliveEvent(profileName, {
+          ts: tickAt,
+          event: "keepalive.tick",
+          profile_name: profileName,
+          healthy,
+          consecutive_failures: consecutiveFailures,
+          browser_healthy: health.browser.healthy,
+          authenticated: health.session.authenticated,
+          reason: health.session.reason
+        });
+      } catch (error) {
+        consecutiveFailures += 1;
+        const message = error instanceof Error ? error.message : String(error);
+        const nextState: KeepAliveState = {
+          ...(await readKeepAliveState(profileName) ?? initialState),
+          pid: process.pid,
+          profileName,
+          updatedAt: tickAt,
+          status:
+            consecutiveFailures >= input.maxConsecutiveFailures
+              ? "degraded"
+              : "running",
+          intervalMs: input.intervalSeconds * 1_000,
+          jitterMs: input.jitterSeconds * 1_000,
+          maxConsecutiveFailures: input.maxConsecutiveFailures,
+          consecutiveFailures,
+          lastTickAt: tickAt,
+          lastError: message
+        };
+        await writeKeepAliveState(profileName, nextState);
+        await appendKeepAliveEvent(profileName, {
+          ts: tickAt,
+          event: "keepalive.tick.error",
+          profile_name: profileName,
+          consecutive_failures: consecutiveFailures,
+          error: message
+        });
+      }
+
+      if (stopRequested) {
+        break;
+      }
+
+      const jitter = (Math.random() * 2 - 1) * (input.jitterSeconds * 1_000);
+      let sleepRemainingMs = Math.max(
+        1_000,
+        input.intervalSeconds * 1_000 + jitter
+      );
+      while (!stopRequested && sleepRemainingMs > 0) {
+        const chunkMs = Math.min(500, sleepRemainingMs);
+        await sleep(chunkMs);
+        sleepRemainingMs -= chunkMs;
+      }
+    }
+  } finally {
+    const now = new Date().toISOString();
+    const lastState = (await readKeepAliveState(profileName)) ?? initialState;
+    await writeKeepAliveState(profileName, {
+      ...lastState,
+      pid: process.pid,
+      profileName,
+      status: "stopped",
+      updatedAt: now,
+      stoppedAt: now
+    });
+    await appendKeepAliveEvent(profileName, {
+      ts: now,
+      event: "keepalive.daemon.stopped",
+      pid: process.pid,
+      profile_name: profileName
+    });
+
+    await removeKeepAlivePid(profileName).catch(() => undefined);
     runtime.close();
   }
 }
@@ -842,6 +1367,119 @@ async function main(): Promise<void> {
     .action(async (options: { profile: string }) => {
       await runStatus(options.profile, readCdpUrl());
     });
+
+  program
+    .command("rate-limit")
+    .description("Show or clear persistent auth rate-limit cooldown state")
+    .option("--clear", "Clear saved rate-limit cooldown state", false)
+    .action(async (options: { clear: boolean }) => {
+      await runRateLimitStatus(options.clear);
+    });
+
+  const keepAliveCommand = program
+    .command("keepalive")
+    .description("Run and manage a background session keepalive daemon");
+
+  keepAliveCommand
+    .command("start")
+    .description("Start keepalive daemon for a profile")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option(
+      "--interval-seconds <seconds>",
+      "Health/refresh check interval in seconds",
+      "300"
+    )
+    .option(
+      "--jitter-seconds <seconds>",
+      "Random +/- jitter per interval in seconds",
+      "30"
+    )
+    .option(
+      "--max-consecutive-failures <count>",
+      "Mark daemon degraded after this many consecutive failures",
+      "5"
+    )
+    .action(
+      async (options: {
+        profile: string;
+        intervalSeconds: string;
+        jitterSeconds: string;
+        maxConsecutiveFailures: string;
+      }) => {
+        await runKeepAliveStart(
+          {
+            profileName: options.profile,
+            intervalSeconds: coercePositiveInt(
+              options.intervalSeconds,
+              "interval-seconds"
+            ),
+            jitterSeconds: coercePositiveInt(
+              options.jitterSeconds,
+              "jitter-seconds"
+            ),
+            maxConsecutiveFailures: coercePositiveInt(
+              options.maxConsecutiveFailures,
+              "max-consecutive-failures"
+            )
+          },
+          readCdpUrl()
+        );
+      }
+    );
+
+  keepAliveCommand
+    .command("status")
+    .description("Show keepalive daemon status for a profile")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(async (options: { profile: string }) => {
+      await runKeepAliveStatus(options.profile);
+    });
+
+  keepAliveCommand
+    .command("stop")
+    .description("Stop keepalive daemon for a profile")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(async (options: { profile: string }) => {
+      await runKeepAliveStop(options.profile);
+    });
+
+  keepAliveCommand
+    .command("__run", { hidden: true })
+    .description("Internal daemon command")
+    .requiredOption("-p, --profile <profile>", "Profile name")
+    .requiredOption("--interval-seconds <seconds>", "Loop interval in seconds")
+    .requiredOption("--jitter-seconds <seconds>", "Interval jitter in seconds")
+    .requiredOption(
+      "--max-consecutive-failures <count>",
+      "Maximum failures before degraded status"
+    )
+    .action(
+      async (options: {
+        profile: string;
+        intervalSeconds: string;
+        jitterSeconds: string;
+        maxConsecutiveFailures: string;
+      }) => {
+        await runKeepAliveDaemon(
+          {
+            profileName: options.profile,
+            intervalSeconds: coercePositiveInt(
+              options.intervalSeconds,
+              "interval-seconds"
+            ),
+            jitterSeconds: coercePositiveInt(
+              options.jitterSeconds,
+              "jitter-seconds"
+            ),
+            maxConsecutiveFailures: coercePositiveInt(
+              options.maxConsecutiveFailures,
+              "max-consecutive-failures"
+            )
+          },
+          readCdpUrl()
+        );
+      }
+    );
 
   program
     .command("login")

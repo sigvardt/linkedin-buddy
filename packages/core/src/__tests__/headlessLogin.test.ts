@@ -63,6 +63,29 @@ describe("HeadlessLoginOptions interface", () => {
     expect(options.timeoutMs).toBeUndefined();
     expect(options.pollIntervalMs).toBeUndefined();
   });
+
+  it("accepts retry options for rate limiting", () => {
+    const options: HeadlessLoginOptions = {
+      email: "test@example.com",
+      password: "secret",
+      retryOnRateLimit: true,
+      maxRetries: 5,
+      retryBaseDelayMs: 60_000
+    };
+    expect(options.retryOnRateLimit).toBe(true);
+    expect(options.maxRetries).toBe(5);
+    expect(options.retryBaseDelayMs).toBe(60_000);
+  });
+
+  it("has retry options undefined by default", () => {
+    const options: HeadlessLoginOptions = {
+      email: "test@example.com",
+      password: "secret"
+    };
+    expect(options.retryOnRateLimit).toBeUndefined();
+    expect(options.maxRetries).toBeUndefined();
+    expect(options.retryBaseDelayMs).toBeUndefined();
+  });
 });
 
 describe("HeadlessLoginResult interface", () => {
@@ -149,6 +172,25 @@ describe("HeadlessLoginResult interface", () => {
       checkpointType: "unknown"
     };
     expect(result.checkpointType).toBe("unknown");
+  });
+
+  it("can represent a rate_limited checkpoint type", () => {
+    const result: HeadlessLoginResult = {
+      authenticated: false,
+      checkedAt: new Date().toISOString(),
+      currentUrl:
+        "https://www.linkedin.com/checkpoint/challenge/?errorKey=challenge_global_internal_error",
+      reason:
+        "LinkedIn rate limit detected (challenge_global_internal_error)",
+      timedOut: false,
+      checkpoint: true,
+      checkpointType: "rate_limited"
+    };
+    expect(result.checkpointType).toBe("rate_limited");
+    expect(result.checkpoint).toBe(true);
+    expect(result.authenticated).toBe(false);
+    expect(result.reason).toContain("rate limit");
+    expect(result.currentUrl).toContain("challenge_global_internal_error");
   });
 
   it("has checkpointType and mfaRequired undefined when not a checkpoint", () => {
@@ -315,5 +357,52 @@ describe("HeadlessLoginResult early-return scenarios", () => {
     expect(result.timedOut).toBe(false);
     expect(result.checkpoint).toBe(false);
     expect(result.currentUrl).toContain("/feed/");
+  });
+});
+
+describe("HeadlessLoginResult rate limit scenarios", () => {
+  it("can represent a rate-limited result with errorKey in URL", () => {
+    const result: HeadlessLoginResult = {
+      authenticated: false,
+      checkedAt: new Date().toISOString(),
+      currentUrl:
+        "https://www.linkedin.com/checkpoint/challenge/AgZrAAoAABNMi3w?errorKey=challenge_global_internal_error",
+      reason:
+        "LinkedIn rate limit detected (challenge_global_internal_error)",
+      timedOut: false,
+      checkpoint: true,
+      checkpointType: "rate_limited"
+    };
+    expect(result.checkpointType).toBe("rate_limited");
+    expect(result.checkpoint).toBe(true);
+    expect(result.authenticated).toBe(false);
+    expect(result.timedOut).toBe(false);
+    expect(result.mfaRequired).toBeUndefined();
+  });
+
+  it("rate_limited is distinct from unknown checkpoint", () => {
+    const rateLimited: HeadlessLoginResult = {
+      authenticated: false,
+      checkedAt: new Date().toISOString(),
+      currentUrl: "https://www.linkedin.com/checkpoint/challenge/?errorKey=challenge_global_internal_error",
+      reason: "LinkedIn rate limit detected (challenge_global_internal_error)",
+      timedOut: false,
+      checkpoint: true,
+      checkpointType: "rate_limited"
+    };
+
+    const unknown: HeadlessLoginResult = {
+      authenticated: false,
+      checkedAt: new Date().toISOString(),
+      currentUrl: "https://www.linkedin.com/checkpoint/challenge/",
+      reason: "LinkedIn checkpoint detected. Manual verification is required.",
+      timedOut: false,
+      checkpoint: true,
+      checkpointType: "unknown"
+    };
+
+    expect(rateLimited.checkpointType).not.toBe(unknown.checkpointType);
+    expect(rateLimited.checkpointType).toBe("rate_limited");
+    expect(unknown.checkpointType).toBe("unknown");
   });
 });

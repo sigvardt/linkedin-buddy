@@ -1,4 +1,5 @@
 export * from "./artifacts.js";
+export * from "./auth/rateLimitState.js";
 export * from "./auth/session.js";
 export * from "./connectionPool.js";
 export * from "./config.js";
