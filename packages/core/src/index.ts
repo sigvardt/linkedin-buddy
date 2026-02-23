@@ -1,5 +1,6 @@
 export * from "./artifacts.js";
 export * from "./auth/session.js";
+export * from "./auth/smsMfaCallback.js";
 export * from "./connectionPool.js";
 export * from "./config.js";
 export * from "./db/database.js";
