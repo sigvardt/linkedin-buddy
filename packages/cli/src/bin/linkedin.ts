@@ -863,7 +863,6 @@ async function main(): Promise<void> {
       "MFA verification code (or set LINKEDIN_MFA_CODE env var)"
     )
     .option("--mfa-interactive", "Prompt for MFA code interactively via stdin", false)
-    .option("--mfa-sms", "Auto-retrieve MFA code from SMS via macOS Messages", false)
     .action(
       async (options: {
         profile: string;
@@ -873,7 +872,6 @@ async function main(): Promise<void> {
         password?: string;
         mfaCode?: string;
         mfaInteractive: boolean;
-        mfaSms: boolean;
       }) => {
         const timeoutMinutes = coercePositiveInt(
           options.timeoutMinutes,
@@ -886,10 +884,7 @@ async function main(): Promise<void> {
           const mfaCode = options.mfaCode ?? process.env.LINKEDIN_MFA_CODE;
 
           let mfaCallback: (() => Promise<string | undefined>) | undefined;
-          if (options.mfaSms && !mfaCode) {
-            const { createSmsMfaCallback } = await import("@linkedin-assistant/core");
-            mfaCallback = createSmsMfaCallback({ timeoutMs: 120_000 });
-          } else if (options.mfaInteractive && !mfaCode) {
+          if (options.mfaInteractive && !mfaCode) {
             mfaCallback = async () => {
               const rl = createInterface({ input: stdin, output: process.stderr });
               try {
