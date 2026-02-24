@@ -2,6 +2,7 @@ import { type BrowserContext, type Page } from "playwright-core";
 import type { LinkedInAuthService } from "./auth/session.js";
 import { LinkedInAssistantError, asLinkedInAssistantError } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
+import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
 
 export interface LinkedInSearchResult {
@@ -163,7 +164,7 @@ export class LinkedInSearchService {
           await page.goto(buildSearchUrl(query, "people"), {
             waitUntil: "domcontentloaded"
           });
-          await page.waitForLoadState("networkidle");
+          await waitForNetworkIdleBestEffort(page);
           await page
             .locator(
               ".reusable-search__result-container, li.reusable-search__result-container"
@@ -300,7 +301,7 @@ export class LinkedInSearchService {
           await page.goto(buildSearchUrl(query, "companies"), {
             waitUntil: "domcontentloaded"
           });
-          await page.waitForLoadState("networkidle");
+          await waitForNetworkIdleBestEffort(page);
           await page
             .locator(
               ".reusable-search__result-container, li.reusable-search__result-container"
@@ -415,7 +416,7 @@ export class LinkedInSearchService {
           await page.goto(buildSearchUrl(query, "jobs"), {
             waitUntil: "domcontentloaded"
           });
-          await page.waitForLoadState("networkidle");
+          await waitForNetworkIdleBestEffort(page);
           await page
             .locator(".job-card-container, .base-search-card")
             .first()

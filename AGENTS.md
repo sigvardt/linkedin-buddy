@@ -94,6 +94,7 @@ npm run build
 - **Tests:** Vitest. Unit tests in `packages/core/src/__tests__/`. E2E tests in `packages/core/src/__tests__/e2e/`
 - **Logging:** Use `runtime.logger.log(level, event, details)` — structured JSON events
 - **Artifacts:** Use `runtime.artifacts` for screenshots and traces. Relative paths under run directory.
+- **Feed comment tone for testing:** When testing comment flows, use short, subtle, kind comments that relate directly to the post content. Avoid mentioning tests, bots, automation, or synthetic language.
 
 ## Architecture Patterns
 

@@ -8,8 +8,10 @@ import { Command } from "commander";
 import {
   clearRateLimitState,
   isInRateLimitCooldown,
+  LINKEDIN_FEED_REACTION_TYPES,
   LinkedInAssistantError,
   createCoreRuntime,
+  normalizeLinkedInFeedReaction,
   resolveConfigPaths,
   toLinkedInAssistantErrorPayload,
   type SearchCategory
@@ -206,6 +208,13 @@ function isProcessRunning(pid: number): boolean {
     }
     return false;
   }
+}
+
+function isProfileLockHeldError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    /lock file is already being held/i.test(error.message)
+  );
 }
 
 async function sleep(ms: number): Promise<void> {
@@ -528,8 +537,12 @@ async function runKeepAliveDaemon(input: {
           reason: health.session.reason
         });
       } catch (error) {
-        consecutiveFailures += 1;
         const message = error instanceof Error ? error.message : String(error);
+        const lockHeld = isProfileLockHeldError(error);
+        if (!lockHeld) {
+          consecutiveFailures += 1;
+        }
+
         const nextState: KeepAliveState = {
           ...(await readKeepAliveState(profileName) ?? initialState),
           pid: process.pid,
@@ -549,10 +562,11 @@ async function runKeepAliveDaemon(input: {
         await writeKeepAliveState(profileName, nextState);
         await appendKeepAliveEvent(profileName, {
           ts: tickAt,
-          event: "keepalive.tick.error",
+          event: lockHeld ? "keepalive.tick.skipped" : "keepalive.tick.error",
           profile_name: profileName,
           consecutive_failures: consecutiveFailures,
-          error: message
+          error: message,
+          ...(lockHeld ? { reason: "profile_lock_held" } : {})
         });
       }
 
@@ -1010,25 +1024,30 @@ async function runFeedView(input: {
 async function runFeedLike(input: {
   profileName: string;
   postUrl: string;
+  reaction?: string;
   operatorNote?: string;
 }, cdpUrl?: string): Promise<void> {
   const runtime = createRuntime(cdpUrl);
+  const reaction = normalizeLinkedInFeedReaction(input.reaction, "like");
 
   try {
     runtime.logger.log("info", "cli.feed.like.start", {
       profileName: input.profileName,
-      postUrl: input.postUrl
+      postUrl: input.postUrl,
+      reaction
     });
 
     const prepared = runtime.feed.prepareLikePost({
       profileName: input.profileName,
       postUrl: input.postUrl,
+      reaction,
       ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
     });
 
     runtime.logger.log("info", "cli.feed.like.done", {
       profileName: input.profileName,
-      preparedActionId: prepared.preparedActionId
+      preparedActionId: prepared.preparedActionId,
+      reaction
     });
 
     printJson({
@@ -1757,18 +1776,25 @@ async function main(): Promise<void> {
 
   feedCommand
     .command("like")
-    .description("Prepare to like a LinkedIn post (two-phase)")
+    .alias("react")
+    .description("Prepare to react to a LinkedIn post (two-phase)")
     .argument("<post>", "Post URL, URN, or activity id")
     .option("-p, --profile <profile>", "Profile name", "default")
+    .option(
+      "-r, --reaction <reaction>",
+      `Reaction type (${LINKEDIN_FEED_REACTION_TYPES.join(", ")})`,
+      "like"
+    )
     .option("-o, --operator-note <note>", "Optional operator note")
     .action(
       async (
         post: string,
-        options: { profile: string; operatorNote?: string }
+        options: { profile: string; reaction: string; operatorNote?: string }
       ) => {
         await runFeedLike({
           profileName: options.profile,
           postUrl: post,
+          reaction: options.reaction,
           ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
         }, readCdpUrl());
       }

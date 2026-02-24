@@ -5,6 +5,7 @@ import {
   asLinkedInAssistantError
 } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
+import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
 
 export interface LinkedInJobSearchResult {
@@ -541,7 +542,7 @@ export class LinkedInJobsService {
           await page.goto(buildJobSearchUrl(query, location || undefined), {
             waitUntil: "domcontentloaded"
           });
-          await page.waitForLoadState("networkidle");
+          await waitForNetworkIdleBestEffort(page);
           await waitForJobSearchSurface(page);
           return loadJobSearchResults(page, limit);
         }
@@ -589,7 +590,7 @@ export class LinkedInJobsService {
           await page.goto(buildJobViewUrl(jobId), {
             waitUntil: "domcontentloaded"
           });
-          await page.waitForLoadState("networkidle");
+          await waitForNetworkIdleBestEffort(page);
           await waitForJobDetailSurface(page);
           return extractJobDetail(page, jobId);
         }

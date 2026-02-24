@@ -2,6 +2,7 @@ import { type BrowserContext, type Page } from "playwright-core";
 import type { LinkedInAuthService } from "./auth/session.js";
 import { LinkedInAssistantError, asLinkedInAssistantError } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
+import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
 
 export interface LinkedInExperience {
@@ -506,7 +507,7 @@ export class LinkedInProfileService {
         async (context) => {
           const page = await getOrCreatePage(context);
           await page.goto(profileUrl, { waitUntil: "domcontentloaded" });
-          await page.waitForLoadState("networkidle");
+          await waitForNetworkIdleBestEffort(page);
           await page
             .locator("h1")
             .first()

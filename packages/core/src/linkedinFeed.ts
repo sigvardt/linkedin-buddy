@@ -38,6 +38,7 @@ export interface ViewPostInput {
 export interface LikePostInput {
   profileName?: string;
   postUrl: string;
+  reaction?: LinkedInFeedReaction | string;
   operatorNote?: string;
 }
 
@@ -65,6 +66,17 @@ const LINKEDIN_FEED_URL = "https://www.linkedin.com/feed/";
 export const LIKE_POST_ACTION_TYPE = "feed.like_post";
 export const COMMENT_ON_POST_ACTION_TYPE = "feed.comment_on_post";
 
+export const LINKEDIN_FEED_REACTION_TYPES = [
+  "like",
+  "celebrate",
+  "support",
+  "love",
+  "insightful",
+  "funny"
+] as const;
+
+export type LinkedInFeedReaction = (typeof LINKEDIN_FEED_REACTION_TYPES)[number];
+
 const LIKE_RATE_LIMIT_CONFIG = {
   counterKey: "linkedin.feed.like_post",
   windowSizeMs: 60 * 60 * 1000,
@@ -76,6 +88,69 @@ const COMMENT_RATE_LIMIT_CONFIG = {
   windowSizeMs: 60 * 60 * 1000,
   limit: 15
 } as const;
+
+interface ReactionUiConfig {
+  label: string;
+  menuAriaLabel: string;
+  iconType: string;
+}
+
+export const LINKEDIN_FEED_REACTION_MAP: Record<
+  LinkedInFeedReaction,
+  ReactionUiConfig
+> = {
+  like: {
+    label: "Like",
+    menuAriaLabel: "React Like",
+    iconType: "LIKE"
+  },
+  celebrate: {
+    label: "Celebrate",
+    menuAriaLabel: "React Celebrate",
+    iconType: "PRAISE"
+  },
+  support: {
+    label: "Support",
+    menuAriaLabel: "React Support",
+    iconType: "APPRECIATION"
+  },
+  love: {
+    label: "Love",
+    menuAriaLabel: "React Love",
+    iconType: "EMPATHY"
+  },
+  insightful: {
+    label: "Insightful",
+    menuAriaLabel: "React Insightful",
+    iconType: "INTEREST"
+  },
+  funny: {
+    label: "Funny",
+    menuAriaLabel: "React Funny",
+    iconType: "ENTERTAINMENT"
+  }
+};
+
+const LINKEDIN_FEED_REACTION_ALIAS_MAP: Record<string, LinkedInFeedReaction> = {
+  like: "like",
+  likes: "like",
+  thumbsup: "like",
+  thumbs_up: "like",
+  celebrate: "celebrate",
+  celebration: "celebrate",
+  praise: "celebrate",
+  support: "support",
+  appreciation: "support",
+  love: "love",
+  heart: "love",
+  insightful: "insightful",
+  insight: "insightful",
+  interest: "insightful",
+  funny: "funny",
+  laugh: "funny",
+  haha: "funny",
+  entertainment: "funny"
+};
 
 interface FeedPostSnapshot {
   post_id: string;
@@ -96,8 +171,43 @@ interface SelectorCandidate {
   locatorFactory: (page: Page) => Locator;
 }
 
+interface TargetPostLocator {
+  locator: Locator;
+  key: string;
+  postIdentity: string;
+  activityId: string;
+}
+
 function normalizeText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function normalizeReactionKey(value: string): string {
+  return value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+}
+
+export function normalizeLinkedInFeedReaction(
+  value: string | undefined,
+  fallback: LinkedInFeedReaction = "like"
+): LinkedInFeedReaction {
+  if (!value || normalizeText(value).length === 0) {
+    return fallback;
+  }
+
+  const key = normalizeReactionKey(value);
+  const mapped = LINKEDIN_FEED_REACTION_ALIAS_MAP[key];
+  if (mapped) {
+    return mapped;
+  }
+
+  throw new LinkedInAssistantError(
+    "ACTION_PRECONDITION_FAILED",
+    `reaction must be one of: ${LINKEDIN_FEED_REACTION_TYPES.join(", ")}.`,
+    {
+      provided_reaction: value,
+      supported_reactions: LINKEDIN_FEED_REACTION_TYPES
+    }
+  );
 }
 
 function isAbsoluteUrl(value: string): boolean {
@@ -189,6 +299,20 @@ function extractPostIdentity(value: string): string {
   }
 
   return normalized;
+}
+
+function extractActivityId(value: string): string {
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return "";
+  }
+
+  const match = /(\d{6,})/.exec(normalized);
+  return match?.[1] ?? "";
+}
+
+function escapeCssAttributeValue(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
 function toAbsoluteLinkedInPostUrl(postId: string): string {
@@ -627,6 +751,284 @@ async function findVisibleLocatorOrThrow(
   );
 }
 
+async function waitForCondition(
+  condition: () => Promise<boolean>,
+  timeoutMs: number,
+  intervalMs = 250
+): Promise<boolean> {
+  const deadline = Date.now() + Math.max(0, timeoutMs);
+  while (Date.now() < deadline) {
+    if (await condition()) {
+      return true;
+    }
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, intervalMs);
+    });
+  }
+
+  return condition();
+}
+
+async function isLocatorVisible(locator: Locator): Promise<boolean> {
+  try {
+    return await locator.isVisible();
+  } catch {
+    return false;
+  }
+}
+
+async function isAnyLocatorVisible(locator: Locator, maxChecks = 3): Promise<boolean> {
+  const count = await locator.count();
+  const checks = Math.min(count, maxChecks);
+  for (let index = 0; index < checks; index += 1) {
+    if (await isLocatorVisible(locator.nth(index))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+interface ReactionButtonState {
+  reacted: boolean;
+  reaction: LinkedInFeedReaction | null;
+  ariaLabel: string;
+  className: string;
+  buttonText: string;
+}
+
+function inferReactionFromText(value: string): LinkedInFeedReaction | null {
+  const normalized = normalizeText(value).toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  for (const reaction of LINKEDIN_FEED_REACTION_TYPES) {
+    const ui = LINKEDIN_FEED_REACTION_MAP[reaction];
+    if (normalized.includes(ui.label.toLowerCase())) {
+      return reaction;
+    }
+    if (normalized.includes(ui.iconType.toLowerCase())) {
+      return reaction;
+    }
+  }
+
+  return null;
+}
+
+async function getReactionButtonState(reactButton: Locator): Promise<ReactionButtonState> {
+  const ariaPressed = normalizeText(await reactButton.getAttribute("aria-pressed")).toLowerCase();
+  const className = normalizeText(await reactButton.getAttribute("class"));
+  const ariaLabel = normalizeText(await reactButton.getAttribute("aria-label"));
+  const buttonText = normalizeText(await reactButton.innerText().catch(() => ""));
+
+  const reacted =
+    ariaPressed === "true" ||
+    className.toLowerCase().includes("react-button--active") ||
+    /remove\s+your\s+reaction|unreact|reacted|undo/i.test(ariaLabel);
+
+  const reactionFromLabel = inferReactionFromText(ariaLabel);
+  const reactionFromText = inferReactionFromText(buttonText);
+
+  return {
+    reacted,
+    reaction: reactionFromLabel ?? reactionFromText,
+    ariaLabel,
+    className,
+    buttonText
+  };
+}
+
+async function isDesiredReactionActive(
+  reactButton: Locator,
+  desiredReaction: LinkedInFeedReaction
+): Promise<boolean> {
+  const state = await getReactionButtonState(reactButton);
+  if (!state.reacted) {
+    return false;
+  }
+
+  if (state.reaction === desiredReaction) {
+    return true;
+  }
+
+  // LinkedIn sometimes reports active state without including the reaction name.
+  return desiredReaction === "like" && state.reaction === null;
+}
+
+async function selectReactionFromMenu(
+  page: Page,
+  reactButton: Locator,
+  reaction: LinkedInFeedReaction
+): Promise<string> {
+  const reactionUi = LINKEDIN_FEED_REACTION_MAP[reaction];
+  await reactButton.hover({ timeout: 5_000 });
+
+  const menu = page.locator("span.reactions-menu--active").first();
+  const menuVisible = await waitForCondition(async () => isLocatorVisible(menu), 3_500);
+  if (!menuVisible) {
+    throw new LinkedInAssistantError(
+      "UI_CHANGED_SELECTOR_FAILED",
+      "Could not open LinkedIn reaction menu for the selected post."
+    );
+  }
+
+  const candidateButtons: SelectorCandidate[] = [
+    {
+      key: "menu-reaction-aria",
+      selectorHint: `button.reactions-menu__reaction-index[aria-label='${reactionUi.menuAriaLabel}']`,
+      locatorFactory: () =>
+        menu.locator(
+          `button.reactions-menu__reaction-index[aria-label="${reactionUi.menuAriaLabel}"]`
+        )
+    },
+    {
+      key: "menu-reaction-text",
+      selectorHint: `button.reactions-menu__reaction-index hasText=${reactionUi.label}`,
+      locatorFactory: () =>
+        menu
+          .locator("button.reactions-menu__reaction-index")
+          .filter({ hasText: new RegExp(`^${reactionUi.label}$`, "i") })
+    },
+    {
+      key: "menu-reaction-fallback",
+      selectorHint: `button[aria-label*='${reactionUi.label}']`,
+      locatorFactory: () =>
+        menu.locator(`button[aria-label*="${reactionUi.label}"]`)
+    }
+  ];
+
+  const reactionButton = await findVisibleLocatorOrThrow(page, candidateButtons, "reaction_menu_button");
+  await reactionButton.locator.click({ timeout: 5_000 });
+  return reactionButton.key;
+}
+
+async function findTargetPostLocator(page: Page, postUrl: string): Promise<TargetPostLocator> {
+  const postIdentity = extractPostIdentity(postUrl);
+  const activityId = extractActivityId(postIdentity || postUrl);
+  const candidates: SelectorCandidate[] = [];
+
+  if (postIdentity) {
+    const escapedIdentity = escapeCssAttributeValue(postIdentity);
+    candidates.push(
+      {
+        key: "post-root-data-urn-exact",
+        selectorHint: `[data-urn="${postIdentity}"]`,
+        locatorFactory: (targetPage) =>
+          targetPage.locator(`[data-urn="${escapedIdentity}"]`)
+      },
+      {
+        key: "post-root-data-urn-contains",
+        selectorHint: `[data-urn*="${postIdentity}"]`,
+        locatorFactory: (targetPage) =>
+          targetPage.locator(`[data-urn*="${escapedIdentity}"]`)
+      },
+      {
+        key: "post-root-permalink-identity",
+        selectorHint: `article:has(a[href*="${postIdentity}"])`,
+        locatorFactory: (targetPage) =>
+          targetPage.locator(`article:has(a[href*="${escapedIdentity}"])`)
+      }
+    );
+  }
+
+  if (activityId) {
+    const escapedActivityId = escapeCssAttributeValue(activityId);
+    candidates.push(
+      {
+        key: "post-root-data-urn-activity",
+        selectorHint: `[data-urn*="${activityId}"]`,
+        locatorFactory: (targetPage) =>
+          targetPage.locator(`[data-urn*="${escapedActivityId}"]`)
+      },
+      {
+        key: "post-root-permalink-activity",
+        selectorHint: `article:has(a[href*="${activityId}"])`,
+        locatorFactory: (targetPage) =>
+          targetPage.locator(`article:has(a[href*="${escapedActivityId}"])`)
+      }
+    );
+  }
+
+  candidates.push(
+    {
+      key: "post-root-first-data-urn",
+      selectorHint: "[data-urn]",
+      locatorFactory: (targetPage) => targetPage.locator("[data-urn]")
+    },
+    {
+      key: "post-root-first-article",
+      selectorHint: "article",
+      locatorFactory: (targetPage) => targetPage.locator("article")
+    }
+  );
+
+  const resolved = await findVisibleLocatorOrThrow(page, candidates, "post_root");
+  return {
+    locator: resolved.locator,
+    key: resolved.key,
+    postIdentity,
+    activityId
+  };
+}
+
+async function expandCommentsForPost(page: Page, postRoot: Locator): Promise<string | null> {
+  const candidates: SelectorCandidate[] = [
+    {
+      key: "post-social-action-comment",
+      selectorHint: "button.social-actions-button.comment-button",
+      locatorFactory: () => postRoot.locator("button.social-actions-button.comment-button")
+    },
+    {
+      key: "post-aria-comment-button",
+      selectorHint: "button[aria-label*='Comment']",
+      locatorFactory: () => postRoot.locator("button[aria-label*='Comment']")
+    },
+    {
+      key: "post-role-button-comment",
+      selectorHint: "getByRole(button, /comment/i)",
+      locatorFactory: () =>
+        postRoot.getByRole("button", {
+          name: /comment/i
+        })
+    }
+  ];
+
+  for (const candidate of candidates) {
+    const locator = candidate.locatorFactory(page).first();
+    if (await isLocatorVisible(locator)) {
+      await locator.click({ timeout: 5_000 });
+      await page.waitForTimeout(800);
+      return candidate.key;
+    }
+  }
+
+  return null;
+}
+
+async function isCommentVisibleInPost(postRoot: Locator, text: string): Promise<boolean> {
+  const normalized = normalizeText(text);
+  if (!normalized) {
+    return false;
+  }
+
+  const candidates = [
+    postRoot
+      .locator(
+        ".comments-comment-item__main-content, .comments-comment-item-content-body, .comments-post-meta__main-content"
+      )
+      .filter({ hasText: normalized }),
+    postRoot.locator(".comments-comment-item").filter({ hasText: normalized })
+  ];
+
+  for (const candidate of candidates) {
+    if (await isAnyLocatorVisible(candidate)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export class LikePostActionExecutor
   implements ActionExecutor<LinkedInFeedExecutorRuntime>
 {
@@ -642,6 +1044,11 @@ export class LikePostActionExecutor
       action.id,
       "target"
     );
+    const requestedReaction =
+      typeof action.payload.reaction === "string"
+        ? action.payload.reaction
+        : undefined;
+    const reaction = normalizeLinkedInFeedReaction(requestedReaction, "like");
 
     await runtime.auth.ensureAuthenticated({
       profileName,
@@ -669,6 +1076,7 @@ export class LikePostActionExecutor
                 action_id: action.id,
                 profile_name: profileName,
                 post_url: postUrl,
+                reaction,
                 rate_limit: formatRateLimitState(rateLimitState)
               }
             );
@@ -677,40 +1085,115 @@ export class LikePostActionExecutor
           await page.goto(postUrl, { waitUntil: "domcontentloaded" });
           await waitForPostSurface(page);
 
-          const likeButton = await findVisibleLocatorOrThrow(
-            page,
-            [
-              {
-                key: "role-button-like",
-                selectorHint: "getByRole(button, /like/i)",
-                locatorFactory: (targetPage) =>
-                  targetPage.getByRole("button", {
-                    name: /\blike\b/i
-                  })
-              },
-              {
-                key: "aria-like-button",
-                selectorHint: "button[aria-label*='Like']",
-                locatorFactory: (targetPage) =>
-                  targetPage.locator("button[aria-label*='Like']")
-              },
-              {
-                key: "social-action-like",
-                selectorHint: "button.react-button__trigger",
-                locatorFactory: (targetPage) =>
-                  targetPage.locator("button.react-button__trigger")
-              }
-            ],
-            "like_button"
+          let targetPost = await findTargetPostLocator(page, postUrl);
+
+          const resolveReactionButton = async (postRoot: Locator) =>
+            findVisibleLocatorOrThrow(
+              page,
+              [
+                {
+                  key: "post-social-action-like",
+                  selectorHint: "button.social-actions-button.react-button__trigger",
+                  locatorFactory: () =>
+                    postRoot.locator(
+                      "button.social-actions-button.react-button__trigger"
+                    )
+                },
+                {
+                  key: "post-react-button",
+                  selectorHint: "button.react-button__trigger",
+                  locatorFactory: () => postRoot.locator("button.react-button__trigger")
+                },
+                {
+                  key: "post-aria-like-button",
+                  selectorHint:
+                    "button[aria-label*='Like'], button[aria-label*='React'], button[aria-label*='reaction']",
+                  locatorFactory: () =>
+                    postRoot.locator(
+                      "button[aria-label*='Like'], button[aria-label*='React'], button[aria-label*='reaction']"
+                    )
+                },
+                {
+                  key: "post-role-button-like",
+                  selectorHint: "getByRole(button, /like|react/i)",
+                  locatorFactory: () =>
+                    postRoot.getByRole("button", {
+                      name: /\blike\b|\breact\b/i
+                    })
+                }
+              ],
+              "reaction_button"
+            );
+
+          let reactButton = await resolveReactionButton(targetPost.locator);
+          const wasAlreadyReacted = await isDesiredReactionActive(
+            reactButton.locator,
+            reaction
           );
+          let reactionSelectorKey: string | null = null;
 
-          const wasAlreadyLiked =
-            normalizeText(await likeButton.locator.getAttribute("aria-pressed")) ===
-            "true";
+          let verifiedReaction = wasAlreadyReacted;
+          if (!wasAlreadyReacted) {
+            if (reaction === "like") {
+              await reactButton.locator.click({ timeout: 5_000 });
+              verifiedReaction = await waitForCondition(
+                async () => isDesiredReactionActive(reactButton.locator, reaction),
+                6_000
+              );
 
-          if (!wasAlreadyLiked) {
-            await likeButton.locator.click({ timeout: 5_000 });
-            await page.waitForTimeout(1_500);
+              if (!verifiedReaction) {
+                try {
+                  reactionSelectorKey = await selectReactionFromMenu(
+                    page,
+                    reactButton.locator,
+                    reaction
+                  );
+                  verifiedReaction = await waitForCondition(
+                    async () => isDesiredReactionActive(reactButton.locator, reaction),
+                    6_000
+                  );
+                } catch {
+                  // Ignore and fall through to reload verification.
+                }
+              }
+            } else {
+              reactionSelectorKey = await selectReactionFromMenu(
+                page,
+                reactButton.locator,
+                reaction
+              );
+              verifiedReaction = await waitForCondition(
+                async () => isDesiredReactionActive(reactButton.locator, reaction),
+                8_000
+              );
+            }
+          }
+
+          if (!verifiedReaction) {
+            await page.reload({ waitUntil: "domcontentloaded" });
+            await waitForPostSurface(page);
+            targetPost = await findTargetPostLocator(page, postUrl);
+            reactButton = await resolveReactionButton(targetPost.locator);
+            verifiedReaction = await isDesiredReactionActive(reactButton.locator, reaction);
+          }
+
+          if (!verifiedReaction) {
+            const currentReactionState = await getReactionButtonState(reactButton.locator);
+            throw new LinkedInAssistantError(
+              "UNKNOWN",
+              "Reaction action could not be verified on the target post.",
+              {
+                action_id: action.id,
+                profile_name: profileName,
+                post_url: postUrl,
+                requested_reaction: reaction,
+                current_reaction: currentReactionState.reaction,
+                current_reacted: currentReactionState.reacted,
+                current_aria_label: currentReactionState.ariaLabel,
+                post_identity: targetPost.postIdentity,
+                activity_id: targetPost.activityId
+              }
+            );
           }
 
           const screenshotPath = `linkedin/screenshot-feed-like-${Date.now()}.png`;
@@ -718,14 +1201,20 @@ export class LikePostActionExecutor
             action: LIKE_POST_ACTION_TYPE,
             profile_name: profileName,
             post_url: postUrl,
-            selector_key: likeButton.key
+            reaction,
+            selector_key: reactButton.key,
+            reaction_selector_key: reactionSelectorKey ?? undefined,
+            post_selector_key: targetPost.key
           });
 
           return {
             ok: true,
             result: {
-              liked: true,
-              already_liked: wasAlreadyLiked,
+              reacted: true,
+              reaction,
+              already_reacted: wasAlreadyReacted,
+              liked: reaction === "like",
+              already_liked: reaction === "like" ? wasAlreadyReacted : false,
               post_url: postUrl,
               rate_limit: formatRateLimitState(rateLimitState)
             },
@@ -794,28 +1283,36 @@ export class CommentOnPostActionExecutor
           await page.goto(postUrl, { waitUntil: "domcontentloaded" });
           await waitForPostSurface(page);
 
+          let targetPost = await findTargetPostLocator(page, postUrl);
+
           const commentTrigger = await findVisibleLocatorOrThrow(
             page,
             [
               {
-                key: "role-button-comment",
+                key: "post-social-action-comment",
+                selectorHint: "button.social-actions-button.comment-button",
+                locatorFactory: () =>
+                  targetPost.locator.locator("button.social-actions-button.comment-button")
+              },
+              {
+                key: "post-aria-comment-button",
+                selectorHint: "button[aria-label*='Comment']",
+                locatorFactory: () =>
+                  targetPost.locator.locator("button[aria-label*='Comment']")
+              },
+              {
+                key: "post-role-button-comment",
                 selectorHint: "getByRole(button, /comment/i)",
-                locatorFactory: (targetPage) =>
-                  targetPage.getByRole("button", {
+                locatorFactory: () =>
+                  targetPost.locator.getByRole("button", {
                     name: /comment/i
                   })
               },
               {
-                key: "aria-comment-button",
-                selectorHint: "button[aria-label*='Comment']",
-                locatorFactory: (targetPage) =>
-                  targetPage.locator("button[aria-label*='Comment']")
-              },
-              {
                 key: "comment-button-fallback",
                 selectorHint: "button.comments-comment-social-bar__button",
-                locatorFactory: (targetPage) =>
-                  targetPage.locator("button.comments-comment-social-bar__button")
+                locatorFactory: () =>
+                  page.locator("button.comments-comment-social-bar__button")
               }
             ],
             "comment_trigger"
@@ -827,27 +1324,33 @@ export class CommentOnPostActionExecutor
             page,
             [
               {
-                key: "role-textbox-comment",
-                selectorHint: "getByRole(textbox, /comment/i)",
-                locatorFactory: (targetPage) =>
-                  targetPage.getByRole("textbox", {
-                    name: /add a comment|comment/i
-                  })
-              },
-              {
-                key: "comment-box-editor",
+                key: "post-comment-box-editor",
                 selectorHint: "div.comments-comment-box__editor[contenteditable='true']",
-                locatorFactory: (targetPage) =>
-                  targetPage.locator(
+                locatorFactory: () =>
+                  targetPost.locator.locator(
                     "div.comments-comment-box__editor[contenteditable='true']"
                   )
               },
               {
-                key: "contenteditable-textbox",
+                key: "post-contenteditable-textbox",
                 selectorHint: "div[role='textbox'][contenteditable='true']",
+                locatorFactory: () =>
+                  targetPost.locator.locator("div[role='textbox'][contenteditable='true']")
+              },
+              {
+                key: "post-role-textbox-comment",
+                selectorHint: "getByRole(textbox, /add a comment|comment/i)",
+                locatorFactory: () =>
+                  targetPost.locator.getByRole("textbox", {
+                    name: /add a comment|comment/i
+                  })
+              },
+              {
+                key: "comment-box-editor-fallback",
+                selectorHint: "div.comments-comment-box__editor[contenteditable='true']",
                 locatorFactory: (targetPage) =>
                   targetPage.locator(
-                    "div[role='textbox'][contenteditable='true']"
+                    "div.comments-comment-box__editor[contenteditable='true']"
                   )
               },
               {
@@ -862,42 +1365,114 @@ export class CommentOnPostActionExecutor
           await commentInput.locator.click({ timeout: 3_000 });
           await commentInput.locator.fill(text, { timeout: 5_000 });
 
+          const composerRoot = commentInput.locator.locator(
+            "xpath=ancestor::*[contains(@class,'comments-comment-box')][1]"
+          );
+
           const submitButton = await findVisibleLocatorOrThrow(
             page,
             [
               {
-                key: "role-button-post",
-                selectorHint: "getByRole(button, /post|comment/i)",
-                locatorFactory: (targetPage) =>
-                  targetPage.getByRole("button", {
-                    name: /post|comment/i
+                key: "comment-submit-button",
+                selectorHint: "button[class*='comments-comment-box__submit-button']",
+                locatorFactory: () =>
+                  composerRoot.locator(
+                    "button[class*='comments-comment-box__submit-button']"
+                  )
+              },
+              {
+                key: "comment-submit-role-post",
+                selectorHint: "getByRole(button, /^post$/i)",
+                locatorFactory: () =>
+                  composerRoot.getByRole("button", {
+                    name: /^post$/i
                   })
               },
               {
-                key: "comment-submit-button",
-                selectorHint: "button.comments-comment-box__submit-button",
-                locatorFactory: (targetPage) =>
-                  targetPage.locator("button.comments-comment-box__submit-button")
+                key: "comment-submit-role-comment",
+                selectorHint: "getByRole(button, /^comment$/i)",
+                locatorFactory: () =>
+                  composerRoot.getByRole("button", {
+                    name: /^comment$/i
+                  })
               },
               {
-                key: "comment-submit-fallback",
-                selectorHint: "button[aria-label*='Post comment']",
-                locatorFactory: (targetPage) =>
-                  targetPage.locator("button[aria-label*='Post comment']")
+                key: "comment-submit-aria",
+                selectorHint: "button[aria-label*='Post comment'], button[aria-label*='Post']",
+                locatorFactory: () =>
+                  composerRoot.locator(
+                    "button[aria-label*='Post comment'], button[aria-label*='Post']"
+                  )
+              },
+              {
+                key: "comment-submit-post-root-fallback",
+                selectorHint: "button[class*='comments-comment-box__submit-button']",
+                locatorFactory: () =>
+                  targetPost.locator.locator(
+                    "button[class*='comments-comment-box__submit-button']"
+                  )
               }
             ],
             "comment_submit"
           );
 
+          const submitEnabled = await waitForCondition(async () => {
+            try {
+              return await submitButton.locator.isEnabled();
+            } catch {
+              return false;
+            }
+          }, 4_000);
+
+          if (!submitEnabled) {
+            throw new LinkedInAssistantError(
+              "UI_CHANGED_SELECTOR_FAILED",
+              "Comment submit button was not enabled after entering comment text.",
+              {
+                action_id: action.id,
+                profile_name: profileName,
+                post_url: postUrl,
+                selector_key: submitButton.key
+              }
+            );
+          }
+
           await submitButton.locator.click({ timeout: 5_000 });
-          await page.waitForTimeout(1_500);
+          await page.waitForTimeout(1_200);
+
+          await page.reload({ waitUntil: "domcontentloaded" });
+          await waitForPostSurface(page);
+          targetPost = await findTargetPostLocator(page, postUrl);
+          const reopenCommentKey = await expandCommentsForPost(page, targetPost.locator);
+
+          const commentVerified = await waitForCondition(
+            async () => isCommentVisibleInPost(targetPost.locator, text),
+            12_000
+          );
+
+          if (!commentVerified) {
+            throw new LinkedInAssistantError(
+              "UNKNOWN",
+              "Comment action could not be verified on the target post.",
+              {
+                action_id: action.id,
+                profile_name: profileName,
+                post_url: postUrl,
+                post_identity: targetPost.postIdentity,
+                activity_id: targetPost.activityId,
+                reopen_comment_selector_key: reopenCommentKey ?? null,
+                text
+              }
+            );
+          }
 
           const screenshotPath = `linkedin/screenshot-feed-comment-${Date.now()}.png`;
           await captureScreenshotArtifact(runtime, page, screenshotPath, {
             action: COMMENT_ON_POST_ACTION_TYPE,
             profile_name: profileName,
             post_url: postUrl,
-            selector_key: submitButton.key
+            selector_key: submitButton.key,
+            post_selector_key: targetPost.key
           });
 
           return {
@@ -1036,6 +1611,7 @@ export class LinkedInFeedService {
   } {
     const profileName = input.profileName ?? "default";
     const postUrl = resolvePostUrl(input.postUrl);
+    const reaction = normalizeLinkedInFeedReaction(input.reaction, "like");
     const rateLimitState = this.runtime.rateLimiter.peek(LIKE_RATE_LIMIT_CONFIG);
 
     const target = {
@@ -1044,18 +1620,23 @@ export class LinkedInFeedService {
     };
 
     const preview = {
-      summary: `Like LinkedIn post ${postUrl}`,
+      summary: `React (${LINKEDIN_FEED_REACTION_MAP[reaction].label}) to LinkedIn post ${postUrl}`,
       target,
       outbound: {
-        action: "like"
+        action: "react",
+        reaction
       },
+      supported_reactions: LINKEDIN_FEED_REACTION_TYPES,
+      reaction_map: LINKEDIN_FEED_REACTION_MAP,
       rate_limit: formatRateLimitState(rateLimitState)
     } satisfies Record<string, unknown>;
 
     return this.runtime.twoPhaseCommit.prepare({
       actionType: LIKE_POST_ACTION_TYPE,
       target,
-      payload: {},
+      payload: {
+        reaction
+      },
       preview,
       ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
     });

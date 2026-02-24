@@ -1,7 +1,8 @@
-import { type BrowserContext, type Page } from "playwright-core";
+import { type BrowserContext, type Locator, type Page } from "playwright-core";
 import type { LinkedInAuthService } from "./auth/session.js";
 import { LinkedInAssistantError, asLinkedInAssistantError } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
+import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
 import { resolveProfileUrl } from "./linkedinProfile.js";
 import type { TwoPhaseCommitService } from "./twoPhaseCommit.js";
@@ -92,6 +93,44 @@ const INVITATIONS_SENT_URL = "https://www.linkedin.com/mynetwork/invitation-mana
 
 function normalizeText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
+}
+
+interface VisibleLocatorCandidate {
+  key: string;
+  selectorHint: string;
+  locatorFactory: (page: Page) => Locator;
+}
+
+async function findVisibleLocator(
+  page: Page,
+  candidates: VisibleLocatorCandidate[]
+): Promise<{ locator: Locator; key: string } | null> {
+  for (const candidate of candidates) {
+    const locator = candidate.locatorFactory(page).first();
+    if (await locator.isVisible().catch(() => false)) {
+      return { locator, key: candidate.key };
+    }
+  }
+
+  return null;
+}
+
+async function waitForCondition(
+  condition: () => Promise<boolean>,
+  timeoutMs: number,
+  intervalMs = 250
+): Promise<boolean> {
+  const deadline = Date.now() + Math.max(0, timeoutMs);
+  while (Date.now() < deadline) {
+    if (await condition()) {
+      return true;
+    }
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, intervalMs);
+    });
+  }
+
+  return condition();
 }
 
 async function getOrCreatePage(context: BrowserContext): Promise<Page> {
@@ -197,7 +236,7 @@ async function scrapePendingInvitations(
 ): Promise<LinkedInPendingInvitation[]> {
   // Wait for invitation cards
   await page
-    .locator("li.invitation-card, li[class*='invitation-card']")
+    .locator("li.invitation-card, li[class*='invitation-card'], div[role='listitem']")
     .first()
     .waitFor({ state: "visible", timeout: 5_000 })
     .catch(() => undefined);
@@ -206,26 +245,63 @@ async function scrapePendingInvitations(
     const normalize = (v: string | null | undefined): string =>
       (v ?? "").replace(/\s+/g, " ").trim();
 
-    const cards = Array.from(
+    const legacyCards = Array.from(
       document.querySelectorAll(
         "li.invitation-card, li[class*='invitation-card'], div.invitation-card"
       )
     );
 
+    const modernCards = Array.from(
+      document.querySelectorAll("div[role='listitem'], li[role='listitem']")
+    ).filter((card) => {
+      const text = normalize(card.textContent).toLowerCase();
+      if (!card.querySelector("a[href*='/in/']")) {
+        return false;
+      }
+
+      if (direction === "sent") {
+        return /withdraw|sent/.test(text);
+      }
+
+      return /accept|ignore|decline|respond/.test(text);
+    });
+
+    const cards = legacyCards.length > 0 ? legacyCards : modernCards;
+
     return cards.map((card) => {
       const linkEl = card.querySelector("a[href*='/in/']") as HTMLAnchorElement | null;
       const profileUrl = linkEl?.href ?? "";
+      const linkTextCandidates = Array.from(
+        card.querySelectorAll("a[href*='/in/']")
+      )
+        .map((anchor) => normalize(anchor.textContent))
+        .filter((value) => value.length > 0);
 
       const nameEl =
         card.querySelector(".invitation-card__title") ??
         card.querySelector("span[dir='ltr'] strong") ??
-        card.querySelector("a[href*='/in/'] span[aria-hidden='true']");
-      const fullName = normalize(nameEl?.textContent);
+        card.querySelector("a[href*='/in/'] span[aria-hidden='true']") ??
+        card.querySelector("a[href*='/in/']");
+      const fullName = normalize(nameEl?.textContent) || linkTextCandidates[0] || "";
 
       const headlineEl =
         card.querySelector(".invitation-card__subtitle") ??
         card.querySelector(".entity-result__primary-subtitle");
-      const headline = normalize(headlineEl?.textContent);
+      let headline = normalize(headlineEl?.textContent)
+        .replace(/\b(sent|withdraw|accept|ignore)\b/gi, "")
+        .trim();
+
+      if (!headline) {
+        const fallbackLine = Array.from(card.querySelectorAll("p, span"))
+          .map((el) => normalize(el.textContent))
+          .find((line) => {
+            if (!line) return false;
+            if (line === fullName) return false;
+            if (/sent|withdraw|accept|ignore|invitation/i.test(line)) return false;
+            return true;
+          });
+        headline = fallbackLine ?? "";
+      }
 
       return {
         profile_url: profileUrl,
@@ -270,71 +346,271 @@ async function executeSendInvitation(
     async (context) => {
       const page = await getOrCreatePage(context);
       await page.goto(profileUrl, { waitUntil: "domcontentloaded" });
-      await page.waitForLoadState("networkidle");
+      await waitForNetworkIdleBestEffort(page);
 
-      // Look for "Connect" button
-      const connectBtn = page.locator(
-        "button:has-text('Connect'), button[aria-label*='connect' i], button[aria-label*='Connect']"
-      ).first();
+      const topCardRoot = page.locator("main .pv-top-card, main").first();
 
-      const moreBtn = page.locator(
-        "button:has-text('More'), button[aria-label='More actions']"
-      ).first();
-
-      let clicked = false;
-      if (await connectBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await connectBtn.click();
-        clicked = true;
-      } else if (await moreBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await moreBtn.click();
-        await page.waitForTimeout(500);
-        const menuConnect = page.locator(
-          "[role='menuitem']:has-text('Connect'), li:has-text('Connect')"
-        ).first();
-        if (await menuConnect.isVisible({ timeout: 2000 }).catch(() => false)) {
-          await menuConnect.click();
-          clicked = true;
+      const connectCandidates: VisibleLocatorCandidate[] = [
+        {
+          key: "topcard-connect-role",
+          selectorHint: "topCard.getByRole(button, /^connect$/i)",
+          locatorFactory: () =>
+            topCardRoot.getByRole("button", {
+              name: /^connect$/i
+            })
+        },
+        {
+          key: "topcard-connect-aria-invite",
+          selectorHint: "topCard button[aria-label*='Invite'][aria-label*='connect']",
+          locatorFactory: () =>
+            topCardRoot.locator(
+              "button[aria-label*='Invite' i][aria-label*='connect' i]"
+            )
+        },
+        {
+          key: "page-connect-role",
+          selectorHint: "page.getByRole(button, /^connect$/i)",
+          locatorFactory: (targetPage) =>
+            targetPage.getByRole("button", {
+              name: /^connect$/i
+            })
+        },
+        {
+          key: "page-connect-aria",
+          selectorHint: "button[aria-label*='connect']",
+          locatorFactory: (targetPage) =>
+            targetPage.locator("button[aria-label*='connect' i]")
         }
-      }
+      ];
 
-      if (!clicked) {
-        throw new LinkedInAssistantError(
-          "UI_CHANGED_SELECTOR_FAILED",
-          "Could not find Connect button on profile page.",
-          { target_profile: targetProfile, url: page.url() }
-        );
-      }
+      const moreCandidates: VisibleLocatorCandidate[] = [
+        {
+          key: "topcard-more-role",
+          selectorHint: "topCard.getByRole(button, /^more$/i)",
+          locatorFactory: () =>
+            topCardRoot.getByRole("button", {
+              name: /^more$/i
+            })
+        },
+        {
+          key: "topcard-more-actions-aria",
+          selectorHint: "topCard button[aria-label='More actions']",
+          locatorFactory: () =>
+            topCardRoot.locator("button[aria-label='More actions']")
+        },
+        {
+          key: "page-more-role",
+          selectorHint: "page.getByRole(button, /^more$/i)",
+          locatorFactory: (targetPage) =>
+            targetPage.getByRole("button", {
+              name: /^more$/i
+            })
+        }
+      ];
 
-      // Wait for the invitation modal
-      await page.waitForTimeout(1000);
+      const menuConnectCandidates: VisibleLocatorCandidate[] = [
+        {
+          key: "menu-connect-roleitem",
+          selectorHint: "[role='menuitem'] hasText /^connect$/i",
+          locatorFactory: (targetPage) =>
+            targetPage.locator("[role='menuitem']").filter({
+              hasText: /^connect$/i
+            })
+        },
+        {
+          key: "menu-connect-dropdown-item",
+          selectorHint: ".artdeco-dropdown__content-inner [role='button'] hasText /^connect$/i",
+          locatorFactory: (targetPage) =>
+            targetPage.locator(".artdeco-dropdown__content-inner [role='button']").filter({
+              hasText: /^connect$/i
+            })
+        },
+        {
+          key: "menu-connect-li-text",
+          selectorHint: ".artdeco-dropdown__content-inner li:has-text('Connect')",
+          locatorFactory: (targetPage) =>
+            targetPage.locator(".artdeco-dropdown__content-inner li").filter({
+              hasText: /^connect$/i
+            })
+        }
+      ];
 
-      // Add note if provided
-      if (note) {
-        const addNoteBtn = page.locator("button:has-text('Add a note')").first();
-        if (await addNoteBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-          await addNoteBtn.click();
-          await page.waitForTimeout(500);
-          const noteField = page.locator(
-            "textarea[name='message'], textarea#custom-message"
-          ).first();
-          if (await noteField.isVisible({ timeout: 2000 }).catch(() => false)) {
-            await noteField.fill(note);
+      let connectSelectorKey: string | null = null;
+      const directConnect = await findVisibleLocator(page, connectCandidates);
+      if (directConnect) {
+        await directConnect.locator.click({ timeout: 5_000 });
+        connectSelectorKey = directConnect.key;
+      } else {
+        const moreButton = await findVisibleLocator(page, moreCandidates);
+        if (moreButton) {
+          await moreButton.locator.click({ timeout: 5_000 });
+          await page.waitForTimeout(600);
+          const menuConnect = await findVisibleLocator(page, menuConnectCandidates);
+          if (menuConnect) {
+            await menuConnect.locator.click({ timeout: 5_000 });
+            connectSelectorKey = `${moreButton.key}:${menuConnect.key}`;
           }
         }
       }
 
-      // Click Send
-      const sendBtn = page.locator(
-        "button:has-text('Send'), button[aria-label*='Send']"
-      ).first();
-      if (await sendBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await sendBtn.click();
-        await page.waitForTimeout(2000);
-      } else {
+      if (!connectSelectorKey) {
+        throw new LinkedInAssistantError(
+          "UI_CHANGED_SELECTOR_FAILED",
+          "Could not find Connect button on profile page.",
+          {
+            target_profile: targetProfile,
+            url: page.url(),
+            attempted_connect_selectors: connectCandidates.map((c) => c.selectorHint),
+            attempted_more_selectors: moreCandidates.map((c) => c.selectorHint),
+            attempted_menu_selectors: menuConnectCandidates.map((c) => c.selectorHint)
+          }
+        );
+      }
+
+      await page.waitForTimeout(900);
+
+      const addNoteCandidates: VisibleLocatorCandidate[] = [
+        {
+          key: "add-note-text",
+          selectorHint: "button:has-text('Add a note')",
+          locatorFactory: (targetPage) => targetPage.locator("button:has-text('Add a note')")
+        },
+        {
+          key: "add-note-aria",
+          selectorHint: "button[aria-label*='Add a note']",
+          locatorFactory: (targetPage) => targetPage.locator("button[aria-label*='Add a note']")
+        }
+      ];
+
+      const noteFieldCandidates: VisibleLocatorCandidate[] = [
+        {
+          key: "note-textarea-message-name",
+          selectorHint: "textarea[name='message']",
+          locatorFactory: (targetPage) => targetPage.locator("textarea[name='message']")
+        },
+        {
+          key: "note-textarea-custom-id",
+          selectorHint: "textarea#custom-message",
+          locatorFactory: (targetPage) => targetPage.locator("textarea#custom-message")
+        },
+        {
+          key: "note-textarea-aria",
+          selectorHint: "textarea[aria-label*='invitation']",
+          locatorFactory: (targetPage) =>
+            targetPage.locator("textarea[aria-label*='invitation' i]")
+        },
+        {
+          key: "note-textarea-fallback",
+          selectorHint: "textarea",
+          locatorFactory: (targetPage) => targetPage.locator("textarea")
+        }
+      ];
+
+      let noteFieldSelectorKey: string | null = null;
+      if (note) {
+        const addNoteButton = await findVisibleLocator(page, addNoteCandidates);
+        if (addNoteButton) {
+          await addNoteButton.locator.click({ timeout: 5_000 });
+          await page.waitForTimeout(500);
+        }
+
+        const noteField = await findVisibleLocator(page, noteFieldCandidates);
+        if (!noteField) {
+          throw new LinkedInAssistantError(
+            "UI_CHANGED_SELECTOR_FAILED",
+            "Could not find invitation note field in connect dialog.",
+            {
+              target_profile: targetProfile,
+              attempted_note_field_selectors: noteFieldCandidates.map(
+                (candidate) => candidate.selectorHint
+              )
+            }
+          );
+        }
+
+        await noteField.locator.fill(note, { timeout: 5_000 });
+        noteFieldSelectorKey = noteField.key;
+      }
+
+      const sendCandidates: VisibleLocatorCandidate[] = [
+        {
+          key: "send-text",
+          selectorHint: "button:has-text('Send')",
+          locatorFactory: (targetPage) => targetPage.locator("button:has-text('Send')")
+        },
+        {
+          key: "send-role",
+          selectorHint: "getByRole(button, /^send$/i)",
+          locatorFactory: (targetPage) =>
+            targetPage.getByRole("button", {
+              name: /^send$/i
+            })
+        },
+        {
+          key: "send-aria",
+          selectorHint: "button[aria-label*='Send']",
+          locatorFactory: (targetPage) => targetPage.locator("button[aria-label*='Send' i]")
+        },
+        {
+          key: "send-without-note",
+          selectorHint: "button:has-text('Send without a note')",
+          locatorFactory: (targetPage) =>
+            targetPage.locator("button:has-text('Send without a note')")
+        }
+      ];
+
+      const sendButton = await findVisibleLocator(page, sendCandidates);
+      if (!sendButton) {
         throw new LinkedInAssistantError(
           "UI_CHANGED_SELECTOR_FAILED",
           "Could not find Send button in invitation dialog.",
-          { target_profile: targetProfile }
+          {
+            target_profile: targetProfile,
+            attempted_send_selectors: sendCandidates.map((candidate) => candidate.selectorHint)
+          }
+        );
+      }
+
+      await sendButton.locator.click({ timeout: 5_000 });
+
+      const pendingCandidates: VisibleLocatorCandidate[] = [
+        {
+          key: "pending-text",
+          selectorHint: "topCard.getByRole(button, /pending|withdraw/i)",
+          locatorFactory: () =>
+            topCardRoot.getByRole("button", {
+              name: /pending|withdraw/i
+            })
+        },
+        {
+          key: "pending-aria",
+          selectorHint: "topCard button[aria-label*='Withdraw']",
+          locatorFactory: () =>
+            topCardRoot.locator("button[aria-label*='Withdraw' i]")
+        },
+        {
+          key: "pending-invitations-sent-text",
+          selectorHint: "page text=/invitation sent/i",
+          locatorFactory: (targetPage) =>
+            targetPage.locator(":text-matches('invitation sent', 'i')")
+        }
+      ];
+
+      const invitationLanded = await waitForCondition(async () => {
+        const pendingIndicator = await findVisibleLocator(page, pendingCandidates);
+        return pendingIndicator !== null;
+      }, 8_000);
+
+      if (!invitationLanded) {
+        throw new LinkedInAssistantError(
+          "UNKNOWN",
+          "Connection invitation could not be verified after clicking send.",
+          {
+            target_profile: targetProfile,
+            connect_selector_key: connectSelectorKey,
+            note_field_selector_key: noteFieldSelectorKey,
+            send_selector_key: sendButton.key
+          }
         );
       }
 
@@ -342,7 +618,10 @@ async function executeSendInvitation(
         result: {
           status: "invitation_sent",
           target_profile: targetProfile,
-          note_included: note.length > 0
+          note_included: note.length > 0,
+          connect_selector_key: connectSelectorKey,
+          note_field_selector_key: noteFieldSelectorKey,
+          send_selector_key: sendButton.key
         },
         artifacts: []
       };
@@ -366,7 +645,7 @@ async function executeAcceptInvitation(
     async (context) => {
       const page = await getOrCreatePage(context);
       await page.goto(INVITATIONS_RECEIVED_URL, { waitUntil: "domcontentloaded" });
-      await page.waitForLoadState("networkidle");
+      await waitForNetworkIdleBestEffort(page);
 
       // Find the invitation card for the target
       const acceptBtn = page.locator(
@@ -411,7 +690,7 @@ async function executeWithdrawInvitation(
     async (context) => {
       const page = await getOrCreatePage(context);
       await page.goto(INVITATIONS_SENT_URL, { waitUntil: "domcontentloaded" });
-      await page.waitForLoadState("networkidle");
+      await waitForNetworkIdleBestEffort(page);
 
       const withdrawBtn = page.locator(
         `li:has(a[href*="${targetProfile}"]) button:has-text("Withdraw")`
@@ -539,7 +818,7 @@ export class LinkedInConnectionsService {
         async (context) => {
           const page = await getOrCreatePage(context);
           await page.goto(CONNECTIONS_URL, { waitUntil: "domcontentloaded" });
-          await page.waitForLoadState("networkidle");
+          await waitForNetworkIdleBestEffort(page);
           return scrapeConnections(page, limit);
         }
       );
@@ -581,7 +860,7 @@ export class LinkedInConnectionsService {
             await page.goto(INVITATIONS_RECEIVED_URL, {
               waitUntil: "domcontentloaded"
             });
-            await page.waitForLoadState("networkidle");
+            await waitForNetworkIdleBestEffort(page);
             return scrapePendingInvitations(page, "received");
           }
         );
@@ -600,7 +879,7 @@ export class LinkedInConnectionsService {
             await page.goto(INVITATIONS_SENT_URL, {
               waitUntil: "domcontentloaded"
             });
-            await page.waitForLoadState("networkidle");
+            await waitForNetworkIdleBestEffort(page);
             return scrapePendingInvitations(page, "sent");
           }
         );

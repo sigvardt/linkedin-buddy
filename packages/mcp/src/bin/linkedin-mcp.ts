@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import {
+  LINKEDIN_FEED_REACTION_TYPES,
   LinkedInAssistantError,
   createCoreRuntime,
+  normalizeLinkedInFeedReaction,
   toLinkedInAssistantErrorPayload,
   type SearchCategory
 } from "@linkedin-assistant/core";
@@ -748,22 +750,26 @@ async function handleFeedLike(args: ToolArgs): Promise<ToolResult> {
   try {
     const profileName = readString(args, "profileName", "default");
     const postUrl = readRequiredString(args, "postUrl");
+    const reaction = normalizeLinkedInFeedReaction(readString(args, "reaction", "like"));
     const operatorNote = readString(args, "operatorNote", "");
 
     runtime.logger.log("info", "mcp.feed.like.start", {
       profileName,
-      postUrl
+      postUrl,
+      reaction
     });
 
     const prepared = runtime.feed.prepareLikePost({
       profileName,
       postUrl,
+      reaction,
       ...(operatorNote ? { operatorNote } : {})
     });
 
     runtime.logger.log("info", "mcp.feed.like.done", {
       profileName,
-      preparedActionId: prepared.preparedActionId
+      preparedActionId: prepared.preparedActionId,
+      reaction
     });
 
     return toToolResult({
@@ -1194,7 +1200,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: LINKEDIN_FEED_LIKE_TOOL,
         description:
-          "Prepare to like a LinkedIn post (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+          "Prepare to react to a LinkedIn post (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -1208,6 +1214,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             postUrl: {
               type: "string",
               description: "LinkedIn post URL, URN, or activity/share identifier."
+            },
+            reaction: {
+              type: "string",
+              enum: [...LINKEDIN_FEED_REACTION_TYPES],
+              description: "Reaction type. Defaults to like."
             },
             operatorNote: {
               type: "string",

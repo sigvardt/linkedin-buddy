@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   COMMENT_ON_POST_ACTION_TYPE,
+  LINKEDIN_FEED_REACTION_MAP,
+  LINKEDIN_FEED_REACTION_TYPES,
   LIKE_POST_ACTION_TYPE,
-  createFeedActionExecutors
+  createFeedActionExecutors,
+  normalizeLinkedInFeedReaction
 } from "../linkedinFeed.js";
 
 describe("Feed action type constants", () => {
@@ -30,5 +33,34 @@ describe("createFeedActionExecutors", () => {
       expect(executor).toBeDefined();
       expect(typeof executor!.execute).toBe("function");
     }
+  });
+});
+
+describe("reaction mapping", () => {
+  it("exposes all supported LinkedIn feed reactions", () => {
+    expect(LINKEDIN_FEED_REACTION_TYPES).toEqual([
+      "like",
+      "celebrate",
+      "support",
+      "love",
+      "insightful",
+      "funny"
+    ]);
+    expect(LINKEDIN_FEED_REACTION_MAP.funny.iconType).toBe("ENTERTAINMENT");
+    expect(LINKEDIN_FEED_REACTION_MAP.insightful.iconType).toBe("INTEREST");
+  });
+
+  it("normalizes aliases to canonical reaction names", () => {
+    expect(normalizeLinkedInFeedReaction("LIKE")).toBe("like");
+    expect(normalizeLinkedInFeedReaction("praise")).toBe("celebrate");
+    expect(normalizeLinkedInFeedReaction("appreciation")).toBe("support");
+    expect(normalizeLinkedInFeedReaction("insight")).toBe("insightful");
+    expect(normalizeLinkedInFeedReaction("haha")).toBe("funny");
+  });
+
+  it("throws for unsupported reaction names", () => {
+    expect(() => normalizeLinkedInFeedReaction("rocket")).toThrow(
+      "reaction must be one of"
+    );
   });
 });

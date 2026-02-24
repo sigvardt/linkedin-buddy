@@ -5,6 +5,7 @@ import {
   asLinkedInAssistantError
 } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
+import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
 
 export interface LinkedInNotification {
@@ -166,7 +167,7 @@ async function extractNotifications(
 
       const linkMatch =
         /\/notifications\/([^/?#]+)/i.exec(link) ??
-        /[\?&]notificationId=([^&#]+)/i.exec(link);
+        /[?&]notificationId=([^&#]+)/i.exec(link);
       if (linkMatch?.[1]) {
         try {
           return decodeURIComponent(linkMatch[1]);
@@ -394,7 +395,7 @@ export class LinkedInNotificationsService {
           await page.goto(LINKEDIN_NOTIFICATIONS_URL, {
             waitUntil: "domcontentloaded"
           });
-          await page.waitForLoadState("networkidle");
+          await waitForNetworkIdleBestEffort(page);
           await waitForNotificationsSurface(page);
           const notifications = await loadNotifications(page, limit);
           return notifications.slice(0, limit);

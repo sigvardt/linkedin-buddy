@@ -6,6 +6,7 @@ import {
   type BrowserContext
 } from "playwright-core";
 import type { ConfigPaths } from "./config.js";
+import { LinkedInAssistantError } from "./errors.js";
 
 type PersistentLaunchOptions = NonNullable<
   Parameters<typeof chromium.launchPersistentContext>[1]
@@ -44,21 +45,42 @@ export class ProfileManager {
     const userDataDir = this.getProfileUserDataDir(profileName);
     await mkdir(userDataDir, { recursive: true });
 
-    const release = await lockfile.lock(userDataDir, {
-      realpath: false,
-      lockfilePath: path.join(userDataDir, ".profile.lock"),
-      retries: {
-        retries: 20,
-        factor: 1.2,
-        minTimeout: 100,
-        maxTimeout: 1_000
+    let release: (() => Promise<void>) | undefined;
+    try {
+      release = await lockfile.lock(userDataDir, {
+        realpath: false,
+        lockfilePath: path.join(userDataDir, ".profile.lock"),
+        retries: {
+          retries: 20,
+          factor: 1.2,
+          minTimeout: 100,
+          maxTimeout: 1_000
+        }
+      });
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        /lock file is already being held/i.test(error.message)
+      ) {
+        throw new LinkedInAssistantError(
+          "ACTION_PRECONDITION_FAILED",
+          "Profile is busy with another LinkedIn CLI operation. Wait a few seconds and retry.",
+          {
+            profile_name: profileName
+          },
+          { cause: error }
+        );
       }
-    });
+
+      throw error;
+    }
 
     try {
       return await callback(userDataDir);
     } finally {
-      await release();
+      if (release) {
+        await release();
+      }
     }
   }
 

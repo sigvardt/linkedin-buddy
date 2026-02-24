@@ -2,7 +2,8 @@ import {
   errors as playwrightErrors,
   type BrowserContext,
   type Locator,
-  type Page
+  type Page,
+  type Response
 } from "playwright-core";
 import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
@@ -11,6 +12,7 @@ import {
   asLinkedInAssistantError
 } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
+import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
 import type { RateLimiter, RateLimiterState } from "./rateLimiter.js";
 import type {
@@ -45,6 +47,22 @@ interface ThreadMessageSnapshot {
 
 interface ThreadDetailSnapshot extends ThreadSnapshot {
   messages: ThreadMessageSnapshot[];
+}
+
+interface MessengerConversationsPayload {
+  data?: {
+    messengerConversationsBySyncToken?: {
+      elements?: unknown[];
+    };
+  };
+}
+
+interface MessengerMessagesPayload {
+  data?: {
+    messengerMessagesBySyncToken?: {
+      elements?: unknown[];
+    };
+  };
 }
 
 interface SelectorCandidate {
@@ -124,6 +142,342 @@ function parseThreadIdFromUrl(url: string): string | null {
   const match = /\/messaging\/thread\/([^/?#]+)/.exec(url);
   const encodedThreadId = match?.[1];
   return encodedThreadId ? decodeURIComponent(encodedThreadId) : null;
+}
+
+function parseThreadIdFromConversationUrn(conversationUrn: string): string | null {
+  const match = /urn:li:msg_conversation:\(urn:li:[^,]+,([^)]+)\)/.exec(
+    conversationUrn
+  );
+  const encodedThreadId = match?.[1];
+  if (!encodedThreadId) {
+    return null;
+  }
+
+  try {
+    return decodeURIComponent(encodedThreadId);
+  } catch {
+    return encodedThreadId;
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function getStringValue(value: unknown): string {
+  return typeof value === "string" ? normalizeText(value) : "";
+}
+
+function getAttributedText(value: unknown): string {
+  if (typeof value === "string") {
+    return normalizeText(value);
+  }
+
+  const record = asRecord(value);
+  if (!record) {
+    return "";
+  }
+
+  const text = record.text;
+  return typeof text === "string" ? normalizeText(text) : "";
+}
+
+function extractThreadTitleFromConversation(
+  conversation: Record<string, unknown>
+): string {
+  const participantsValue = conversation.conversationParticipants;
+  if (!Array.isArray(participantsValue)) {
+    return "";
+  }
+
+  const participantNames: string[] = [];
+  for (const participantValue of participantsValue) {
+    const participant = asRecord(participantValue);
+    const participantType = asRecord(participant?.participantType);
+    const member = asRecord(participantType?.member);
+    const firstName = getAttributedText(member?.firstName);
+    const lastName = getAttributedText(member?.lastName);
+    const fullName = normalizeText([firstName, lastName].filter(Boolean).join(" "));
+    if (!fullName) {
+      continue;
+    }
+
+    const distance = getStringValue(member?.distance).toUpperCase();
+    if (distance === "SELF") {
+      continue;
+    }
+
+    participantNames.push(fullName);
+  }
+
+  if (participantNames.length > 0) {
+    return participantNames.join(", ");
+  }
+
+  return "";
+}
+
+function extractThreadSnippetFromConversation(
+  conversation: Record<string, unknown>
+): string {
+  const messages = asRecord(conversation.messages);
+  const messageElements = messages?.elements;
+  if (Array.isArray(messageElements)) {
+    for (const messageValue of messageElements) {
+      const message = asRecord(messageValue);
+      if (!message) {
+        continue;
+      }
+
+      const snippetCandidates = [
+        getAttributedText(message.body),
+        getAttributedText(message.subject),
+        getStringValue(message.renderContentFallbackText),
+        getAttributedText(message.footer)
+      ];
+
+      for (const candidate of snippetCandidates) {
+        if (candidate) {
+          return candidate;
+        }
+      }
+    }
+  }
+
+  return "";
+}
+
+function parseThreadSummariesFromMessengerConversationsPayload(
+  payload: MessengerConversationsPayload
+): ThreadSnapshot[] {
+  const elements = payload.data?.messengerConversationsBySyncToken?.elements;
+  if (!Array.isArray(elements)) {
+    return [];
+  }
+
+  const byUrl = new Map<string, ThreadSnapshot>();
+  for (const elementValue of elements) {
+    const conversation = asRecord(elementValue);
+    if (!conversation) {
+      continue;
+    }
+
+    const conversationUrl = getStringValue(conversation.conversationUrl);
+    const conversationUrn =
+      getStringValue(conversation.entityUrn) ||
+      getStringValue(conversation.backendUrn);
+    const threadId =
+      (conversationUrl ? parseThreadIdFromUrl(conversationUrl) : null) ??
+      (conversationUrn
+        ? parseThreadIdFromConversationUrn(conversationUrn)
+        : null);
+
+    if (!threadId && !conversationUrl) {
+      continue;
+    }
+
+    const threadUrl =
+      conversationUrl ||
+      `https://www.linkedin.com/messaging/thread/${encodeURIComponent(threadId!)}/`;
+
+    const unreadRaw = conversation.unreadCount;
+    const unreadCount =
+      typeof unreadRaw === "number" && Number.isFinite(unreadRaw) && unreadRaw >= 0
+        ? Math.trunc(unreadRaw)
+        : 0;
+
+    const title =
+      getAttributedText(conversation.title) ||
+      getAttributedText(conversation.headlineText) ||
+      getAttributedText(conversation.shortHeadlineText) ||
+      extractThreadTitleFromConversation(conversation);
+
+    const snippet =
+      getAttributedText(conversation.descriptionText) ||
+      extractThreadSnippetFromConversation(conversation);
+
+    if (byUrl.has(threadUrl)) {
+      continue;
+    }
+
+    byUrl.set(threadUrl, {
+      thread_id: threadId ?? threadUrl,
+      title,
+      unread_count: unreadCount,
+      snippet,
+      thread_url: threadUrl
+    });
+  }
+
+  return Array.from(byUrl.values());
+}
+
+function getNumberValue(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function extractAuthorFromMessage(
+  message: Record<string, unknown>
+): string {
+  const actor = asRecord(message.actor);
+  const actorType = asRecord(actor?.participantType);
+  const actorMember = asRecord(actorType?.member);
+  const actorFirst = getAttributedText(actorMember?.firstName);
+  const actorLast = getAttributedText(actorMember?.lastName);
+  const actorName = normalizeText([actorFirst, actorLast].filter(Boolean).join(" "));
+  if (actorName) {
+    return actorName;
+  }
+
+  const sender = asRecord(message.sender);
+  const senderType = asRecord(sender?.participantType);
+  const senderMember = asRecord(senderType?.member);
+  const senderFirst = getAttributedText(senderMember?.firstName);
+  const senderLast = getAttributedText(senderMember?.lastName);
+  const senderName = normalizeText(
+    [senderFirst, senderLast].filter(Boolean).join(" ")
+  );
+  if (senderName) {
+    return senderName;
+  }
+
+  return "Unknown";
+}
+
+function extractTextFromMessage(message: Record<string, unknown>): string {
+  const textCandidates = [
+    getAttributedText(message.body),
+    getAttributedText(message.subject),
+    getStringValue(message.renderContentFallbackText),
+    getAttributedText(message.footer)
+  ];
+
+  for (const candidate of textCandidates) {
+    if (candidate) {
+      return candidate;
+    }
+  }
+
+  return "";
+}
+
+function parseThreadMessagesFromMessengerMessagesPayload(
+  payload: MessengerMessagesPayload,
+  messageLimit: number
+): ThreadMessageSnapshot[] {
+  const elements = payload.data?.messengerMessagesBySyncToken?.elements;
+  if (!Array.isArray(elements)) {
+    return [];
+  }
+
+  const normalizedLimit = Math.max(1, messageLimit);
+  const parsedMessages = elements
+    .map((elementValue, index) => {
+      const message = asRecord(elementValue);
+      if (!message) {
+        return null;
+      }
+
+      const text = extractTextFromMessage(message);
+      if (!text) {
+        return null;
+      }
+
+      const deliveredAtMs = getNumberValue(message.deliveredAt);
+      const sentAt = deliveredAtMs
+        ? new Date(deliveredAtMs).toISOString()
+        : null;
+
+      return {
+        author: extractAuthorFromMessage(message),
+        sent_at: sentAt,
+        text,
+        sort_ms: deliveredAtMs,
+        index
+      };
+    })
+    .filter((message): message is {
+      author: string;
+      sent_at: string | null;
+      text: string;
+      sort_ms: number | null;
+      index: number;
+    } => Boolean(message));
+
+  parsedMessages.sort((left, right) => {
+    if (left.sort_ms !== null && right.sort_ms !== null) {
+      if (left.sort_ms !== right.sort_ms) {
+        return left.sort_ms - right.sort_ms;
+      }
+      return left.index - right.index;
+    }
+
+    if (left.sort_ms !== null) {
+      return -1;
+    }
+    if (right.sort_ms !== null) {
+      return 1;
+    }
+
+    return left.index - right.index;
+  });
+
+  return parsedMessages.slice(-normalizedLimit).map((message) => ({
+    author: message.author,
+    sent_at: message.sent_at,
+    text: message.text
+  }));
+}
+
+function normalizeThreadUrl(threadUrl: string): string {
+  return threadUrl.replace(/\/+$/, "/");
+}
+
+function findThreadSummary(
+  threads: ThreadSnapshot[],
+  expectedThreadId: string | null,
+  expectedThreadUrl: string
+): ThreadSnapshot | null {
+  const normalizedExpectedUrl = normalizeThreadUrl(expectedThreadUrl);
+
+  if (expectedThreadId) {
+    const byId = threads.find((thread) => thread.thread_id === expectedThreadId);
+    if (byId) {
+      return byId;
+    }
+  }
+
+  const byUrl = threads.find(
+    (thread) => normalizeThreadUrl(thread.thread_url) === normalizedExpectedUrl
+  );
+  if (byUrl) {
+    return byUrl;
+  }
+
+  if (expectedThreadId) {
+    const byParsedId = threads.find(
+      (thread) => parseThreadIdFromUrl(thread.thread_url) === expectedThreadId
+    );
+    if (byParsedId) {
+      return byParsedId;
+    }
+  }
+
+  return null;
 }
 
 function isAbsoluteUrl(value: string): boolean {
@@ -318,6 +672,124 @@ async function waitForThreadSurface(page: Page): Promise<void> {
   );
 }
 
+async function waitForInboxListSurface(page: Page): Promise<void> {
+  const candidates: Locator[] = [
+    page.locator("a[href*='/messaging/thread/']").first(),
+    page.locator("li.msg-conversation-listitem").first(),
+    page.locator(".msg-conversation-card").first(),
+    page.locator(".msg-conversations-container").first(),
+    page.locator("main").first()
+  ];
+
+  for (const locator of candidates) {
+    try {
+      await locator.waitFor({ state: "visible", timeout: 6_000 });
+      return;
+    } catch {
+      // Try the next candidate.
+    }
+  }
+}
+
+function isMessengerConversationsResponse(response: Response): boolean {
+  if (response.status() !== 200) {
+    return false;
+  }
+
+  const url = response.url();
+  return (
+    url.includes("/voyagerMessagingGraphQL/graphql") &&
+    /[?&]queryId=messengerConversations\./.test(url)
+  );
+}
+
+function isMessengerMessagesResponse(
+  response: Response,
+  expectedThreadId: string | null = null
+): boolean {
+  if (response.status() !== 200) {
+    return false;
+  }
+
+  const url = response.url();
+  if (
+    !url.includes("/voyagerMessagingGraphQL/graphql") ||
+    !/[?&]queryId=messengerMessages\./.test(url)
+  ) {
+    return false;
+  }
+
+  if (!expectedThreadId) {
+    return true;
+  }
+
+  try {
+    const parsedUrl = new URL(url);
+    const variables = parsedUrl.searchParams.get("variables") ?? "";
+    if (variables.includes(expectedThreadId)) {
+      return true;
+    }
+
+    const decodedVariables = decodeURIComponent(variables);
+    return decodedVariables.includes(expectedThreadId);
+  } catch {
+    return url.includes(expectedThreadId);
+  }
+}
+
+async function waitForMessengerConversationsResponse(
+  page: Page
+): Promise<Response | null> {
+  try {
+    return await page.waitForResponse(isMessengerConversationsResponse, {
+      timeout: 12_000
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function waitForMessengerMessagesResponse(
+  page: Page,
+  expectedThreadId: string | null
+): Promise<Response | null> {
+  try {
+    return await page.waitForResponse(
+      (response) => isMessengerMessagesResponse(response, expectedThreadId),
+      {
+        timeout: 12_000
+      }
+    );
+  } catch {
+    return null;
+  }
+}
+
+async function extractThreadSummariesFromNetwork(
+  response: Response
+): Promise<ThreadSnapshot[]> {
+  try {
+    const payload = JSON.parse(
+      await response.text()
+    ) as MessengerConversationsPayload;
+    return parseThreadSummariesFromMessengerConversationsPayload(payload);
+  } catch {
+    return [];
+  }
+}
+
+async function extractThreadMessagesFromNetwork(
+  response: Response,
+  messageLimit: number
+): Promise<ThreadMessageSnapshot[]> {
+  try {
+    const payload = JSON.parse(await response.text()) as MessengerMessagesPayload;
+    return parseThreadMessagesFromMessengerMessagesPayload(payload, messageLimit);
+  } catch {
+    return [];
+  }
+}
+
 async function extractThreadSummaries(page: Page): Promise<ThreadSnapshot[]> {
   return page.evaluate(() => {
     const normalize = (value: string | null | undefined): string =>
@@ -387,10 +859,12 @@ async function extractThreadDetail(
       const encodedThreadId = threadIdMatch?.[1];
       const threadId = encodedThreadId ? decodeURIComponent(encodedThreadId) : threadUrl;
       const titleCandidates = [
-        ".msg-thread__link-to-profile .t-16",
-        ".msg-thread__link-to-profile",
-        ".msg-overlay-bubble-header__title",
         ".msg-entity-lockup__entity-title",
+        ".msg-thread__participant-names",
+        ".msg-thread__name",
+        ".msg-thread__link-to-profile .t-16",
+        ".msg-overlay-bubble-header__title",
+        ".msg-thread__link-to-profile",
         "h2"
       ];
       let title = "";
@@ -469,6 +943,87 @@ async function extractThreadDetail(
   }
 
   return snapshot;
+}
+
+function mergeThreadDetailSnapshot(input: {
+  domDetail: ThreadDetailSnapshot;
+  expectedThreadUrl: string;
+  expectedThreadId: string | null;
+  networkThreadSummary: ThreadSnapshot | null;
+  networkMessages: ThreadMessageSnapshot[];
+}): ThreadDetailSnapshot {
+  const {
+    domDetail,
+    expectedThreadUrl,
+    expectedThreadId,
+    networkThreadSummary,
+    networkMessages
+  } = input;
+
+  const resolvedThreadUrl =
+    networkThreadSummary?.thread_url ||
+    domDetail.thread_url ||
+    expectedThreadUrl;
+
+  const resolvedThreadId =
+    networkThreadSummary?.thread_id ||
+    domDetail.thread_id ||
+    expectedThreadId ||
+    resolvedThreadUrl;
+
+  return {
+    thread_id: resolvedThreadId,
+    title: networkThreadSummary?.title || domDetail.title,
+    unread_count: networkThreadSummary?.unread_count ?? domDetail.unread_count,
+    snippet: networkThreadSummary?.snippet || domDetail.snippet,
+    thread_url: resolvedThreadUrl,
+    messages: networkMessages.length > 0 ? networkMessages : domDetail.messages
+  };
+}
+
+async function extractThreadDetailWithNetwork(
+  page: Page,
+  threadUrl: string,
+  messageLimit: number
+): Promise<ThreadDetailSnapshot> {
+  const expectedThreadId = parseThreadIdFromUrl(threadUrl);
+  const conversationsResponsePromise = waitForMessengerConversationsResponse(page);
+  const messagesResponsePromise = waitForMessengerMessagesResponse(
+    page,
+    expectedThreadId
+  );
+
+  await page.goto(threadUrl, { waitUntil: "domcontentloaded" });
+  await waitForNetworkIdleBestEffort(page);
+  await waitForThreadSurface(page);
+
+  const domDetail = await extractThreadDetail(page, messageLimit);
+  const conversationsResponse = await conversationsResponsePromise;
+  const messagesResponse = await messagesResponsePromise;
+
+  let networkThreadSummary: ThreadSnapshot | null = null;
+  if (conversationsResponse) {
+    const networkThreads = await extractThreadSummariesFromNetwork(
+      conversationsResponse
+    );
+    networkThreadSummary = findThreadSummary(
+      networkThreads,
+      expectedThreadId,
+      threadUrl
+    );
+  }
+
+  const networkMessages = messagesResponse
+    ? await extractThreadMessagesFromNetwork(messagesResponse, messageLimit)
+    : [];
+
+  return mergeThreadDetailSnapshot({
+    domDetail,
+    expectedThreadUrl: threadUrl,
+    expectedThreadId,
+    networkThreadSummary,
+    networkMessages
+  });
 }
 
 async function captureScreenshotArtifact(
@@ -588,8 +1143,20 @@ export class LinkedInInboxService {
         },
         async (context) => {
           const page = await getOrCreatePage(context);
+          const conversationsResponsePromise =
+            waitForMessengerConversationsResponse(page);
           await page.goto(LINKEDIN_MESSAGING_URL, { waitUntil: "domcontentloaded" });
-          await page.waitForLoadState("networkidle");
+          await waitForNetworkIdleBestEffort(page);
+          await waitForInboxListSurface(page);
+          const conversationsResponse = await conversationsResponsePromise;
+          if (conversationsResponse) {
+            const networkThreads =
+              await extractThreadSummariesFromNetwork(conversationsResponse);
+            if (networkThreads.length > 0) {
+              return networkThreads;
+            }
+          }
+
           return extractThreadSummaries(page);
         }
       );
@@ -625,9 +1192,7 @@ export class LinkedInInboxService {
         },
         async (context) => {
           const page = await getOrCreatePage(context);
-          await page.goto(threadUrl, { waitUntil: "domcontentloaded" });
-          await waitForThreadSurface(page);
-          return extractThreadDetail(page, messageLimit);
+          return extractThreadDetailWithNetwork(page, threadUrl, messageLimit);
         }
       );
 
@@ -666,10 +1231,11 @@ export class LinkedInInboxService {
         },
         async (context) => {
           const page = await getOrCreatePage(context);
-          await page.goto(threadUrl, { waitUntil: "domcontentloaded" });
-          await waitForThreadSurface(page);
-
-          const threadDetail = await extractThreadDetail(page, 12);
+          const threadDetail = await extractThreadDetailWithNetwork(
+            page,
+            threadUrl,
+            12
+          );
           const screenshotPath = `linkedin/screenshot-prepare-${Date.now()}.png`;
           await captureScreenshotArtifact(this.runtime, page, screenshotPath, {
             action: "prepare_reply",
@@ -780,10 +1346,7 @@ class SendMessageActionExecutor
           });
           tracingStarted = true;
 
-          await page.goto(threadUrl, { waitUntil: "domcontentloaded" });
-          await waitForThreadSurface(page);
-
-          const detail = await extractThreadDetail(page, 20);
+          const detail = await extractThreadDetailWithNetwork(page, threadUrl, 20);
           validateThreadTarget(action, detail, page.url());
 
           const rateLimitState = runtime.rateLimiter.consume(
