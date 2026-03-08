@@ -81,6 +81,75 @@ export interface RateLimitCounterRow {
   updatedAtMs: number;
 }
 
+export interface SentInvitationStateUpsert {
+  profileName: string;
+  profileUrlKey: string;
+  vanityName: string | null;
+  fullName: string;
+  headline: string;
+  profileUrl: string;
+  firstSeenSentAtMs: number;
+  lastSeenSentAtMs: number;
+  createdAtMs: number;
+  updatedAtMs: number;
+}
+
+export interface SentInvitationStateRow {
+  profile_name: string;
+  profile_url_key: string;
+  vanity_name: string | null;
+  full_name: string;
+  headline: string;
+  profile_url: string;
+  first_seen_sent_at: number;
+  last_seen_sent_at: number;
+  closed_at: number | null;
+  closed_reason: string | null;
+  accepted_at: number | null;
+  accepted_detection: string | null;
+  followup_prepared_at: number | null;
+  followup_prepared_action_id: string | null;
+  followup_confirmed_at: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface SentInvitationAcceptedUpdate {
+  profileName: string;
+  profileUrlKey: string;
+  vanityName: string | null;
+  fullName: string;
+  headline: string;
+  profileUrl: string;
+  acceptedAtMs: number;
+  acceptedDetection: string;
+  updatedAtMs: number;
+}
+
+export interface SentInvitationClosedUpdate {
+  profileName: string;
+  profileUrlKey: string;
+  closedAtMs: number;
+  closedReason: string;
+  updatedAtMs: number;
+}
+
+export interface SentInvitationFollowupPreparedUpdate {
+  profileName: string;
+  profileUrlKey: string;
+  preparedAtMs: number;
+  preparedActionId: string;
+  updatedAtMs: number;
+}
+
+export interface SentInvitationFollowupConfirmedUpdate {
+  profileName: string;
+  profileUrlKey: string;
+  confirmedAtMs: number;
+  preparedActionId: string;
+  updatedAtMs: number;
+}
+
 export class AssistantDatabase {
   private readonly db: Database.Database;
 
@@ -307,6 +376,251 @@ ON CONFLICT(counter_key) DO UPDATE SET
 `
       )
       .run(counter);
+  }
+
+  upsertSentInvitationState(input: SentInvitationStateUpsert): void {
+    this.db
+      .prepare(
+        `
+INSERT INTO sent_invitation_state (
+  profile_name,
+  profile_url_key,
+  vanity_name,
+  full_name,
+  headline,
+  profile_url,
+  first_seen_sent_at,
+  last_seen_sent_at,
+  closed_at,
+  closed_reason,
+  accepted_at,
+  accepted_detection,
+  followup_prepared_at,
+  followup_prepared_action_id,
+  followup_confirmed_at,
+  created_at,
+  updated_at
+)
+VALUES (
+  @profileName,
+  @profileUrlKey,
+  @vanityName,
+  @fullName,
+  @headline,
+  @profileUrl,
+  @firstSeenSentAtMs,
+  @lastSeenSentAtMs,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  @createdAtMs,
+  @updatedAtMs
+)
+ON CONFLICT(profile_name, profile_url_key) DO UPDATE SET
+  vanity_name = excluded.vanity_name,
+  full_name = CASE
+    WHEN length(excluded.full_name) > 0 THEN excluded.full_name
+    ELSE sent_invitation_state.full_name
+  END,
+  headline = CASE
+    WHEN length(excluded.headline) > 0 THEN excluded.headline
+    ELSE sent_invitation_state.headline
+  END,
+  profile_url = CASE
+    WHEN length(excluded.profile_url) > 0 THEN excluded.profile_url
+    ELSE sent_invitation_state.profile_url
+  END,
+  last_seen_sent_at = CASE
+    WHEN excluded.last_seen_sent_at > sent_invitation_state.last_seen_sent_at
+      THEN excluded.last_seen_sent_at
+    ELSE sent_invitation_state.last_seen_sent_at
+  END,
+  closed_at = NULL,
+  closed_reason = NULL,
+  updated_at = excluded.updated_at
+`
+      )
+      .run(input);
+  }
+
+  listSentInvitationAcceptanceCandidates(input: {
+    profileName: string;
+    lastSeenBeforeMs: number;
+  }): SentInvitationStateRow[] {
+    return this.db
+      .prepare<
+        {
+          profileName: string;
+          lastSeenBeforeMs: number;
+        },
+        SentInvitationStateRow
+      >(
+        `
+SELECT
+  profile_name,
+  profile_url_key,
+  vanity_name,
+  full_name,
+  headline,
+  profile_url,
+  first_seen_sent_at,
+  last_seen_sent_at,
+  closed_at,
+  closed_reason,
+  accepted_at,
+  accepted_detection,
+  followup_prepared_at,
+  followup_prepared_action_id,
+  followup_confirmed_at,
+  created_at,
+  updated_at
+FROM sent_invitation_state
+WHERE profile_name = @profileName
+  AND closed_at IS NULL
+  AND accepted_at IS NULL
+  AND last_seen_sent_at < @lastSeenBeforeMs
+ORDER BY last_seen_sent_at DESC
+`
+      )
+      .all(input);
+  }
+
+  listAcceptedSentInvitations(input: {
+    profileName: string;
+    sinceMs: number;
+  }): SentInvitationStateRow[] {
+    return this.db
+      .prepare<
+        {
+          profileName: string;
+          sinceMs: number;
+        },
+        SentInvitationStateRow
+      >(
+        `
+SELECT
+  profile_name,
+  profile_url_key,
+  vanity_name,
+  full_name,
+  headline,
+  profile_url,
+  first_seen_sent_at,
+  last_seen_sent_at,
+  closed_at,
+  closed_reason,
+  accepted_at,
+  accepted_detection,
+  followup_prepared_at,
+  followup_prepared_action_id,
+  followup_confirmed_at,
+  created_at,
+  updated_at
+FROM sent_invitation_state
+WHERE profile_name = @profileName
+  AND closed_at IS NULL
+  AND accepted_at IS NOT NULL
+  AND accepted_at >= @sinceMs
+ORDER BY accepted_at DESC, last_seen_sent_at DESC
+`
+      )
+      .all(input);
+  }
+
+  markSentInvitationAccepted(input: SentInvitationAcceptedUpdate): boolean {
+    const result = this.db
+      .prepare(
+        `
+UPDATE sent_invitation_state
+SET
+  vanity_name = COALESCE(@vanityName, vanity_name),
+  full_name = CASE
+    WHEN length(@fullName) > 0 THEN @fullName
+    ELSE full_name
+  END,
+  headline = CASE
+    WHEN length(@headline) > 0 THEN @headline
+    ELSE headline
+  END,
+  profile_url = CASE
+    WHEN length(@profileUrl) > 0 THEN @profileUrl
+    ELSE profile_url
+  END,
+  accepted_at = COALESCE(accepted_at, @acceptedAtMs),
+  accepted_detection = @acceptedDetection,
+  updated_at = @updatedAtMs
+WHERE profile_name = @profileName
+  AND profile_url_key = @profileUrlKey
+  AND closed_at IS NULL
+`
+      )
+      .run(input);
+
+    return result.changes === 1;
+  }
+
+  markSentInvitationClosed(input: SentInvitationClosedUpdate): boolean {
+    const result = this.db
+      .prepare(
+        `
+UPDATE sent_invitation_state
+SET
+  closed_at = COALESCE(closed_at, @closedAtMs),
+  closed_reason = COALESCE(closed_reason, @closedReason),
+  updated_at = @updatedAtMs
+WHERE profile_name = @profileName
+  AND profile_url_key = @profileUrlKey
+`
+      )
+      .run(input);
+
+    return result.changes === 1;
+  }
+
+  markSentInvitationFollowupPrepared(
+    input: SentInvitationFollowupPreparedUpdate
+  ): boolean {
+    const result = this.db
+      .prepare(
+        `
+UPDATE sent_invitation_state
+SET
+  followup_prepared_at = @preparedAtMs,
+  followup_prepared_action_id = @preparedActionId,
+  updated_at = @updatedAtMs
+WHERE profile_name = @profileName
+  AND profile_url_key = @profileUrlKey
+  AND closed_at IS NULL
+  AND accepted_at IS NOT NULL
+`
+      )
+      .run(input);
+
+    return result.changes === 1;
+  }
+
+  markSentInvitationFollowupConfirmed(
+    input: SentInvitationFollowupConfirmedUpdate
+  ): boolean {
+    const result = this.db
+      .prepare(
+        `
+UPDATE sent_invitation_state
+SET
+  followup_confirmed_at = @confirmedAtMs,
+  updated_at = @updatedAtMs
+WHERE profile_name = @profileName
+  AND profile_url_key = @profileUrlKey
+  AND followup_prepared_action_id = @preparedActionId
+`
+      )
+      .run(input);
+
+    return result.changes === 1;
   }
 
   private ensureMigrationsTable(): void {

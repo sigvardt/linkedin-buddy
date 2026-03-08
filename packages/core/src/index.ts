@@ -11,6 +11,7 @@ export * from "./humanize.js";
 export * from "./keepAlive.js";
 export * from "./linkedinConnections.js";
 export * from "./linkedinFeed.js";
+export * from "./linkedinFollowups.js";
 export * from "./linkedinInbox.js";
 export * from "./linkedinProfile.js";
 export * from "./linkedinJobs.js";

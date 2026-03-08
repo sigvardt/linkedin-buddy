@@ -14,6 +14,11 @@ import {
   type LinkedInConnectionsRuntime
 } from "./linkedinConnections.js";
 import {
+  createFollowupActionExecutors,
+  LinkedInFollowupsService,
+  type LinkedInFollowupsRuntime
+} from "./linkedinFollowups.js";
+import {
   createFeedActionExecutors,
   LinkedInFeedService,
   type LinkedInFeedRuntime
@@ -81,6 +86,7 @@ export interface CoreRuntime {
   jobs: LinkedInJobsService;
   notifications: LinkedInNotificationsService;
   connections: LinkedInConnectionsService;
+  followups: LinkedInFollowupsService;
   feed: LinkedInFeedService;
   posts: LinkedInPostsService;
   inbox: LinkedInInboxService;
@@ -113,6 +119,10 @@ export function createCoreRuntime(
     string,
     import("./twoPhaseCommit.js").ActionExecutor<LinkedInMessagingRuntime>
   >;
+  const followupExecutors = createFollowupActionExecutors() as unknown as Record<
+    string,
+    import("./twoPhaseCommit.js").ActionExecutor<LinkedInMessagingRuntime>
+  >;
   const postExecutors = createPostActionExecutors() as unknown as Record<
     string,
     import("./twoPhaseCommit.js").ActionExecutor<LinkedInMessagingRuntime>
@@ -122,6 +132,7 @@ export function createCoreRuntime(
     executors: {
       ...linkedInExecutors,
       ...connectionExecutors,
+      ...followupExecutors,
       ...feedExecutors,
       ...postExecutors,
       [TEST_ECHO_ACTION_TYPE]: testEchoExecutor
@@ -146,6 +157,7 @@ export function createCoreRuntime(
     jobs: undefined as unknown as LinkedInJobsService,
     notifications: undefined as unknown as LinkedInNotificationsService,
     connections: undefined as unknown as LinkedInConnectionsService,
+    followups: undefined as unknown as LinkedInFollowupsService,
     feed: undefined as unknown as LinkedInFeedService,
     posts: undefined as unknown as LinkedInPostsService,
     inbox: undefined as unknown as LinkedInInboxService,
@@ -179,6 +191,8 @@ export function createCoreRuntime(
   runtime.notifications = new LinkedInNotificationsService(notificationsRuntime);
   const connectionsRuntime: LinkedInConnectionsRuntime = runtime;
   runtime.connections = new LinkedInConnectionsService(connectionsRuntime);
+  const followupsRuntime: LinkedInFollowupsRuntime = runtime;
+  runtime.followups = new LinkedInFollowupsService(followupsRuntime);
   const feedRuntime: LinkedInFeedRuntime = runtime;
   runtime.feed = new LinkedInFeedService(feedRuntime);
   const postsRuntime: LinkedInPostsRuntime = runtime;

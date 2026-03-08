@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 import {
+  DEFAULT_FOLLOWUP_SINCE,
   LINKEDIN_FEED_REACTION_TYPES,
   LINKEDIN_POST_VISIBILITY_TYPES,
   LinkedInAssistantError,
   createCoreRuntime,
   normalizeLinkedInFeedReaction,
   normalizeLinkedInPostVisibility,
+  resolveFollowupSinceWindow,
   toLinkedInAssistantErrorPayload,
   type SearchCategory
 } from "@linkedin-assistant/core";
@@ -23,6 +25,7 @@ import {
   LINKEDIN_CONNECTIONS_LIST_TOOL,
   LINKEDIN_CONNECTIONS_PENDING_TOOL,
   LINKEDIN_CONNECTIONS_WITHDRAW_TOOL,
+  LINKEDIN_NETWORK_PREPARE_FOLLOWUP_AFTER_ACCEPT_TOOL,
   LINKEDIN_FEED_COMMENT_TOOL,
   LINKEDIN_FEED_LIKE_TOOL,
   LINKEDIN_FEED_LIST_TOOL,
@@ -682,6 +685,50 @@ async function handleConnectionsWithdraw(args: ToolArgs): Promise<ToolResult> {
   }
 }
 
+async function handlePrepareFollowupAfterAccept(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const since = readString(args, "since", DEFAULT_FOLLOWUP_SINCE);
+    const { sinceMs } = resolveFollowupSinceWindow(since);
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.followups.prepare.start", {
+      profileName,
+      since
+    });
+
+    const result = await runtime.followups.prepareFollowupsAfterAccept({
+      profileName,
+      since,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.followups.prepare.done", {
+      profileName,
+      acceptedConnectionCount: result.acceptedConnections.length,
+      preparedCount: result.preparedFollowups.length
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      since,
+      since_ms: sinceMs,
+      since_at: new Date(sinceMs).toISOString(),
+      accepted_connection_count: result.acceptedConnections.length,
+      prepared_count: result.preparedFollowups.length,
+      accepted_connections: result.acceptedConnections,
+      prepared_followups: result.preparedFollowups
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 async function handleFeedList(args: ToolArgs): Promise<ToolResult> {
   const runtime = createRuntime(args);
 
@@ -1201,6 +1248,31 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
+        name: LINKEDIN_NETWORK_PREPARE_FOLLOWUP_AFTER_ACCEPT_TOOL,
+        description:
+          "Detect newly accepted sent invitations and prepare follow-up messages (two-phase: returns confirm tokens). Use linkedin.actions.confirm to execute each prepared follow-up.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            since: {
+              type: "string",
+              description:
+                "Lookback window such as 30m, 12h, 7d, or 2w. Defaults to 7d."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note attached to each prepared follow-up."
+            }
+          })
+        }
+      },
+      {
         name: LINKEDIN_FEED_LIST_TOOL,
         description:
           "List posts from your LinkedIn feed with author, text, and engagement counts.",
@@ -1475,6 +1547,10 @@ server.setRequestHandler(
 
       if (name === LINKEDIN_CONNECTIONS_WITHDRAW_TOOL) {
         return await handleConnectionsWithdraw(args);
+      }
+
+      if (name === LINKEDIN_NETWORK_PREPARE_FOLLOWUP_AFTER_ACCEPT_TOOL) {
+        return await handlePrepareFollowupAfterAccept(args);
       }
 
       if (name === LINKEDIN_FEED_LIST_TOOL) {

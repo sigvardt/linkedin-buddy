@@ -2,11 +2,15 @@ import { type BrowserContext, type Locator, type Page } from "playwright-core";
 import type { LinkedInAuthService } from "./auth/session.js";
 import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
 import type { ConfirmFailureArtifactConfig } from "./config.js";
+import type { AssistantDatabase } from "./db/database.js";
 import { LinkedInAssistantError, asLinkedInAssistantError } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
-import { resolveProfileUrl } from "./linkedinProfile.js";
+import {
+  normalizeLinkedInProfileUrl,
+  resolveProfileUrl
+} from "./linkedinProfile.js";
 import type { TwoPhaseCommitService } from "./twoPhaseCommit.js";
 import type { ArtifactHelpers } from "./artifacts.js";
 
@@ -63,6 +67,7 @@ export interface PrepareWithdrawInvitationInput {
  * Minimal runtime needed by connection action executors (no twoPhaseCommit).
  */
 export interface LinkedInConnectionsExecutorRuntime {
+  db: AssistantDatabase;
   auth: LinkedInAuthService;
   cdpUrl?: string | undefined;
   profileManager: ProfileManager;
@@ -154,6 +159,35 @@ function extractVanityName(url: string): string | null {
   } catch {
     return match[1];
   }
+}
+
+function trackSentInvitationState(
+  db: AssistantDatabase,
+  profileName: string,
+  invitation: Pick<
+    LinkedInPendingInvitation,
+    "profile_url" | "vanity_name" | "full_name" | "headline"
+  >,
+  nowMs: number
+): void {
+  const profileUrl = normalizeText(invitation.profile_url);
+  if (!profileUrl) {
+    return;
+  }
+
+  const profileUrlKey = normalizeLinkedInProfileUrl(profileUrl);
+  db.upsertSentInvitationState({
+    profileName,
+    profileUrlKey,
+    vanityName: invitation.vanity_name,
+    fullName: normalizeText(invitation.full_name),
+    headline: normalizeText(invitation.headline),
+    profileUrl,
+    firstSeenSentAtMs: nowMs,
+    lastSeenSentAtMs: nowMs,
+    createdAtMs: nowMs,
+    updatedAtMs: nowMs
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -643,6 +677,19 @@ async function executeSendInvitation(
         );
       }
 
+      const trackedProfileUrl = normalizeLinkedInProfileUrl(page.url() || profileUrl);
+      trackSentInvitationState(
+        runtime.db,
+        profileName,
+        {
+          profile_url: trackedProfileUrl,
+          vanity_name: extractVanityName(trackedProfileUrl),
+          full_name: "",
+          headline: ""
+        },
+        Date.now()
+      );
+
       return {
         ok: true,
         result: {
@@ -786,6 +833,15 @@ async function executeWithdrawInvitation(
           await confirmBtn.click();
           await page.waitForTimeout(2000);
         }
+
+        const closedAtMs = Date.now();
+        runtime.db.markSentInvitationClosed({
+          profileName,
+          profileUrlKey: normalizeLinkedInProfileUrl(resolveProfileUrl(targetProfile)),
+          closedAtMs,
+          closedReason: "withdrawn",
+          updatedAtMs: closedAtMs
+        });
       } else {
         throw new LinkedInAssistantError(
           "TARGET_NOT_FOUND",
@@ -968,6 +1024,17 @@ export class LinkedInConnectionsService {
             return scrapePendingInvitations(page, "sent");
           }
         );
+
+        const syncedAtMs = Date.now();
+        for (const invitation of sent) {
+          trackSentInvitationState(
+            this.runtime.db,
+            profileName,
+            invitation,
+            syncedAtMs
+          );
+        }
+
         results.push(...sent);
       }
 
