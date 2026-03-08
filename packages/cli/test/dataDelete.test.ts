@@ -186,6 +186,60 @@ describe("linkedin data delete", () => {
     });
   });
 
+  it("aborts without deleting anything when the operator declines deletion", async () => {
+    const fixture = await seedLocalDataFixture();
+    readlineMocks.question.mockResolvedValueOnce("no");
+
+    await expect(
+      runCli(["node", "linkedin", "data", "delete"])
+    ).rejects.toMatchObject({
+      message: "Operator declined local data deletion."
+    });
+
+    expect(readlineMocks.question).toHaveBeenCalledTimes(1);
+    expect(await pathExists(fixture.dbPath)).toBe(true);
+    expect(await pathExists(`${fixture.dbPath}-journal`)).toBe(true);
+    expect(await pathExists(`${fixture.dbPath}-wal`)).toBe(true);
+    expect(await pathExists(`${fixture.dbPath}-shm`)).toBe(true);
+    expect(await pathExists(fixture.artifactsDir)).toBe(true);
+    expect(await pathExists(fixture.keepAliveDir)).toBe(true);
+    expect(await pathExists(fixture.rateLimitStatePath)).toBe(true);
+    expect(await pathExists(fixture.profilesDir)).toBe(true);
+    expect(await pathExists(fixture.configFilePath)).toBe(true);
+  });
+
+  it("preserves profiles when the extra profile confirmation is declined", async () => {
+    const fixture = await seedLocalDataFixture();
+    readlineMocks.question
+      .mockResolvedValueOnce("yes")
+      .mockResolvedValueOnce("no");
+
+    await runCli(["node", "linkedin", "data", "delete", "--include-profile"]);
+
+    expect(readlineMocks.question).toHaveBeenCalledTimes(2);
+    expect(await pathExists(fixture.dbPath)).toBe(false);
+    expect(await pathExists(`${fixture.dbPath}-journal`)).toBe(false);
+    expect(await pathExists(`${fixture.dbPath}-wal`)).toBe(false);
+    expect(await pathExists(`${fixture.dbPath}-shm`)).toBe(false);
+    expect(await pathExists(fixture.artifactsDir)).toBe(false);
+    expect(await pathExists(fixture.keepAliveDir)).toBe(false);
+    expect(await pathExists(fixture.rateLimitStatePath)).toBe(false);
+    expect(await pathExists(fixture.profilesDir)).toBe(true);
+    expect(await pathExists(fixture.configFilePath)).toBe(true);
+    expect(
+      consoleLogSpy.mock.calls.some(([message]) =>
+        String(message).includes("Browser profile deletion declined")
+      )
+    ).toBe(true);
+
+    const finalOutput = consoleLogSpy.mock.calls.at(-1)?.[0];
+    expect(JSON.parse(String(finalOutput))).toMatchObject({
+      deleted: true,
+      include_profile_requested: true,
+      include_profile_deleted: false
+    });
+  });
+
   it("refuses to run with --cdp-url", async () => {
     await expect(
       runCli([
@@ -203,6 +257,25 @@ describe("linkedin data delete", () => {
 
     expect(readlineMocks.createInterface).not.toHaveBeenCalled();
     expect(await pathExists(assistantHome)).toBe(false);
+  });
+
+  it("allows deletion to proceed when keepalive pid files are stale", async () => {
+    const fixture = await seedLocalDataFixture();
+    await writeFile(
+      path.join(fixture.keepAliveDir, "default.pid"),
+      "999999\n",
+      "utf8"
+    );
+    readlineMocks.question.mockResolvedValueOnce("yes");
+
+    await runCli(["node", "linkedin", "data", "delete"]);
+
+    expect(readlineMocks.question).toHaveBeenCalledTimes(1);
+    expect(await pathExists(fixture.dbPath)).toBe(false);
+    expect(await pathExists(fixture.keepAliveDir)).toBe(false);
+    expect(await pathExists(fixture.rateLimitStatePath)).toBe(false);
+    expect(await pathExists(fixture.profilesDir)).toBe(true);
+    expect(await pathExists(fixture.configFilePath)).toBe(true);
   });
 
   it("refuses to run while a keepalive daemon is active", async () => {

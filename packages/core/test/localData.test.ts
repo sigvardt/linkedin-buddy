@@ -125,6 +125,21 @@ describe("local data deletion", () => {
     expect(plan.targets).not.toContain(path.resolve(rateLimitStatePath));
   });
 
+  it("resolves the keepalive directory from the shared config path", () => {
+    expect(resolveKeepAliveDir(baseDir)).toBe(path.join(baseDir, "keepalive"));
+
+    process.env.LINKEDIN_ASSISTANT_HOME = baseDir;
+    expect(resolveKeepAliveDir()).toBe(path.join(baseDir, "keepalive"));
+  });
+
+  it("refuses to build a deletion plan for the filesystem root", () => {
+    const filesystemRoot = path.parse(baseDir).root;
+
+    expect(() =>
+      createLocalDataDeletionPlan({ baseDir: filesystemRoot })
+    ).toThrowError("filesystem root");
+  });
+
   it("deletes database sidecars and preserves config.json by default", async () => {
     const paths = await seedLocalDataFixture();
     const keepAliveDir = resolveKeepAliveDir(baseDir);
@@ -153,6 +168,40 @@ describe("local data deletion", () => {
     expect(await pathExists(paths.profilesDir)).toBe(true);
   });
 
+  it("reports missing paths cleanly when only part of the local state exists", async () => {
+    const paths = resolveConfigPaths(baseDir);
+    const keepAliveDir = resolveKeepAliveDir(baseDir);
+
+    await mkdir(path.dirname(paths.dbPath), { recursive: true });
+    await writeFile(paths.dbPath, "sqlite-data", "utf8");
+    await mkdir(keepAliveDir, { recursive: true });
+    await writeFile(path.join(keepAliveDir, "default.pid"), "321\n", "utf8");
+    await writeFile(configFilePath, "{\"safe\":true}\n", "utf8");
+    await mkdir(path.join(paths.profilesDir, "default"), { recursive: true });
+
+    const result = await deleteLocalData({ baseDir });
+
+    expect(result.deletedPaths).toEqual(
+      expect.arrayContaining([
+        path.resolve(paths.dbPath),
+        path.resolve(keepAliveDir)
+      ])
+    );
+    expect(result.missingPaths).toEqual(
+      expect.arrayContaining([
+        path.resolve(`${paths.dbPath}-journal`),
+        path.resolve(`${paths.dbPath}-wal`),
+        path.resolve(`${paths.dbPath}-shm`),
+        path.resolve(paths.artifactsDir),
+        path.resolve(rateLimitStatePath)
+      ])
+    );
+    expect(await pathExists(paths.dbPath)).toBe(false);
+    expect(await pathExists(keepAliveDir)).toBe(false);
+    expect(await pathExists(configFilePath)).toBe(true);
+    expect(await pathExists(paths.profilesDir)).toBe(true);
+  });
+
   it("deletes browser profiles only when includeProfile is enabled", async () => {
     const paths = await seedLocalDataFixture();
 
@@ -164,5 +213,28 @@ describe("local data deletion", () => {
     expect(result.deletedPaths).toContain(path.resolve(paths.profilesDir));
     expect(await pathExists(paths.profilesDir)).toBe(false);
     expect(await pathExists(configFilePath)).toBe(true);
+  });
+
+  it("is idempotent when deleteLocalData runs repeatedly", async () => {
+    const paths = await seedLocalDataFixture();
+    const keepAliveDir = resolveKeepAliveDir(baseDir);
+
+    await deleteLocalData({ baseDir });
+    const secondResult = await deleteLocalData({ baseDir });
+
+    expect(secondResult.deletedPaths).toEqual([]);
+    expect(secondResult.missingPaths).toEqual(
+      expect.arrayContaining([
+        path.resolve(paths.dbPath),
+        path.resolve(`${paths.dbPath}-journal`),
+        path.resolve(`${paths.dbPath}-wal`),
+        path.resolve(`${paths.dbPath}-shm`),
+        path.resolve(paths.artifactsDir),
+        path.resolve(keepAliveDir),
+        path.resolve(rateLimitStatePath)
+      ])
+    );
+    expect(await pathExists(configFilePath)).toBe(true);
+    expect(await pathExists(paths.profilesDir)).toBe(true);
   });
 });
