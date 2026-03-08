@@ -211,6 +211,12 @@ export interface DraftQualityMetricAverages {
   length: number;
 }
 
+export interface DraftQualityFailedMetricCounts {
+  relevance: number;
+  tone: number;
+  length: number;
+}
+
 export interface DraftQualityReportSummary {
   total_cases: number;
   evaluated_case_count: number;
@@ -220,6 +226,10 @@ export interface DraftQualityReportSummary {
   failed_drafts: number;
   pass_rate: number;
   metric_averages: DraftQualityMetricAverages;
+  failed_metric_counts: DraftQualityFailedMetricCounts;
+  hard_failure_count: number;
+  judge_failure_count: number;
+  warning_count: number;
   source_counts: Record<DraftQualityDraftSource, number>;
 }
 
@@ -261,10 +271,29 @@ export interface DraftQualityJudge {
   evaluate(input: DraftQualityJudgeInput): Promise<DraftQualityJudgeResult>;
 }
 
+export interface DraftQualityEvaluationLimits {
+  max_cases?: number;
+  max_drafts?: number;
+  max_message_characters?: number;
+  max_draft_characters?: number;
+  max_total_text_characters?: number;
+  judge_timeout_ms?: number;
+}
+
+export interface DraftQualityEvaluationLogger {
+  log(
+    level: "debug" | "info" | "warn" | "error",
+    event: string,
+    payload?: Record<string, unknown>
+  ): unknown;
+}
+
 export interface EvaluateDraftQualityInput {
   dataset: DraftQualityDataset;
   candidates?: DraftQualityCandidateSet;
   judge?: DraftQualityJudge;
+  limits?: DraftQualityEvaluationLimits;
+  logger?: DraftQualityEvaluationLogger;
   now?: Date;
   run_id?: string;
   dataset_path?: string;

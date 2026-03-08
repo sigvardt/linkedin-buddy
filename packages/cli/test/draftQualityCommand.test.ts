@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { stdin, stdout } from "node:process";
@@ -259,5 +259,28 @@ describe("linkedin audit draft-quality", () => {
       "Draft quality evaluation failed: Draft-quality dataset must contain at least one case."
     );
     expect(stderrOutput).toContain("Location: dataset.cases");
+  });
+
+  it("rejects non-file dataset paths before reading", async () => {
+    const datasetDir = path.join(tempDir, "dataset-dir");
+    await mkdir(datasetDir, { recursive: true });
+
+    await runCli([
+      "node",
+      "linkedin",
+      "audit",
+      "draft-quality",
+      "--dataset",
+      datasetDir
+    ]);
+
+    const stderrOutput = stderrChunks.join("");
+
+    expect(process.exitCode).toBe(1);
+    expect(consoleLogSpy).not.toHaveBeenCalled();
+    expect(stderrOutput).toContain(
+      "Draft quality evaluation failed: Expected draft-quality dataset path to point to a file."
+    );
+    expect(stderrOutput).toContain(`Location: ${path.resolve(datasetDir)}`);
   });
 });

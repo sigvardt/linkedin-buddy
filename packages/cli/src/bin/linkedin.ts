@@ -7,6 +7,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  stat,
   unlink,
   writeFile
 } from "node:fs/promises";
@@ -57,6 +58,7 @@ const cliPrivacyConfig = resolvePrivacyConfig();
 const SELECTOR_AUDIT_DOC_PATH = "docs/selector-audit.md";
 const SELECTOR_AUDIT_DOC_REFERENCE =
   `See ${SELECTOR_AUDIT_DOC_PATH} for sample output, configuration, and troubleshooting.`;
+const MAX_JSON_INPUT_BYTES = 10 * 1024 * 1024;
 let cliSelectorLocale: string | undefined;
 
 function coercePositiveInt(value: string, label: string): number {
@@ -206,8 +208,35 @@ async function readJsonInputFile(filePath: string, label: string): Promise<unkno
   let raw: string;
 
   try {
+    const fileStats = await stat(resolvedPath);
+    if (!fileStats.isFile()) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        `Expected ${label} path to point to a file.`,
+        {
+          path: resolvedPath
+        }
+      );
+    }
+
+    if (fileStats.size > MAX_JSON_INPUT_BYTES) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        `${label} exceeds the maximum supported size of ${MAX_JSON_INPUT_BYTES} bytes.`,
+        {
+          path: resolvedPath,
+          size_bytes: fileStats.size,
+          limit_bytes: MAX_JSON_INPUT_BYTES
+        }
+      );
+    }
+
     raw = await readFile(resolvedPath, "utf8");
   } catch (error) {
+    if (error instanceof LinkedInAssistantError) {
+      throw error;
+    }
+
     if (
       error instanceof Error &&
       "code" in error &&

@@ -208,6 +208,23 @@ describe("draft quality evaluator scoring", () => {
     expect(result?.overall.failed_metrics).toEqual(["length"]);
   });
 
+  it("matches unicode-equivalent required points across normalization forms", async () => {
+    const result = await evaluateSingleDraft({
+      draftText: "Thanks — happy to share the cafe\u0301 overview next week.",
+      requiredPoints: [
+        {
+          id: "accented_keyword",
+          aliases: ["café overview"]
+        }
+      ]
+    });
+
+    expect(result.metrics.relevance.passed).toBe(true);
+    expect(result.metrics.relevance.details.covered_point_ids).toEqual([
+      "accented_keyword"
+    ]);
+  });
+
   it("scales length scores when word and sentence limits are exceeded", async () => {
     const result = await evaluateSingleDraft({
       draftText: "One two three. Four five six. Seven eight nine.",
@@ -734,6 +751,263 @@ describe("draft quality evaluator parsing and integration", () => {
     }
   ])("rejects %s", ({ payload }) => {
     expect(() => parseDraftQualityDataset(payload)).toThrowError(LinkedInAssistantError);
+  });
+
+  it("rejects visually empty candidate drafts made only of zero-width characters", () => {
+    expect(() =>
+      parseDraftQualityDataset({
+        schemaVersion: 1,
+        cases: [
+          {
+            id: "invalid_case_zero_width",
+            thread: {
+              participants: [
+                {
+                  id: "assistant",
+                  name: "You",
+                  role: "assistant"
+                }
+              ],
+              messages: [
+                {
+                  id: "m1",
+                  author: "Jordan",
+                  direction: "inbound",
+                  text: "Hello there"
+                }
+              ]
+            },
+            expectations: {
+              tone: {
+                required: [],
+                forbidden: []
+              },
+              length: {
+                minWords: 0,
+                maxWords: 10
+              },
+              requiredPoints: []
+            },
+            candidateDrafts: [
+              {
+                id: "draft_1",
+                source: "manual",
+                text: "\u200B\u200B"
+              }
+            ]
+          }
+        ]
+      })
+    ).toThrowError(LinkedInAssistantError);
+  });
+
+  it("rejects duplicate participant ids, duplicate message ids, and unknown participant references", () => {
+    expect(() =>
+      parseDraftQualityDataset({
+        schemaVersion: 1,
+        cases: [
+          {
+            id: "invalid_case_participants",
+            thread: {
+              participants: [
+                {
+                  id: "assistant",
+                  name: "You",
+                  role: "assistant"
+                },
+                {
+                  id: "assistant",
+                  name: "Jordan",
+                  role: "contact"
+                }
+              ],
+              messages: [
+                {
+                  id: "m1",
+                  author: "Jordan",
+                  direction: "inbound",
+                  text: "Hello there"
+                }
+              ]
+            },
+            expectations: {
+              tone: {
+                required: [],
+                forbidden: []
+              },
+              length: {
+                minWords: 1,
+                maxWords: 10
+              },
+              requiredPoints: []
+            },
+            candidateDrafts: [
+              {
+                id: "draft_1",
+                source: "manual",
+                text: "Thanks for the note."
+              }
+            ]
+          }
+        ]
+      })
+    ).toThrowError(LinkedInAssistantError);
+
+    expect(() =>
+      parseDraftQualityDataset({
+        schemaVersion: 1,
+        cases: [
+          {
+            id: "invalid_case_messages",
+            thread: {
+              participants: [
+                {
+                  id: "assistant",
+                  name: "You",
+                  role: "assistant"
+                }
+              ],
+              messages: [
+                {
+                  id: "m1",
+                  author: "Jordan",
+                  direction: "inbound",
+                  text: "Hello there"
+                },
+                {
+                  id: "m1",
+                  author: "Jordan",
+                  direction: "inbound",
+                  text: "Checking in"
+                }
+              ]
+            },
+            expectations: {
+              tone: {
+                required: [],
+                forbidden: []
+              },
+              length: {
+                minWords: 1,
+                maxWords: 10
+              },
+              requiredPoints: []
+            },
+            candidateDrafts: [
+              {
+                id: "draft_1",
+                source: "manual",
+                text: "Thanks for the note."
+              }
+            ]
+          }
+        ]
+      })
+    ).toThrowError(LinkedInAssistantError);
+
+    expect(() =>
+      parseDraftQualityDataset({
+        schemaVersion: 1,
+        cases: [
+          {
+            id: "invalid_case_refs",
+            thread: {
+              participants: [
+                {
+                  id: "assistant",
+                  name: "You",
+                  role: "assistant"
+                }
+              ],
+              messages: [
+                {
+                  id: "m1",
+                  author: "Jordan",
+                  direction: "inbound",
+                  text: "Hello there",
+                  participantId: "missing_contact"
+                }
+              ]
+            },
+            expectations: {
+              tone: {
+                required: [],
+                forbidden: []
+              },
+              length: {
+                minWords: 1,
+                maxWords: 10
+              },
+              requiredPoints: []
+            },
+            candidateDrafts: [
+              {
+                id: "draft_1",
+                source: "manual",
+                text: "Thanks for the note."
+              }
+            ]
+          }
+        ]
+      })
+    ).toThrowError(LinkedInAssistantError);
+  });
+
+  it("rejects metadata that exceeds the maximum nesting depth", () => {
+    const deepMetadata: Record<string, unknown> = {};
+    let current: Record<string, unknown> = deepMetadata;
+
+    for (let index = 0; index < 25; index += 1) {
+      current.child = {};
+      current = current.child as Record<string, unknown>;
+    }
+
+    expect(() =>
+      parseDraftQualityDataset({
+        schemaVersion: 1,
+        metadata: deepMetadata,
+        cases: [
+          {
+            id: "invalid_case_metadata_depth",
+            thread: {
+              participants: [
+                {
+                  id: "assistant",
+                  name: "You",
+                  role: "assistant"
+                }
+              ],
+              messages: [
+                {
+                  id: "m1",
+                  author: "Jordan",
+                  direction: "inbound",
+                  text: "Hello there"
+                }
+              ]
+            },
+            expectations: {
+              tone: {
+                required: [],
+                forbidden: []
+              },
+              length: {
+                minWords: 1,
+                maxWords: 10
+              },
+              requiredPoints: []
+            },
+            candidateDrafts: [
+              {
+                id: "draft_1",
+                source: "manual",
+                text: "Thanks for the note."
+              }
+            ]
+          }
+        ]
+      })
+    ).toThrowError(LinkedInAssistantError);
   });
 
   it("evaluates a mixed multi-case batch end to end", async () => {

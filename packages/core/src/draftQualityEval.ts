@@ -9,12 +9,16 @@ import {
   type DraftQualityCase,
   type DraftQualityCaseResult,
   type DraftQualityDraftSource,
+  type DraftQualityEvaluationLimits,
+  type DraftQualityEvaluationLogger,
   type DraftQualityExpectations,
+  type DraftQualityFailedMetricCounts,
   type DraftQualityExternalCandidateDraft,
   type DraftQualityHardFailure,
   type DraftQualityJsonObject,
   type DraftQualityJsonValue,
   type DraftQualityJudgeMetricFeedback,
+  type DraftQualityJudgeResult,
   type DraftQualityLengthDetails,
   type DraftQualityLengthExpectations,
   type DraftQualityMetricResult,
@@ -36,7 +40,16 @@ import {
 } from "./draftQualityTypes.js";
 
 const NON_WORD_PATTERN = /[^\p{L}\p{N}]+/gu;
+const INVISIBLE_TEXT_PATTERN = /[\p{Cf}\s]+/gu;
 const SENTENCE_SPLIT_PATTERN = /[.!?]+/;
+const MAX_JSON_VALUE_DEPTH = 20;
+const DEFAULT_DRAFT_QUALITY_MAX_CASES = 1_000;
+const DEFAULT_DRAFT_QUALITY_MAX_DRAFTS = 5_000;
+const DEFAULT_DRAFT_QUALITY_MAX_MESSAGE_CHARACTERS = 20_000;
+const DEFAULT_DRAFT_QUALITY_MAX_DRAFT_CHARACTERS = 20_000;
+const DEFAULT_DRAFT_QUALITY_MAX_TOTAL_TEXT_CHARACTERS = 2_000_000;
+const DEFAULT_DRAFT_QUALITY_JUDGE_TIMEOUT_MS = 5_000;
+const MAX_DRAFT_QUALITY_JUDGE_TIMEOUT_MS = 60_000;
 
 const STOP_WORDS = new Set([
   "a",
@@ -193,6 +206,21 @@ interface DeterministicDraftEvaluation {
   hard_failures: DraftQualityHardFailure[];
 }
 
+interface ResolvedDraftQualityEvaluationLimits {
+  max_cases: number;
+  max_drafts: number;
+  max_message_characters: number;
+  max_draft_characters: number;
+  max_total_text_characters: number;
+  judge_timeout_ms: number;
+}
+
+interface EvaluateJudgeResult {
+  judgeResult?: DraftQualityJudgeResult;
+  warning?: string;
+  failed: boolean;
+}
+
 function createInputError(
   message: string,
   details: Record<string, unknown> = {}
@@ -202,6 +230,35 @@ function createInputError(
     message,
     details
   );
+}
+
+function normalizeUnicodeText(value: string): string {
+  try {
+    return value.normalize("NFKC");
+  } catch {
+    return value;
+  }
+}
+
+function hasVisibleText(value: string): boolean {
+  return normalizeUnicodeText(value).replace(INVISIBLE_TEXT_PATTERN, "").length > 0;
+}
+
+function logEvaluationEvent(
+  logger: DraftQualityEvaluationLogger | undefined,
+  level: "debug" | "info" | "warn" | "error",
+  event: string,
+  payload: Record<string, unknown>
+): void {
+  if (!logger) {
+    return;
+  }
+
+  try {
+    logger.log(level, event, payload);
+  } catch {
+    // Logging must never break evaluation.
+  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -251,6 +308,26 @@ function readOptionalString(
   }
 
   return trimmed;
+}
+
+function readOptionalBoolean(
+  record: Record<string, unknown>,
+  keys: readonly string[],
+  location: string
+): boolean | undefined {
+  const value = readValue(record, keys);
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "boolean") {
+    throw createInputError(`Expected ${location}.${keys[0]} to be a boolean.`, {
+      location,
+      field: keys[0]
+    });
+  }
+
+  return value;
 }
 
 function readRequiredString(
@@ -346,7 +423,18 @@ function readOptionalObject(
   return parsed;
 }
 
-function parseJsonValue(value: unknown, location: string): DraftQualityJsonValue {
+function parseJsonValue(
+  value: unknown,
+  location: string,
+  depth: number = 0
+): DraftQualityJsonValue {
+  if (depth > MAX_JSON_VALUE_DEPTH) {
+    throw createInputError(`Expected ${location} to stay within metadata depth limits.`, {
+      location,
+      max_depth: MAX_JSON_VALUE_DEPTH
+    });
+  }
+
   if (
     typeof value === "string" ||
     typeof value === "number" ||
@@ -357,7 +445,7 @@ function parseJsonValue(value: unknown, location: string): DraftQualityJsonValue
   }
 
   if (Array.isArray(value)) {
-    return value.map((item, index) => parseJsonValue(item, `${location}[${index}]`));
+    return value.map((item, index) => parseJsonValue(item, `${location}[${index}]`, depth + 1));
   }
 
   const record = asRecord(value);
@@ -369,7 +457,7 @@ function parseJsonValue(value: unknown, location: string): DraftQualityJsonValue
 
   const parsed: DraftQualityJsonObject = {};
   for (const [key, entry] of Object.entries(record)) {
-    parsed[key] = parseJsonValue(entry, `${location}.${key}`);
+    parsed[key] = parseJsonValue(entry, `${location}.${key}`, depth + 1);
   }
   return parsed;
 }
@@ -441,6 +529,13 @@ function parseStringList(values: unknown[], location: string): string[] {
     const trimmed = value.trim();
     if (trimmed.length === 0) {
       throw createInputError(`Expected ${location}[${index}] to be non-empty.`, {
+        location,
+        index
+      });
+    }
+
+    if (!hasVisibleText(trimmed)) {
+      throw createInputError(`Expected ${location}[${index}] to include visible text.`, {
         location,
         index
       });
@@ -550,6 +645,12 @@ function parseThreadMessage(
     `${location}.direction`
   );
   const text = readRequiredString(record, ["text"], location);
+  if (!hasVisibleText(text)) {
+    throw createInputError(`Expected ${location}.text to include visible text.`, {
+      location,
+      field: "text"
+    });
+  }
   const participantId = readOptionalString(
     record,
     ["participant_id", "participantId"],
@@ -565,6 +666,66 @@ function parseThreadMessage(
     ...(participantId ? { participant_id: participantId } : {}),
     ...(createdAt ? { created_at: createdAt } : {})
   };
+}
+
+function assertUniqueParticipantIds(
+  participants: DraftQualityParticipant[],
+  location: string
+): void {
+  const seen = new Set<string>();
+
+  for (const participant of participants) {
+    if (seen.has(participant.id)) {
+      throw createInputError(
+        `Duplicate participant id "${participant.id}" found in ${location}.participants.`,
+        {
+          location,
+          participant_id: participant.id
+        }
+      );
+    }
+
+    seen.add(participant.id);
+  }
+}
+
+function assertUniqueMessageIds(messages: DraftQualityThreadMessage[], location: string): void {
+  const seen = new Set<string>();
+
+  for (const message of messages) {
+    if (seen.has(message.id)) {
+      throw createInputError(
+        `Duplicate message id "${message.id}" found in ${location}.messages.`,
+        {
+          location,
+          message_id: message.id
+        }
+      );
+    }
+
+    seen.add(message.id);
+  }
+}
+
+function assertKnownParticipantReferences(
+  participants: DraftQualityParticipant[],
+  messages: DraftQualityThreadMessage[],
+  location: string
+): void {
+  const participantIds = new Set(participants.map((participant) => participant.id));
+
+  for (const message of messages) {
+    if (message.participant_id && !participantIds.has(message.participant_id)) {
+      throw createInputError(
+        `Message "${message.id}" references unknown participant id "${message.participant_id}".`,
+        {
+          location,
+          message_id: message.id,
+          participant_id: message.participant_id
+        }
+      );
+    }
+  }
 }
 
 function parseThread(value: unknown, location: string): DraftQualityThread {
@@ -591,6 +752,10 @@ function parseThread(value: unknown, location: string): DraftQualityThread {
       location
     });
   }
+
+  assertUniqueParticipantIds(participants, location);
+  assertUniqueMessageIds(messages, location);
+  assertKnownParticipantReferences(participants, messages, location);
 
   return {
     participants,
@@ -801,7 +966,28 @@ function parseCandidateDraftRecord(
     readRequiredString(record, ["source"], location),
     `${location}.source`
   );
-  const text = readRequiredString(record, ["text"], location);
+  const textValue = readValue(record, ["text"]);
+  if (textValue === undefined) {
+    throw createInputError(`Missing required field ${location}.text.`, {
+      location,
+      field: "text"
+    });
+  }
+
+  if (typeof textValue !== "string") {
+    throw createInputError(`Expected ${location}.text to be a string.`, {
+      location,
+      field: "text"
+    });
+  }
+
+  const text = textValue;
+  if (text.length > 0 && !hasVisibleText(text)) {
+    throw createInputError(`Expected ${location}.text to include visible text.`, {
+      location,
+      field: "text"
+    });
+  }
   const label = readOptionalString(record, ["label"], location);
   const metadata = parseMetadataObject(
     readOptionalObject(record, ["metadata"], location),
@@ -876,8 +1062,23 @@ function assertUniqueDraftIds(
   }
 }
 
-function createDraftKey(caseId: string, draftId: string): string {
-  return `${caseId}::${draftId}`;
+function addSeenDraftId(
+  seenDraftIds: Map<string, Set<string>>,
+  caseId: string,
+  draftId: string,
+  onDuplicate: () => never
+): void {
+  const draftIds = seenDraftIds.get(caseId);
+  if (draftIds?.has(draftId)) {
+    onDuplicate();
+  }
+
+  if (draftIds) {
+    draftIds.add(draftId);
+    return;
+  }
+
+  seenDraftIds.set(caseId, new Set([draftId]));
 }
 
 function parseCase(value: unknown, location: string): DraftQualityCase {
@@ -972,10 +1173,9 @@ export function parseDraftQualityCandidateSet(value: unknown): DraftQualityCandi
     "candidates"
   ).map((entry, index) => parseExternalCandidateDraft(entry, `candidates.drafts[${index}]`));
 
-  const seenDraftKeys = new Set<string>();
+  const seenDraftIds = new Map<string, Set<string>>();
   for (const draft of drafts) {
-    const draftKey = createDraftKey(draft.case_id, draft.id);
-    if (seenDraftKeys.has(draftKey)) {
+    addSeenDraftId(seenDraftIds, draft.case_id, draft.id, () => {
       throw createInputError(
         `Duplicate draft id "${draft.id}" found for case "${draft.case_id}" in candidates file.`,
         {
@@ -983,9 +1183,7 @@ export function parseDraftQualityCandidateSet(value: unknown): DraftQualityCandi
           draft_id: draft.id
         }
       );
-    }
-
-    seenDraftKeys.add(draftKey);
+    });
   }
 
   return {
@@ -996,7 +1194,7 @@ export function parseDraftQualityCandidateSet(value: unknown): DraftQualityCandi
 }
 
 function normalizeText(value: string): string {
-  return value
+  return normalizeUnicodeText(value)
     .toLowerCase()
     .replace(NON_WORD_PATTERN, " ")
     .trim()
@@ -1442,6 +1640,252 @@ function createOverallResult(input: {
   };
 }
 
+function resolveEvaluationLimits(
+  limits: DraftQualityEvaluationLimits | undefined
+): ResolvedDraftQualityEvaluationLimits {
+  const parseLimit = (
+    value: number | undefined,
+    field: keyof ResolvedDraftQualityEvaluationLimits,
+    defaultValue: number,
+    minimum: number,
+    maximum?: number
+  ): number => {
+    if (value === undefined) {
+      return defaultValue;
+    }
+
+    const location = `evaluate.limits.${field}`;
+    if (!Number.isInteger(value) || value < minimum) {
+      throw createInputError(
+        `Expected ${location} to be an integer greater than or equal to ${minimum}.`,
+        {
+          location,
+          field,
+          minimum
+        }
+      );
+    }
+
+    const parsed = value;
+    if (maximum !== undefined && parsed > maximum) {
+      throw createInputError(
+        `Expected ${location} to be less than or equal to ${maximum}.`,
+        {
+          location,
+          field,
+          maximum
+        }
+      );
+    }
+
+    return parsed;
+  };
+
+  return {
+    max_cases: parseLimit(
+      limits?.max_cases,
+      "max_cases",
+      DEFAULT_DRAFT_QUALITY_MAX_CASES,
+      1
+    ),
+    max_drafts: parseLimit(
+      limits?.max_drafts,
+      "max_drafts",
+      DEFAULT_DRAFT_QUALITY_MAX_DRAFTS,
+      1
+    ),
+    max_message_characters: parseLimit(
+      limits?.max_message_characters,
+      "max_message_characters",
+      DEFAULT_DRAFT_QUALITY_MAX_MESSAGE_CHARACTERS,
+      1
+    ),
+    max_draft_characters: parseLimit(
+      limits?.max_draft_characters,
+      "max_draft_characters",
+      DEFAULT_DRAFT_QUALITY_MAX_DRAFT_CHARACTERS,
+      1
+    ),
+    max_total_text_characters: parseLimit(
+      limits?.max_total_text_characters,
+      "max_total_text_characters",
+      DEFAULT_DRAFT_QUALITY_MAX_TOTAL_TEXT_CHARACTERS,
+      1
+    ),
+    judge_timeout_ms: parseLimit(
+      limits?.judge_timeout_ms,
+      "judge_timeout_ms",
+      DEFAULT_DRAFT_QUALITY_JUDGE_TIMEOUT_MS,
+      0,
+      MAX_DRAFT_QUALITY_JUDGE_TIMEOUT_MS
+    )
+  };
+}
+
+function validateResourceLimits(
+  dataset: DraftQualityDataset,
+  candidates: DraftQualityCandidateSet | undefined,
+  limits: ResolvedDraftQualityEvaluationLimits
+): void {
+  if (dataset.cases.length > limits.max_cases) {
+    throw createInputError(
+      `Draft-quality dataset includes ${dataset.cases.length} cases, which exceeds the limit of ${limits.max_cases}.`,
+      {
+        location: "dataset.cases",
+        case_count: dataset.cases.length,
+        limit: limits.max_cases
+      }
+    );
+  }
+
+  let totalDraftCount = 0;
+  let totalTextCharacters = 0;
+
+  for (const draftCase of dataset.cases) {
+    for (const message of draftCase.thread.messages) {
+      totalTextCharacters += message.text.length;
+      if (message.text.length > limits.max_message_characters) {
+        throw createInputError(
+          `Message "${message.id}" in case "${draftCase.id}" exceeds the configured character limit.`,
+          {
+            case_id: draftCase.id,
+            message_id: message.id,
+            character_count: message.text.length,
+            limit: limits.max_message_characters
+          }
+        );
+      }
+    }
+
+    for (const draft of draftCase.candidate_drafts) {
+      totalDraftCount += 1;
+      totalTextCharacters += draft.text.length;
+      if (draft.text.length > limits.max_draft_characters) {
+        throw createInputError(
+          `Draft "${draft.id}" in case "${draftCase.id}" exceeds the configured character limit.`,
+          {
+            case_id: draftCase.id,
+            draft_id: draft.id,
+            character_count: draft.text.length,
+            limit: limits.max_draft_characters
+          }
+        );
+      }
+    }
+  }
+
+  for (const draft of candidates?.drafts ?? []) {
+    totalDraftCount += 1;
+    totalTextCharacters += draft.text.length;
+    if (draft.text.length > limits.max_draft_characters) {
+      throw createInputError(
+        `Draft "${draft.id}" in case "${draft.case_id}" exceeds the configured character limit.`,
+        {
+          case_id: draft.case_id,
+          draft_id: draft.id,
+          character_count: draft.text.length,
+          limit: limits.max_draft_characters
+        }
+      );
+    }
+  }
+
+  if (totalDraftCount > limits.max_drafts) {
+    throw createInputError(
+      `Draft-quality evaluation includes ${totalDraftCount} drafts, which exceeds the limit of ${limits.max_drafts}.`,
+      {
+        draft_count: totalDraftCount,
+        limit: limits.max_drafts
+      }
+    );
+  }
+
+  if (totalTextCharacters > limits.max_total_text_characters) {
+    throw createInputError(
+      `Draft-quality evaluation includes ${totalTextCharacters} text characters, which exceeds the limit of ${limits.max_total_text_characters}.`,
+      {
+        total_text_characters: totalTextCharacters,
+        limit: limits.max_total_text_characters
+      }
+    );
+  }
+}
+
+function parseJudgeMetricFeedback(
+  value: unknown,
+  location: string
+): DraftQualityJudgeMetricFeedback {
+  const record = asRecord(value);
+  if (!record) {
+    throw createInputError(`Expected ${location} to be an object.`, { location });
+  }
+
+  const passed = readOptionalBoolean(record, ["passed"], location);
+  const score = readOptionalNumber(record, ["score"], location);
+  const rationaleValues = readOptionalArray(record, ["rationale"], location);
+  const rationale = rationaleValues
+    ? parseStringList(rationaleValues, `${location}.rationale`)
+    : undefined;
+
+  return {
+    ...(passed === undefined ? {} : { passed }),
+    ...(score === undefined ? {} : { score }),
+    ...(rationale ? { rationale } : {})
+  };
+}
+
+function parseJudgeResult(value: unknown, location: string): DraftQualityJudgeResult {
+  if (value === undefined || value === null) {
+    return {};
+  }
+
+  const record = asRecord(value);
+  if (!record) {
+    throw createInputError(`Expected ${location} to be an object.`, { location });
+  }
+
+  const relevanceValue = readValue(record, ["relevance"]);
+  const toneValue = readValue(record, ["tone"]);
+  const notesValue = readOptionalArray(record, ["notes"], location);
+
+  return {
+    ...(relevanceValue === undefined
+      ? {}
+      : { relevance: parseJudgeMetricFeedback(relevanceValue, `${location}.relevance`) }),
+    ...(toneValue === undefined
+      ? {}
+      : { tone: parseJudgeMetricFeedback(toneValue, `${location}.tone`) }),
+    ...(notesValue ? { notes: parseStringList(notesValue, `${location}.notes`) } : {})
+  };
+}
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  onTimeout: () => LinkedInAssistantError
+): Promise<T> {
+  if (timeoutMs <= 0) {
+    return promise;
+  }
+
+  return new Promise<T>((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      reject(onTimeout());
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        clearTimeout(timeoutId);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timeoutId);
+        reject(error);
+      }
+    );
+  });
+}
+
 function buildCandidateLookup(
   dataset: DraftQualityDataset,
   candidates?: DraftQualityCandidateSet
@@ -1449,11 +1893,21 @@ function buildCandidateLookup(
   const draftsByCaseId = new Map<string, DraftQualityCandidateDraft[]>(
     dataset.cases.map((draftCase) => [draftCase.id, [...draftCase.candidate_drafts]])
   );
-  const seenDraftKeys = new Set<string>(
-    dataset.cases.flatMap((draftCase) =>
-      draftCase.candidate_drafts.map((draft) => createDraftKey(draftCase.id, draft.id))
-    )
-  );
+  const seenDraftIds = new Map<string, Set<string>>();
+
+  for (const draftCase of dataset.cases) {
+    for (const draft of draftCase.candidate_drafts) {
+      addSeenDraftId(seenDraftIds, draftCase.id, draft.id, () => {
+        throw createInputError(
+          `Duplicate draft id "${draft.id}" found for case "${draftCase.id}" across dataset and candidates inputs.`,
+          {
+            case_id: draftCase.id,
+            draft_id: draft.id
+          }
+        );
+      });
+    }
+  }
 
   for (const externalDraft of candidates?.drafts ?? []) {
     const { case_id: caseId, ...draft } = externalDraft;
@@ -1468,8 +1922,7 @@ function buildCandidateLookup(
       );
     }
 
-    const draftKey = createDraftKey(caseId, draft.id);
-    if (seenDraftKeys.has(draftKey)) {
+    addSeenDraftId(seenDraftIds, caseId, draft.id, () => {
       throw createInputError(
         `Duplicate draft id "${draft.id}" found for case "${caseId}" across dataset and candidates inputs.`,
         {
@@ -1477,9 +1930,7 @@ function buildCandidateLookup(
           draft_id: draft.id
         }
       );
-    }
-
-    seenDraftKeys.add(draftKey);
+    });
     caseDrafts.push(draft);
   }
 
@@ -1496,43 +1947,136 @@ async function evaluateDraftCaseResult(input: {
   draftCase: DraftQualityCase;
   draft: DraftQualityCandidateDraft;
   judge?: EvaluateDraftQualityInput["judge"];
-}): Promise<DraftQualityCaseResult> {
+  judgeTimeoutMs: number;
+  logger: DraftQualityEvaluationLogger | undefined;
+}): Promise<{ result: DraftQualityCaseResult; warning?: string; judgeFailed: boolean }> {
   const deterministic = evaluateDeterministicDraft(input.draftCase, input.draft);
   let relevance = deterministic.relevance;
   let tone = deterministic.tone;
   const length = deterministic.length;
   const notes = [...input.draftCase.expectations.manual_notes];
+  let warning: string | undefined;
+  let judgeFailed = false;
 
-  if (input.judge) {
-    const judgeResult = await input.judge.evaluate({
-      draft_case: input.draftCase,
-      draft: input.draft,
-      deterministic
+  const judge = input.judge;
+
+  if (judge) {
+    logEvaluationEvent(input.logger, "debug", "draft_quality.judge.start", {
+      case_id: input.draftCase.id,
+      draft_id: input.draft.id,
+      timeout_ms: input.judgeTimeoutMs
     });
-    relevance = mergeJudgeMetric(relevance, judgeResult.relevance);
-    tone = mergeJudgeMetric(tone, judgeResult.tone);
-    notes.push(...(judgeResult.notes ?? []));
+
+    const judgePromise = Promise.resolve().then(() =>
+      judge.evaluate(
+        structuredClone({
+          draft_case: input.draftCase,
+          draft: input.draft,
+          deterministic
+        })
+      )
+    );
+
+    let evaluatedJudge: EvaluateJudgeResult;
+
+    try {
+      const judgeResult = parseJudgeResult(
+        await withTimeout(judgePromise, input.judgeTimeoutMs, () =>
+          new LinkedInAssistantError(
+            "TIMEOUT",
+            `Draft-quality judge timed out after ${input.judgeTimeoutMs}ms.`,
+            {
+              case_id: input.draftCase.id,
+              draft_id: input.draft.id,
+              timeout_ms: input.judgeTimeoutMs
+            }
+          )
+        ),
+        `judge_result.${input.draftCase.id}.${input.draft.id}`
+      );
+
+      evaluatedJudge = {
+        judgeResult,
+        failed: false
+      };
+
+      logEvaluationEvent(input.logger, "debug", "draft_quality.judge.complete", {
+        case_id: input.draftCase.id,
+        draft_id: input.draft.id,
+        has_relevance_feedback: Boolean(judgeResult.relevance),
+        has_tone_feedback: Boolean(judgeResult.tone),
+        note_count: judgeResult.notes?.length ?? 0
+      });
+    } catch (error) {
+      judgeFailed = true;
+      const normalizedError =
+        error instanceof LinkedInAssistantError
+          ? error
+          : new LinkedInAssistantError(
+              "UNKNOWN",
+              `Draft-quality judge failed for ${input.draftCase.id}/${input.draft.id}.`,
+              {
+                case_id: input.draftCase.id,
+                draft_id: input.draft.id,
+                cause: error instanceof Error ? error.message : String(error)
+              },
+              error instanceof Error ? { cause: error } : undefined
+            );
+
+      warning = `Judge fallback for ${input.draftCase.id}/${input.draft.id}: ${normalizedError.message} Deterministic scores were kept.`;
+      notes.push("Judge fallback: deterministic scores were kept.");
+
+      logEvaluationEvent(
+        input.logger,
+        normalizedError.code === "TIMEOUT" ? "warn" : "error",
+        normalizedError.code === "TIMEOUT"
+          ? "draft_quality.judge.timeout"
+          : "draft_quality.judge.failed",
+        {
+          case_id: input.draftCase.id,
+          draft_id: input.draft.id,
+          error_code: normalizedError.code,
+          message: normalizedError.message,
+          ...normalizedError.details
+        }
+      );
+
+      evaluatedJudge = {
+        failed: true,
+        warning
+      };
+    }
+
+    if (evaluatedJudge.judgeResult) {
+      relevance = mergeJudgeMetric(relevance, evaluatedJudge.judgeResult.relevance);
+      tone = mergeJudgeMetric(tone, evaluatedJudge.judgeResult.tone);
+      notes.push(...(evaluatedJudge.judgeResult.notes ?? []));
+    }
   }
 
   return {
-    case_id: input.draftCase.id,
-    draft_id: input.draft.id,
-    draft_source: input.draft.source,
-    overall: createOverallResult({
-      relevance,
-      tone,
-      length,
-      hard_failures: deterministic.hard_failures
-    }),
-    metrics: {
-      relevance,
-      tone,
-      length
+    result: {
+      case_id: input.draftCase.id,
+      draft_id: input.draft.id,
+      draft_source: input.draft.source,
+      overall: createOverallResult({
+        relevance,
+        tone,
+        length,
+        hard_failures: deterministic.hard_failures
+      }),
+      metrics: {
+        relevance,
+        tone,
+        length
+      },
+      notes: uniqueStrings(notes),
+      ...(input.draftCase.channel ? { case_channel: input.draftCase.channel } : {}),
+      ...(input.draftCase.scenario ? { case_scenario: input.draftCase.scenario } : {}),
+      ...(input.draft.label ? { draft_label: input.draft.label } : {})
     },
-    notes: uniqueStrings(notes),
-    ...(input.draftCase.channel ? { case_channel: input.draftCase.channel } : {}),
-    ...(input.draftCase.scenario ? { case_scenario: input.draftCase.scenario } : {}),
-    ...(input.draft.label ? { draft_label: input.draft.label } : {})
+    ...(warning ? { warning } : {}),
+    judgeFailed
   };
 }
 
@@ -1541,6 +2085,8 @@ function createReportSummary(input: {
   skippedCaseCount: number;
   caseResults: DraftQualityCaseResult[];
   sourceCounts: Record<DraftQualityDraftSource, number>;
+  judgeFailureCount: number;
+  warningCount: number;
 }): DraftQualityReportSummary {
   const totalDrafts = input.caseResults.length;
   const passedDrafts = input.caseResults.filter((result) => result.overall.passed).length;
@@ -1553,6 +2099,25 @@ function createReportSummary(input: {
       return totals;
     },
     { relevance: 0, tone: 0, length: 0 }
+  );
+  const failedMetricCounts = input.caseResults.reduce<DraftQualityFailedMetricCounts>(
+    (totals, result) => {
+      if (!result.metrics.relevance.passed) {
+        totals.relevance += 1;
+      }
+      if (!result.metrics.tone.passed) {
+        totals.tone += 1;
+      }
+      if (!result.metrics.length.passed) {
+        totals.length += 1;
+      }
+      return totals;
+    },
+    { relevance: 0, tone: 0, length: 0 }
+  );
+  const hardFailureCount = input.caseResults.reduce(
+    (total, result) => total + result.overall.hard_failures.length,
+    0
   );
 
   return {
@@ -1568,6 +2133,10 @@ function createReportSummary(input: {
       tone: totalDrafts === 0 ? 0 : roundScore(totalMetricScores.tone / totalDrafts),
       length: totalDrafts === 0 ? 0 : roundScore(totalMetricScores.length / totalDrafts)
     },
+    failed_metric_counts: failedMetricCounts,
+    hard_failure_count: hardFailureCount,
+    judge_failure_count: input.judgeFailureCount,
+    warning_count: input.warningCount,
     source_counts: input.sourceCounts
   };
 }
@@ -1576,60 +2145,142 @@ export async function evaluateDraftQuality(
   input: EvaluateDraftQualityInput
 ): Promise<DraftQualityReport> {
   const now = input.now ?? new Date();
-  const runId = input.run_id ?? createRunId(now);
-  const draftsByCaseId = buildCandidateLookup(input.dataset, input.candidates);
-  const sourceCounts = createSourceCounts();
-  const warnings: string[] = [];
-  const caseResults: DraftQualityCaseResult[] = [];
-  let skippedCaseCount = 0;
+  if (!(now instanceof Date) || Number.isNaN(now.getTime())) {
+    throw createInputError("Expected evaluate.now to be a valid Date.", {
+      location: "evaluate.now"
+    });
+  }
 
-  for (const draftCase of input.dataset.cases) {
-    const drafts = draftsByCaseId.get(draftCase.id) ?? [];
+  const runId = input.run_id === undefined ? createRunId(now) : input.run_id.trim();
+  if (runId.length === 0) {
+    throw createInputError("Expected evaluate.run_id to be non-empty when provided.", {
+      location: "evaluate.run_id"
+    });
+  }
 
-    if (drafts.length === 0) {
-      skippedCaseCount += 1;
-      warnings.push(`Case ${draftCase.id} has no candidate drafts and was skipped.`);
-      continue;
-    }
+  try {
+    const dataset = parseDraftQualityDataset(input.dataset);
+    const candidates = input.candidates
+      ? parseDraftQualityCandidateSet(input.candidates)
+      : undefined;
+    const limits = resolveEvaluationLimits(input.limits);
+    validateResourceLimits(dataset, candidates, limits);
 
-    for (const draft of drafts) {
-      sourceCounts[draft.source] += 1;
+    logEvaluationEvent(input.logger, "info", "draft_quality.evaluate.start", {
+      run_id: runId,
+      total_cases: dataset.cases.length,
+      embedded_draft_count: dataset.cases.reduce(
+        (total, draftCase) => total + draftCase.candidate_drafts.length,
+        0
+      ),
+      external_draft_count: candidates?.drafts.length ?? 0,
+      judge_enabled: Boolean(input.judge)
+    });
 
-      caseResults.push(
-        await evaluateDraftCaseResult({
+    const draftsByCaseId = buildCandidateLookup(dataset, candidates);
+    const sourceCounts = createSourceCounts();
+    const warnings: string[] = [];
+    const caseResults: DraftQualityCaseResult[] = [];
+    let skippedCaseCount = 0;
+    let judgeFailureCount = 0;
+
+    for (const draftCase of dataset.cases) {
+      const drafts = draftsByCaseId.get(draftCase.id) ?? [];
+
+      if (drafts.length === 0) {
+        skippedCaseCount += 1;
+        const warning = `Case ${draftCase.id} has no candidate drafts and was skipped.`;
+        warnings.push(warning);
+        logEvaluationEvent(input.logger, "warn", "draft_quality.case.skipped", {
+          run_id: runId,
+          case_id: draftCase.id,
+          reason: "no_candidate_drafts"
+        });
+        continue;
+      }
+
+      for (const draft of drafts) {
+        sourceCounts[draft.source] += 1;
+
+        const evaluation = await evaluateDraftCaseResult({
           draftCase,
           draft,
-          judge: input.judge
-        })
+          judge: input.judge,
+          judgeTimeoutMs: limits.judge_timeout_ms,
+          logger: input.logger
+        });
+        caseResults.push(evaluation.result);
+
+        if (evaluation.warning) {
+          warnings.push(evaluation.warning);
+        }
+
+        if (evaluation.judgeFailed) {
+          judgeFailureCount += 1;
+        }
+      }
+    }
+
+    if (caseResults.length === 0) {
+      throw createInputError(
+        "No candidate drafts were found. Provide embedded candidate_drafts or a separate candidates file.",
+        {
+          dataset_case_count: dataset.cases.length,
+          candidates_supplied: Boolean(candidates)
+        }
       );
     }
+
+    const summary = createReportSummary({
+      totalCases: dataset.cases.length,
+      skippedCaseCount,
+      caseResults,
+      sourceCounts,
+      judgeFailureCount,
+      warningCount: warnings.length
+    });
+
+    const report = {
+      run_id: runId,
+      generated_at: now.toISOString(),
+      outcome: summary.failed_drafts === 0 ? "pass" : "fail",
+      summary,
+      warnings,
+      cases: caseResults,
+      ...(input.dataset_path ? { dataset_path: input.dataset_path } : {}),
+      ...(input.candidates_path ? { candidates_path: input.candidates_path } : {})
+    } satisfies DraftQualityReport;
+
+    logEvaluationEvent(input.logger, "info", "draft_quality.evaluate.complete", {
+      run_id: runId,
+      outcome: report.outcome,
+      total_drafts: report.summary.total_drafts,
+      failed_drafts: report.summary.failed_drafts,
+      warning_count: report.summary.warning_count,
+      judge_failure_count: report.summary.judge_failure_count
+    });
+
+    return report;
+  } catch (error) {
+    const normalizedError =
+      error instanceof LinkedInAssistantError
+        ? error
+        : new LinkedInAssistantError(
+            "UNKNOWN",
+            "Draft-quality evaluation failed.",
+            {
+              cause: error instanceof Error ? error.message : String(error)
+            },
+            error instanceof Error ? { cause: error } : undefined
+          );
+
+    logEvaluationEvent(input.logger, "error", "draft_quality.evaluate.failed", {
+      run_id: runId,
+      error_code: normalizedError.code,
+      message: normalizedError.message,
+      ...normalizedError.details
+    });
+
+    throw error;
   }
-
-  if (caseResults.length === 0) {
-    throw createInputError(
-      "No candidate drafts were found. Provide embedded candidate_drafts or a separate candidates file.",
-      {
-        dataset_case_count: input.dataset.cases.length,
-        candidates_supplied: Boolean(input.candidates)
-      }
-    );
-  }
-
-  const summary = createReportSummary({
-    totalCases: input.dataset.cases.length,
-    skippedCaseCount,
-    caseResults,
-    sourceCounts
-  });
-
-  return {
-    run_id: runId,
-    generated_at: now.toISOString(),
-    outcome: summary.failed_drafts === 0 ? "pass" : "fail",
-    summary,
-    warnings,
-    cases: caseResults,
-    ...(input.dataset_path ? { dataset_path: input.dataset_path } : {}),
-    ...(input.candidates_path ? { candidates_path: input.candidates_path } : {})
-  };
 }
