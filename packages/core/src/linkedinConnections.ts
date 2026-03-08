@@ -1,5 +1,7 @@
 import { type BrowserContext, type Locator, type Page } from "playwright-core";
 import type { LinkedInAuthService } from "./auth/session.js";
+import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
+import type { ConfirmFailureArtifactConfig } from "./config.js";
 import { LinkedInAssistantError, asLinkedInAssistantError } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
@@ -66,6 +68,7 @@ export interface LinkedInConnectionsExecutorRuntime {
   profileManager: ProfileManager;
   logger: JsonEventLogger;
   artifacts: ArtifactHelpers;
+  confirmFailureArtifacts: ConfirmFailureArtifactConfig;
 }
 
 /**
@@ -329,6 +332,7 @@ async function scrapePendingInvitations(
 
 async function executeSendInvitation(
   runtime: LinkedInConnectionsExecutorRuntime,
+  actionId: string,
   target: Record<string, unknown>,
   payload: Record<string, unknown>
 ): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
@@ -345,6 +349,31 @@ async function executeSendInvitation(
     },
     async (context) => {
       const page = await getOrCreatePage(context);
+      return executeConfirmActionWithArtifacts({
+        runtime,
+        context,
+        page,
+        actionId,
+        actionType: SEND_INVITATION_ACTION_TYPE,
+        profileName,
+        targetUrl: profileUrl,
+        metadata: {
+          target_profile: targetProfile,
+          profile_url: profileUrl,
+          note_included: note.length > 0
+        },
+        errorDetails: {
+          target_profile: targetProfile,
+          profile_url: profileUrl,
+          note_included: note.length > 0
+        },
+        mapError: (error) =>
+          asLinkedInAssistantError(
+            error,
+            "UNKNOWN",
+            "Failed to execute LinkedIn send_invitation action."
+          ),
+        execute: async () => {
       await page.goto(profileUrl, { waitUntil: "domcontentloaded" });
       await waitForNetworkIdleBestEffort(page);
 
@@ -615,6 +644,7 @@ async function executeSendInvitation(
       }
 
       return {
+        ok: true,
         result: {
           status: "invitation_sent",
           target_profile: targetProfile,
@@ -625,12 +655,15 @@ async function executeSendInvitation(
         },
         artifacts: []
       };
+        }
+      });
     }
   );
 }
 
 async function executeAcceptInvitation(
   runtime: LinkedInConnectionsExecutorRuntime,
+  actionId: string,
   target: Record<string, unknown>
 ): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
   const targetProfile = String(target.target_profile ?? "");
@@ -644,6 +677,27 @@ async function executeAcceptInvitation(
     },
     async (context) => {
       const page = await getOrCreatePage(context);
+      return executeConfirmActionWithArtifacts({
+        runtime,
+        context,
+        page,
+        actionId,
+        actionType: ACCEPT_INVITATION_ACTION_TYPE,
+        profileName,
+        targetUrl: INVITATIONS_RECEIVED_URL,
+        metadata: {
+          target_profile: targetProfile
+        },
+        errorDetails: {
+          target_profile: targetProfile
+        },
+        mapError: (error) =>
+          asLinkedInAssistantError(
+            error,
+            "UNKNOWN",
+            "Failed to execute LinkedIn accept_invitation action."
+          ),
+        execute: async () => {
       await page.goto(INVITATIONS_RECEIVED_URL, { waitUntil: "domcontentloaded" });
       await waitForNetworkIdleBestEffort(page);
 
@@ -664,18 +718,22 @@ async function executeAcceptInvitation(
       }
 
       return {
+        ok: true,
         result: {
           status: "invitation_accepted",
           target_profile: targetProfile
         },
         artifacts: []
       };
+        }
+      });
     }
   );
 }
 
 async function executeWithdrawInvitation(
   runtime: LinkedInConnectionsExecutorRuntime,
+  actionId: string,
   target: Record<string, unknown>
 ): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
   const targetProfile = String(target.target_profile ?? "");
@@ -689,6 +747,27 @@ async function executeWithdrawInvitation(
     },
     async (context) => {
       const page = await getOrCreatePage(context);
+      return executeConfirmActionWithArtifacts({
+        runtime,
+        context,
+        page,
+        actionId,
+        actionType: WITHDRAW_INVITATION_ACTION_TYPE,
+        profileName,
+        targetUrl: INVITATIONS_SENT_URL,
+        metadata: {
+          target_profile: targetProfile
+        },
+        errorDetails: {
+          target_profile: targetProfile
+        },
+        mapError: (error) =>
+          asLinkedInAssistantError(
+            error,
+            "UNKNOWN",
+            "Failed to execute LinkedIn withdraw_invitation action."
+          ),
+        execute: async () => {
       await page.goto(INVITATIONS_SENT_URL, { waitUntil: "domcontentloaded" });
       await waitForNetworkIdleBestEffort(page);
 
@@ -716,12 +795,15 @@ async function executeWithdrawInvitation(
       }
 
       return {
+        ok: true,
         result: {
           status: "invitation_withdrawn",
           target_profile: targetProfile
         },
         artifacts: []
       };
+        }
+      });
     }
   );
 }
@@ -744,6 +826,7 @@ export class SendInvitationActionExecutor
   ): Promise<ActionExecutorResult> {
     const { result, artifacts } = await executeSendInvitation(
       input.runtime,
+      input.action.id,
       input.action.target,
       input.action.payload
     );
@@ -759,6 +842,7 @@ export class AcceptInvitationActionExecutor
   ): Promise<ActionExecutorResult> {
     const { result, artifacts } = await executeAcceptInvitation(
       input.runtime,
+      input.action.id,
       input.action.target
     );
     return { ok: true, result, artifacts };
@@ -773,6 +857,7 @@ export class WithdrawInvitationActionExecutor
   ): Promise<ActionExecutorResult> {
     const { result, artifacts } = await executeWithdrawInvitation(
       input.runtime,
+      input.action.id,
       input.action.target
     );
     return { ok: true, result, artifacts };

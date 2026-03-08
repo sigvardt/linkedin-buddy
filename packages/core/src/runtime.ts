@@ -1,5 +1,11 @@
 import { ArtifactHelpers } from "./artifacts.js";
-import { ensureConfigPaths, resolveConfigPaths, type ConfigPaths } from "./config.js";
+import {
+  ensureConfigPaths,
+  resolveConfigPaths,
+  resolveConfirmFailureArtifactConfig,
+  type ConfigPaths,
+  type ConfirmFailureArtifactConfig
+} from "./config.js";
 import { AssistantDatabase } from "./db/database.js";
 import { LinkedInAuthService } from "./auth/session.js";
 import {
@@ -57,6 +63,7 @@ export interface CoreRuntime {
   paths: ConfigPaths;
   runId: string;
   cdpUrl?: string | undefined;
+  confirmFailureArtifacts: ConfirmFailureArtifactConfig;
   db: AssistantDatabase;
   logger: JsonEventLogger;
   artifacts: ArtifactHelpers;
@@ -86,6 +93,7 @@ export function createCoreRuntime(
   const runId = options.runId ?? createRunId();
   const logger = new JsonEventLogger(paths, runId, db);
   const artifacts = new ArtifactHelpers(paths, runId, db);
+  const confirmFailureArtifacts = resolveConfirmFailureArtifactConfig();
   const profileManager = new ProfileManager(paths);
   let runtime: CoreRuntime;
 
@@ -114,6 +122,7 @@ export function createCoreRuntime(
     paths,
     runId,
     cdpUrl: options.cdpUrl,
+    confirmFailureArtifacts,
     db,
     logger,
     artifacts,
