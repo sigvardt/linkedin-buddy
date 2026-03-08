@@ -50,9 +50,18 @@ export interface PreparedActionResult {
   preview: Record<string, unknown>;
 }
 
-interface CommandExecutionOptions {
+export interface CommandExecutionOptions {
   assistantHome?: string;
+  timeoutMs?: number;
+  maxAttempts?: number;
+  retryDelayMs?: number;
 }
+
+export type CliRunner = (argv: string[]) => Promise<void>;
+export type McpToolCaller = (
+  name: string,
+  args: Record<string, unknown>
+) => Promise<unknown>;
 
 const DEFAULT_PROFILE_NAME = process.env.LINKEDIN_E2E_PROFILE ?? "default";
 const DEFAULT_MESSAGE_TARGET_PATTERN =
@@ -63,6 +72,10 @@ const DEFAULT_LIKE_POST_URL = process.env.LINKEDIN_E2E_LIKE_POST_URL;
 const DEFAULT_COMMENT_POST_URL = process.env.LINKEDIN_E2E_COMMENT_POST_URL;
 const DEFAULT_CONNECTION_CONFIRM_MODE =
   process.env.LINKEDIN_E2E_CONNECTION_CONFIRM_MODE ?? "";
+const DEFAULT_MAX_ATTEMPTS = 1;
+const DEFAULT_RETRY_DELAY_MS = 250;
+const TRANSIENT_E2E_ERROR_PATTERN =
+  /timed out|timeout|Target closed|Execution context was destroyed|page crashed|browser has been closed|context was closed|ECONNRESET|ECONNREFUSED|EPIPE/i;
 
 function readEnabledFlag(name: string): boolean {
   const value = process.env[name];
@@ -163,6 +176,193 @@ function parseJsonObjects(text: string): Record<string, unknown>[] {
   return objects;
 }
 
+function summarizeUnknownValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function resolveMaxAttempts(value: number | undefined): number {
+  if (value === undefined) {
+    return DEFAULT_MAX_ATTEMPTS;
+  }
+
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error("maxAttempts must be a positive integer.");
+  }
+
+  return value;
+}
+
+function resolveRetryDelayMs(value: number | undefined): number {
+  if (value === undefined) {
+    return DEFAULT_RETRY_DELAY_MS;
+  }
+
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error("retryDelayMs must be zero or greater.");
+  }
+
+  return value;
+}
+
+function getTimeoutMs(value: number | undefined): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error("timeoutMs must be a positive number.");
+  }
+
+  return value;
+}
+
+function shouldRetryTransientError(error: unknown): boolean {
+  const message =
+    error instanceof Error && error.message.trim().length > 0
+      ? error.message
+      : summarizeUnknownValue(error);
+
+  return TRANSIENT_E2E_ERROR_PATTERN.test(message);
+}
+
+async function sleep(delayMs: number): Promise<void> {
+  if (delayMs <= 0) {
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
+}
+
+async function withOptionalTimeout<T>(
+  promise: Promise<T>,
+  label: string,
+  timeoutMs: number | undefined
+): Promise<T> {
+  if (timeoutMs === undefined) {
+    return promise;
+  }
+
+  return await new Promise<T>((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms.`));
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        clearTimeout(timeoutId);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timeoutId);
+        reject(error);
+      }
+    );
+  });
+}
+
+async function captureCommandExecution(
+  execute: () => Promise<void>
+): Promise<CapturedCommandResult> {
+  const stdoutChunks: string[] = [];
+  const stderrChunks: string[] = [];
+  const originalStdoutWrite = process.stdout.write;
+  const originalStderrWrite = process.stderr.write;
+  const originalExitCode = process.exitCode;
+  let exitCode = 0;
+
+  process.stdout.write = createWriteInterceptor(stdoutChunks);
+  process.stderr.write = createWriteInterceptor(stderrChunks);
+  process.exitCode = 0;
+
+  let error: unknown;
+
+  try {
+    await execute();
+  } catch (caught) {
+    error = caught;
+    if ((process.exitCode ?? 0) === 0) {
+      process.exitCode = 1;
+    }
+
+    stderrChunks.push(
+      `${JSON.stringify(toLinkedInAssistantErrorPayload(caught), null, 2)}\n`
+    );
+  } finally {
+    process.stdout.write = originalStdoutWrite;
+    process.stderr.write = originalStderrWrite;
+    exitCode = process.exitCode ?? 0;
+    process.exitCode = originalExitCode;
+  }
+
+  return {
+    stdout: stdoutChunks.join(""),
+    stderr: stderrChunks.join(""),
+    exitCode,
+    ...(error === undefined ? {} : { error })
+  };
+}
+
+function assertObjectRecord(value: unknown, label: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${label} must be an object.`);
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function parseJsonObjectText(text: string, label: string): Record<string, unknown> {
+  try {
+    return assertObjectRecord(JSON.parse(text) as unknown, label);
+  } catch {
+    const objects = parseJsonObjects(text);
+    const lastObject = objects.at(-1);
+    if (lastObject) {
+      return lastObject;
+    }
+
+    throw new Error(`${label} did not contain a JSON object: ${text}`);
+  }
+}
+
+export function mapMcpToolResult(name: string, rawResult: unknown): MappedMcpResult {
+  const record = assertObjectRecord(rawResult, `Tool ${name} result`);
+  const content = record.content;
+  if (!Array.isArray(content)) {
+    throw new Error(`Tool ${name} returned invalid content: ${summarizeUnknownValue(content)}`);
+  }
+
+  const textItems = content.filter((item) => {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      return false;
+    }
+
+    const entry = item as Record<string, unknown>;
+    return entry.type === "text" && typeof entry.text === "string";
+  }) as Array<Record<string, unknown>>;
+
+  const lastText = textItems.at(-1)?.text;
+  if (typeof lastText !== "string" || lastText.trim().length === 0) {
+    throw new Error(`Tool ${name} returned no text content.`);
+  }
+
+  const payload = parseJsonObjectText(lastText, `Tool ${name} payload`);
+
+  return {
+    payload,
+    isError: record.isError === true
+  };
+}
+
 export function getDefaultProfileName(): string {
   return DEFAULT_PROFILE_NAME;
 }
@@ -191,54 +391,59 @@ export function getOptInCommentPostUrl(): string | undefined {
   return DEFAULT_COMMENT_POST_URL;
 }
 
+export async function runCliCommandWith(
+  runner: CliRunner,
+  args: string[],
+  options: CommandExecutionOptions = {}
+): Promise<CapturedCommandResult> {
+  const maxAttempts = resolveMaxAttempts(options.maxAttempts);
+  const retryDelayMs = resolveRetryDelayMs(options.retryDelayMs);
+  const timeoutMs = getTimeoutMs(options.timeoutMs);
+  let lastResult: CapturedCommandResult | undefined;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const execute = async (): Promise<void> => {
+      await runner(["node", "linkedin", "--cdp-url", getCdpUrl(), ...args]);
+    };
+
+    const wrappedExecution = async (): Promise<void> => {
+      if (options.assistantHome) {
+        await withAssistantHome(options.assistantHome, execute);
+        return;
+      }
+
+      await withE2EEnvironment(execute);
+    };
+
+    const result = await captureCommandExecution(() =>
+      withOptionalTimeout(
+        wrappedExecution(),
+        `CLI command ${args.join(" ")}`,
+        timeoutMs
+      )
+    );
+    lastResult = result;
+
+    if (!result.error || !shouldRetryTransientError(result.error) || attempt >= maxAttempts) {
+      return result;
+    }
+
+    await sleep(retryDelayMs);
+  }
+
+  return lastResult ?? {
+    stdout: "",
+    stderr: "",
+    exitCode: 1,
+    error: new Error("CLI command did not produce a result.")
+  };
+}
+
 export async function runCliCommand(
   args: string[],
   options: CommandExecutionOptions = {}
 ): Promise<CapturedCommandResult> {
-  const stdoutChunks: string[] = [];
-  const stderrChunks: string[] = [];
-  const originalStdoutWrite = process.stdout.write;
-  const originalStderrWrite = process.stderr.write;
-  const originalExitCode = process.exitCode;
-  let exitCode = 0;
-
-  process.stdout.write = createWriteInterceptor(stdoutChunks);
-  process.stderr.write = createWriteInterceptor(stderrChunks);
-  process.exitCode = 0;
-
-  let error: unknown;
-  const execute = async (): Promise<void> => {
-    await runCli(["node", "linkedin", "--cdp-url", getCdpUrl(), ...args]);
-  };
-
-  try {
-    if (options.assistantHome) {
-      await withAssistantHome(options.assistantHome, execute);
-    } else {
-      await withE2EEnvironment(execute);
-    }
-  } catch (caught) {
-    error = caught;
-    if ((process.exitCode ?? 0) === 0) {
-      process.exitCode = 1;
-    }
-
-    stderrChunks.push(
-      `${JSON.stringify(toLinkedInAssistantErrorPayload(caught), null, 2)}\n`
-    );
-  } finally {
-    process.stdout.write = originalStdoutWrite;
-    process.stderr.write = originalStderrWrite;
-    exitCode = process.exitCode ?? 0;
-    process.exitCode = originalExitCode;
-  }
-
-  return {
-    stdout: stdoutChunks.join(""),
-    stderr: stderrChunks.join(""),
-    exitCode,
-    ...(error === undefined ? {} : { error })
-  };
+  return runCliCommandWith(runCli, args, options);
 }
 
 export function getLastJsonObject(text: string): Record<string, unknown> {
@@ -250,33 +455,58 @@ export function getLastJsonObject(text: string): Record<string, unknown> {
   return lastObject;
 }
 
+export async function callMcpToolWith(
+  caller: McpToolCaller,
+  name: string,
+  args: Record<string, unknown> = {},
+  options: CommandExecutionOptions = {}
+): Promise<MappedMcpResult> {
+  const maxAttempts = resolveMaxAttempts(options.maxAttempts);
+  const retryDelayMs = resolveRetryDelayMs(options.retryDelayMs);
+  const timeoutMs = getTimeoutMs(options.timeoutMs);
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const execute = async (): Promise<unknown> =>
+      caller(name, {
+        cdpUrl: getCdpUrl(),
+        ...args
+      });
+
+    const wrappedExecution = async (): Promise<unknown> => {
+      if (options.assistantHome) {
+        return await withAssistantHome(options.assistantHome, execute);
+      }
+
+      return await withE2EEnvironment(execute);
+    };
+
+    try {
+      const rawResult = await withOptionalTimeout(
+        wrappedExecution(),
+        `MCP tool ${name}`,
+        timeoutMs
+      );
+      return mapMcpToolResult(name, rawResult);
+    } catch (error) {
+      lastError = error;
+      if (!shouldRetryTransientError(error) || attempt >= maxAttempts) {
+        throw error;
+      }
+
+      await sleep(retryDelayMs);
+    }
+  }
+
+  throw lastError;
+}
+
 export async function callMcpTool(
   name: string,
   args: Record<string, unknown> = {},
   options: CommandExecutionOptions = {}
 ): Promise<MappedMcpResult> {
-  const execute = async () =>
-    handleToolCall(name, {
-      cdpUrl: getCdpUrl(),
-      ...args
-    });
-  const rawResult = options.assistantHome
-    ? await withAssistantHome(options.assistantHome, execute)
-    : await withE2EEnvironment(execute);
-  const content = rawResult.content[0];
-  if (!content) {
-    throw new Error(`Tool ${name} returned no content.`);
-  }
-
-  const payload = JSON.parse(content.text) as unknown;
-  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
-    throw new Error(`Tool ${name} returned a non-object payload.`);
-  }
-
-  return {
-    payload: payload as Record<string, unknown>,
-    isError: "isError" in rawResult && rawResult.isError === true
-  };
+  return callMcpToolWith(handleToolCall, name, args, options);
 }
 
 function asRecord(value: unknown, label: string): Record<string, unknown> {
