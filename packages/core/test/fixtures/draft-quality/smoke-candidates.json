@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "drafts": [
+    {
+      "case_id": "timeline_clarification_001",
+      "id": "model_candidate",
+      "source": "model",
+      "text": "Thanks for checking. We are planning a small pilot in Q3, and I can send a one-page overview if that would be helpful."
+    },
+    {
+      "case_id": "followup_meeting_request_001",
+      "id": "too_pushy",
+      "source": "model",
+      "text": "Just circling back. Please respond ASAP about next week!!!"
+    }
+  ]
+}

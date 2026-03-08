@@ -8,6 +8,7 @@ import { Command } from "commander";
 import {
   DEFAULT_FOLLOWUP_SINCE,
   clearRateLimitState,
+  evaluateDraftQuality,
   isInRateLimitCooldown,
   LINKEDIN_FEED_REACTION_TYPES,
   LINKEDIN_POST_VISIBILITY_TYPES,
@@ -15,14 +16,22 @@ import {
   createCoreRuntime,
   normalizeLinkedInFeedReaction,
   normalizeLinkedInPostVisibility,
+  parseDraftQualityCandidateSet,
+  parseDraftQualityDataset,
   resolveFollowupSinceWindow,
   redactStructuredValue,
   resolveConfigPaths,
   resolvePrivacyConfig,
   toLinkedInAssistantErrorPayload,
+  type DraftQualityReport,
   type SearchCategory,
   type SelectorAuditReport
 } from "@linkedin-assistant/core";
+import {
+  formatDraftQualityError,
+  formatDraftQualityReport,
+  resolveDraftQualityOutputMode
+} from "../draftQualityOutput.js";
 import {
   formatSelectorAuditError,
   formatSelectorAuditReport,
@@ -169,6 +178,62 @@ async function readJsonFile<T>(filePath: string): Promise<T | null> {
 
 async function writeJsonFile(filePath: string, value: unknown): Promise<void> {
   await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+async function readJsonInputFile(filePath: string, label: string): Promise<unknown> {
+  const resolvedPath = path.resolve(filePath);
+  let raw: string;
+
+  try {
+    raw = await readFile(resolvedPath, "utf8");
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "ENOENT"
+    ) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        `Could not read ${label}.`,
+        {
+          path: resolvedPath,
+          cause: "ENOENT"
+        },
+        { cause: error }
+      );
+    }
+
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `Could not read ${label}.`,
+      {
+        path: resolvedPath,
+        cause: error instanceof Error ? error.message : String(error)
+      },
+      error instanceof Error ? { cause: error } : undefined
+    );
+  }
+
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch (error) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `Could not parse ${label} as JSON.`,
+      {
+        path: resolvedPath,
+        cause: error instanceof Error ? error.message : String(error)
+      },
+      error instanceof Error ? { cause: error } : undefined
+    );
+  }
+}
+
+async function writeOutputJsonFile(filePath: string, value: unknown): Promise<string> {
+  const resolvedPath = path.resolve(filePath);
+  await mkdir(path.dirname(resolvedPath), { recursive: true });
+  await writeJsonFile(resolvedPath, value);
+  return resolvedPath;
 }
 
 async function readKeepAlivePid(profileName: string): Promise<number | null> {
@@ -1525,6 +1590,72 @@ async function runSelectorAudit(input: {
   }
 }
 
+async function runDraftQualityAudit(input: {
+  datasetPath: string;
+  candidatesPath?: string;
+  json: boolean;
+  verbose: boolean;
+  outputPath?: string;
+}): Promise<void> {
+  const outputMode = resolveDraftQualityOutputMode(
+    { json: input.json },
+    Boolean(stdout.isTTY)
+  );
+
+  try {
+    const datasetPath = path.resolve(input.datasetPath);
+    const dataset = parseDraftQualityDataset(
+      await readJsonInputFile(datasetPath, "draft-quality dataset")
+    );
+    const candidatesPath = input.candidatesPath
+      ? path.resolve(input.candidatesPath)
+      : undefined;
+    const candidates = candidatesPath
+      ? parseDraftQualityCandidateSet(
+          await readJsonInputFile(candidatesPath, "draft-quality candidates file")
+        )
+      : undefined;
+    const report = await evaluateDraftQuality({
+      dataset,
+      ...(candidates ? { candidates } : {}),
+      dataset_path: datasetPath,
+      ...(candidatesPath ? { candidates_path: candidatesPath } : {})
+    });
+    const writtenReportPath = input.outputPath
+      ? await writeOutputJsonFile(input.outputPath, report)
+      : undefined;
+
+    if (outputMode === "json") {
+      printJson(report);
+    } else {
+      const redactedReport = redactStructuredValue(
+        report,
+        cliPrivacyConfig,
+        "cli"
+      ) as DraftQualityReport;
+      const output = formatDraftQualityReport(redactedReport, {
+        verbose: input.verbose
+      });
+
+      console.log(
+        writtenReportPath ? `${output}\nJSON report written to ${writtenReportPath}` : output
+      );
+    }
+
+    if (report.outcome === "fail") {
+      process.exitCode = 1;
+    }
+  } catch (error) {
+    if (outputMode === "json") {
+      throw error;
+    }
+
+    const errorPayload = toLinkedInAssistantErrorPayload(error, cliPrivacyConfig);
+    process.stderr.write(`${formatDraftQualityError(errorPayload)}\n`);
+    process.exitCode = 1;
+  }
+}
+
 function readTargetProfileName(target: Record<string, unknown>): string | undefined {
   const value = target.profile_name;
   if (typeof value === "string" && value.trim().length > 0) {
@@ -1634,6 +1765,7 @@ async function main(): Promise<void> {
         "",
         "Diagnostics:",
         "  linkedin audit selectors --help",
+        "  linkedin audit draft-quality --help",
         `  ${SELECTOR_AUDIT_DOC_REFERENCE}`
       ].join("\n")
     );
@@ -2283,6 +2415,46 @@ async function main(): Promise<void> {
         progress: options.progress,
         verbose: options.verbose
       }, readCdpUrl());
+    });
+
+  auditCommand
+    .command("draft-quality")
+    .description("Evaluate draft replies against thread-specific quality expectations")
+    .requiredOption("--dataset <path>", "Path to the draft-quality dataset JSON file")
+    .option(
+      "--candidates <path>",
+      "Optional JSON file with external candidate drafts keyed by case_id"
+    )
+    .option("--json", "Print the full JSON report (recommended for automation)", false)
+    .option(
+      "--verbose",
+      "Show draft-by-draft detail in human-readable output",
+      false
+    )
+    .option("--output <path>", "Write the JSON report to a file")
+    .addHelpText(
+      "after",
+      [
+        "",
+        "The dataset can embed candidate_drafts or you can provide --candidates.",
+        "Interactive terminals default to a human-readable summary.",
+        "Use --json for automation and --output to persist the JSON report."
+      ].join("\n")
+    )
+    .action(async (options: {
+      dataset: string;
+      candidates?: string;
+      json: boolean;
+      verbose: boolean;
+      output?: string;
+    }) => {
+      await runDraftQualityAudit({
+        datasetPath: options.dataset,
+        json: options.json,
+        verbose: options.verbose,
+        ...(options.candidates ? { candidatesPath: options.candidates } : {}),
+        ...(options.output ? { outputPath: options.output } : {})
+      });
     });
 
   const actionsCommand = program
