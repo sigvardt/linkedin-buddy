@@ -3,6 +3,7 @@ import type { Dirent } from "node:fs";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import {
+  access,
   appendFile,
   mkdir,
   readFile,
@@ -19,6 +20,7 @@ import { Command } from "commander";
 import {
   DEFAULT_FOLLOWUP_SINCE,
   LINKEDIN_ASSISTANT_SELECTOR_LOCALE_ENV,
+  asLinkedInAssistantError,
   clearRateLimitState,
   createLocalDataDeletionPlan,
   evaluateDraftQuality,
@@ -34,13 +36,16 @@ import {
   normalizeLinkedInPostVisibility,
   parseDraftQualityCandidateSet,
   parseDraftQualityDataset,
+  resolveConfigPaths,
   resolveFollowupSinceWindow,
   resolveLinkedInSelectorLocaleConfigResolution,
   redactStructuredValue,
   resolveKeepAliveDir,
+  resolveLegacyRateLimitStateFilePath,
   resolvePrivacyConfig,
   toLinkedInAssistantErrorPayload,
   type DraftQualityReport,
+  type LocalDataDeletionFailure,
   type SearchCategory,
   type SelectorAuditReport
 } from "@linkedin-assistant/core";
@@ -85,6 +90,22 @@ function maybeWarnAboutSelectorLocaleConfig(selectorLocale?: string): void {
   writeCliWarning(warning.message);
   writeCliNotice(warning.actionTaken);
   writeCliNotice(warning.guidance);
+}
+
+interface LocalDataPreviewItem {
+  exists: boolean;
+  label: string;
+  note?: string;
+  path: string;
+}
+
+interface LocalDataDeletionPreview {
+  baseDir: string;
+  deleteItems: LocalDataPreviewItem[];
+  existingDeletePaths: string[];
+  includeProfileRequested: boolean;
+  missingDeletePaths: string[];
+  preserveItems: LocalDataPreviewItem[];
 }
 
 function coercePositiveInt(value: string, label: string): number {
@@ -448,10 +469,295 @@ function assertInteractiveTerminal(operation: string): void {
   }
 }
 
-function printDeletionTargets(targetPaths: string[]): void {
-  for (const targetPath of targetPaths) {
-    console.log(`- ${targetPath}`);
+async function pathExists(targetPath: string): Promise<boolean> {
+  try {
+    await access(targetPath);
+    return true;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "ENOENT"
+    ) {
+      return false;
+    }
+
+    throw error;
   }
+}
+
+function pluralize(
+  count: number,
+  singular: string,
+  plural: string = `${singular}s`
+): string {
+  return count === 1 ? singular : plural;
+}
+
+function resolveLocalDataDeleteLabel(
+  targetPath: string,
+  paths: ReturnType<typeof resolveConfigPaths>,
+  keepAliveDir: string,
+  legacyRateLimitStatePath: string
+): string {
+  if (targetPath === path.resolve(paths.dbPath)) {
+    return "SQLite database";
+  }
+
+  if (targetPath === path.resolve(`${paths.dbPath}-journal`)) {
+    return "SQLite rollback journal";
+  }
+
+  if (targetPath === path.resolve(`${paths.dbPath}-wal`)) {
+    return "SQLite write-ahead log";
+  }
+
+  if (targetPath === path.resolve(`${paths.dbPath}-shm`)) {
+    return "SQLite shared-memory file";
+  }
+
+  if (targetPath === path.resolve(paths.artifactsDir)) {
+    return "Run artifacts";
+  }
+
+  if (targetPath === path.resolve(keepAliveDir)) {
+    return "Keepalive daemon state";
+  }
+
+  if (targetPath === path.resolve(paths.profilesDir)) {
+    return "Browser profiles";
+  }
+
+  if (targetPath === legacyRateLimitStatePath) {
+    return "Legacy auth cooldown state";
+  }
+
+  if (targetPath.endsWith(`${path.sep}rate-limit-state.json`)) {
+    return "Auth cooldown state";
+  }
+
+  return "Local data target";
+}
+
+async function createLocalDataDeletionPreview(
+  includeProfile: boolean
+): Promise<LocalDataDeletionPreview> {
+  const deletionPlan = createLocalDataDeletionPlan({ includeProfile });
+  const resolvedPaths = resolveConfigPaths(deletionPlan.baseDir);
+  const keepAliveDir = resolveKeepAliveDir(deletionPlan.baseDir);
+  const legacyRateLimitStatePath = path.resolve(
+    resolveLegacyRateLimitStateFilePath()
+  );
+
+  const deleteItems = await Promise.all(
+    deletionPlan.targets.map(async (targetPath) => ({
+      exists: await pathExists(targetPath),
+      label: resolveLocalDataDeleteLabel(
+        targetPath,
+        resolvedPaths,
+        keepAliveDir,
+        legacyRateLimitStatePath
+      ),
+      ...(targetPath === path.resolve(resolvedPaths.profilesDir)
+        ? {
+            note: "Deletes tool-owned cookies, local storage, and saved browser sessions."
+          }
+        : {}),
+      path: targetPath
+    }))
+  );
+
+  const preserveItems = await Promise.all(
+    [
+      ...(!includeProfile
+        ? [
+            {
+              label: "Browser profiles",
+              note: "Preserved unless you rerun with --include-profile.",
+              path: path.resolve(resolvedPaths.profilesDir)
+            }
+          ]
+        : []),
+      {
+        label: "Config file",
+        note: "Preserved by design. Delete manually only if you want a full local reset.",
+        path: path.resolve(path.join(deletionPlan.baseDir, "config.json"))
+      }
+    ].map(async (item) => ({
+      ...item,
+      exists: await pathExists(item.path)
+    }))
+  );
+
+  return {
+    baseDir: deletionPlan.baseDir,
+    deleteItems,
+    existingDeletePaths: deleteItems
+      .filter((item) => item.exists)
+      .map((item) => item.path),
+    includeProfileRequested: includeProfile,
+    missingDeletePaths: deleteItems
+      .filter((item) => !item.exists)
+      .map((item) => item.path),
+    preserveItems
+  };
+}
+
+function printLocalDataPreviewSection(
+  title: string,
+  items: LocalDataPreviewItem[]
+): void {
+  if (items.length === 0) {
+    return;
+  }
+
+  console.log(title);
+  for (const item of items) {
+    const note = item.note ? ` — ${item.note}` : "";
+    console.log(
+      `- ${item.label}: ${item.path} (${item.exists ? "present" : "already absent"})${note}`
+    );
+  }
+}
+
+function printLocalDataDeletionPreview(
+  preview: LocalDataDeletionPreview,
+  destructiveMode: boolean
+): void {
+  if (destructiveMode) {
+    console.log("Local data deletion requested.");
+  } else {
+    console.log("Local data deletion preview (dry-run). No files were removed.");
+  }
+
+  console.log(`Assistant home: ${preview.baseDir}`);
+  printLocalDataPreviewSection("Delete targets:", preview.deleteItems);
+  printLocalDataPreviewSection("Preserved paths:", preview.preserveItems);
+
+  if (preview.existingDeletePaths.length === 0) {
+    console.log("Nothing to delete. Tool-owned runtime state is already absent.");
+    return;
+  }
+
+  if (!destructiveMode) {
+    console.log(
+      `Rerun with --confirm to permanently delete ${preview.existingDeletePaths.length} existing ${pluralize(preview.existingDeletePaths.length, "path")}.`
+    );
+    if (preview.includeProfileRequested) {
+      console.log(
+        "Browser profiles are included in this preview and still require a second confirmation during deletion."
+      );
+    }
+    return;
+  }
+
+  console.log(
+    `Ready to delete ${preview.existingDeletePaths.length} existing ${pluralize(preview.existingDeletePaths.length, "path")} after confirmation.`
+  );
+  if (preview.includeProfileRequested) {
+    console.log(
+      "Deleting browser profiles requires a second confirmation because signed-in browser state will be lost."
+    );
+  }
+}
+
+function isLocalDataDeletionFailure(
+  value: unknown
+): value is LocalDataDeletionFailure {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Partial<LocalDataDeletionFailure>;
+  return (
+    typeof candidate.path === "string" &&
+    (typeof candidate.code === "string" || candidate.code === null) &&
+    typeof candidate.message === "string" &&
+    (typeof candidate.recoveryHint === "string" ||
+      typeof candidate.recoveryHint === "undefined")
+  );
+}
+
+function extractLocalDataDeletionFailures(
+  value: unknown
+): LocalDataDeletionFailure[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter(isLocalDataDeletionFailure);
+}
+
+function formatLocalDataDeletionError(error: unknown): LinkedInAssistantError {
+  const assistantError = asLinkedInAssistantError(
+    error,
+    "UNKNOWN",
+    "Local data deletion failed."
+  );
+  const failedPaths = extractLocalDataDeletionFailures(
+    assistantError.details.failed_paths
+  );
+  if (failedPaths.length === 0) {
+    return assistantError;
+  }
+
+  const deletedCount = Array.isArray(assistantError.details.deleted_paths)
+    ? assistantError.details.deleted_paths.length
+    : 0;
+  const firstFailure = failedPaths[0]!;
+  const deletedSummary =
+    deletedCount > 0
+      ? `${deletedCount} ${pluralize(deletedCount, "path")} ${deletedCount === 1 ? "was" : "were"} removed before the failure.`
+      : "No paths were removed before the failure.";
+
+  return new LinkedInAssistantError(
+    assistantError.code,
+    `Local data deletion completed with ${failedPaths.length} ${pluralize(failedPaths.length, "failure")}. ${deletedSummary} First blocked path: ${firstFailure.path}. ${firstFailure.recoveryHint ?? "Review failed_paths for recovery guidance and retry."}`,
+    assistantError.details,
+    { cause: assistantError }
+  );
+}
+
+function printLocalDataDeletionFailure(error: LinkedInAssistantError): void {
+  const failedPaths = extractLocalDataDeletionFailures(error.details.failed_paths);
+  if (failedPaths.length === 0) {
+    return;
+  }
+
+  console.error("Local data deletion could not finish cleanly.");
+  for (const failure of failedPaths.slice(0, 3)) {
+    console.error(
+      `- ${failure.path}: ${failure.message}${failure.recoveryHint ? ` ${failure.recoveryHint}` : ""}`
+    );
+  }
+
+  if (failedPaths.length > 3) {
+    const remainingFailures = failedPaths.length - 3;
+    console.error(
+      `- ${remainingFailures} more ${pluralize(remainingFailures, "failure")} not shown. Inspect failed_paths in the JSON error output for the full list.`
+    );
+  }
+}
+
+function printLocalDataDeletionSummary(input: {
+  deletedCount: number;
+  includeProfileDeleted: boolean;
+  includeProfileRequested: boolean;
+  missingCount: number;
+}): void {
+  console.log("Local data deletion completed.");
+  console.log(
+    `- Removed ${input.deletedCount} ${pluralize(input.deletedCount, "path")}.`
+  );
+  if (input.missingCount > 0) {
+    console.log(
+      `- Skipped ${input.missingCount} already-absent ${pluralize(input.missingCount, "path")}.`
+    );
+  }
+  if (input.includeProfileRequested && !input.includeProfileDeleted) {
+    console.log("- Browser profiles were preserved.");
+  }
+  console.log("- config.json remains untouched.");
 }
 
 async function findRunningKeepAlivePids(): Promise<number[]> {
@@ -523,7 +829,7 @@ async function assertNoRunningKeepAliveDaemons(): Promise<void> {
 
   throw new LinkedInAssistantError(
     "ACTION_PRECONDITION_FAILED",
-    "Stop running keepalive daemons before deleting local data.",
+    `Stop running keepalive daemons before deleting local data. Active PID${runningKeepAlivePids.length === 1 ? "" : "s"}: ${runningKeepAlivePids.join(", ")}.`,
     {
       running_keepalive_pids: runningKeepAlivePids
     }
@@ -531,57 +837,104 @@ async function assertNoRunningKeepAliveDaemons(): Promise<void> {
 }
 
 async function runDataDelete(input: {
+  confirm: boolean;
   includeProfile: boolean;
   cdpUrl: string | undefined;
 }): Promise<void> {
-  assertInteractiveTerminal("delete local data");
   assertCdpUrlUnsupportedForDataDelete(input.cdpUrl);
+  const preview = await createLocalDataDeletionPreview(input.includeProfile);
+
+  if (!input.confirm) {
+    printLocalDataDeletionPreview(preview, false);
+    printJson({
+      base_dir: preview.baseDir,
+      confirm_required: true,
+      dry_run: true,
+      existing_paths: preview.existingDeletePaths,
+      include_profile_requested: input.includeProfile,
+      missing_paths: preview.missingDeletePaths,
+      nothing_to_delete: preview.existingDeletePaths.length === 0,
+      preserved_paths: preview.preserveItems.map((item) => item.path),
+      would_delete_paths: preview.deleteItems.map((item) => item.path)
+    });
+    return;
+  }
+
+  if (preview.existingDeletePaths.length === 0) {
+    printLocalDataDeletionPreview(preview, true);
+    printJson({
+      deleted: false,
+      dry_run: false,
+      include_profile_deleted: false,
+      include_profile_requested: input.includeProfile,
+      missing_paths: preview.missingDeletePaths,
+      nothing_to_delete: true,
+      preserved_paths: preview.preserveItems.map((item) => item.path)
+    });
+    return;
+  }
+
+  assertInteractiveTerminal("delete local data with --confirm");
   await assertNoRunningKeepAliveDaemons();
+  printLocalDataDeletionPreview(preview, true);
 
-  const requestedPlan = createLocalDataDeletionPlan({
-    includeProfile: input.includeProfile
-  });
-  const profilesDir = path.join(requestedPlan.baseDir, "profiles");
-
-  console.log("This permanently deletes local LinkedIn Assistant data:");
-  printDeletionTargets(requestedPlan.targets);
-  if (!input.includeProfile) {
-    console.log(`- preserving browser profiles at ${profilesDir}`);
-  }
-
-  const deleteAllConfirmed = await promptYesNo(
-    "Delete the listed local data?"
-  );
+  const deleteAllConfirmed = await promptYesNo("Delete the listed local data?");
   if (!deleteAllConfirmed) {
-    throw new LinkedInAssistantError(
-      "ACTION_PRECONDITION_FAILED",
-      "Operator declined local data deletion."
-    );
+    console.log("Deletion cancelled. No files were removed.");
+    printJson({
+      cancelled: true,
+      deleted: false,
+      dry_run: false,
+      include_profile_deleted: false,
+      include_profile_requested: input.includeProfile,
+      preserved_paths: preview.preserveItems.map((item) => item.path),
+      would_delete_paths: preview.existingDeletePaths
+    });
+    return;
   }
 
+  const profileItem = preview.deleteItems.find(
+    (item) => item.label === "Browser profiles"
+  );
   let includeProfile = false;
-  if (input.includeProfile) {
+  if (input.includeProfile && profileItem?.exists) {
     includeProfile = await promptYesNo(
-      `Delete browser profile data at ${profilesDir}?`
+      `Delete browser profile data at ${profileItem.path}? This removes saved sessions and cookies.`
     );
 
     if (!includeProfile) {
       console.log("Browser profile deletion declined. Profiles will be preserved.");
     }
+  } else if (input.includeProfile) {
+    console.log("Browser profiles are already absent. Skipping the extra profile confirmation.");
   }
 
-  const deletionResult = await deleteLocalData({ includeProfile });
+  try {
+    const deletionResult = await deleteLocalData({ includeProfile });
+    printLocalDataDeletionSummary({
+      deletedCount: deletionResult.deletedPaths.length,
+      includeProfileDeleted: includeProfile,
+      includeProfileRequested: input.includeProfile,
+      missingCount: deletionResult.missingPaths.length
+    });
 
-  printJson({
-    deleted: true,
-    include_profile_requested: input.includeProfile,
-    include_profile_deleted: includeProfile,
-    started_at: deletionResult.startedAt,
-    completed_at: deletionResult.completedAt,
-    deleted_paths: deletionResult.deletedPaths,
-    missing_paths: deletionResult.missingPaths,
-    failed_paths: deletionResult.failedPaths
-  });
+    printJson({
+      deleted: true,
+      dry_run: false,
+      include_profile_requested: input.includeProfile,
+      include_profile_deleted: includeProfile,
+      missing_paths: deletionResult.missingPaths,
+      preserved_paths: preview.preserveItems.map((item) => item.path),
+      started_at: deletionResult.startedAt,
+      completed_at: deletionResult.completedAt,
+      deleted_paths: deletionResult.deletedPaths,
+      failed_paths: deletionResult.failedPaths
+    });
+  } catch (error) {
+    const formattedError = formatLocalDataDeletionError(error);
+    printLocalDataDeletionFailure(formattedError);
+    throw formattedError;
+  }
 }
 
 async function runStatus(profileName: string, cdpUrl?: string): Promise<void> {
@@ -2020,10 +2373,7 @@ async function runConfirmAction(input: {
   }
 }
 
-export async function runCli(argv: string[] = process.argv): Promise<void> {
-  const originalArgv = process.argv;
-  process.argv = argv;
-
+export function createCliProgram(): Command {
   const program = new Command();
 
   program
@@ -2093,18 +2443,48 @@ export async function runCli(argv: string[] = process.argv): Promise<void> {
 
   const dataCommand = program
     .command("data")
-    .description("Inspect and delete local LinkedIn Assistant data");
+    .description("Preview and delete tool-owned local LinkedIn Assistant data");
 
   dataCommand
     .command("delete")
-    .description("Delete local database, artifacts, logs, and optional browser profiles")
+    .description(
+      [
+        "Preview local runtime data deletion; rerun with --confirm to delete.",
+        "Default behavior is a dry-run preview of the local database, artifacts, keepalive state, and auth cooldown files.",
+        "config.json is preserved by design. Stop keepalive daemons first. Data from external browsers attached with --cdp-url is never deleted."
+      ].join("\n\n")
+    )
     .option(
-      "--include-profile",
-      "Also delete local browser profile data after extra confirmation",
+      "--confirm",
+      "Permanently delete the listed tool-owned local data after interactive confirmation",
       false
     )
-    .action(async (options: { includeProfile: boolean }) => {
+    .option(
+      "--include-profile",
+      "Also delete tool-owned browser profile data after a second confirmation",
+      false
+    )
+    .addHelpText(
+      "after",
+      [
+        "",
+        "Deletes when confirmed:",
+        "  - state.sqlite and SQLite sidecars",
+        "  - run artifacts and logs",
+        "  - keepalive daemon state",
+        "  - auth cooldown state",
+        "  - all tool-owned browser profiles when --include-profile is set",
+        "",
+        "Safety:",
+        "  - default behavior is a dry-run preview",
+        "  - config.json is preserved by design",
+        "  - active keepalive daemons must be stopped first",
+        "  - data from external browsers attached with --cdp-url is never deleted"
+      ].join("\n")
+    )
+    .action(async (options: { confirm: boolean; includeProfile: boolean }) => {
       await runDataDelete({
+        confirm: options.confirm,
         includeProfile: options.includeProfile,
         cdpUrl: readCdpUrl()
       });
@@ -2821,6 +3201,15 @@ export async function runCli(argv: string[] = process.argv): Promise<void> {
         runtime.close();
       }
     });
+
+  return program;
+}
+
+export async function runCli(argv: string[] = process.argv): Promise<void> {
+  const originalArgv = process.argv;
+  process.argv = argv;
+
+  const program = createCliProgram();
 
   try {
     await program.parseAsync(argv);
