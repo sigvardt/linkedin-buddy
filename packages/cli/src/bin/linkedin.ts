@@ -242,6 +242,7 @@ interface SchedulerState {
   pollIntervalMs: number;
   businessHours: SchedulerConfig["businessHours"];
   maxJobsPerTick: number;
+  maxActiveJobsPerProfile: number;
   consecutiveFailures: number;
   maxConsecutiveFailures: number;
   lastTickAt?: string;
@@ -1571,6 +1572,7 @@ async function runSchedulerStart(
     pollIntervalMs: schedulerConfig.pollIntervalMs,
     businessHours: schedulerConfig.businessHours,
     maxJobsPerTick: schedulerConfig.maxJobsPerTick,
+    maxActiveJobsPerProfile: schedulerConfig.maxActiveJobsPerProfile,
     consecutiveFailures: 0,
     maxConsecutiveFailures: SCHEDULER_DAEMON_MAX_CONSECUTIVE_FAILURES,
     ...(cdpUrl ? { cdpUrl } : {})
@@ -1710,6 +1712,7 @@ async function runSchedulerDaemon(
     pollIntervalMs: schedulerConfig.pollIntervalMs,
     businessHours: schedulerConfig.businessHours,
     maxJobsPerTick: schedulerConfig.maxJobsPerTick,
+    maxActiveJobsPerProfile: schedulerConfig.maxActiveJobsPerProfile,
     consecutiveFailures: 0,
     maxConsecutiveFailures: SCHEDULER_DAEMON_MAX_CONSECUTIVE_FAILURES,
     ...(cdpUrl ? { cdpUrl } : {})
@@ -1761,6 +1764,7 @@ async function runSchedulerDaemon(
             pollIntervalMs: schedulerConfig.pollIntervalMs,
             businessHours: schedulerConfig.businessHours,
             maxJobsPerTick: schedulerConfig.maxJobsPerTick,
+            maxActiveJobsPerProfile: schedulerConfig.maxActiveJobsPerProfile,
             consecutiveFailures,
             maxConsecutiveFailures: SCHEDULER_DAEMON_MAX_CONSECUTIVE_FAILURES,
             lastTickAt: tickAt,
@@ -1804,6 +1808,7 @@ async function runSchedulerDaemon(
           pollIntervalMs: schedulerConfig.pollIntervalMs,
           businessHours: schedulerConfig.businessHours,
           maxJobsPerTick: schedulerConfig.maxJobsPerTick,
+          maxActiveJobsPerProfile: schedulerConfig.maxActiveJobsPerProfile,
           consecutiveFailures,
           maxConsecutiveFailures: SCHEDULER_DAEMON_MAX_CONSECUTIVE_FAILURES,
           lastTickAt: tickAt,
