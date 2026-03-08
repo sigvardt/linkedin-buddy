@@ -122,6 +122,17 @@ prepare*() → stores PreparedAction in DB → returns { preparedActionId, confi
 confirm(token) → validates token + expiry → calls ActionExecutor.execute() → records result
 ```
 
+## E2E Testing Safety Rules
+
+**Outbound actions against real LinkedIn are restricted:**
+
+- **Messages:** Only send to Simon Miller (`linkedin.com/in/realsimonmiller`). No other recipients without explicit approval from Joakim.
+- **Connection requests:** Only to Simon Miller unless explicitly approved.
+- **Comments, likes, posts, and other public actions:** Ask Joakim for approval before executing. Describe what you plan to test and on which target, and wait for confirmation.
+- **Read-only operations** (profile view, search, inbox list, feed view, notifications) are unrestricted.
+
+Violating these rules risks real social interactions on Joakim's LinkedIn account.
+
 ## Branch Naming
 
 `issue-<number>-<short-description>` (e.g., `issue-2-post-composer`)
