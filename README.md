@@ -101,6 +101,7 @@ npm exec -w @linkedin-assistant/cli -- linkedin data delete --include-profile
 ```
 
 - `linkedin data delete` always requires an interactive terminal confirmation.
+- Stop any running keepalive daemons before deleting local state.
 - `--include-profile` prompts a second time before removing local browser profile data.
 
 ### Selector audit

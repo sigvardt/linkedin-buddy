@@ -34,6 +34,7 @@ import {
   resolveFollowupSinceWindow,
   redactStructuredValue,
   resolveConfigPaths,
+  resolveKeepAliveDir,
   resolvePrivacyConfig,
   toLinkedInAssistantErrorPayload,
   type DraftQualityReport,
@@ -163,9 +164,8 @@ function profileSlug(profileName: string): string {
 }
 
 function getKeepAliveFiles(profileName: string): KeepAliveFiles {
-  const baseDir = resolveConfigPaths().baseDir;
   const slug = profileSlug(profileName);
-  const dir = path.join(baseDir, "keepalive");
+  const dir = resolveKeepAliveDir();
   return {
     dir,
     pidPath: path.join(dir, `${slug}.pid`),
@@ -381,56 +381,8 @@ function printDeletionTargets(targetPaths: string[]): void {
   }
 }
 
-async function stopKeepAliveDaemonByPid(pid: number): Promise<void> {
-  if (!isProcessRunning(pid)) {
-    return;
-  }
-
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch (error) {
-    throw new LinkedInAssistantError(
-      "UNKNOWN",
-      "Failed to stop a running keepalive daemon before deleting local data.",
-      {
-        pid,
-        cause: error instanceof Error ? error.message : String(error)
-      }
-    );
-  }
-
-  const deadline = Date.now() + 5_000;
-  while (Date.now() < deadline) {
-    await sleep(200);
-    if (!isProcessRunning(pid)) {
-      return;
-    }
-  }
-
-  try {
-    process.kill(pid, "SIGKILL");
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      error.code === "ESRCH"
-    ) {
-      return;
-    }
-
-    throw new LinkedInAssistantError(
-      "UNKNOWN",
-      "Failed to force-stop a running keepalive daemon before deleting local data.",
-      {
-        pid,
-        cause: error instanceof Error ? error.message : String(error)
-      }
-    );
-  }
-}
-
-async function stopAllKeepAliveDaemons(): Promise<number[]> {
-  const keepAliveDir = path.join(resolveConfigPaths().baseDir, "keepalive");
+async function findRunningKeepAlivePids(): Promise<number[]> {
+  const keepAliveDir = resolveKeepAliveDir();
   let entries: Dirent[];
 
   try {
@@ -454,24 +406,64 @@ async function stopAllKeepAliveDaemons(): Promise<number[]> {
     }
 
     const pidFilePath = path.join(keepAliveDir, entry.name);
-    const rawPid = await readFile(pidFilePath, "utf8");
+    let rawPid: string;
+
+    try {
+      rawPid = await readFile(pidFilePath, "utf8");
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "ENOENT"
+      ) {
+        continue;
+      }
+
+      throw error;
+    }
+
     const pid = Number.parseInt(rawPid.trim(), 10);
     if (Number.isInteger(pid) && pid > 0 && isProcessRunning(pid)) {
       runningPids.add(pid);
     }
   }
 
-  const stoppedPids: number[] = [];
-  for (const pid of runningPids) {
-    await stopKeepAliveDaemonByPid(pid);
-    stoppedPids.push(pid);
-  }
-
-  return stoppedPids;
+  return [...runningPids];
 }
 
-async function runDataDelete(input: { includeProfile: boolean }): Promise<void> {
+function assertCdpUrlUnsupportedForDataDelete(cdpUrl?: string): void {
+  if (!cdpUrl) {
+    return;
+  }
+
+  throw new LinkedInAssistantError(
+    "ACTION_PRECONDITION_FAILED",
+    "The data delete command only deletes tool-owned local filesystem state and does not support --cdp-url."
+  );
+}
+
+async function assertNoRunningKeepAliveDaemons(): Promise<void> {
+  const runningKeepAlivePids = await findRunningKeepAlivePids();
+  if (runningKeepAlivePids.length === 0) {
+    return;
+  }
+
+  throw new LinkedInAssistantError(
+    "ACTION_PRECONDITION_FAILED",
+    "Stop running keepalive daemons before deleting local data.",
+    {
+      running_keepalive_pids: runningKeepAlivePids
+    }
+  );
+}
+
+async function runDataDelete(input: {
+  includeProfile: boolean;
+  cdpUrl: string | undefined;
+}): Promise<void> {
   assertInteractiveTerminal("delete local data");
+  assertCdpUrlUnsupportedForDataDelete(input.cdpUrl);
+  await assertNoRunningKeepAliveDaemons();
 
   const requestedPlan = createLocalDataDeletionPlan({
     includeProfile: input.includeProfile
@@ -505,30 +497,14 @@ async function runDataDelete(input: { includeProfile: boolean }): Promise<void> 
     }
   }
 
-  const finalPlan = createLocalDataDeletionPlan({ includeProfile });
-  const runtime = createCoreRuntime({ privacy: cliPrivacyConfig });
-
-  try {
-    runtime.logger.log("warn", "cli.data.delete.start", {
-      includeProfileRequested: input.includeProfile,
-      includeProfileDeleted: includeProfile,
-      targets: finalPlan.targets
-    });
-  } finally {
-    runtime.close();
-  }
-
-  const stoppedKeepAlivePids = await stopAllKeepAliveDaemons();
   const deletionResult = await deleteLocalData({ includeProfile });
 
   printJson({
     deleted: true,
-    run_id: runtime.runId,
     include_profile_requested: input.includeProfile,
     include_profile_deleted: includeProfile,
     deleted_paths: deletionResult.deletedPaths,
-    missing_paths: deletionResult.missingPaths,
-    stopped_keepalive_pids: stoppedKeepAlivePids
+    missing_paths: deletionResult.missingPaths
   });
 }
 
@@ -2042,7 +2018,8 @@ export async function runCli(argv: string[] = process.argv): Promise<void> {
     )
     .action(async (options: { includeProfile: boolean }) => {
       await runDataDelete({
-        includeProfile: options.includeProfile
+        includeProfile: options.includeProfile,
+        cdpUrl: readCdpUrl()
       });
     });
 

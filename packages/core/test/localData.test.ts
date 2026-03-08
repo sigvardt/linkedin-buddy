@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createLocalDataDeletionPlan,
   deleteLocalData,
-  resolveConfigPaths
+  resolveConfigPaths,
+  resolveKeepAliveDir
 } from "../src/index.js";
 
 async function pathExists(targetPath: string): Promise<boolean> {
@@ -28,24 +29,39 @@ async function pathExists(targetPath: string): Promise<boolean> {
 describe("local data deletion", () => {
   let tempDir = "";
   let baseDir = "";
+  let configFilePath = "";
   let rateLimitStatePath = "";
+  let previousAssistantHome: string | undefined;
 
   beforeEach(async () => {
+    previousAssistantHome = process.env.LINKEDIN_ASSISTANT_HOME;
+    delete process.env.LINKEDIN_ASSISTANT_HOME;
+
     tempDir = await mkdtemp(path.join(os.tmpdir(), "linkedin-local-data-"));
     baseDir = path.join(tempDir, "assistant-home");
-    rateLimitStatePath = path.join(tempDir, "rate-limit-state.json");
+    configFilePath = path.join(baseDir, "config.json");
+    rateLimitStatePath = path.join(baseDir, "rate-limit-state.json");
   });
 
   afterEach(async () => {
+    if (typeof previousAssistantHome === "string") {
+      process.env.LINKEDIN_ASSISTANT_HOME = previousAssistantHome;
+    } else {
+      delete process.env.LINKEDIN_ASSISTANT_HOME;
+    }
+
     await rm(tempDir, { recursive: true, force: true });
   });
 
   async function seedLocalDataFixture(): Promise<ReturnType<typeof resolveConfigPaths>> {
     const paths = resolveConfigPaths(baseDir);
-    const keepAliveDir = path.join(baseDir, "keepalive");
+    const keepAliveDir = resolveKeepAliveDir(baseDir);
 
     await mkdir(path.dirname(paths.dbPath), { recursive: true });
     await writeFile(paths.dbPath, "sqlite-data", "utf8");
+    await writeFile(`${paths.dbPath}-journal`, "sqlite-journal", "utf8");
+    await writeFile(`${paths.dbPath}-wal`, "sqlite-wal", "utf8");
+    await writeFile(`${paths.dbPath}-shm`, "sqlite-shm", "utf8");
     await mkdir(path.join(paths.artifactsDir, "run-123"), { recursive: true });
     await writeFile(
       path.join(paths.artifactsDir, "run-123", "events.jsonl"),
@@ -67,23 +83,24 @@ describe("local data deletion", () => {
       "utf8"
     );
     await writeFile(rateLimitStatePath, "{\"cooldown\":true}\n", "utf8");
+    await writeFile(configFilePath, "{\"safe\":true}\n", "utf8");
 
     return paths;
   }
 
-  it("builds a deletion plan without browser profiles by default", () => {
+  it("builds a deletion plan under the configured base directory by default", () => {
     const paths = resolveConfigPaths(baseDir);
-    const keepAliveDir = path.join(baseDir, "keepalive");
+    const keepAliveDir = resolveKeepAliveDir(baseDir);
 
-    const plan = createLocalDataDeletionPlan({
-      baseDir,
-      rateLimitStatePath
-    });
+    const plan = createLocalDataDeletionPlan({ baseDir });
 
     expect(plan.includeProfile).toBe(false);
     expect(plan.targets).toEqual(
       expect.arrayContaining([
         path.resolve(paths.dbPath),
+        path.resolve(`${paths.dbPath}-journal`),
+        path.resolve(`${paths.dbPath}-wal`),
+        path.resolve(`${paths.dbPath}-shm`),
         path.resolve(paths.artifactsDir),
         path.resolve(keepAliveDir),
         path.resolve(rateLimitStatePath)
@@ -92,27 +109,47 @@ describe("local data deletion", () => {
     expect(plan.targets).not.toContain(path.resolve(paths.profilesDir));
   });
 
-  it("deletes database, artifacts, keepalive files, and rate-limit state", async () => {
-    const paths = await seedLocalDataFixture();
-    const keepAliveDir = path.join(baseDir, "keepalive");
+  it("uses an explicit rate-limit state path when provided", () => {
+    const explicitRateLimitStatePath = path.join(
+      tempDir,
+      "external",
+      "rate-limit-state.json"
+    );
 
-    const result = await deleteLocalData({
+    const plan = createLocalDataDeletionPlan({
       baseDir,
-      rateLimitStatePath
+      rateLimitStatePath: explicitRateLimitStatePath
     });
+
+    expect(plan.targets).toContain(path.resolve(explicitRateLimitStatePath));
+    expect(plan.targets).not.toContain(path.resolve(rateLimitStatePath));
+  });
+
+  it("deletes database sidecars and preserves config.json by default", async () => {
+    const paths = await seedLocalDataFixture();
+    const keepAliveDir = resolveKeepAliveDir(baseDir);
+
+    const result = await deleteLocalData({ baseDir });
 
     expect(result.deletedPaths).toEqual(
       expect.arrayContaining([
         path.resolve(paths.dbPath),
+        path.resolve(`${paths.dbPath}-journal`),
+        path.resolve(`${paths.dbPath}-wal`),
+        path.resolve(`${paths.dbPath}-shm`),
         path.resolve(paths.artifactsDir),
         path.resolve(keepAliveDir),
         path.resolve(rateLimitStatePath)
       ])
     );
     expect(await pathExists(paths.dbPath)).toBe(false);
+    expect(await pathExists(`${paths.dbPath}-journal`)).toBe(false);
+    expect(await pathExists(`${paths.dbPath}-wal`)).toBe(false);
+    expect(await pathExists(`${paths.dbPath}-shm`)).toBe(false);
     expect(await pathExists(paths.artifactsDir)).toBe(false);
     expect(await pathExists(keepAliveDir)).toBe(false);
     expect(await pathExists(rateLimitStatePath)).toBe(false);
+    expect(await pathExists(configFilePath)).toBe(true);
     expect(await pathExists(paths.profilesDir)).toBe(true);
   });
 
@@ -121,11 +158,11 @@ describe("local data deletion", () => {
 
     const result = await deleteLocalData({
       baseDir,
-      includeProfile: true,
-      rateLimitStatePath
+      includeProfile: true
     });
 
     expect(result.deletedPaths).toContain(path.resolve(paths.profilesDir));
     expect(await pathExists(paths.profilesDir)).toBe(false);
+    expect(await pathExists(configFilePath)).toBe(true);
   });
 });

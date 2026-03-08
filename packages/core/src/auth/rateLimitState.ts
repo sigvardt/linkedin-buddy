@@ -15,28 +15,41 @@ const LEGACY_STATE_FILE_PATH = path.join(
   "rate-limit-state.json"
 );
 
-export function resolveRateLimitStateFilePath(stateFilePath?: string): string {
+export function resolveRateLimitStateFilePath(
+  stateFilePath?: string,
+  baseDir?: string
+): string {
   if (stateFilePath) {
     return stateFilePath;
   }
 
-  return path.join(resolveConfigPaths().baseDir, "rate-limit-state.json");
+  return path.join(resolveConfigPaths(baseDir).baseDir, "rate-limit-state.json");
 }
 
 export function resolveLegacyRateLimitStateFilePath(): string {
   return LEGACY_STATE_FILE_PATH;
 }
 
-function shouldIncludeLegacyStateFilePath(stateFilePath?: string): boolean {
+function shouldIncludeLegacyStateFilePath(
+  stateFilePath?: string,
+  baseDir?: string
+): boolean {
   return (
     !stateFilePath &&
+    typeof baseDir !== "string" &&
     typeof process.env.LINKEDIN_ASSISTANT_HOME !== "string"
   );
 }
 
-function resolveStateFilePaths(stateFilePath?: string): string[] {
-  const primaryStateFilePath = resolveRateLimitStateFilePath(stateFilePath);
-  if (!shouldIncludeLegacyStateFilePath(stateFilePath)) {
+export function resolveRateLimitStateFilePaths(
+  stateFilePath?: string,
+  baseDir?: string
+): string[] {
+  const primaryStateFilePath = resolveRateLimitStateFilePath(
+    stateFilePath,
+    baseDir
+  );
+  if (!shouldIncludeLegacyStateFilePath(stateFilePath, baseDir)) {
     return [primaryStateFilePath];
   }
 
@@ -70,7 +83,9 @@ function isValidRateLimitState(value: unknown): value is RateLimitState {
 export async function readRateLimitState(
   stateFilePath?: string
 ): Promise<RateLimitState | null> {
-  for (const resolvedStateFilePath of resolveStateFilePaths(stateFilePath)) {
+  for (const resolvedStateFilePath of resolveRateLimitStateFilePaths(
+    stateFilePath
+  )) {
     try {
       const rawState = await readFile(resolvedStateFilePath, "utf8");
       const parsed = JSON.parse(rawState) as unknown;
@@ -111,7 +126,9 @@ export async function writeRateLimitState(
 }
 
 export async function clearRateLimitState(stateFilePath?: string): Promise<void> {
-  for (const resolvedStateFilePath of resolveStateFilePaths(stateFilePath)) {
+  for (const resolvedStateFilePath of resolveRateLimitStateFilePaths(
+    stateFilePath
+  )) {
     try {
       await unlink(resolvedStateFilePath);
     } catch (error) {
