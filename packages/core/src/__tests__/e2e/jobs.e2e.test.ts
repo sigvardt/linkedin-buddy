@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { setupE2ESuite } from "./setup.js";
+import { setupE2ESuite, skipIfE2EUnavailable } from "./setup.js";
 
 describe("Jobs E2E", () => {
   const e2e = setupE2ESuite();
 
-  it("search jobs returns structured results with count", async () => {
-    if (!e2e.canRun()) return;
+  it("search jobs returns structured results with count", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
     const runtime = e2e.runtime();
     const result = await runtime.jobs.searchJobs({
       query: "software engineer",

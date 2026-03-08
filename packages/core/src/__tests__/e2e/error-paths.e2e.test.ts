@@ -9,7 +9,7 @@ import {
   type SelectorAuditPageDefinition
 } from "../../selectorAudit.js";
 import { getFeedPost } from "./helpers.js";
-import { getCdpUrl, setupE2ESuite } from "./setup.js";
+import { getCdpUrl, setupE2ESuite, skipIfE2EUnavailable } from "./setup.js";
 
 const LIKE_RATE_LIMIT_CONFIG = {
   counterKey: "linkedin.feed.like_post",
@@ -54,8 +54,8 @@ async function expectAssistantError(
 describe("E2E error paths", () => {
   const e2e = setupE2ESuite();
 
-  it("rejects expired confirmation tokens before execution", async () => {
-    if (!e2e.canRun()) return;
+  it("rejects expired confirmation tokens before execution", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
 
     const isolated = await createIsolatedRuntime();
     try {
@@ -81,8 +81,8 @@ describe("E2E error paths", () => {
     }
   }, 120_000);
 
-  it("surfaces rate limit failures without performing the action", async () => {
-    if (!e2e.canRun()) return;
+  it("surfaces rate limit failures without performing the action", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
 
     const isolated = await createIsolatedRuntime();
     try {
@@ -117,8 +117,8 @@ describe("E2E error paths", () => {
     }
   }, 120_000);
 
-  it("detects UI drift through selector audit failure artifacts", async () => {
-    if (!e2e.canRun()) return;
+  it("detects UI drift through selector audit failure artifacts", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
 
     const isolated = await createIsolatedRuntime();
     try {
