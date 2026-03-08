@@ -199,7 +199,7 @@ describe("LinkedInFollowupsService", () => {
         profileName: "default",
         profileUrl: "https://www.linkedin.com/in/jane-doe/",
         fullName: "Jane Doe",
-        preparedAtMs: FIXED_NOW.getTime() - 60 * 60 * 1000
+        preparedAtMs: FIXED_NOW.getTime() - 10 * 60 * 1000
       });
 
       const runtime = createTestRuntime(db);
