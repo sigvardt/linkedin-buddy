@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { getOptInCommentPostUrl, getWriteConfirmGate } from "./helpers.js";
 import {
   getRuntime,
   checkCdpAvailable,
@@ -6,12 +7,21 @@ import {
   cleanupRuntime
 } from "./setup.js";
 
+const commentConfirmPostUrl = getOptInCommentPostUrl();
+const commentConfirmTest =
+  getWriteConfirmGate("LINKEDIN_E2E_ENABLE_COMMENT_CONFIRM").enabled &&
+  typeof commentConfirmPostUrl === "string" &&
+  commentConfirmPostUrl.length > 0
+    ? it
+    : it.skip;
+
 /**
  * Feed Write E2E — two-phase commit comment on Joakim's own post.
  *
  * Flow: feed.viewFeed → feed.prepareCommentOnPost → twoPhaseCommit.confirmByToken
  *
- * Uses the first visible feed post (Joakim's own or any post in the feed).
+ * Requires LINKEDIN_E2E_ENABLE_COMMENT_CONFIRM=1 and
+ * LINKEDIN_E2E_COMMENT_POST_URL=<approved-post-url>.
  * Comments can be manually deleted afterwards.
  * Explicitly authorised by project owner (Joakim Sigvardt).
  */
@@ -30,29 +40,20 @@ describe("Feed Write E2E (2PC comment_on_post)", () => {
     cleanupRuntime();
   });
 
-  it("comments on a feed post via prepare → confirm", async () => {
+  commentConfirmTest("comments on a feed post via prepare → confirm", async () => {
     if (!cdpOk || !authOk) return;
     const runtime = getRuntime();
 
-    // Step 1: get feed posts and pick a target
-    const posts = await runtime.feed.viewFeed({ limit: 10 });
-    expect(posts.length).toBeGreaterThan(0);
+    const targetPostUrl = commentConfirmPostUrl!;
 
-    // Prefer Joakim's own post if visible; otherwise use the first post
-    const ownPost = posts.find((p) =>
-      /joakim\s*sigvardt/i.test(p.author_name)
-    );
-    const targetPost = ownPost ?? posts[0]!;
-
-    expect(targetPost.post_url).toBeTruthy();
-    expect(targetPost.post_id).toBeTruthy();
+    expect(targetPostUrl).toContain("linkedin.com");
 
     // Step 2: prepare a comment via 2PC
     const timestamp = new Date().toISOString();
     const commentText = `E2E test comment from linkedin-owa-agentools [${timestamp}]`;
 
     const prepared = runtime.feed.prepareCommentOnPost({
-      postUrl: targetPost.post_url,
+      postUrl: targetPostUrl,
       text: commentText,
       operatorNote: "Automated E2E feed write test"
     });

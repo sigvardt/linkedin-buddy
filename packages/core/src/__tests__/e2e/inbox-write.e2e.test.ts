@@ -1,10 +1,17 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { getWriteConfirmGate } from "./helpers.js";
 import {
   getRuntime,
   checkCdpAvailable,
   checkAuthenticated,
   cleanupRuntime
 } from "./setup.js";
+
+const messageConfirmTest = getWriteConfirmGate(
+  "LINKEDIN_E2E_ENABLE_MESSAGE_CONFIRM"
+).enabled
+  ? it
+  : it.skip;
 
 /**
  * Inbox Write E2E — two-phase commit message send to Simon Miller.
@@ -13,6 +20,8 @@ import {
  * Explicitly authorised by project owner (Joakim Sigvardt).
  *
  * Flow: inbox.prepareReply → twoPhaseCommit.confirmByToken
+ *
+ * Opt in with LINKEDIN_E2E_ENABLE_MESSAGE_CONFIRM=1.
  */
 describe("Inbox Write E2E (2PC send_message)", () => {
   let cdpOk = false;
@@ -29,7 +38,7 @@ describe("Inbox Write E2E (2PC send_message)", () => {
     cleanupRuntime();
   });
 
-  it("sends a message to Simon Miller via prepare → confirm", async () => {
+  messageConfirmTest("sends a message to Simon Miller via prepare → confirm", async () => {
     if (!cdpOk || !authOk) return;
     const runtime = getRuntime();
 

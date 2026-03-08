@@ -198,6 +198,7 @@ Exposed tools:
 
 - `linkedin.session.status`
 - `linkedin.session.open_login`
+- `linkedin.session.health`
 - `linkedin.profile.view`
 - `linkedin.search`
 - `linkedin.inbox.list_threads`
@@ -262,56 +263,55 @@ npm run build
 
 ## E2E Testing (Real Browser)
 
-Unit tests use mocks. After all features are implemented, run E2E tests against a real authenticated LinkedIn session in a headless browser.
+Unit tests use mocks. The E2E suite validates the CLI, MCP tools, and selected
+two-phase commit flows against a real authenticated LinkedIn session.
+
+Run the default E2E runner:
+
+```bash
+npm run test:e2e
+```
+
+The runner now skips cleanly when no authenticated CDP session is available,
+which makes it safe to invoke in CI.
+
+See `docs/e2e-testing.md` for the full workflow, safe targets, and opt-in write
+flags.
 
 ### Prerequisites
 
-- Authenticated LinkedIn session in the openclaw browser profile (CDP port 18800)
-- Or: any Chromium instance with an active LinkedIn session exposed via CDP
+- Node.js 22+
+- `npm install`
+- Authenticated LinkedIn session in a dedicated Chromium instance exposed via
+  CDP (default: `http://localhost:18800`)
+- Optional: `LINKEDIN_CDP_URL` to point at a different CDP endpoint
 
-### E2E Test Plan
+### Safe defaults
 
-Connect the CLI to a live CDP session and exercise every feature against real LinkedIn:
+By default, the E2E suite only performs read-only operations, prepare-only
+two-phase commit steps, or safe `test.echo` confirmations for the generic
+confirm entrypoints. Real outbound confirms remain opt-in.
 
 ```bash
-# Status check (verify session is authenticated)
-npm exec -w @linkedin-assistant/cli -- linkedin status --profile default --cdp-url http://localhost:18800
+# Default run: safe coverage only
+npm run test:e2e
 
-# Profile viewing
-npm exec -w @linkedin-assistant/cli -- linkedin profile view --profile default --cdp-url http://localhost:18800
-npm exec -w @linkedin-assistant/cli -- linkedin profile view --profile default --cdp-url http://localhost:18800 --user "realsimonmiller"
-
-# Search (people, companies, jobs)
-npm exec -w @linkedin-assistant/cli -- linkedin search --profile default --cdp-url http://localhost:18800 --type people --query "Simon Miller"
-npm exec -w @linkedin-assistant/cli -- linkedin search --profile default --cdp-url http://localhost:18800 --type companies --query "Power International"
-npm exec -w @linkedin-assistant/cli -- linkedin search --profile default --cdp-url http://localhost:18800 --type jobs --query "engineering manager"
-
-# Connections
-npm exec -w @linkedin-assistant/cli -- linkedin connections list --profile default --cdp-url http://localhost:18800 --limit 10
-
-# Feed
-npm exec -w @linkedin-assistant/cli -- linkedin feed view --profile default --cdp-url http://localhost:18800 --limit 5
-
-# Inbox
-npm exec -w @linkedin-assistant/cli -- linkedin inbox list --profile default --cdp-url http://localhost:18800 --limit 10
-
-# Notifications (when implemented)
-npm exec -w @linkedin-assistant/cli -- linkedin notifications list --profile default --cdp-url http://localhost:18800 --limit 10
+# Raw Vitest E2E run when you already know the session is available
+npm run test:e2e:raw
 ```
 
-### E2E Acceptance Criteria
+### Opt-in writes
 
-- Each command returns structured JSON (not errors)
-- Profile view returns real profile data (name, headline, etc.)
-- Search returns real results matching the query
-- Connections list returns actual connections
-- Feed returns real posts
-- Inbox returns real message threads
-- No `AUTH_REQUIRED` or `UI_CHANGED_SELECTOR_FAILED` errors
-- Screenshots/trace artifacts are captured where applicable
+Use the flags documented in `docs/e2e-testing.md` for:
 
-### Test Account
+- `LINKEDIN_E2E_ENABLE_MESSAGE_CONFIRM=1`
+- `LINKEDIN_E2E_ENABLE_CONNECTION_CONFIRM=1`
+- `LINKEDIN_E2E_ENABLE_LIKE_CONFIRM=1`
+- `LINKEDIN_E2E_ENABLE_COMMENT_CONFIRM=1`
+- `LINKEDIN_ENABLE_POST_WRITE_E2E=1`
 
-- LinkedIn account: joakim@sigvardt.eu (authenticated in openclaw browser profile)
-- Safe interaction target: Simon Miller (linkedin.com/in/realsimonmiller)
-- **Do not** send unsolicited messages or connection requests during E2E testing without explicit approval
+### Safe targets
+
+- Safe message target: Simon Miller (`linkedin.com/in/realsimonmiller`)
+- Safe connection target: Simon Miller unless an explicitly approved alternative is provided
+- Public actions like likes, comments, and posts require explicit approval before enabling write confirms
