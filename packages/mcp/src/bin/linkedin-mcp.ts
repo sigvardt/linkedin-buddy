@@ -1630,6 +1630,7 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   [LINKEDIN_ACTIONS_CONFIRM_TOOL]: handleConfirm
 };
 
+/** Dispatches one MCP tool call to the registered LinkedIn tool handlers. */
 export async function handleToolCall(
   name: string,
   args: ToolArgs = {}

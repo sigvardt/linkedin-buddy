@@ -88,6 +88,7 @@ function summarizeSelectorLocaleInput(
   };
 }
 
+/** Options for constructing a fully wired LinkedIn Assistant runtime. */
 export interface CreateCoreRuntimeOptions {
   baseDir?: string;
   dbPath?: string;
@@ -97,6 +98,10 @@ export interface CreateCoreRuntimeOptions {
   selectorLocale?: string | LinkedInSelectorLocale;
 }
 
+/**
+ * Fully wired service graph used by the CLI, MCP server, and real-session E2E
+ * suites. `close()` is safe to call repeatedly.
+ */
 export interface CoreRuntime {
   paths: ConfigPaths;
   runId: string;
@@ -127,6 +132,10 @@ export interface CoreRuntime {
   close: () => void;
 }
 
+/**
+ * Creates the fully wired LinkedIn Assistant runtime and all supporting
+ * services for one execution context.
+ */
 export function createCoreRuntime(
   options: CreateCoreRuntimeOptions = {}
 ): CoreRuntime {

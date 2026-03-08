@@ -33,6 +33,7 @@ import {
 } from "../../../../mcp/src/index.js";
 import { getCdpUrl, withAssistantHome, withE2EEnvironment } from "./setup.js";
 
+/** Captured process result from invoking the CLI test surface. */
 export interface CapturedCommandResult {
   stdout: string;
   stderr: string;
@@ -40,11 +41,13 @@ export interface CapturedCommandResult {
   error?: unknown;
 }
 
+/** Normalized MCP tool result used by the contract assertions. */
 export interface MappedMcpResult {
   payload: Record<string, unknown>;
   isError: boolean;
 }
 
+/** Minimal prepared-action contract asserted across preview and confirm tests. */
 export interface PreparedActionResult {
   preparedActionId: string;
   confirmToken: string;
@@ -52,6 +55,7 @@ export interface PreparedActionResult {
   preview: Record<string, unknown>;
 }
 
+/** Shared live identifiers captured for the CLI and MCP contract suites. */
 export interface CliCoverageFixtures {
   threadId: string;
   postUrl: string;
@@ -59,6 +63,7 @@ export interface CliCoverageFixtures {
   connectionTarget: string;
 }
 
+/** Optional execution controls shared by the CLI and MCP wrapper helpers. */
 export interface CommandExecutionOptions {
   assistantHome?: string;
   timeoutMs?: number;
@@ -66,7 +71,10 @@ export interface CommandExecutionOptions {
   retryDelayMs?: number;
 }
 
+/** Test-local adapter used to invoke the CLI entrypoint directly. */
 export type CliRunner = (argv: string[]) => Promise<void>;
+
+/** Test-local adapter used to invoke one MCP tool call directly. */
 export type McpToolCaller = (
   name: string,
   args: Record<string, unknown>
@@ -446,6 +454,7 @@ function parseJsonObjectText(text: string, label: string): Record<string, unknow
   }
 }
 
+/** Normalizes raw MCP tool output into a payload plus `isError` bit. */
 export function mapMcpToolResult(name: string, rawResult: unknown): MappedMcpResult {
   const record = assertObjectRecord(rawResult, `Tool ${name} result`);
   const content = record.content;
@@ -475,14 +484,17 @@ export function mapMcpToolResult(name: string, rawResult: unknown): MappedMcpRes
   };
 }
 
+/** Returns the logical profile name used by the real-session E2E helpers. */
 export function getDefaultProfileName(): string {
   return readTrimmedEnv("LINKEDIN_E2E_PROFILE") ?? "default";
 }
 
+/** Returns the default connection target slug used by preview and confirm tests. */
 export function getDefaultConnectionTarget(): string {
   return readTrimmedEnv("LINKEDIN_E2E_CONNECTION_TARGET") ?? "realsimonmiller";
 }
 
+/** Returns the regex used to discover the approved message thread. */
 export function getDefaultMessageTargetPattern(): RegExp {
   return new RegExp(
     readTrimmedEnv("LINKEDIN_E2E_MESSAGE_TARGET_PATTERN") ?? "Simon Miller",
@@ -490,22 +502,30 @@ export function getDefaultMessageTargetPattern(): RegExp {
   );
 }
 
+/** Returns whether an opt-in E2E flag is enabled. */
 export function isOptInEnabled(name: string): boolean {
   return readEnabledFlag(name);
 }
 
+/** Returns the configured connection confirm mode for real outbound tests. */
 export function getConnectionConfirmMode(): string {
   return readTrimmedEnv("LINKEDIN_E2E_CONNECTION_CONFIRM_MODE") ?? "";
 }
 
+/** Returns the approved post URL used by the real like confirm test. */
 export function getOptInLikePostUrl(): string | undefined {
   return readTrimmedEnv("LINKEDIN_E2E_LIKE_POST_URL");
 }
 
+/** Returns the approved post URL used by the real comment confirm test. */
 export function getOptInCommentPostUrl(): string | undefined {
   return readTrimmedEnv("LINKEDIN_E2E_COMMENT_POST_URL");
 }
 
+/**
+ * Invokes the CLI entrypoint, applying optional retries, assistant-home
+ * overrides, and timeout handling.
+ */
 export async function runCliCommandWith(
   runner: CliRunner,
   args: string[],
@@ -554,6 +574,7 @@ export async function runCliCommandWith(
   };
 }
 
+/** Invokes the real CLI entrypoint used by the contract suites. */
 export async function runCliCommand(
   args: string[],
   options: CommandExecutionOptions = {}
@@ -561,9 +582,7 @@ export async function runCliCommand(
   return runCliCommandWith(runCli, args, options);
 }
 
-// The CLI emits human guidance plus JSON. Tests assert against the last JSON
-// object so command output can stay useful for operators without breaking
-// programmatic E2E checks.
+/** Extracts the last top-level JSON object from mixed CLI or MCP output. */
 export function getLastJsonObject(text: string): Record<string, unknown> {
   const objects = parseJsonObjects(text);
   const lastObject = objects.at(-1);
@@ -573,6 +592,10 @@ export function getLastJsonObject(text: string): Record<string, unknown> {
   return lastObject;
 }
 
+/**
+ * Invokes one MCP tool call with retries, optional assistant-home overrides,
+ * and timeout handling.
+ */
 export async function callMcpToolWith(
   caller: McpToolCaller,
   name: string,
@@ -619,6 +642,7 @@ export async function callMcpToolWith(
   throw lastError;
 }
 
+/** Invokes the real MCP tool handler used by the contract suites. */
 export async function callMcpTool(
   name: string,
   args: Record<string, unknown> = {},
@@ -635,6 +659,7 @@ function asRecord(value: unknown, label: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+/** Asserts the minimal prepared-action contract returned by preview commands. */
 export function expectPreparedAction(prepared: PreparedActionResult): void {
   expect(prepared.preparedActionId).toMatch(/^pa_/);
   expect(prepared.confirmToken).toMatch(/^ct_/);
@@ -645,6 +670,7 @@ export function expectPreparedAction(prepared: PreparedActionResult): void {
   expect(prepared.preview).toHaveProperty("target");
 }
 
+/** Asserts that a prepared-action preview contains the expected outbound text. */
 export function expectPreparedOutboundText(
   prepared: PreparedActionResult,
   text: string
@@ -654,6 +680,7 @@ export function expectPreparedOutboundText(
   expect(outbound.text).toBe(text);
 }
 
+/** Asserts that a preview contains the expected rate-limit metadata. */
 export function expectRateLimitPreview(
   preview: Record<string, unknown>,
   counterKey: string
@@ -666,6 +693,7 @@ export function expectRateLimitPreview(
   expect(typeof rateLimit.allowed).toBe("boolean");
 }
 
+/** Creates a safe `test.echo` prepared action for generic confirm coverage. */
 export function prepareEchoAction(
   runtime: CoreRuntime,
   input: {
@@ -701,6 +729,7 @@ export function prepareEchoAction(
   });
 }
 
+/** Discovers the approved inbox thread used by live message coverage. */
 export async function getMessageThread(runtime: CoreRuntime): Promise<{
   thread_id: string;
   title: string;
@@ -727,6 +756,7 @@ export async function getMessageThread(runtime: CoreRuntime): Promise<{
   };
 }
 
+/** Discovers one feed post suitable for preview-only or approved write tests. */
 export async function getFeedPost(runtime: CoreRuntime): Promise<{
   post_id: string;
   post_url: string;
@@ -751,6 +781,7 @@ export async function getFeedPost(runtime: CoreRuntime): Promise<{
   };
 }
 
+/** Discovers one job result used by the CLI and MCP contract suites. */
 export async function getJob(runtime: CoreRuntime): Promise<{
   job_id: string;
   title: string;
@@ -792,9 +823,10 @@ async function discoverCliCoverageFixtures(runtime: CoreRuntime): Promise<CliCov
   };
 }
 
-// CLI and MCP surface tests only need a few stable identifiers. Keeping that
-// contract in one small fixture object makes it easy to capture once and replay
-// when iterating on contract bugs without rediscovering every LinkedIn target.
+/**
+ * Returns the shared live identifiers for CLI and MCP contract coverage,
+ * either by replaying a saved fixture file or by discovering fresh targets.
+ */
 export async function getCliCoverageFixtures(runtime: CoreRuntime): Promise<CliCoverageFixtures> {
   const fixtureFilePath = getFixtureFilePath();
 
@@ -811,6 +843,7 @@ export async function getCliCoverageFixtures(runtime: CoreRuntime): Promise<CliC
   return fixtures;
 }
 
+/** Canonical MCP tool names used by the E2E contract suites. */
 export const MCP_TOOL_NAMES = {
   sessionStatus: LINKEDIN_SESSION_STATUS_TOOL,
   sessionOpenLogin: LINKEDIN_SESSION_OPEN_LOGIN_TOOL,
