@@ -152,8 +152,8 @@ const runtime = createCoreRuntime({
 });
 
 const profile = await runtime.profile.viewProfile({
-  profileUrl: "https://www.linkedin.com/in/example/",
-  profileName: "default"
+  profileName: "default",
+  target: "https://www.linkedin.com/in/example/"
 });
 
 console.log(runtime.selectorLocale);
