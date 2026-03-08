@@ -9,12 +9,21 @@ import type {
   SelectorAuditResult
 } from "@linkedin-assistant/core";
 
+/**
+ * Output formats supported by the selector audit CLI.
+ */
 export type SelectorAuditOutputMode = "human" | "json";
 
+/**
+ * Optional display flags for the human-readable report formatter.
+ */
 export interface FormatSelectorAuditReportOptions {
   verbose?: boolean;
 }
 
+/**
+ * Configuration for {@link SelectorAuditProgressReporter}.
+ */
 export interface SelectorAuditProgressReporterOptions {
   enabled?: boolean;
   writeLine?: (line: string) => void;
@@ -194,12 +203,18 @@ function readNumber(payload: Record<string, unknown>, key: string): number | nul
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+/**
+ * Selects JSON or human-readable output for the selector audit command.
+ */
 export function resolveSelectorAuditOutputMode(options: {
   json: boolean;
 }, isInteractiveOutput: boolean): SelectorAuditOutputMode {
   return options.json || !isInteractiveOutput ? "json" : "human";
 }
 
+/**
+ * Formats a structured selector audit report for terminal output.
+ */
 export function formatSelectorAuditReport(
   report: SelectorAuditReport,
   options: FormatSelectorAuditReportOptions = {}
@@ -247,6 +262,9 @@ export function formatSelectorAuditReport(
   return lines.join("\n");
 }
 
+/**
+ * Formats a structured selector audit failure into a concise terminal message.
+ */
 export function formatSelectorAuditError(
   payload: LinkedInAssistantErrorPayload
 ): string {
@@ -263,6 +281,12 @@ export function formatSelectorAuditError(
   return lines.join("\n");
 }
 
+/**
+ * Consumes selector-audit log events and emits lightweight progress lines.
+ *
+ * This keeps the CLI progress view aligned with the core service lifecycle
+ * without introducing a second progress callback API.
+ */
 export class SelectorAuditProgressReporter {
   private readonly enabled: boolean;
   private readonly writeLine: (line: string) => void;
@@ -280,6 +304,8 @@ export class SelectorAuditProgressReporter {
       return;
     }
 
+    // Only a small, stable subset of audit lifecycle events is surfaced so the
+    // progress UI stays predictable even if lower-level log events evolve.
     if (entry.event === "selector.audit.start") {
       this.totalPages = readNumber(entry.payload, "pageCount");
       const profileName = readString(entry.payload, "profileName");

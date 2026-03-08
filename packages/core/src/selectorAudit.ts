@@ -13,6 +13,9 @@ import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
 
+/**
+ * Canonical LinkedIn page identifiers covered by the built-in selector audit.
+ */
 export const LINKEDIN_SELECTOR_AUDIT_PAGES = [
   "feed",
   "inbox",
@@ -21,18 +24,34 @@ export const LINKEDIN_SELECTOR_AUDIT_PAGES = [
   "notifications"
 ] as const;
 
+/**
+ * One supported page identifier in the selector audit registry.
+ */
 export type LinkedInSelectorAuditPage =
   (typeof LINKEDIN_SELECTOR_AUDIT_PAGES)[number];
 
+/**
+ * Ordered selector fallback tiers checked for every selector group.
+ *
+ * `primary` is the preferred stable selector. `secondary` and `tertiary` are
+ * tolerated fallbacks that keep the audit actionable while still surfacing UI
+ * drift in the final report.
+ */
 export const LINKEDIN_SELECTOR_AUDIT_STRATEGIES = [
   "primary",
   "secondary",
   "tertiary"
 ] as const;
 
+/**
+ * One selector fallback tier supported by the audit.
+ */
 export type LinkedInSelectorAuditStrategy =
   (typeof LINKEDIN_SELECTOR_AUDIT_STRATEGIES)[number];
 
+/**
+ * One concrete Playwright locator candidate inside a selector group.
+ */
 export interface SelectorAuditCandidate {
   strategy: LinkedInSelectorAuditStrategy;
   key: string;
@@ -40,12 +59,18 @@ export interface SelectorAuditCandidate {
   locatorFactory: (page: Page) => Locator;
 }
 
+/**
+ * A logical selector group that should resolve on a page.
+ */
 export interface SelectorAuditSelectorDefinition {
   key: string;
   description: string;
   candidates: SelectorAuditCandidate[];
 }
 
+/**
+ * Selector audit definition for one LinkedIn page.
+ */
 export interface SelectorAuditPageDefinition {
   page: LinkedInSelectorAuditPage;
   url: string;
@@ -53,10 +78,16 @@ export interface SelectorAuditPageDefinition {
   readyCandidates?: SelectorAuditCandidate[];
 }
 
+/**
+ * Input accepted by {@link LinkedInSelectorAuditService.auditSelectors}.
+ */
 export interface SelectorAuditInput {
   profileName?: string;
 }
 
+/**
+ * Per-candidate outcome captured for reporting and troubleshooting.
+ */
 export interface SelectorAuditStrategyResult {
   strategy: LinkedInSelectorAuditStrategy;
   status: "pass" | "fail";
@@ -65,6 +96,9 @@ export interface SelectorAuditStrategyResult {
   error?: string;
 }
 
+/**
+ * Failure artifact paths captured when a selector group cannot be matched.
+ */
 export interface SelectorAuditFailureArtifacts {
   screenshot_path?: string;
   dom_snapshot_path?: string;
@@ -72,6 +106,9 @@ export interface SelectorAuditFailureArtifacts {
   capture_warnings?: string[];
 }
 
+/**
+ * Full audit outcome for one selector group on one page.
+ */
 export interface SelectorAuditResult {
   page: LinkedInSelectorAuditPage;
   page_url: string;
@@ -88,6 +125,9 @@ export interface SelectorAuditResult {
   error?: string;
 }
 
+/**
+ * Per-page aggregate counts included in the top-level report.
+ */
 export interface SelectorAuditPageSummary {
   page: LinkedInSelectorAuditPage;
   total_count: number;
@@ -96,13 +136,22 @@ export interface SelectorAuditPageSummary {
   fallback_count: number;
 }
 
+/**
+ * Top-level outcome for a selector audit run.
+ */
 export type SelectorAuditOutcome = "pass" | "pass_with_fallbacks" | "fail";
 
+/**
+ * Page-level warnings that applied to every selector evaluated on that page.
+ */
 export interface SelectorAuditPageWarningSummary {
   page: LinkedInSelectorAuditPage;
   warnings: string[];
 }
 
+/**
+ * Failure summary promoted to the top-level report for quick triage.
+ */
 export interface SelectorAuditFailureSummary {
   page: LinkedInSelectorAuditPage;
   page_url: string;
@@ -114,6 +163,10 @@ export interface SelectorAuditFailureSummary {
   recommended_action: string;
 }
 
+/**
+ * Fallback summary promoted to the top-level report when only non-primary
+ * selectors matched.
+ */
 export interface SelectorAuditFallbackSummary {
   page: LinkedInSelectorAuditPage;
   page_url: string;
@@ -125,6 +178,9 @@ export interface SelectorAuditFallbackSummary {
   recommended_action: string;
 }
 
+/**
+ * Structured result returned by the selector audit CLI and core API.
+ */
 export interface SelectorAuditReport {
   run_id: string;
   profile_name: string;
@@ -145,6 +201,12 @@ export interface SelectorAuditReport {
   results: SelectorAuditResult[];
 }
 
+/**
+ * Runtime dependencies required by {@link LinkedInSelectorAuditService}.
+ *
+ * This shape is exported so tests and alternate runtimes can provide a narrow
+ * selector-audit-compatible runtime without constructing the full app graph.
+ */
 export interface LinkedInSelectorAuditRuntime {
   runId: string;
   auth: LinkedInAuthService;
@@ -154,6 +216,9 @@ export interface LinkedInSelectorAuditRuntime {
   artifacts: ArtifactHelpers;
 }
 
+/**
+ * Optional overrides for the selector audit registry and timeouts.
+ */
 export interface LinkedInSelectorAuditServiceOptions {
   registry?: SelectorAuditPageDefinition[];
   candidateTimeoutMs?: number;
@@ -1006,6 +1071,10 @@ function createArtifactCaptureWarning(
   return `Could not capture the ${artifactKind} for ${selectorDefinition.key} on ${pageDefinition.page}: ${getErrorMessage(error)}.`;
 }
 
+/**
+ * Audits selector groups across core LinkedIn pages and emits a structured
+ * report with pass/fail/fallback summaries plus failure artifacts.
+ */
 export class LinkedInSelectorAuditService {
   private readonly registry: SelectorAuditPageDefinition[];
   private readonly candidateTimeoutMs: number;
@@ -1036,6 +1105,14 @@ export class LinkedInSelectorAuditService {
     );
   }
 
+  /**
+   * Runs the selector audit for one authenticated profile.
+   *
+   * The audit is read-only: it navigates across the configured pages, checks
+   * each selector group in primary-to-tertiary order, captures artifacts only
+   * for failures, writes a JSON report into the run artifact directory, and
+   * returns the same report to the caller.
+   */
   async auditSelectors(input: SelectorAuditInput = {}): Promise<SelectorAuditReport> {
     const normalizedInput = validateSelectorAuditInput(input);
     const profileName = validateProfileName(normalizedInput.profileName);
@@ -1181,6 +1258,8 @@ export class LinkedInSelectorAuditService {
 
       const pageReadyFailures = await this.waitForPageReady(page, pageDefinition);
       if (pageReadyFailures !== null) {
+        // Page-readiness is advisory instead of fatal so the audit can still
+        // collect selector drift evidence from the current DOM state.
         const warning = createPageReadinessWarning(
           pageDefinition,
           this.pageReadyTimeoutMs,
@@ -1299,6 +1378,8 @@ export class LinkedInSelectorAuditService {
 
     const matchedResult = strategyResults.find((result) => result.status === "pass") ?? null;
     const failureArtifacts =
+      // Failure artifacts are intentionally captured only when every candidate
+      // misses so successful audits stay lightweight and focused.
       matchedResult === null
         ? await this.captureFailureArtifacts(page, pageDefinition, selectorDefinition)
         : {};
@@ -1414,6 +1495,8 @@ export class LinkedInSelectorAuditService {
     pageDefinition: SelectorAuditPageDefinition,
     selectorDefinition: SelectorAuditSelectorDefinition
   ): Promise<SelectorAuditFailureArtifacts> {
+    // Timestamped file names avoid collisions when the same selector key fails
+    // multiple times during one run or across quick successive reruns.
     const prefix = path.join(
       SELECTOR_AUDIT_ARTIFACT_DIR,
       sanitizePathSegment(pageDefinition.page),
@@ -1531,6 +1614,12 @@ export class LinkedInSelectorAuditService {
   }
 }
 
+/**
+ * Returns a fresh copy of the built-in selector audit registry.
+ *
+ * Callers can inspect or clone this registry before passing a customized copy
+ * to {@link LinkedInSelectorAuditServiceOptions.registry}.
+ */
 export function createLinkedInSelectorAuditRegistry(): SelectorAuditPageDefinition[] {
   return createDefaultSelectorAuditRegistry();
 }

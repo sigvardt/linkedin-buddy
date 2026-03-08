@@ -49,6 +49,13 @@ type ToolArgs = Record<string, unknown>;
 type ToolResult = { content: Array<{ type: "text"; text: string }> };
 
 const mcpPrivacyConfig = resolvePrivacyConfig();
+const SELECTOR_AUDIT_DOC_PATH = "docs/selector-audit.md";
+const SELECTOR_AUDIT_MCP_HINT =
+  `For broader UI-drift diagnostics, run the CLI selector audit ("linkedin audit selectors") and see ${SELECTOR_AUDIT_DOC_PATH}.`;
+
+function withSelectorAuditHint(description: string): string {
+  return `${description} ${SELECTOR_AUDIT_MCP_HINT}`;
+}
 
 function readString(args: ToolArgs, key: string, fallback: string): string {
   const value = args[key];
@@ -1020,7 +1027,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: LINKEDIN_INBOX_LIST_THREADS_TOOL,
-        description: "List LinkedIn inbox threads for a profile.",
+        description: withSelectorAuditHint(
+          "List LinkedIn inbox threads for a profile."
+        ),
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -1042,7 +1051,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: LINKEDIN_INBOX_GET_THREAD_TOOL,
-        description: "Get one LinkedIn thread with recent messages.",
+        description: withSelectorAuditHint(
+          "Get one LinkedIn thread with recent messages."
+        ),
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -1093,7 +1104,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: LINKEDIN_PROFILE_VIEW_TOOL,
         description:
-          "View a LinkedIn profile. Returns structured profile data including name, headline, location, about, experience, and education.",
+          withSelectorAuditHint(
+            "View a LinkedIn profile. Returns structured profile data including name, headline, location, about, experience, and education."
+          ),
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -1112,7 +1125,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: LINKEDIN_SEARCH_TOOL,
-        description: "Search LinkedIn for people, companies, or jobs.",
+        description: withSelectorAuditHint(
+          "Search LinkedIn for people, companies, or jobs."
+        ),
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -1142,7 +1157,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: LINKEDIN_CONNECTIONS_LIST_TOOL,
         description:
-          "List your LinkedIn connections. Returns connection names, headlines, profile URLs, and when connected.",
+          withSelectorAuditHint(
+            "List your LinkedIn connections. Returns connection names, headlines, profile URLs, and when connected."
+          ),
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -1162,7 +1179,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: LINKEDIN_CONNECTIONS_PENDING_TOOL,
         description:
-          "List pending LinkedIn connection invitations (sent, received, or both).",
+          withSelectorAuditHint(
+            "List pending LinkedIn connection invitations (sent, received, or both)."
+          ),
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -1291,7 +1310,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: LINKEDIN_FEED_LIST_TOOL,
         description:
-          "List posts from your LinkedIn feed with author, text, and engagement counts.",
+          withSelectorAuditHint(
+            "List posts from your LinkedIn feed with author, text, and engagement counts."
+          ),
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -1310,7 +1331,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: LINKEDIN_FEED_VIEW_POST_TOOL,
-        description: "View one LinkedIn feed post by URL, URN, or activity id.",
+        description: withSelectorAuditHint(
+          "View one LinkedIn feed post by URL, URN, or activity id."
+        ),
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -1420,7 +1443,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: LINKEDIN_NOTIFICATIONS_LIST_TOOL,
         description:
-          "List your LinkedIn notifications. Returns notification type, message, timestamp, link, and read/unread status.",
+          withSelectorAuditHint(
+            "List your LinkedIn notifications. Returns notification type, message, timestamp, link, and read/unread status."
+          ),
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -1440,7 +1465,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: LINKEDIN_JOBS_SEARCH_TOOL,
         description:
-          "Search for LinkedIn job postings by keyword and optional location.",
+          withSelectorAuditHint(
+            "Search for LinkedIn job postings by keyword and optional location."
+          ),
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -1469,7 +1496,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: LINKEDIN_JOBS_VIEW_TOOL,
         description:
-          "View details of a specific LinkedIn job posting by job ID.",
+          withSelectorAuditHint(
+            "View details of a specific LinkedIn job posting by job ID."
+          ),
         inputSchema: {
           type: "object",
           additionalProperties: false,

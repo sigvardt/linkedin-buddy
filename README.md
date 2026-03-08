@@ -92,18 +92,75 @@ npm exec -w @linkedin-assistant/cli -- linkedin keepalive stop --profile default
 
 - Keepalive state/log files are stored under `~/.linkedin-assistant/linkedin-owa-agentools/keepalive/`.
 
-Selector audit (read-only, CI-friendly):
+### Selector audit
+
+Selector audit is a read-only diagnostic that checks the built-in selector
+registry across the LinkedIn feed, inbox, profile, connections, and
+notifications pages. It is designed for CI and maintenance work: it captures
+failure artifacts, reports fallback-only matches before they become hard
+failures, and exits non-zero only when a selector group fails across every
+strategy.
+
+See `docs/selector-audit.md` for the full guide.
 
 ```bash
+# Interactive summary with per-page progress
 npm exec -w @linkedin-assistant/cli -- linkedin audit selectors --profile default
+
+# Machine-readable report for CI or scripts
 npm exec -w @linkedin-assistant/cli -- linkedin audit selectors --profile default --json
+
+# Expand the human summary with selector-by-selector detail
+npm exec -w @linkedin-assistant/cli -- linkedin audit selectors --profile default --verbose
+
+# Audit an attached logged-in browser instead of the tool-owned profile
+npm exec -w @linkedin-assistant/cli -- linkedin audit selectors --profile default --cdp-url http://127.0.0.1:18800
+
+# Show command help and doc reference
+npm exec -w @linkedin-assistant/cli -- linkedin audit selectors --help
 ```
 
-- Interactive terminals show per-page progress plus a human-readable summary with clear failures, fallbacks, warnings, and next steps.
+Representative human-readable output:
+
+```text
+Starting selector audit for profile default (2 pages).
+Checking page 1/2: feed (2 selector groups)...
+Finished page 1/2: feed — 1 passed, 1 failed, 1 fallback.
+Checking page 2/2: inbox (1 selector group)...
+Finished page 2/2: inbox — 1 passed, 0 failed, 0 fallback.
+Selector audit finished. Report: /tmp/run_test/selector-audit/report.json
+
+Selector Audit: FAIL
+Profile: default
+Checked At: 2026-03-08T12:00:00.000Z
+Summary: Checked 3 selector groups across 2 pages. 2 passed. 1 failed. 1 used fallback selectors.
+Report JSON: /tmp/run_test/selector-audit/report.json
+Artifacts: /tmp/run_test/selector-audit
+
+Pages
+- FAIL feed: 1 passed, 1 failed, 1 fallback-only
+- PASS inbox: 1 passed, 0 failed, 0 fallback-only
+
+Failures
+- feed/post_composer_trigger — Feed post composer trigger
+  Error: No selector strategy matched for post_composer_trigger on feed. Review the failure artifacts, update the selector registry if LinkedIn's UI changed, and rerun the selector audit.
+  Artifacts: screenshot=/tmp/run_test/selector-audit/feed/post_composer_trigger.png | dom=/tmp/run_test/selector-audit/feed/post_composer_trigger.html | a11y=/tmp/run_test/selector-audit/feed/post_composer_trigger.a11y.json
+  Next: Open the captured failure artifacts for post_composer_trigger on feed, update that selector group in the registry, and rerun the selector audit.
+```
+
+- Interactive terminals show per-page progress plus a human-readable summary
+  with failures, fallbacks, warnings, and next steps.
 - Use `--json` for machine-readable output in CI, scripts, or agent workflows.
-- Use `--verbose` to expand the human-readable summary with selector-by-selector details.
-- Use `--no-progress` to suppress live progress updates when you only want the final summary.
-- Exits non-zero only when a selector group fully fails across all fallback strategies.
+- Use `--verbose` to expand the human-readable summary with selector-by-selector
+  details.
+- Use `--no-progress` to suppress live progress updates when you only want the
+  final summary.
+- Reports are written under the run artifact directory as
+  `selector-audit/report.json`; screenshots, DOM snapshots, and accessibility
+  snapshots are captured only for failures.
+- The CLI has no selector-audit-specific env vars today; configuration is via
+  `--profile`, optional `--cdp-url`, and the programmatic core service options
+  documented in `docs/selector-audit.md`.
 
 Inbox MVP commands:
 
@@ -141,11 +198,31 @@ Exposed tools:
 
 - `linkedin.session.status`
 - `linkedin.session.open_login`
+- `linkedin.profile.view`
+- `linkedin.search`
 - `linkedin.inbox.list_threads`
 - `linkedin.inbox.get_thread`
 - `linkedin.inbox.prepare_reply`
+- `linkedin.connections.list`
+- `linkedin.connections.pending`
+- `linkedin.connections.invite`
+- `linkedin.connections.accept`
+- `linkedin.connections.withdraw`
+- `linkedin.feed.list`
+- `linkedin.feed.view_post`
+- `linkedin.feed.like`
+- `linkedin.feed.comment`
+- `linkedin.post.prepare_create`
+- `linkedin.notifications.list`
+- `linkedin.jobs.search`
+- `linkedin.jobs.view`
 - `linkedin.network.prepare_followup_after_accept`
 - `linkedin.actions.confirm`
+
+Selector audit is currently a CLI-only diagnostic. When an MCP read-only tool
+starts failing because LinkedIn's UI changed, run
+`linkedin audit selectors --profile <profile>` and follow `docs/selector-audit.md`.
+The read-only MCP tool descriptions reference this diagnostic path.
 
 ## MVP Flow
 

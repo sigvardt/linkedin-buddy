@@ -31,6 +31,9 @@ import {
 } from "../selectorAuditOutput.js";
 
 const cliPrivacyConfig = resolvePrivacyConfig();
+const SELECTOR_AUDIT_DOC_PATH = "docs/selector-audit.md";
+const SELECTOR_AUDIT_DOC_REFERENCE =
+  `See ${SELECTOR_AUDIT_DOC_PATH} for sample output, configuration, and troubleshooting.`;
 
 function coercePositiveInt(value: string, label: string): number {
   const parsed = Number.parseInt(value, 10);
@@ -1454,6 +1457,8 @@ async function runSelectorAudit(input: {
     const selectorAuditRuntime = runtime;
 
     const originalLog = selectorAuditRuntime.logger.log.bind(selectorAuditRuntime.logger);
+    // Mirror stable selector-audit lifecycle logs into the optional progress
+    // reporter without changing the core service API surface.
     selectorAuditRuntime.logger.log = ((level, event, payload = {}) => {
       const entry = originalLog(level, event, payload);
       progressReporter.handleLog(entry);
@@ -1622,6 +1627,15 @@ async function main(): Promise<void> {
     .option(
       "--cdp-url <url>",
       "Connect to existing browser via CDP endpoint (e.g., http://127.0.0.1:18800)"
+    )
+    .addHelpText(
+      "after",
+      [
+        "",
+        "Diagnostics:",
+        "  linkedin audit selectors --help",
+        `  ${SELECTOR_AUDIT_DOC_REFERENCE}`
+      ].join("\n")
     );
 
   const readCdpUrl = (): string | undefined => {
@@ -2253,7 +2267,8 @@ async function main(): Promise<void> {
       [
         "",
         "Interactive terminals default to a human-readable summary with per-page progress.",
-        "Use --json for automation, piping, or other agent workflows."
+        "Use --json for automation, piping, or other agent workflows.",
+        SELECTOR_AUDIT_DOC_REFERENCE
       ].join("\n")
     )
     .action(async (options: {
