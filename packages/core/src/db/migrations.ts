@@ -136,5 +136,39 @@ CREATE INDEX IF NOT EXISTS prepared_action_status_idx
 CREATE INDEX IF NOT EXISTS prepared_action_confirm_token_hash_idx
   ON prepared_action(confirm_token_hash);
 `
+  },
+  {
+    id: "003_sent_invitation_state",
+    sql: `
+CREATE TABLE IF NOT EXISTS sent_invitation_state (
+  profile_name TEXT NOT NULL,
+  profile_url_key TEXT NOT NULL,
+  vanity_name TEXT,
+  full_name TEXT NOT NULL,
+  headline TEXT NOT NULL,
+  profile_url TEXT NOT NULL,
+  first_seen_sent_at INTEGER NOT NULL,
+  last_seen_sent_at INTEGER NOT NULL,
+  closed_at INTEGER,
+  closed_reason TEXT,
+  accepted_at INTEGER,
+  accepted_detection TEXT,
+  followup_prepared_at INTEGER,
+  followup_prepared_action_id TEXT,
+  followup_confirmed_at INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (profile_name, profile_url_key)
+);
+
+CREATE INDEX IF NOT EXISTS sent_invitation_state_profile_last_seen_idx
+  ON sent_invitation_state(profile_name, last_seen_sent_at);
+
+CREATE INDEX IF NOT EXISTS sent_invitation_state_profile_accepted_idx
+  ON sent_invitation_state(profile_name, accepted_at);
+
+CREATE INDEX IF NOT EXISTS sent_invitation_state_followup_action_idx
+  ON sent_invitation_state(followup_prepared_action_id);
+`
   }
 ];

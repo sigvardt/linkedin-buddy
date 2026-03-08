@@ -91,6 +91,24 @@ export function resolveProfileUrl(target: string | undefined): string {
   return `https://www.linkedin.com/in/${encodeURIComponent(trimmedTarget)}/`;
 }
 
+export function normalizeLinkedInProfileUrl(target: string): string {
+  const resolved = resolveProfileUrl(target);
+
+  try {
+    const parsedUrl = new URL(resolved);
+    parsedUrl.search = "";
+    parsedUrl.hash = "";
+
+    const pathname = parsedUrl.pathname.endsWith("/")
+      ? parsedUrl.pathname
+      : `${parsedUrl.pathname}/`;
+
+    return `${parsedUrl.origin}${pathname}`;
+  } catch {
+    return resolved;
+  }
+}
+
 async function getOrCreatePage(context: BrowserContext): Promise<Page> {
   const existing = context.pages()[0];
   if (existing) {

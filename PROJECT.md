@@ -64,7 +64,7 @@ All errors use machine-readable codes: `AUTH_REQUIRED`, `CAPTCHA_OR_CHALLENGE`, 
 ### Implemented (MVP + V1)
 - Auth: login, status, health check, ensureAuthenticated
 - Inbox: list threads, get thread, prepare reply, confirm send message
-- Connections: list, pending invitations, prepare/confirm send/accept/withdraw invitation
+- Connections: list, pending invitations, prepare/confirm send/accept/withdraw invitation, detect accepted invites, prepare/confirm follow-up message
 - Feed: list posts, view post, prepare/confirm like, prepare/confirm comment
 - Posts: prepare/confirm create post
 - Profile: view (own or others)

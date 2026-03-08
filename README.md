@@ -69,6 +69,13 @@ npm exec -w @linkedin-assistant/cli -- linkedin inbox show --profile default --t
 npm exec -w @linkedin-assistant/cli -- linkedin inbox prepare-reply --profile default --thread <thread_id_or_url> --text "Hi there"
 ```
 
+Follow-up flow after accepted invitations:
+
+```bash
+npm exec -w @linkedin-assistant/cli -- linkedin followups list --profile default --since 7d
+npm exec -w @linkedin-assistant/cli -- linkedin followups prepare --profile default --since 7d
+```
+
 Confirm prepared actions by token:
 
 ```bash
@@ -93,6 +100,7 @@ Exposed tools:
 - `linkedin.inbox.list_threads`
 - `linkedin.inbox.get_thread`
 - `linkedin.inbox.prepare_reply`
+- `linkedin.network.prepare_followup_after_accept`
 - `linkedin.actions.confirm`
 
 ## MVP Flow

@@ -6,6 +6,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { Command } from "commander";
 import {
+  DEFAULT_FOLLOWUP_SINCE,
   clearRateLimitState,
   isInRateLimitCooldown,
   LINKEDIN_FEED_REACTION_TYPES,
@@ -14,6 +15,7 @@ import {
   createCoreRuntime,
   normalizeLinkedInFeedReaction,
   normalizeLinkedInPostVisibility,
+  resolveFollowupSinceWindow,
   resolveConfigPaths,
   toLinkedInAssistantErrorPayload,
   type SearchCategory
@@ -958,6 +960,83 @@ async function runConnectionsWithdraw(input: {
   }
 }
 
+async function runFollowupsList(input: {
+  profileName: string;
+  since: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+  const { since, sinceMs } = resolveFollowupSinceWindow(input.since);
+
+  try {
+    runtime.logger.log("info", "cli.followups.list.start", {
+      profileName: input.profileName,
+      since
+    });
+
+    const acceptedConnections = await runtime.followups.listAcceptedConnections({
+      profileName: input.profileName,
+      since
+    });
+
+    runtime.logger.log("info", "cli.followups.list.done", {
+      profileName: input.profileName,
+      count: acceptedConnections.length
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      since,
+      since_ms: sinceMs,
+      since_at: new Date(sinceMs).toISOString(),
+      count: acceptedConnections.length,
+      accepted_connections: acceptedConnections
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runFollowupsPrepare(input: {
+  profileName: string;
+  since: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+  const { since, sinceMs } = resolveFollowupSinceWindow(input.since);
+
+  try {
+    runtime.logger.log("info", "cli.followups.prepare.start", {
+      profileName: input.profileName,
+      since
+    });
+
+    const result = await runtime.followups.prepareFollowupsAfterAccept({
+      profileName: input.profileName,
+      since
+    });
+
+    runtime.logger.log("info", "cli.followups.prepare.done", {
+      profileName: input.profileName,
+      acceptedConnectionCount: result.acceptedConnections.length,
+      preparedCount: result.preparedFollowups.length
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      since,
+      since_ms: sinceMs,
+      since_at: new Date(sinceMs).toISOString(),
+      accepted_connection_count: result.acceptedConnections.length,
+      prepared_count: result.preparedFollowups.length,
+      accepted_connections: result.acceptedConnections,
+      prepared_followups: result.preparedFollowups
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 async function runFeedList(input: {
   profileName: string;
   limit: number;
@@ -1781,6 +1860,44 @@ async function main(): Promise<void> {
       await runConnectionsWithdraw({
         profileName: options.profile,
         targetProfile: target
+      }, readCdpUrl());
+    });
+
+  const followupsCommand = program
+    .command("followups")
+    .description("Detect accepted invitations and prepare follow-up messages");
+
+  followupsCommand
+    .command("list")
+    .description("List recently accepted connections detected from sent invites")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option(
+      "-s, --since <window>",
+      "Lookback window such as 30m, 12h, 7d, or 2w",
+      DEFAULT_FOLLOWUP_SINCE
+    )
+    .action(async (options: { profile: string; since: string }) => {
+      await runFollowupsList({
+        profileName: options.profile,
+        since: options.since
+      }, readCdpUrl());
+    });
+
+  followupsCommand
+    .command("prepare")
+    .description(
+      "Prepare follow-up messages for newly accepted connections (two-phase)"
+    )
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option(
+      "-s, --since <window>",
+      "Lookback window such as 30m, 12h, 7d, or 2w",
+      DEFAULT_FOLLOWUP_SINCE
+    )
+    .action(async (options: { profile: string; since: string }) => {
+      await runFollowupsPrepare({
+        profileName: options.profile,
+        since: options.since
       }, readCdpUrl());
     });
 

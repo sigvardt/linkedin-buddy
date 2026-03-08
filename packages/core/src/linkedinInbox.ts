@@ -11,6 +11,7 @@ import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
 import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
 import type { ConfirmFailureArtifactConfig } from "./config.js";
+import type { AssistantDatabase } from "./db/database.js";
 import {
   LinkedInAssistantError,
   asLinkedInAssistantError
@@ -29,7 +30,7 @@ import type {
 
 const LINKEDIN_MESSAGING_URL = "https://www.linkedin.com/messaging/";
 const SEND_MESSAGE_ACTION_TYPE = "send_message";
-const SEND_MESSAGE_RATE_LIMIT_CONFIG = {
+export const SEND_MESSAGE_RATE_LIMIT_CONFIG = {
   counterKey: "linkedin.messaging.send_message",
   windowSizeMs: 60 * 60 * 1000,
   limit: 20
@@ -126,6 +127,7 @@ export interface PrepareReplyResult {
 
 export interface LinkedInMessagingRuntime {
   runId: string;
+  db: AssistantDatabase;
   auth: LinkedInAuthService;
   cdpUrl?: string | undefined;
   profileManager: ProfileManager;
