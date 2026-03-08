@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SchedulerConfig } from "../config.js";
-import { AssistantDatabase } from "../db/database.js";
+import {
+  AssistantDatabase,
+  type SchedulerJobInsert
+} from "../db/database.js";
 import { LinkedInAssistantError } from "../errors.js";
 import {
   FOLLOWUP_AFTER_ACCEPT_ACTION_TYPE,
@@ -12,6 +15,7 @@ import {
   alignToBusinessHours,
   calculateSchedulerBackoffMs,
   isWithinBusinessHours,
+  scheduleAcceptedConnectionFollowupAtMs,
   type LinkedInSchedulerRuntime
 } from "../scheduler.js";
 import { TwoPhaseCommitService } from "../twoPhaseCommit.js";
@@ -78,6 +82,84 @@ function createAcceptedConnection(
     followup_expires_at_ms: null,
     ...overrides
   };
+}
+
+function createLogger(): LinkedInSchedulerRuntime["logger"] {
+  return {
+    log: vi.fn()
+  } as LinkedInSchedulerRuntime["logger"];
+}
+
+function createRuntime(input: {
+  db: AssistantDatabase;
+  followups: LinkedInSchedulerRuntime["followups"];
+  logger?: LinkedInSchedulerRuntime["logger"];
+  schedulerConfig?: SchedulerConfig;
+}): LinkedInSchedulerRuntime {
+  return {
+    db: input.db,
+    logger: input.logger ?? createLogger(),
+    followups: input.followups,
+    schedulerConfig: input.schedulerConfig ?? createSchedulerConfig()
+  };
+}
+
+function insertSchedulerJob(
+  db: AssistantDatabase,
+  overrides: Partial<SchedulerJobInsert> & Pick<SchedulerJobInsert, "id">
+): void {
+  const profileName = overrides.profileName ?? "default";
+  const lane = overrides.lane ?? "followup_preparation";
+  const profileUrlKey = overrides.id;
+
+  db.insertSchedulerJob({
+    id: overrides.id,
+    profileName,
+    lane,
+    actionType: overrides.actionType ?? FOLLOWUP_AFTER_ACCEPT_ACTION_TYPE,
+    targetJson:
+      overrides.targetJson ??
+      JSON.stringify({
+        profile_name: profileName,
+        profile_url_key: profileUrlKey
+      }),
+    dedupeKey:
+      overrides.dedupeKey ?? `${lane}:${profileName}:${profileUrlKey}`,
+    scheduledAtMs: overrides.scheduledAtMs ?? FIXED_NOW,
+    status: overrides.status,
+    attemptCount: overrides.attemptCount,
+    maxAttempts: overrides.maxAttempts ?? 5,
+    leaseOwner: overrides.leaseOwner,
+    leasedAtMs: overrides.leasedAtMs,
+    leaseExpiresAtMs: overrides.leaseExpiresAtMs,
+    preparedActionId: overrides.preparedActionId,
+    lastErrorCode: overrides.lastErrorCode,
+    lastErrorMessage: overrides.lastErrorMessage,
+    lastAttemptAtMs: overrides.lastAttemptAtMs,
+    completedAtMs: overrides.completedAtMs,
+    createdAtMs: overrides.createdAtMs ?? FIXED_NOW,
+    updatedAtMs: overrides.updatedAtMs ?? FIXED_NOW
+  });
+}
+
+function claimDueSchedulerJobs(
+  db: AssistantDatabase,
+  overrides: Partial<{
+    profileName: string;
+    nowMs: number;
+    limit: number;
+    leaseOwner: string;
+    leaseTtlMs: number;
+  }> = {}
+) {
+  return db.claimDueSchedulerJobs({
+    profileName: "default",
+    nowMs: FIXED_NOW,
+    limit: 10,
+    leaseOwner: "worker",
+    leaseTtlMs: 60_000,
+    ...overrides
+  });
 }
 
 function seedAcceptedInvitation(input: {
@@ -200,9 +282,93 @@ describe("scheduler helpers", () => {
 
     expect(backoff).toBe(5 * 60_000);
   });
+
+  it("delays newly accepted follow-ups but retries failed ones immediately", () => {
+    const config = createSchedulerConfig();
+
+    expect(
+      scheduleAcceptedConnectionFollowupAtMs({
+        connection: createAcceptedConnection({
+          accepted_at_ms: FIXED_NOW - 5 * 60 * 1000,
+          followup_status: "not_prepared"
+        }),
+        nowMs: FIXED_NOW,
+        config
+      })
+    ).toBe(FIXED_NOW + 10 * 60 * 1000);
+
+    expect(
+      scheduleAcceptedConnectionFollowupAtMs({
+        connection: createAcceptedConnection({
+          accepted_at_ms: FIXED_NOW - 5 * 60 * 1000,
+          followup_status: "failed"
+        }),
+        nowMs: FIXED_NOW,
+        config
+      })
+    ).toBe(FIXED_NOW);
+  });
 });
 
 describe("scheduler DB helpers", () => {
+  it("stores inserted jobs with defaults", () => {
+    const db = new AssistantDatabase(":memory:");
+
+    try {
+      insertSchedulerJob(db, {
+        id: "job_default"
+      });
+
+      expect(db.getSchedulerJobById("job_default")).toMatchObject({
+        id: "job_default",
+        profile_name: "default",
+        lane: "followup_preparation",
+        action_type: FOLLOWUP_AFTER_ACCEPT_ACTION_TYPE,
+        target_json: JSON.stringify({
+          profile_name: "default",
+          profile_url_key: "job_default"
+        }),
+        dedupe_key: "followup_preparation:default:job_default",
+        scheduled_at: FIXED_NOW,
+        status: "pending",
+        attempt_count: 0,
+        max_attempts: 5,
+        lease_owner: null,
+        leased_at: null,
+        lease_expires_at: null,
+        prepared_action_id: null,
+        last_error_code: null,
+        last_error_message: null,
+        last_attempt_at: null,
+        completed_at: null,
+        created_at: FIXED_NOW,
+        updated_at: FIXED_NOW
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("rejects duplicate dedupe keys", () => {
+    const db = new AssistantDatabase(":memory:");
+
+    try {
+      insertSchedulerJob(db, {
+        id: "job_one",
+        dedupeKey: "followup_preparation:default:dup"
+      });
+
+      expect(() => {
+        insertSchedulerJob(db, {
+          id: "job_two",
+          dedupeKey: "followup_preparation:default:dup"
+        });
+      }).toThrowError(/dedupe_key/i);
+    } finally {
+      db.close();
+    }
+  });
+
   it("claims due jobs in lane priority order", () => {
     const db = new AssistantDatabase(":memory:");
 
@@ -213,26 +379,16 @@ describe("scheduler DB helpers", () => {
         ["pending_invite_checks", "job_pending"],
         ["inbox_triage", "job_inbox"]
       ] as const) {
-        db.insertSchedulerJob({
+        insertSchedulerJob(db, {
           id,
-          profileName: "default",
           lane,
-          actionType: "scheduler.test",
-          targetJson: "{}",
-          dedupeKey: `${lane}:default`,
-          scheduledAtMs: FIXED_NOW,
-          maxAttempts: 5,
-          createdAtMs: FIXED_NOW,
-          updatedAtMs: FIXED_NOW
+          dedupeKey: `${lane}:default:${id}`
         });
       }
 
-      const claimed = db.claimDueSchedulerJobs({
-        profileName: "default",
-        nowMs: FIXED_NOW,
+      const claimed = claimDueSchedulerJobs(db, {
         limit: 4,
-        leaseOwner: "worker",
-        leaseTtlMs: 60_000
+        leaseOwner: "worker"
       });
 
       expect(claimed.map((job) => job.lane)).toEqual([
@@ -241,6 +397,116 @@ describe("scheduler DB helpers", () => {
         "followup_preparation",
         "feed_engagement"
       ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("reclaims expired leases but leaves future and unexpired jobs alone", () => {
+    const db = new AssistantDatabase(":memory:");
+
+    try {
+      insertSchedulerJob(db, {
+        id: "job_due_pending",
+        scheduledAtMs: FIXED_NOW - 5_000,
+        createdAtMs: FIXED_NOW - 5_000,
+        updatedAtMs: FIXED_NOW - 5_000
+      });
+      insertSchedulerJob(db, {
+        id: "job_expired_lease",
+        status: "leased",
+        leaseOwner: "worker-old",
+        leasedAtMs: FIXED_NOW - 61_000,
+        leaseExpiresAtMs: FIXED_NOW - 1,
+        scheduledAtMs: FIXED_NOW,
+        createdAtMs: FIXED_NOW - 4_000,
+        updatedAtMs: FIXED_NOW - 4_000
+      });
+      insertSchedulerJob(db, {
+        id: "job_boundary_lease",
+        status: "leased",
+        leaseOwner: "worker-old",
+        leasedAtMs: FIXED_NOW - 60_000,
+        leaseExpiresAtMs: FIXED_NOW,
+        scheduledAtMs: FIXED_NOW,
+        createdAtMs: FIXED_NOW - 3_000,
+        updatedAtMs: FIXED_NOW - 3_000
+      });
+      insertSchedulerJob(db, {
+        id: "job_future_pending",
+        scheduledAtMs: FIXED_NOW + 1,
+        createdAtMs: FIXED_NOW - 2_000,
+        updatedAtMs: FIXED_NOW - 2_000
+      });
+      insertSchedulerJob(db, {
+        id: "job_prepared",
+        status: "prepared",
+        preparedActionId: "prepared_action",
+        completedAtMs: FIXED_NOW - 1_000,
+        createdAtMs: FIXED_NOW - 1_000,
+        updatedAtMs: FIXED_NOW - 1_000
+      });
+      insertSchedulerJob(db, {
+        id: "job_failed",
+        status: "failed",
+        completedAtMs: FIXED_NOW - 1_000,
+        createdAtMs: FIXED_NOW - 500,
+        updatedAtMs: FIXED_NOW - 500
+      });
+
+      const claimed = claimDueSchedulerJobs(db, {
+        leaseOwner: "worker-new",
+        leaseTtlMs: 30_000
+      });
+
+      expect(claimed.map((job) => job.id)).toEqual([
+        "job_due_pending",
+        "job_expired_lease"
+      ]);
+      expect(db.getSchedulerJobById("job_due_pending")).toMatchObject({
+        status: "leased",
+        lease_owner: "worker-new",
+        leased_at: FIXED_NOW,
+        lease_expires_at: FIXED_NOW + 30_000
+      });
+      expect(db.getSchedulerJobById("job_expired_lease")).toMatchObject({
+        status: "leased",
+        lease_owner: "worker-new",
+        leased_at: FIXED_NOW,
+        lease_expires_at: FIXED_NOW + 30_000
+      });
+      expect(db.getSchedulerJobById("job_boundary_lease")?.lease_owner).toBe(
+        "worker-old"
+      );
+      expect(db.getSchedulerJobById("job_future_pending")?.status).toBe(
+        "pending"
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  it("does not let competing workers double-claim unexpired leases", () => {
+    const db = new AssistantDatabase(":memory:");
+
+    try {
+      insertSchedulerJob(db, {
+        id: "job_claim_once"
+      });
+
+      const firstClaim = claimDueSchedulerJobs(db, {
+        leaseOwner: "worker-1"
+      });
+      const secondClaim = claimDueSchedulerJobs(db, {
+        leaseOwner: "worker-2"
+      });
+
+      expect(firstClaim).toHaveLength(1);
+      expect(secondClaim).toHaveLength(0);
+      expect(db.getSchedulerJobById("job_claim_once")).toMatchObject({
+        status: "leased",
+        lease_owner: "worker-1"
+      });
     } finally {
       db.close();
     }
@@ -256,36 +522,22 @@ describe("scheduler DB helpers", () => {
         "job_fail",
         "job_cancel"
       ]) {
-        db.insertSchedulerJob({
-          id,
-          profileName: "default",
-          lane: "followup_preparation",
-          actionType: "scheduler.test",
-          targetJson: "{}",
-          dedupeKey: `followup_preparation:default:${id}`,
-          scheduledAtMs: FIXED_NOW,
-          maxAttempts: 5,
-          createdAtMs: FIXED_NOW,
-          updatedAtMs: FIXED_NOW
+        insertSchedulerJob(db, {
+          id
         });
       }
 
-      const firstClaimed = db.claimDueSchedulerJobs({
-        profileName: "default",
-        nowMs: FIXED_NOW,
+      const firstClaimed = claimDueSchedulerJobs(db, {
         limit: 4,
-        leaseOwner: "worker-1",
-        leaseTtlMs: 60_000
+        leaseOwner: "worker-1"
       });
       expect(firstClaimed).toHaveLength(4);
 
       const reclaimAtMs = FIXED_NOW + 61_000;
-      const reclaimed = db.claimDueSchedulerJobs({
-        profileName: "default",
+      const reclaimed = claimDueSchedulerJobs(db, {
         nowMs: reclaimAtMs,
         limit: 4,
-        leaseOwner: "worker-2",
-        leaseTtlMs: 60_000
+        leaseOwner: "worker-2"
       });
       expect(reclaimed).toHaveLength(4);
 
@@ -363,23 +615,159 @@ describe("scheduler DB helpers", () => {
     }
   });
 
-  it("still cancels pending jobs without a lease owner", () => {
+  it("marks prepared jobs and clears transient lease and error fields", () => {
     const db = new AssistantDatabase(":memory:");
 
     try {
-      db.insertSchedulerJob({
-        id: "job_pending_cancel",
-        profileName: "default",
-        lane: "followup_preparation",
-        actionType: "scheduler.test",
-        targetJson: "{}",
-        dedupeKey: "followup_preparation:default:job_pending_cancel",
-        scheduledAtMs: FIXED_NOW,
-        maxAttempts: 5,
-        createdAtMs: FIXED_NOW,
-        updatedAtMs: FIXED_NOW
+      insertSchedulerJob(db, {
+        id: "job_prepared_fields",
+        status: "leased",
+        leaseOwner: "worker",
+        leasedAtMs: FIXED_NOW - 10_000,
+        leaseExpiresAtMs: FIXED_NOW + 10_000,
+        lastErrorCode: "NETWORK_ERROR",
+        lastErrorMessage: "stale error",
+        attemptCount: 2
       });
 
+      expect(
+        db.markSchedulerJobPrepared({
+          id: "job_prepared_fields",
+          nowMs: FIXED_NOW,
+          preparedActionId: "prepared_action_123",
+          leaseOwner: "worker"
+        })
+      ).toBe(true);
+
+      expect(db.getSchedulerJobById("job_prepared_fields")).toMatchObject({
+        status: "prepared",
+        prepared_action_id: "prepared_action_123",
+        attempt_count: 2,
+        lease_owner: null,
+        leased_at: null,
+        lease_expires_at: null,
+        last_error_code: null,
+        last_error_message: null,
+        last_attempt_at: FIXED_NOW,
+        completed_at: FIXED_NOW,
+        updated_at: FIXED_NOW
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("reschedules leased jobs and increments attempt counters", () => {
+    const db = new AssistantDatabase(":memory:");
+
+    try {
+      insertSchedulerJob(db, {
+        id: "job_reschedule_fields",
+        status: "leased",
+        leaseOwner: "worker",
+        leasedAtMs: FIXED_NOW - 10_000,
+        leaseExpiresAtMs: FIXED_NOW + 10_000,
+        attemptCount: 4,
+        maxAttempts: 5
+      });
+
+      const nextRunAtMs = FIXED_NOW + 15 * 60 * 1000;
+
+      expect(
+        db.rescheduleSchedulerJob({
+          id: "job_reschedule_fields",
+          scheduledAtMs: nextRunAtMs,
+          nowMs: FIXED_NOW,
+          leaseOwner: "worker",
+          errorCode: "TIMEOUT",
+          errorMessage: "Retry later."
+        })
+      ).toBe(true);
+
+      expect(db.getSchedulerJobById("job_reschedule_fields")).toMatchObject({
+        status: "pending",
+        attempt_count: 5,
+        max_attempts: 5,
+        scheduled_at: nextRunAtMs,
+        lease_owner: null,
+        leased_at: null,
+        lease_expires_at: null,
+        last_error_code: "TIMEOUT",
+        last_error_message: "Retry later.",
+        last_attempt_at: FIXED_NOW,
+        completed_at: null,
+        updated_at: FIXED_NOW
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("fails leased jobs and records terminal error state", () => {
+    const db = new AssistantDatabase(":memory:");
+
+    try {
+      insertSchedulerJob(db, {
+        id: "job_fail_fields",
+        status: "leased",
+        leaseOwner: "worker",
+        leasedAtMs: FIXED_NOW - 10_000,
+        leaseExpiresAtMs: FIXED_NOW + 10_000,
+        attemptCount: 4,
+        maxAttempts: 5
+      });
+
+      expect(
+        db.failSchedulerJob({
+          id: "job_fail_fields",
+          nowMs: FIXED_NOW,
+          leaseOwner: "worker",
+          errorCode: "TARGET_NOT_FOUND",
+          errorMessage: "Profile not found."
+        })
+      ).toBe(true);
+
+      expect(db.getSchedulerJobById("job_fail_fields")).toMatchObject({
+        status: "failed",
+        attempt_count: 5,
+        max_attempts: 5,
+        lease_owner: null,
+        leased_at: null,
+        lease_expires_at: null,
+        last_error_code: "TARGET_NOT_FOUND",
+        last_error_message: "Profile not found.",
+        last_attempt_at: FIXED_NOW,
+        completed_at: FIXED_NOW,
+        updated_at: FIXED_NOW
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("requires matching cancellation mode for pending and leased jobs", () => {
+    const db = new AssistantDatabase(":memory:");
+
+    try {
+      insertSchedulerJob(db, {
+        id: "job_pending_cancel"
+      });
+      insertSchedulerJob(db, {
+        id: "job_leased_cancel",
+        status: "leased",
+        leaseOwner: "worker",
+        leasedAtMs: FIXED_NOW - 10_000,
+        leaseExpiresAtMs: FIXED_NOW + 10_000
+      });
+
+      expect(
+        db.cancelSchedulerJob({
+          id: "job_pending_cancel",
+          nowMs: FIXED_NOW,
+          reason: "wrong cancellation mode",
+          leaseOwner: "worker"
+        })
+      ).toBe(false);
       expect(
         db.cancelSchedulerJob({
           id: "job_pending_cancel",
@@ -387,6 +775,46 @@ describe("scheduler DB helpers", () => {
           reason: "obsolete"
         })
       ).toBe(true);
+
+      expect(
+        db.cancelSchedulerJob({
+          id: "job_leased_cancel",
+          nowMs: FIXED_NOW,
+          reason: "missing lease owner"
+        })
+      ).toBe(false);
+      expect(
+        db.cancelSchedulerJob({
+          id: "job_leased_cancel",
+          nowMs: FIXED_NOW,
+          reason: "wrong owner",
+          leaseOwner: "worker-other"
+        })
+      ).toBe(false);
+      expect(
+        db.cancelSchedulerJob({
+          id: "job_leased_cancel",
+          nowMs: FIXED_NOW,
+          reason: "not needed",
+          leaseOwner: "worker"
+        })
+      ).toBe(true);
+
+      expect(db.getSchedulerJobById("job_pending_cancel")).toMatchObject({
+        status: "cancelled",
+        last_error_message: "obsolete",
+        last_attempt_at: FIXED_NOW,
+        completed_at: FIXED_NOW
+      });
+      expect(db.getSchedulerJobById("job_leased_cancel")).toMatchObject({
+        status: "cancelled",
+        lease_owner: null,
+        leased_at: null,
+        lease_expires_at: null,
+        last_error_message: "not needed",
+        last_attempt_at: FIXED_NOW,
+        completed_at: FIXED_NOW
+      });
     } finally {
       db.close();
     }
@@ -394,6 +822,41 @@ describe("scheduler DB helpers", () => {
 });
 
 describe("LinkedInSchedulerService", () => {
+  it("skips scheduler work when the follow-up lane is disabled", async () => {
+    const db = new AssistantDatabase(":memory:");
+    const followups = {
+      listAcceptedConnections: vi.fn(async () => []),
+      prepareFollowupForAcceptedConnection: vi.fn(async () => null)
+    };
+
+    try {
+      const service = new LinkedInSchedulerService(
+        createRuntime({
+          db,
+          followups,
+          schedulerConfig: createSchedulerConfig({
+            enabledLanes: []
+          })
+        })
+      );
+
+      await expect(
+        service.runTick({
+          profileName: "default",
+          nowMs: FIXED_NOW,
+          workerId: "test-worker"
+        })
+      ).resolves.toMatchObject({
+        skippedReason: "disabled",
+        claimedJobs: 0,
+        processedJobs: []
+      });
+      expect(followups.listAcceptedConnections).not.toHaveBeenCalled();
+    } finally {
+      db.close();
+    }
+  });
+
   it("queues and prepares due follow-up jobs during business hours", async () => {
     const db = new AssistantDatabase(":memory:");
     const connection = createAcceptedConnection();
@@ -405,27 +868,23 @@ describe("LinkedInSchedulerService", () => {
 
     const followups = {
       listAcceptedConnections: vi.fn(async () => [connection]),
-      prepareFollowupForAcceptedConnection: vi.fn(
-        async () =>
-          createPreparedFollowupResult({
-            db,
-            profileName: "default",
-            connection,
-            preparedAtMs: FIXED_NOW
-          })
+      prepareFollowupForAcceptedConnection: vi.fn(async () =>
+        createPreparedFollowupResult({
+          db,
+          profileName: "default",
+          connection,
+          preparedAtMs: FIXED_NOW
+        })
       )
-    };
-    const runtime: LinkedInSchedulerRuntime = {
-      db,
-      logger: {
-        log: vi.fn()
-      } as LinkedInSchedulerRuntime["logger"],
-      followups,
-      schedulerConfig: createSchedulerConfig()
     };
 
     try {
-      const service = new LinkedInSchedulerService(runtime);
+      const service = new LinkedInSchedulerService(
+        createRuntime({
+          db,
+          followups
+        })
+      );
       const result = await service.runTick({
         profileName: "default",
         nowMs: FIXED_NOW,
@@ -445,7 +904,9 @@ describe("LinkedInSchedulerService", () => {
 
       const jobs = db.listSchedulerJobs({ profileName: "default" });
       expect(jobs).toHaveLength(1);
-      expect(jobs[0]?.status).toBe("prepared");
+      expect(jobs[0]).toMatchObject({
+        status: "prepared"
+      });
       expect(jobs[0]?.prepared_action_id).toBeTruthy();
 
       const preparedActionId = jobs[0]?.prepared_action_id;
@@ -465,35 +926,392 @@ describe("LinkedInSchedulerService", () => {
     }
   });
 
+  it("returns an empty summary when nothing is queued or due", async () => {
+    const db = new AssistantDatabase(":memory:");
+    const followups = {
+      listAcceptedConnections: vi.fn(async () => []),
+      prepareFollowupForAcceptedConnection: vi.fn(async () => null)
+    };
+
+    try {
+      const service = new LinkedInSchedulerService(
+        createRuntime({
+          db,
+          followups
+        })
+      );
+      const result = await service.runTick({
+        profileName: "default",
+        nowMs: FIXED_NOW,
+        workerId: "test-worker"
+      });
+
+      expect(result).toMatchObject({
+        skippedReason: null,
+        discoveredAcceptedConnections: 0,
+        queuedJobs: 0,
+        updatedJobs: 0,
+        reopenedJobs: 0,
+        cancelledJobs: 0,
+        claimedJobs: 0,
+        preparedJobs: 0,
+        rescheduledJobs: 0,
+        failedJobs: 0,
+        processedJobs: []
+      });
+      expect(followups.prepareFollowupForAcceptedConnection).not.toHaveBeenCalled();
+    } finally {
+      db.close();
+    }
+  });
+
+  it("queues jobs that are not due yet without preparing them", async () => {
+    const db = new AssistantDatabase(":memory:");
+    const connection = createAcceptedConnection({
+      accepted_at_ms: FIXED_NOW - 5 * 60 * 1000
+    });
+    const followups = {
+      listAcceptedConnections: vi.fn(async () => [connection]),
+      prepareFollowupForAcceptedConnection: vi.fn(async () => null)
+    };
+
+    try {
+      const config = createSchedulerConfig({
+        followupDelayMs: 15 * 60 * 1000
+      });
+      const service = new LinkedInSchedulerService(
+        createRuntime({
+          db,
+          followups,
+          schedulerConfig: config
+        })
+      );
+      const result = await service.runTick({
+        profileName: "default",
+        nowMs: FIXED_NOW,
+        workerId: "test-worker"
+      });
+
+      expect(result.queuedJobs).toBe(1);
+      expect(result.claimedJobs).toBe(0);
+      expect(result.preparedJobs).toBe(0);
+      expect(result.processedJobs).toEqual([]);
+      expect(followups.prepareFollowupForAcceptedConnection).not.toHaveBeenCalled();
+
+      expect(db.listSchedulerJobs({ profileName: "default" })).toMatchObject([
+        {
+          status: "pending",
+          scheduled_at: FIXED_NOW + 10 * 60 * 1000
+        }
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("dedupes duplicate accepted connections to one scheduler job", async () => {
+    const db = new AssistantDatabase(":memory:");
+    const connection = createAcceptedConnection();
+    const duplicateConnection = createAcceptedConnection({
+      accepted_at_ms: connection.accepted_at_ms + 60_000,
+      last_seen_sent_at_ms: connection.last_seen_sent_at_ms + 60_000
+    });
+    seedAcceptedInvitation({
+      db,
+      profileName: "default",
+      connection
+    });
+
+    const followups = {
+      listAcceptedConnections: vi.fn(async () => [connection, duplicateConnection]),
+      prepareFollowupForAcceptedConnection: vi.fn(async () =>
+        createPreparedFollowupResult({
+          db,
+          profileName: "default",
+          connection,
+          preparedAtMs: FIXED_NOW
+        })
+      )
+    };
+
+    try {
+      const service = new LinkedInSchedulerService(
+        createRuntime({
+          db,
+          followups
+        })
+      );
+      const result = await service.runTick({
+        profileName: "default",
+        nowMs: FIXED_NOW,
+        workerId: "test-worker"
+      });
+
+      expect(result.discoveredAcceptedConnections).toBe(2);
+      expect(result.queuedJobs).toBe(1);
+      expect(result.claimedJobs).toBe(1);
+      expect(result.preparedJobs).toBe(1);
+      expect(followups.prepareFollowupForAcceptedConnection).toHaveBeenCalledTimes(1);
+      expect(db.listSchedulerJobs({ profileName: "default" })).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("reopens prepared jobs when follow-ups expire and need re-preparation", async () => {
+    const db = new AssistantDatabase(":memory:");
+    const connection = createAcceptedConnection();
+    let currentConnection = connection;
+    seedAcceptedInvitation({
+      db,
+      profileName: "default",
+      connection
+    });
+
+    const followups = {
+      listAcceptedConnections: vi.fn(async () => [currentConnection]),
+      prepareFollowupForAcceptedConnection: vi.fn(async () =>
+        createPreparedFollowupResult({
+          db,
+          profileName: "default",
+          connection: currentConnection,
+          preparedAtMs: FIXED_NOW
+        })
+      )
+    };
+
+    try {
+      const service = new LinkedInSchedulerService(
+        createRuntime({
+          db,
+          followups
+        })
+      );
+
+      await service.runTick({
+        profileName: "default",
+        nowMs: FIXED_NOW,
+        workerId: "worker-1"
+      });
+      const firstPreparedActionId = db.listSchedulerJobs({
+        profileName: "default"
+      })[0]?.prepared_action_id;
+
+      currentConnection = {
+        ...connection,
+        followup_status: "expired"
+      };
+      const secondResult = await service.runTick({
+        profileName: "default",
+        nowMs: FIXED_NOW + 60_000,
+        workerId: "worker-2"
+      });
+
+      const job = db.listSchedulerJobs({ profileName: "default" })[0];
+      expect(secondResult.reopenedJobs).toBe(1);
+      expect(secondResult.claimedJobs).toBe(1);
+      expect(secondResult.preparedJobs).toBe(1);
+      expect(job?.status).toBe("prepared");
+      expect(job?.prepared_action_id).toBeTruthy();
+      expect(job?.prepared_action_id).not.toBe(firstPreparedActionId);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("cancels pending jobs once a follow-up has already executed", async () => {
+    const db = new AssistantDatabase(":memory:");
+    const connection = createAcceptedConnection({
+      followup_status: "executed"
+    });
+    insertSchedulerJob(db, {
+      id: "job_execute_cancel",
+      targetJson: JSON.stringify({
+        profile_name: "default",
+        profile_url_key: connection.profile_url_key
+      }),
+      dedupeKey: `followup_preparation:default:${connection.profile_url_key}`
+    });
+    const followups = {
+      listAcceptedConnections: vi.fn(async () => [connection]),
+      prepareFollowupForAcceptedConnection: vi.fn(async () => null)
+    };
+
+    try {
+      const service = new LinkedInSchedulerService(
+        createRuntime({
+          db,
+          followups
+        })
+      );
+      const result = await service.runTick({
+        profileName: "default",
+        nowMs: FIXED_NOW,
+        workerId: "test-worker"
+      });
+
+      expect(result.cancelledJobs).toBe(1);
+      expect(result.claimedJobs).toBe(0);
+      expect(followups.prepareFollowupForAcceptedConnection).not.toHaveBeenCalled();
+      expect(db.getSchedulerJobById("job_execute_cancel")).toMatchObject({
+        status: "cancelled",
+        last_error_message: "Follow-up already executed."
+      });
+    } finally {
+      db.close();
+    }
+  });
+
   it("skips scheduler work outside business hours", async () => {
     const db = new AssistantDatabase(":memory:");
     const followups = {
       listAcceptedConnections: vi.fn(async () => []),
-      prepareFollowupForAcceptedConnection: vi.fn()
+      prepareFollowupForAcceptedConnection: vi.fn(async () => null)
     };
 
     try {
-      const service = new LinkedInSchedulerService({
-        db,
-        logger: {
-          log: vi.fn()
-        } as LinkedInSchedulerRuntime["logger"],
-        followups,
-        schedulerConfig: createSchedulerConfig({
-          businessHours: {
-            timeZone: "UTC",
-            startTime: "09:00",
-            endTime: "17:00"
-          }
+      const service = new LinkedInSchedulerService(
+        createRuntime({
+          db,
+          followups,
+          schedulerConfig: createSchedulerConfig({
+            businessHours: {
+              timeZone: "UTC",
+              startTime: "09:00",
+              endTime: "17:00"
+            }
+          })
         })
-      });
+      );
       const result = await service.runTick({
         profileName: "default",
         nowMs: Date.parse("2026-03-08T08:30:00Z")
       });
 
       expect(result.skippedReason).toBe("outside_business_hours");
+      expect(result.nextWindowStartAt).toBe("2026-03-08T09:00:00.000Z");
       expect(followups.listAcceptedConnections).not.toHaveBeenCalled();
+    } finally {
+      db.close();
+    }
+  });
+
+  it("treats profile lock contention as a skipped tick", async () => {
+    const db = new AssistantDatabase(":memory:");
+    const followups = {
+      listAcceptedConnections: vi.fn(async () => {
+        throw new LinkedInAssistantError(
+          "ACTION_PRECONDITION_FAILED",
+          "Profile is busy; lock file is already being held."
+        );
+      }),
+      prepareFollowupForAcceptedConnection: vi.fn(async () => null)
+    };
+
+    try {
+      const service = new LinkedInSchedulerService(
+        createRuntime({
+          db,
+          followups
+        })
+      );
+      const result = await service.runTick({
+        profileName: "default",
+        nowMs: FIXED_NOW,
+        workerId: "test-worker"
+      });
+
+      expect(result.skippedReason).toBe("profile_busy");
+      expect(result.claimedJobs).toBe(0);
+      expect(followups.prepareFollowupForAcceptedConnection).not.toHaveBeenCalled();
+    } finally {
+      db.close();
+    }
+  });
+
+  it("cancels unsupported lane jobs after they are claimed", async () => {
+    const db = new AssistantDatabase(":memory:");
+    insertSchedulerJob(db, {
+      id: "job_unsupported_lane",
+      lane: "inbox_triage",
+      actionType: "scheduler.unsupported",
+      targetJson: "{}",
+      dedupeKey: "inbox_triage:default:job_unsupported_lane"
+    });
+    const followups = {
+      listAcceptedConnections: vi.fn(async () => []),
+      prepareFollowupForAcceptedConnection: vi.fn(async () => null)
+    };
+
+    try {
+      const service = new LinkedInSchedulerService(
+        createRuntime({
+          db,
+          followups
+        })
+      );
+      const result = await service.runTick({
+        profileName: "default",
+        nowMs: FIXED_NOW,
+        workerId: "test-worker"
+      });
+
+      expect(result.claimedJobs).toBe(1);
+      expect(result.cancelledJobs).toBe(1);
+      expect(result.processedJobs).toEqual([
+        {
+          jobId: "job_unsupported_lane",
+          lane: "inbox_triage",
+          outcome: "cancelled"
+        }
+      ]);
+      expect(db.getSchedulerJobById("job_unsupported_lane")).toMatchObject({
+        status: "cancelled",
+        last_error_message:
+          "Lane inbox_triage is not executable in this scheduler build."
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("cancels jobs when follow-up preparation is no longer needed", async () => {
+    const db = new AssistantDatabase(":memory:");
+    const connection = createAcceptedConnection();
+    insertSchedulerJob(db, {
+      id: "job_cancel_no_longer_needed",
+      targetJson: JSON.stringify({
+        profile_name: "default",
+        profile_url_key: connection.profile_url_key
+      }),
+      dedupeKey: `followup_preparation:default:${connection.profile_url_key}`
+    });
+    const followups = {
+      listAcceptedConnections: vi.fn(async () => []),
+      prepareFollowupForAcceptedConnection: vi.fn(async () => null)
+    };
+
+    try {
+      const service = new LinkedInSchedulerService(
+        createRuntime({
+          db,
+          followups
+        })
+      );
+      const result = await service.runTick({
+        profileName: "default",
+        nowMs: FIXED_NOW,
+        workerId: "test-worker"
+      });
+
+      expect(result.cancelledJobs).toBe(1);
+      expect(result.preparedJobs).toBe(0);
+      expect(db.getSchedulerJobById("job_cancel_no_longer_needed")).toMatchObject(
+        {
+          status: "cancelled",
+          last_error_message: "Follow-up no longer needs preparation."
+        }
+      );
     } finally {
       db.close();
     }
@@ -511,19 +1329,21 @@ describe("LinkedInSchedulerService", () => {
     const followups = {
       listAcceptedConnections: vi.fn(async () => [connection]),
       prepareFollowupForAcceptedConnection: vi.fn(async () => {
-        throw new LinkedInAssistantError("NETWORK_ERROR", "Temporary network issue.");
+        throw new LinkedInAssistantError(
+          "NETWORK_ERROR",
+          "Temporary network issue."
+        );
       })
     };
 
     try {
-      const service = new LinkedInSchedulerService({
-        db,
-        logger: {
-          log: vi.fn()
-        } as LinkedInSchedulerRuntime["logger"],
-        followups,
-        schedulerConfig: config
-      });
+      const service = new LinkedInSchedulerService(
+        createRuntime({
+          db,
+          followups,
+          schedulerConfig: config
+        })
+      );
       const result = await service.runTick({
         profileName: "default",
         nowMs: FIXED_NOW,
@@ -534,12 +1354,12 @@ describe("LinkedInSchedulerService", () => {
 
       const jobs = db.listSchedulerJobs({ profileName: "default" });
       expect(jobs).toHaveLength(1);
-      expect(jobs[0]?.status).toBe("pending");
-      expect(jobs[0]?.attempt_count).toBe(1);
-      expect(jobs[0]?.last_error_code).toBe("NETWORK_ERROR");
-      expect(jobs[0]?.scheduled_at).toBe(
-        FIXED_NOW + config.retry.initialBackoffMs
-      );
+      expect(jobs[0]).toMatchObject({
+        status: "pending",
+        attempt_count: 1,
+        last_error_code: "NETWORK_ERROR",
+        scheduled_at: FIXED_NOW + config.retry.initialBackoffMs
+      });
     } finally {
       db.close();
     }
@@ -560,17 +1380,13 @@ describe("LinkedInSchedulerService", () => {
         maxBackoffMs: 30 * 60 * 1000
       }
     });
-    db.insertSchedulerJob({
+    insertSchedulerJob(db, {
       id: "job_followup_retry",
-      profileName: "default",
-      lane: "followup_preparation",
-      actionType: FOLLOWUP_AFTER_ACCEPT_ACTION_TYPE,
       targetJson: JSON.stringify({
         profile_name: "default",
         profile_url_key: connection.profile_url_key
       }),
       dedupeKey: `followup_preparation:default:${connection.profile_url_key}`,
-      scheduledAtMs: FIXED_NOW,
       attemptCount: 1,
       maxAttempts: 2,
       createdAtMs: FIXED_NOW - 60_000,
@@ -584,14 +1400,13 @@ describe("LinkedInSchedulerService", () => {
     };
 
     try {
-      const service = new LinkedInSchedulerService({
-        db,
-        logger: {
-          log: vi.fn()
-        } as LinkedInSchedulerRuntime["logger"],
-        followups,
-        schedulerConfig: config
-      });
+      const service = new LinkedInSchedulerService(
+        createRuntime({
+          db,
+          followups,
+          schedulerConfig: config
+        })
+      );
       const result = await service.runTick({
         profileName: "default",
         nowMs: FIXED_NOW,
@@ -602,9 +1417,282 @@ describe("LinkedInSchedulerService", () => {
 
       const jobs = db.listSchedulerJobs({ profileName: "default" });
       expect(jobs).toHaveLength(1);
-      expect(jobs[0]?.status).toBe("failed");
-      expect(jobs[0]?.attempt_count).toBe(2);
-      expect(jobs[0]?.last_error_code).toBe("NETWORK_ERROR");
+      expect(jobs[0]).toMatchObject({
+        status: "failed",
+        attempt_count: 2,
+        last_error_code: "NETWORK_ERROR"
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("fails missing-profile errors without retrying", async () => {
+    const db = new AssistantDatabase(":memory:");
+    const connection = createAcceptedConnection();
+    insertSchedulerJob(db, {
+      id: "job_missing_profile",
+      targetJson: JSON.stringify({
+        profile_name: "default",
+        profile_url_key: connection.profile_url_key
+      }),
+      dedupeKey: `followup_preparation:default:${connection.profile_url_key}`
+    });
+    const followups = {
+      listAcceptedConnections: vi.fn(async () => []),
+      prepareFollowupForAcceptedConnection: vi.fn(async () => {
+        throw new LinkedInAssistantError(
+          "TARGET_NOT_FOUND",
+          "Profile default not found."
+        );
+      })
+    };
+
+    try {
+      const service = new LinkedInSchedulerService(
+        createRuntime({
+          db,
+          followups
+        })
+      );
+      const result = await service.runTick({
+        profileName: "default",
+        nowMs: FIXED_NOW,
+        workerId: "test-worker"
+      });
+
+      expect(result.failedJobs).toBe(1);
+      expect(result.rescheduledJobs).toBe(0);
+      expect(db.getSchedulerJobById("job_missing_profile")).toMatchObject({
+        status: "failed",
+        attempt_count: 1,
+        last_error_code: "TARGET_NOT_FOUND",
+        last_error_message: "Profile default not found."
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("fails malformed target JSON jobs", async () => {
+    const db = new AssistantDatabase(":memory:");
+    insertSchedulerJob(db, {
+      id: "job_bad_target_json",
+      targetJson: "{not-valid-json",
+      dedupeKey: "followup_preparation:default:job_bad_target_json"
+    });
+    const followups = {
+      listAcceptedConnections: vi.fn(async () => []),
+      prepareFollowupForAcceptedConnection: vi.fn(async () => null)
+    };
+
+    try {
+      const service = new LinkedInSchedulerService(
+        createRuntime({
+          db,
+          followups
+        })
+      );
+      const result = await service.runTick({
+        profileName: "default",
+        nowMs: FIXED_NOW,
+        workerId: "test-worker"
+      });
+
+      expect(result.failedJobs).toBe(1);
+      expect(followups.prepareFollowupForAcceptedConnection).not.toHaveBeenCalled();
+      expect(db.getSchedulerJobById("job_bad_target_json")).toMatchObject({
+        status: "failed",
+        attempt_count: 1,
+        last_error_code: "ACTION_PRECONDITION_FAILED"
+      });
+      expect(
+        db.getSchedulerJobById("job_bad_target_json")?.last_error_message
+      ).toContain("target_json is not valid JSON");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("fails jobs that are missing required scheduler target fields", async () => {
+    const db = new AssistantDatabase(":memory:");
+    insertSchedulerJob(db, {
+      id: "job_missing_target_field",
+      targetJson: JSON.stringify({
+        profile_name: "default"
+      }),
+      dedupeKey: "followup_preparation:default:job_missing_target_field"
+    });
+    const followups = {
+      listAcceptedConnections: vi.fn(async () => []),
+      prepareFollowupForAcceptedConnection: vi.fn(async () => null)
+    };
+
+    try {
+      const service = new LinkedInSchedulerService(
+        createRuntime({
+          db,
+          followups
+        })
+      );
+      const result = await service.runTick({
+        profileName: "default",
+        nowMs: FIXED_NOW,
+        workerId: "test-worker"
+      });
+
+      expect(result.failedJobs).toBe(1);
+      expect(followups.prepareFollowupForAcceptedConnection).not.toHaveBeenCalled();
+      expect(db.getSchedulerJobById("job_missing_target_field")).toMatchObject({
+        status: "failed",
+        attempt_count: 1,
+        last_error_code: "ACTION_PRECONDITION_FAILED"
+      });
+      expect(
+        db.getSchedulerJobById("job_missing_target_field")?.last_error_message
+      ).toContain("missing target.profile_url_key");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("downgrades lease-expiry prepare races to cancelled outcomes", async () => {
+    const db = new AssistantDatabase(":memory:");
+    const config = createSchedulerConfig({
+      leaseTtlMs: 1_000,
+      maxJobsPerTick: 1
+    });
+    const connection = createAcceptedConnection();
+    seedAcceptedInvitation({
+      db,
+      profileName: "default",
+      connection
+    });
+    insertSchedulerJob(db, {
+      id: "job_lease_race",
+      targetJson: JSON.stringify({
+        profile_name: "default",
+        profile_url_key: connection.profile_url_key
+      }),
+      dedupeKey: `followup_preparation:default:${connection.profile_url_key}`
+    });
+
+    const followups = {
+      listAcceptedConnections: vi.fn(async () => []),
+      prepareFollowupForAcceptedConnection: vi.fn(async () => {
+        const reclaimed = claimDueSchedulerJobs(db, {
+          nowMs: FIXED_NOW + config.leaseTtlMs + 1,
+          limit: 1,
+          leaseOwner: "worker-2",
+          leaseTtlMs: config.leaseTtlMs
+        });
+
+        expect(reclaimed).toHaveLength(1);
+
+        return createPreparedFollowupResult({
+          db,
+          profileName: "default",
+          connection,
+          preparedAtMs: FIXED_NOW
+        });
+      })
+    };
+
+    try {
+      const service = new LinkedInSchedulerService(
+        createRuntime({
+          db,
+          followups,
+          schedulerConfig: config
+        })
+      );
+      const result = await service.runTick({
+        profileName: "default",
+        nowMs: FIXED_NOW,
+        workerId: "worker-1"
+      });
+
+      expect(result.claimedJobs).toBe(1);
+      expect(result.cancelledJobs).toBe(1);
+      expect(result.preparedJobs).toBe(0);
+      expect(result.processedJobs).toEqual([
+        {
+          jobId: "job_lease_race",
+          lane: "followup_preparation",
+          outcome: "cancelled"
+        }
+      ]);
+      expect(db.getSchedulerJobById("job_lease_race")).toMatchObject({
+        status: "leased",
+        lease_owner: "worker-2"
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("converts scheduler DB write errors into terminal job failures", async () => {
+    const db = new AssistantDatabase(":memory:");
+    const connection = createAcceptedConnection();
+    seedAcceptedInvitation({
+      db,
+      profileName: "default",
+      connection
+    });
+    insertSchedulerJob(db, {
+      id: "job_db_error",
+      targetJson: JSON.stringify({
+        profile_name: "default",
+        profile_url_key: connection.profile_url_key
+      }),
+      dedupeKey: `followup_preparation:default:${connection.profile_url_key}`
+    });
+
+    vi.spyOn(db, "markSchedulerJobPrepared").mockImplementation(() => {
+      throw new Error("scheduler row write failed");
+    });
+
+    const followups = {
+      listAcceptedConnections: vi.fn(async () => []),
+      prepareFollowupForAcceptedConnection: vi.fn(async () =>
+        createPreparedFollowupResult({
+          db,
+          profileName: "default",
+          connection,
+          preparedAtMs: FIXED_NOW
+        })
+      )
+    };
+
+    try {
+      const service = new LinkedInSchedulerService(
+        createRuntime({
+          db,
+          followups
+        })
+      );
+      const result = await service.runTick({
+        profileName: "default",
+        nowMs: FIXED_NOW,
+        workerId: "test-worker"
+      });
+
+      expect(result.failedJobs).toBe(1);
+      expect(result.processedJobs).toEqual([
+        {
+          jobId: "job_db_error",
+          lane: "followup_preparation",
+          outcome: "failed",
+          errorCode: "UNKNOWN",
+          errorMessage: "scheduler row write failed"
+        }
+      ]);
+      expect(db.getSchedulerJobById("job_db_error")).toMatchObject({
+        status: "failed",
+        attempt_count: 1,
+        last_error_code: "UNKNOWN",
+        last_error_message: "scheduler row write failed"
+      });
     } finally {
       db.close();
     }
