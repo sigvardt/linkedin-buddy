@@ -3,7 +3,7 @@
 ## Current Sprint
 
 - [ ] #1 — Follow-up after connection acceptance flow (detect accepted invitations → prepare follow-up message)
-- [ ] #2 — Post composer automation (prepare/confirm creating new LinkedIn posts)
+- [x] #2 — Post composer automation (prepare/confirm creating new LinkedIn posts)
 - [ ] #3 — Post safety lint (configurable length, banned phrases, link checks)
 - [ ] #4 — Selector audit command (exercise key selectors across pages, output report)
 

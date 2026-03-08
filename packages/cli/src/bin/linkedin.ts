@@ -9,9 +9,11 @@ import {
   clearRateLimitState,
   isInRateLimitCooldown,
   LINKEDIN_FEED_REACTION_TYPES,
+  LINKEDIN_POST_VISIBILITY_TYPES,
   LinkedInAssistantError,
   createCoreRuntime,
   normalizeLinkedInFeedReaction,
+  normalizeLinkedInPostVisibility,
   resolveConfigPaths,
   toLinkedInAssistantErrorPayload,
   type SearchCategory
@@ -1096,6 +1098,44 @@ async function runFeedComment(input: {
   }
 }
 
+async function runPostPrepare(input: {
+  profileName: string;
+  text: string;
+  visibility?: string;
+  operatorNote?: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+  const visibility = normalizeLinkedInPostVisibility(input.visibility, "public");
+
+  try {
+    runtime.logger.log("info", "cli.post.prepare.start", {
+      profileName: input.profileName,
+      visibility
+    });
+
+    const prepared = await runtime.posts.prepareCreate({
+      profileName: input.profileName,
+      text: input.text,
+      visibility,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "cli.post.prepare.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId,
+      visibility
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 async function runProfileView(input: {
   profileName: string;
   target: string;
@@ -1817,6 +1857,53 @@ async function main(): Promise<void> {
           postUrl: post,
           text: options.text,
           ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
+        }, readCdpUrl());
+      }
+    );
+
+  const postCommand = program
+    .command("post")
+    .description("Prepare and confirm LinkedIn post creation");
+
+  postCommand
+    .command("prepare")
+    .description("Prepare a new LinkedIn post (two-phase)")
+    .requiredOption("--text <text>", "Post text")
+    .option(
+      "-v, --visibility <visibility>",
+      `Visibility (${LINKEDIN_POST_VISIBILITY_TYPES.join(", ")})`,
+      "public"
+    )
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-o, --operator-note <note>", "Optional operator note")
+    .action(
+      async (options: {
+        profile: string;
+        text: string;
+        visibility: string;
+        operatorNote?: string;
+      }) => {
+        await runPostPrepare({
+          profileName: options.profile,
+          text: options.text,
+          visibility: options.visibility,
+          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
+        }, readCdpUrl());
+      }
+    );
+
+  postCommand
+    .command("confirm")
+    .description("Confirm and publish a prepared LinkedIn post by token")
+    .requiredOption("--token <token>", "Confirmation token (ct_...)")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-y, --yes", "Skip interactive confirmation prompt", false)
+    .action(
+      async (options: { profile: string; token: string; yes: boolean }) => {
+        await runConfirmAction({
+          profileName: options.profile,
+          token: options.token,
+          yes: options.yes
         }, readCdpUrl());
       }
     );
