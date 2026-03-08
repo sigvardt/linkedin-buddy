@@ -27,7 +27,7 @@ export const DRAFT_QUALITY_DRAFT_SOURCES = [
 export type DraftQualityDraftSource =
   (typeof DRAFT_QUALITY_DRAFT_SOURCES)[number];
 
-export type DraftQualityMetricMode = "deterministic" | "judge" | "hybrid";
+export type DraftQualityMetricMode = "deterministic" | "hybrid";
 
 export type DraftQualityJsonValue =
   | string
