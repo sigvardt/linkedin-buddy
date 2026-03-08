@@ -1,18 +1,49 @@
+import { realpathSync } from "node:fs";
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+function isMissingPathError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+function resolveCanonicalDirectoryPath(targetPath: string): string {
+  const normalizedTargetPath = path.resolve(targetPath);
+
+  try {
+    return realpathSync(normalizedTargetPath);
+  } catch (error) {
+    if (!isMissingPathError(error)) {
+      throw error;
+    }
+
+    const parentPath = path.dirname(normalizedTargetPath);
+    if (parentPath === normalizedTargetPath) {
+      return normalizedTargetPath;
+    }
+
+    return path.resolve(
+      resolveCanonicalDirectoryPath(parentPath),
+      path.basename(normalizedTargetPath)
+    );
+  }
+}
+
+function resolveExpectedDeletionPath(targetPath: string): string {
+  const normalizedTargetPath = path.resolve(targetPath);
+  return path.resolve(
+    resolveCanonicalDirectoryPath(path.dirname(normalizedTargetPath)),
+    path.basename(normalizedTargetPath)
+  );
+}
 
 async function pathExists(targetPath: string): Promise<boolean> {
   try {
     await access(targetPath);
     return true;
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ) {
+    if (isMissingPathError(error)) {
       return false;
     }
 
@@ -94,8 +125,8 @@ describe("local data deletion default paths", () => {
     );
     expect(plan.targets).toEqual(
       expect.arrayContaining([
-        path.resolve(currentRateLimitStatePath),
-        path.resolve(legacyRateLimitStatePath)
+        resolveExpectedDeletionPath(currentRateLimitStatePath),
+        resolveExpectedDeletionPath(legacyRateLimitStatePath)
       ])
     );
     expect(currentRateLimitStatePath).not.toBe(legacyRateLimitStatePath);
@@ -122,10 +153,11 @@ describe("local data deletion default paths", () => {
 
     expect(result.deletedPaths).toEqual(
       expect.arrayContaining([
-        path.resolve(currentRateLimitStatePath),
-        path.resolve(legacyRateLimitStatePath)
+        resolveExpectedDeletionPath(currentRateLimitStatePath),
+        resolveExpectedDeletionPath(legacyRateLimitStatePath)
       ])
     );
+    expect(result.failedPaths).toEqual([]);
     expect(await pathExists(currentRateLimitStatePath)).toBe(false);
     expect(await pathExists(legacyRateLimitStatePath)).toBe(false);
     expect(await pathExists(configFilePath)).toBe(true);

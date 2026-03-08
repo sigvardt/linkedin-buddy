@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -9,16 +10,46 @@ import {
   resolveKeepAliveDir
 } from "../src/index.js";
 
+function isMissingPathError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+function resolveCanonicalDirectoryPath(targetPath: string): string {
+  const normalizedTargetPath = path.resolve(targetPath);
+
+  try {
+    return realpathSync(normalizedTargetPath);
+  } catch (error) {
+    if (!isMissingPathError(error)) {
+      throw error;
+    }
+
+    const parentPath = path.dirname(normalizedTargetPath);
+    if (parentPath === normalizedTargetPath) {
+      return normalizedTargetPath;
+    }
+
+    return path.resolve(
+      resolveCanonicalDirectoryPath(parentPath),
+      path.basename(normalizedTargetPath)
+    );
+  }
+}
+
+function resolveExpectedDeletionPath(targetPath: string): string {
+  const normalizedTargetPath = path.resolve(targetPath);
+  return path.resolve(
+    resolveCanonicalDirectoryPath(path.dirname(normalizedTargetPath)),
+    path.basename(normalizedTargetPath)
+  );
+}
+
 async function pathExists(targetPath: string): Promise<boolean> {
   try {
     await access(targetPath);
     return true;
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ) {
+    if (isMissingPathError(error)) {
       return false;
     }
 
@@ -97,16 +128,16 @@ describe("local data deletion", () => {
     expect(plan.includeProfile).toBe(false);
     expect(plan.targets).toEqual(
       expect.arrayContaining([
-        path.resolve(paths.dbPath),
-        path.resolve(`${paths.dbPath}-journal`),
-        path.resolve(`${paths.dbPath}-wal`),
-        path.resolve(`${paths.dbPath}-shm`),
-        path.resolve(paths.artifactsDir),
-        path.resolve(keepAliveDir),
-        path.resolve(rateLimitStatePath)
+        resolveExpectedDeletionPath(paths.dbPath),
+        resolveExpectedDeletionPath(`${paths.dbPath}-journal`),
+        resolveExpectedDeletionPath(`${paths.dbPath}-wal`),
+        resolveExpectedDeletionPath(`${paths.dbPath}-shm`),
+        resolveExpectedDeletionPath(paths.artifactsDir),
+        resolveExpectedDeletionPath(keepAliveDir),
+        resolveExpectedDeletionPath(rateLimitStatePath)
       ])
     );
-    expect(plan.targets).not.toContain(path.resolve(paths.profilesDir));
+    expect(plan.targets).not.toContain(resolveExpectedDeletionPath(paths.profilesDir));
   });
 
   it("uses an explicit rate-limit state path when provided", () => {
@@ -121,8 +152,10 @@ describe("local data deletion", () => {
       rateLimitStatePath: explicitRateLimitStatePath
     });
 
-    expect(plan.targets).toContain(path.resolve(explicitRateLimitStatePath));
-    expect(plan.targets).not.toContain(path.resolve(rateLimitStatePath));
+    expect(plan.targets).toContain(
+      resolveExpectedDeletionPath(explicitRateLimitStatePath)
+    );
+    expect(plan.targets).not.toContain(resolveExpectedDeletionPath(rateLimitStatePath));
   });
 
   it("resolves the keepalive directory from the shared config path", () => {
@@ -148,15 +181,17 @@ describe("local data deletion", () => {
 
     expect(result.deletedPaths).toEqual(
       expect.arrayContaining([
-        path.resolve(paths.dbPath),
-        path.resolve(`${paths.dbPath}-journal`),
-        path.resolve(`${paths.dbPath}-wal`),
-        path.resolve(`${paths.dbPath}-shm`),
-        path.resolve(paths.artifactsDir),
-        path.resolve(keepAliveDir),
-        path.resolve(rateLimitStatePath)
+        resolveExpectedDeletionPath(paths.dbPath),
+        resolveExpectedDeletionPath(`${paths.dbPath}-journal`),
+        resolveExpectedDeletionPath(`${paths.dbPath}-wal`),
+        resolveExpectedDeletionPath(`${paths.dbPath}-shm`),
+        resolveExpectedDeletionPath(paths.artifactsDir),
+        resolveExpectedDeletionPath(keepAliveDir),
+        resolveExpectedDeletionPath(rateLimitStatePath)
       ])
     );
+    expect(result.failedPaths).toEqual([]);
+    expect(result.startedAt <= result.completedAt).toBe(true);
     expect(await pathExists(paths.dbPath)).toBe(false);
     expect(await pathExists(`${paths.dbPath}-journal`)).toBe(false);
     expect(await pathExists(`${paths.dbPath}-wal`)).toBe(false);
@@ -183,19 +218,20 @@ describe("local data deletion", () => {
 
     expect(result.deletedPaths).toEqual(
       expect.arrayContaining([
-        path.resolve(paths.dbPath),
-        path.resolve(keepAliveDir)
+        resolveExpectedDeletionPath(paths.dbPath),
+        resolveExpectedDeletionPath(keepAliveDir)
       ])
     );
     expect(result.missingPaths).toEqual(
       expect.arrayContaining([
-        path.resolve(`${paths.dbPath}-journal`),
-        path.resolve(`${paths.dbPath}-wal`),
-        path.resolve(`${paths.dbPath}-shm`),
-        path.resolve(paths.artifactsDir),
-        path.resolve(rateLimitStatePath)
+        resolveExpectedDeletionPath(`${paths.dbPath}-journal`),
+        resolveExpectedDeletionPath(`${paths.dbPath}-wal`),
+        resolveExpectedDeletionPath(`${paths.dbPath}-shm`),
+        resolveExpectedDeletionPath(paths.artifactsDir),
+        resolveExpectedDeletionPath(rateLimitStatePath)
       ])
     );
+    expect(result.failedPaths).toEqual([]);
     expect(await pathExists(paths.dbPath)).toBe(false);
     expect(await pathExists(keepAliveDir)).toBe(false);
     expect(await pathExists(configFilePath)).toBe(true);
@@ -210,7 +246,10 @@ describe("local data deletion", () => {
       includeProfile: true
     });
 
-    expect(result.deletedPaths).toContain(path.resolve(paths.profilesDir));
+    expect(result.deletedPaths).toContain(
+      resolveExpectedDeletionPath(paths.profilesDir)
+    );
+    expect(result.failedPaths).toEqual([]);
     expect(await pathExists(paths.profilesDir)).toBe(false);
     expect(await pathExists(configFilePath)).toBe(true);
   });
@@ -225,15 +264,16 @@ describe("local data deletion", () => {
     expect(secondResult.deletedPaths).toEqual([]);
     expect(secondResult.missingPaths).toEqual(
       expect.arrayContaining([
-        path.resolve(paths.dbPath),
-        path.resolve(`${paths.dbPath}-journal`),
-        path.resolve(`${paths.dbPath}-wal`),
-        path.resolve(`${paths.dbPath}-shm`),
-        path.resolve(paths.artifactsDir),
-        path.resolve(keepAliveDir),
-        path.resolve(rateLimitStatePath)
+        resolveExpectedDeletionPath(paths.dbPath),
+        resolveExpectedDeletionPath(`${paths.dbPath}-journal`),
+        resolveExpectedDeletionPath(`${paths.dbPath}-wal`),
+        resolveExpectedDeletionPath(`${paths.dbPath}-shm`),
+        resolveExpectedDeletionPath(paths.artifactsDir),
+        resolveExpectedDeletionPath(keepAliveDir),
+        resolveExpectedDeletionPath(rateLimitStatePath)
       ])
     );
+    expect(secondResult.failedPaths).toEqual([]);
     expect(await pathExists(configFilePath)).toBe(true);
     expect(await pathExists(paths.profilesDir)).toBe(true);
   });
