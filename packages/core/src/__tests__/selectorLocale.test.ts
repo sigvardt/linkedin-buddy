@@ -27,6 +27,14 @@ describe("getLinkedInSelectorPhrases", () => {
     ]);
   });
 
+  it("uses english base phrases when a locale has no override", () => {
+    expect(
+      getLinkedInSelectorPhrases("send", "da", {
+        includeEnglishFallback: false
+      })
+    ).toEqual(["Send"]);
+  });
+
   it("deduplicates english fallback phrases when the locale already shares them", () => {
     expect(getLinkedInSelectorPhrases("send", "da")).toEqual(["Send"]);
   });

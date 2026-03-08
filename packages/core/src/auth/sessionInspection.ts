@@ -15,13 +15,7 @@ export interface LinkedInSessionInspection {
 const LOGIN_FORM_SELECTOR = "input[name='session_key'], input#username";
 const CHECKPOINT_FORM_SELECTOR = "form[action*='checkpoint']";
 const AUTH_NAV_SELECTOR = "nav.global-nav";
-
-function createAuthProfileSelector(selectorLocale: LinkedInSelectorLocale): string {
-  return [
-    buildLinkedInAriaLabelContainsSelector("button", "me", selectorLocale),
-    "[data-control-name='nav.settings_view_profile']"
-  ].join(", ");
-}
+const AUTH_PROFILE_MENU_SELECTOR = "[data-control-name='nav.settings_view_profile']";
 
 async function isVisibleSafe(page: Page, selector: string): Promise<boolean> {
   try {
@@ -101,9 +95,13 @@ export async function inspectLinkedInSession(
   }
 
   const navVisible = await isVisibleSafe(page, AUTH_NAV_SELECTOR);
+  const profileMenuSelector = [
+    buildLinkedInAriaLabelContainsSelector("button", "me", selectorLocale),
+    AUTH_PROFILE_MENU_SELECTOR
+  ].join(", ");
   const profileMenuVisible = await isVisibleSafe(
     page,
-    createAuthProfileSelector(selectorLocale)
+    profileMenuSelector
   );
   const sessionCookiePresent = await hasSessionCookie(page);
 
