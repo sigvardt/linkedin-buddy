@@ -1,3 +1,37 @@
+const DEFAULT_SELECTOR_ATTRIBUTE_NAME = "aria-label";
+const MAX_SELECTOR_LOCALE_INPUT_LENGTH = 64;
+const SELECTOR_CACHE_KEY_SEPARATOR = "\u001f";
+const VALID_SELECTOR_ATTRIBUTE_NAME_PATTERN = /^[a-z_][-a-z0-9_:.]*$/iu;
+const VALID_SELECTOR_LOCALE_INPUT_PATTERN = /^[a-z0-9_-]+$/u;
+const EMPTY_SELECTOR_PHRASES: readonly string[] = Object.freeze([] as string[]);
+
+const selectorPhraseCache = new Map<string, readonly string[]>();
+const selectorPhrasePatternCache = new Map<string, ResolvedSelectorPhrasePattern>();
+const selectorPhraseRegexCache = new Map<string, RegExp>();
+
+function normalizeUnicode(
+  value: string,
+  form: "NFC" | "NFD" | "NFKC" | "NFKD"
+): string {
+  return value.normalize(form);
+}
+
+function normalizeWhitespace(value: string): string {
+  return value.replace(/\s+/gu, " ").trim();
+}
+
+function normalizePhrase(value: string): string {
+  return normalizeWhitespace(normalizeUnicode(value, "NFC"));
+}
+
+function normalizePhraseForComparison(value: string): string {
+  return normalizeWhitespace(normalizeUnicode(value, "NFKC")).toLowerCase();
+}
+
+function normalizeLocaleInput(value: string): string {
+  return normalizeUnicode(value, "NFKC").trim().toLowerCase();
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -6,21 +40,21 @@ function escapeCssAttributeValue(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
-function normalizePhrase(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
-}
-
-function dedupePhrases(values: readonly string[]): string[] {
+function dedupePhrases(values: readonly unknown[]): string[] {
   const normalizedValues: string[] = [];
   const seen = new Set<string>();
 
   for (const value of values) {
+    if (typeof value !== "string") {
+      continue;
+    }
+
     const normalized = normalizePhrase(value);
     if (!normalized) {
       continue;
     }
 
-    const dedupeKey = normalized.toLowerCase();
+    const dedupeKey = normalizePhraseForComparison(normalized);
     if (seen.has(dedupeKey)) {
       continue;
     }
@@ -30,6 +64,43 @@ function dedupePhrases(values: readonly string[]): string[] {
   }
 
   return normalizedValues;
+}
+
+function createSelectorPhraseCacheKey(parts: readonly string[]): string {
+  return parts.join(SELECTOR_CACHE_KEY_SEPARATOR);
+}
+
+function normalizeSelectorRoots(roots: string | readonly string[]): string[] {
+  const rawRoots = Array.isArray(roots) ? roots : [roots];
+  const normalizedRoots: string[] = [];
+  const seen = new Set<string>();
+
+  for (const root of rawRoots) {
+    if (typeof root !== "string") {
+      continue;
+    }
+
+    const normalizedRoot = root.trim();
+    if (!normalizedRoot || seen.has(normalizedRoot)) {
+      continue;
+    }
+
+    seen.add(normalizedRoot);
+    normalizedRoots.push(normalizedRoot);
+  }
+
+  return normalizedRoots;
+}
+
+function normalizeSelectorAttributeName(attributeName: string): string {
+  const normalizedAttributeName = attributeName.trim();
+  return VALID_SELECTOR_ATTRIBUTE_NAME_PATTERN.test(normalizedAttributeName)
+    ? normalizedAttributeName
+    : DEFAULT_SELECTOR_ATTRIBUTE_NAME;
+}
+
+function sanitizeSelectorPhrases(values: readonly unknown[] | undefined): string[] {
+  return dedupePhrases(Array.isArray(values) ? values : EMPTY_SELECTOR_PHRASES);
 }
 
 export const LINKEDIN_SELECTOR_LOCALES = ["en", "da"] as const;
@@ -95,7 +166,7 @@ export type LinkedInSelectorPhraseKey =
 
 type SelectorPhraseDictionary = Record<
   LinkedInSelectorPhraseKey,
-  readonly string[]
+  readonly unknown[]
 >;
 
 type SelectorPhraseOverrides = Partial<SelectorPhraseDictionary>;
@@ -226,10 +297,55 @@ const LINKEDIN_SELECTOR_LOCALE_SET = new Set<LinkedInSelectorLocale>(
   LINKEDIN_SELECTOR_LOCALES
 );
 
+const LINKEDIN_SELECTOR_PHRASE_KEY_SET = new Set<LinkedInSelectorPhraseKey>(
+  Object.keys(ENGLISH_SELECTOR_PHRASES) as LinkedInSelectorPhraseKey[]
+);
+
+export type LinkedInSelectorLocaleFallbackReason =
+  | "blank"
+  | "invalid_format"
+  | "unsupported_locale"
+  | "too_long";
+
+export interface LinkedInSelectorLocaleResolution {
+  locale: LinkedInSelectorLocale;
+  inputProvided: boolean;
+  normalizedInput?: string;
+  inputLength?: number;
+  fallbackUsed: boolean;
+  fallbackReason?: LinkedInSelectorLocaleFallbackReason;
+}
+
 function isLinkedInSelectorLocale(
   value: string
 ): value is LinkedInSelectorLocale {
   return LINKEDIN_SELECTOR_LOCALE_SET.has(value as LinkedInSelectorLocale);
+}
+
+function isLinkedInSelectorPhraseKey(
+  value: unknown
+): value is LinkedInSelectorPhraseKey {
+  return (
+    typeof value === "string" &&
+    LINKEDIN_SELECTOR_PHRASE_KEY_SET.has(value as LinkedInSelectorPhraseKey)
+  );
+}
+
+function getEnglishSelectorPhrases(
+  key: LinkedInSelectorPhraseKey
+): readonly string[] {
+  return sanitizeSelectorPhrases(ENGLISH_SELECTOR_PHRASES[key]);
+}
+
+function getLocaleOverrideSelectorPhrases(
+  key: LinkedInSelectorPhraseKey,
+  locale: LinkedInSelectorLocale
+): readonly string[] {
+  return sanitizeSelectorPhrases(
+    locale === "en"
+      ? undefined
+      : LINKEDIN_SELECTOR_PHRASE_OVERRIDES[locale]?.[key]
+  );
 }
 
 function getPrimaryLinkedInSelectorPhrases(
@@ -237,30 +353,102 @@ function getPrimaryLinkedInSelectorPhrases(
   locale: LinkedInSelectorLocale
 ): readonly string[] {
   if (locale === "en") {
-    return ENGLISH_SELECTOR_PHRASES[key];
+    return getEnglishSelectorPhrases(key);
   }
 
-  return (
-    LINKEDIN_SELECTOR_PHRASE_OVERRIDES[locale][key] ??
-    ENGLISH_SELECTOR_PHRASES[key]
-  );
+  const localePhrases = getLocaleOverrideSelectorPhrases(key, locale);
+  return localePhrases.length > 0 ? localePhrases : getEnglishSelectorPhrases(key);
+}
+
+function buildLinkedInSelectorLocaleResolution(
+  locale: LinkedInSelectorLocale,
+  options: Omit<LinkedInSelectorLocaleResolution, "locale">
+): LinkedInSelectorLocaleResolution {
+  return {
+    locale,
+    ...options
+  };
+}
+
+export function resolveLinkedInSelectorLocaleResolution(
+  value: string | LinkedInSelectorLocale | undefined,
+  fallback: LinkedInSelectorLocale = DEFAULT_LINKEDIN_SELECTOR_LOCALE
+): LinkedInSelectorLocaleResolution {
+  if (typeof value !== "string") {
+    return buildLinkedInSelectorLocaleResolution(fallback, {
+      inputProvided: false,
+      fallbackUsed: false
+    });
+  }
+
+  const normalized = normalizeLocaleInput(value);
+  const normalizedInput = normalized.slice(0, MAX_SELECTOR_LOCALE_INPUT_LENGTH);
+  const inputLength = normalized.length;
+
+  if (!normalized) {
+    return buildLinkedInSelectorLocaleResolution(fallback, {
+      inputProvided: true,
+      normalizedInput,
+      inputLength,
+      fallbackUsed: true,
+      fallbackReason: "blank"
+    });
+  }
+
+  if (inputLength > MAX_SELECTOR_LOCALE_INPUT_LENGTH) {
+    return buildLinkedInSelectorLocaleResolution(fallback, {
+      inputProvided: true,
+      normalizedInput,
+      inputLength,
+      fallbackUsed: true,
+      fallbackReason: "too_long"
+    });
+  }
+
+  if (!VALID_SELECTOR_LOCALE_INPUT_PATTERN.test(normalized)) {
+    return buildLinkedInSelectorLocaleResolution(fallback, {
+      inputProvided: true,
+      normalizedInput,
+      inputLength,
+      fallbackUsed: true,
+      fallbackReason: "invalid_format"
+    });
+  }
+
+  const [baseLocale = ""] = normalized.split(/[-_]/u);
+  if (!/^[a-z]{2,3}$/u.test(baseLocale)) {
+    return buildLinkedInSelectorLocaleResolution(fallback, {
+      inputProvided: true,
+      normalizedInput,
+      inputLength,
+      fallbackUsed: true,
+      fallbackReason: "invalid_format"
+    });
+  }
+
+  if (!isLinkedInSelectorLocale(baseLocale)) {
+    return buildLinkedInSelectorLocaleResolution(fallback, {
+      inputProvided: true,
+      normalizedInput,
+      inputLength,
+      fallbackUsed: true,
+      fallbackReason: "unsupported_locale"
+    });
+  }
+
+  return buildLinkedInSelectorLocaleResolution(baseLocale, {
+    inputProvided: true,
+    normalizedInput,
+    inputLength,
+    fallbackUsed: false
+  });
 }
 
 export function resolveLinkedInSelectorLocale(
   value: string | LinkedInSelectorLocale | undefined,
   fallback: LinkedInSelectorLocale = DEFAULT_LINKEDIN_SELECTOR_LOCALE
 ): LinkedInSelectorLocale {
-  if (!value) {
-    return fallback;
-  }
-
-  const normalized = value.trim().toLowerCase();
-  if (!normalized) {
-    return fallback;
-  }
-
-  const [baseLocale = ""] = normalized.split(/[-_]/u);
-  return isLinkedInSelectorLocale(baseLocale) ? baseLocale : fallback;
+  return resolveLinkedInSelectorLocaleResolution(value, fallback).locale;
 }
 
 interface SelectorPhraseOptions {
@@ -272,14 +460,92 @@ interface SelectorRegexOptions extends SelectorPhraseOptions {
 }
 
 interface ResolvedSelectorPhrasePattern {
-  phrases: string[];
+  phrases: readonly string[];
   body: string;
+}
+
+function createSelectorPhraseOptionsKey(
+  options: SelectorPhraseOptions | SelectorRegexOptions
+): readonly string[] {
+  const includeEnglishFallback = options.includeEnglishFallback ?? true;
+  const optionParts = [includeEnglishFallback ? "with-en" : "no-en"];
+
+  if ("exact" in options) {
+    optionParts.push(options.exact ? "exact" : "contains");
+  }
+
+  return optionParts;
+}
+
+function createSelectorPhraseCombinationCacheKey(
+  cachePrefix: string,
+  locale: LinkedInSelectorLocale,
+  normalizedKeys: readonly LinkedInSelectorPhraseKey[],
+  options: SelectorPhraseOptions | SelectorRegexOptions = {}
+): string {
+  return createSelectorPhraseCacheKey([
+    cachePrefix,
+    locale,
+    ...createSelectorPhraseOptionsKey(options),
+    ...normalizedKeys
+  ]);
 }
 
 function normalizePhraseKeys(
   keys: LinkedInSelectorPhraseKey | readonly LinkedInSelectorPhraseKey[]
 ): LinkedInSelectorPhraseKey[] {
-  return typeof keys === "string" ? [keys] : [...keys];
+  const rawKeys = typeof keys === "string" ? [keys] : Array.isArray(keys) ? keys : [];
+  const normalizedKeys: LinkedInSelectorPhraseKey[] = [];
+  const seen = new Set<LinkedInSelectorPhraseKey>();
+
+  for (const key of rawKeys) {
+    if (!isLinkedInSelectorPhraseKey(key) || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    normalizedKeys.push(key);
+  }
+
+  return normalizedKeys;
+}
+
+function getLinkedInSelectorPhrasesFromNormalizedKeys(
+  normalizedKeys: readonly LinkedInSelectorPhraseKey[],
+  locale: LinkedInSelectorLocale,
+  options: SelectorPhraseOptions = {}
+): readonly string[] {
+  if (normalizedKeys.length === 0) {
+    return EMPTY_SELECTOR_PHRASES;
+  }
+
+  const cacheKey = createSelectorPhraseCombinationCacheKey(
+    "phrases",
+    locale,
+    normalizedKeys,
+    options
+  );
+  const cachedPhrases = selectorPhraseCache.get(cacheKey);
+  if (cachedPhrases) {
+    return cachedPhrases;
+  }
+
+  const includeEnglishFallback = options.includeEnglishFallback ?? true;
+  const primaryValues = normalizedKeys.flatMap((key) =>
+    getPrimaryLinkedInSelectorPhrases(key, locale)
+  );
+
+  const phrases =
+    !includeEnglishFallback || locale === "en"
+      ? dedupePhrases(primaryValues)
+      : dedupePhrases([
+          ...primaryValues,
+          ...normalizedKeys.flatMap((key) => getEnglishSelectorPhrases(key))
+        ]);
+
+  const frozenPhrases = Object.freeze(phrases);
+  selectorPhraseCache.set(cacheKey, frozenPhrases);
+  return frozenPhrases;
 }
 
 function resolveLinkedInSelectorPhrasePattern(
@@ -287,11 +553,29 @@ function resolveLinkedInSelectorPhrasePattern(
   locale: LinkedInSelectorLocale,
   options: SelectorPhraseOptions = {}
 ): ResolvedSelectorPhrasePattern {
-  const phrases = getLinkedInSelectorPhrases(keys, locale, options);
-  return {
+  const normalizedKeys = normalizePhraseKeys(keys);
+  const cacheKey = createSelectorPhraseCombinationCacheKey(
+    "pattern",
+    locale,
+    normalizedKeys,
+    options
+  );
+  const cachedPattern = selectorPhrasePatternCache.get(cacheKey);
+  if (cachedPattern) {
+    return cachedPattern;
+  }
+
+  const phrases = getLinkedInSelectorPhrasesFromNormalizedKeys(
+    normalizedKeys,
+    locale,
+    options
+  );
+  const pattern = {
     phrases,
     body: phrases.map((phrase) => escapeRegExp(phrase)).join("|") || "^$"
   };
+  selectorPhrasePatternCache.set(cacheKey, pattern);
+  return pattern;
 }
 
 export function getLinkedInSelectorPhrases(
@@ -299,19 +583,8 @@ export function getLinkedInSelectorPhrases(
   locale: LinkedInSelectorLocale,
   options: SelectorPhraseOptions = {}
 ): string[] {
-  const includeEnglishFallback = options.includeEnglishFallback ?? true;
   const normalizedKeys = normalizePhraseKeys(keys);
-
-  const primaryValues = normalizedKeys.flatMap((key) =>
-    getPrimaryLinkedInSelectorPhrases(key, locale)
-  );
-
-  if (!includeEnglishFallback || locale === "en") {
-    return dedupePhrases(primaryValues);
-  }
-
-  const englishValues = normalizedKeys.flatMap((key) => ENGLISH_SELECTOR_PHRASES[key]);
-  return dedupePhrases([...primaryValues, ...englishValues]);
+  return [...getLinkedInSelectorPhrasesFromNormalizedKeys(normalizedKeys, locale, options)];
 }
 
 export function buildLinkedInSelectorPhraseRegex(
@@ -319,9 +592,27 @@ export function buildLinkedInSelectorPhraseRegex(
   locale: LinkedInSelectorLocale,
   options: SelectorRegexOptions = {}
 ): RegExp {
-  const { body } = resolveLinkedInSelectorPhrasePattern(keys, locale, options);
+  const normalizedKeys = normalizePhraseKeys(keys);
+  const cacheKey = createSelectorPhraseCombinationCacheKey(
+    "regex",
+    locale,
+    normalizedKeys,
+    options
+  );
+  const cachedRegex = selectorPhraseRegexCache.get(cacheKey);
+  if (cachedRegex) {
+    return cachedRegex;
+  }
+
+  const { body } = resolveLinkedInSelectorPhrasePattern(
+    normalizedKeys,
+    locale,
+    options
+  );
   const pattern = options.exact ? `^(?:${body})$` : `(?:${body})`;
-  return new RegExp(pattern, "i");
+  const regex = new RegExp(pattern, "iu");
+  selectorPhraseRegexCache.set(cacheKey, regex);
+  return regex;
 }
 
 export function formatLinkedInSelectorRegexHint(
@@ -330,23 +621,34 @@ export function formatLinkedInSelectorRegexHint(
   options: SelectorRegexOptions = {}
 ): string {
   const { body } = resolveLinkedInSelectorPhrasePattern(keys, locale, options);
-  return options.exact ? `/^(?:${body})$/i` : `/${body}/i`;
+  return options.exact ? `/^(?:${body})$/iu` : `/${body}/iu`;
 }
 
 export function buildLinkedInAriaLabelContainsSelector(
   roots: string | readonly string[],
   keys: LinkedInSelectorPhraseKey | readonly LinkedInSelectorPhraseKey[],
   locale: LinkedInSelectorLocale,
-  attributeName: string = "aria-label",
+  attributeName: string = DEFAULT_SELECTOR_ATTRIBUTE_NAME,
   options: SelectorPhraseOptions = {}
 ): string {
-  const selectors = Array.isArray(roots) ? roots : [roots];
-  const { phrases } = resolveLinkedInSelectorPhrasePattern(keys, locale, options);
+  const selectors = normalizeSelectorRoots(roots);
+  const normalizedAttributeName = normalizeSelectorAttributeName(attributeName);
+  const normalizedKeys = normalizePhraseKeys(keys);
+  if (selectors.length === 0 || normalizedKeys.length === 0) {
+    return "";
+  }
+
+  const phrases = getLinkedInSelectorPhrasesFromNormalizedKeys(
+    normalizedKeys,
+    locale,
+    options
+  );
 
   return selectors
     .flatMap((root) =>
       phrases.map(
-        (phrase) => `${root}[${attributeName}*="${escapeCssAttributeValue(phrase)}" i]`
+        (phrase) =>
+          `${root}[${normalizedAttributeName}*="${escapeCssAttributeValue(phrase)}" i]`
       )
     )
     .join(", ");
@@ -358,12 +660,19 @@ export function valueContainsLinkedInSelectorPhrase(
   locale: LinkedInSelectorLocale,
   options: SelectorPhraseOptions = {}
 ): boolean {
-  const normalizedValue = normalizePhrase(value ?? "").toLowerCase();
+  const normalizedValue = normalizePhraseForComparison(value ?? "");
   if (!normalizedValue) {
     return false;
   }
 
-  return getLinkedInSelectorPhrases(keys, locale, options).some((phrase) =>
-    normalizedValue.includes(phrase.toLowerCase())
-  );
+  const normalizedKeys = normalizePhraseKeys(keys);
+  if (normalizedKeys.length === 0) {
+    return false;
+  }
+
+  return getLinkedInSelectorPhrasesFromNormalizedKeys(
+    normalizedKeys,
+    locale,
+    options
+  ).some((phrase) => normalizedValue.includes(normalizePhraseForComparison(phrase)));
 }

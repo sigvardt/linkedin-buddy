@@ -2,7 +2,8 @@ import { mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
-  resolveLinkedInSelectorLocale,
+  resolveLinkedInSelectorLocaleResolution,
+  type LinkedInSelectorLocaleResolution,
   type LinkedInSelectorLocale
 } from "./selectorLocale.js";
 
@@ -27,6 +28,13 @@ export interface ConfirmFailureArtifactConfig {
 
 export const LINKEDIN_ASSISTANT_SELECTOR_LOCALE_ENV =
   "LINKEDIN_ASSISTANT_SELECTOR_LOCALE";
+
+export type LinkedInSelectorLocaleConfigSource = "default" | "env" | "option";
+
+export interface LinkedInSelectorLocaleConfigResolution
+  extends LinkedInSelectorLocaleResolution {
+  source: LinkedInSelectorLocaleConfigSource;
+}
 
 function parsePositiveInteger(
   value: string | undefined,
@@ -76,7 +84,25 @@ export function resolveConfirmFailureArtifactConfig(): ConfirmFailureArtifactCon
 export function resolveLinkedInSelectorLocaleConfig(
   selectorLocale?: string | LinkedInSelectorLocale
 ): LinkedInSelectorLocale {
-  return resolveLinkedInSelectorLocale(
-    selectorLocale ?? process.env[LINKEDIN_ASSISTANT_SELECTOR_LOCALE_ENV]
+  return resolveLinkedInSelectorLocaleConfigResolution(selectorLocale).locale;
+}
+
+export function resolveLinkedInSelectorLocaleConfigResolution(
+  selectorLocale?: string | LinkedInSelectorLocale
+): LinkedInSelectorLocaleConfigResolution {
+  const envSelectorLocale = process.env[LINKEDIN_ASSISTANT_SELECTOR_LOCALE_ENV];
+  const source: LinkedInSelectorLocaleConfigSource =
+    selectorLocale === undefined
+      ? envSelectorLocale === undefined
+        ? "default"
+        : "env"
+      : "option";
+  const resolution = resolveLinkedInSelectorLocaleResolution(
+    source === "option" ? selectorLocale : envSelectorLocale
   );
+
+  return {
+    ...resolution,
+    source
+  };
 }

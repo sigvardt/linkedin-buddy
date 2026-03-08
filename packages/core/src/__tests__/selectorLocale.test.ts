@@ -5,6 +5,7 @@ import {
   formatLinkedInSelectorRegexHint,
   getLinkedInSelectorPhrases,
   resolveLinkedInSelectorLocale,
+  resolveLinkedInSelectorLocaleResolution,
   valueContainsLinkedInSelectorPhrase
 } from "../selectorLocale.js";
 
@@ -12,6 +13,7 @@ describe("resolveLinkedInSelectorLocale", () => {
   it("normalizes region-specific locales to the supported base locale", () => {
     expect(resolveLinkedInSelectorLocale("da-DK")).toBe("da");
     expect(resolveLinkedInSelectorLocale("EN_us")).toBe("en");
+    expect(resolveLinkedInSelectorLocale("ＤＡ_ＤＫ")).toBe("da");
   });
 
   it("falls back to english for unsupported locales", () => {
@@ -23,6 +25,32 @@ describe("resolveLinkedInSelectorLocale", () => {
     expect(resolveLinkedInSelectorLocale("   ", "da")).toBe("da");
     expect(resolveLinkedInSelectorLocale("fr-CA", "da")).toBe("da");
     expect(resolveLinkedInSelectorLocale(undefined, "da")).toBe("da");
+  });
+
+  it("rejects malformed unicode and overly long locale values", () => {
+    expect(resolveLinkedInSelectorLocale("d\u200ba")).toBe("en");
+    expect(resolveLinkedInSelectorLocale("da".repeat(40))).toBe("en");
+  });
+});
+
+describe("resolveLinkedInSelectorLocaleResolution", () => {
+  it("returns diagnostics when falling back to english", () => {
+    expect(resolveLinkedInSelectorLocaleResolution("fr-CA")).toEqual({
+      locale: "en",
+      inputProvided: true,
+      normalizedInput: "fr-ca",
+      inputLength: 5,
+      fallbackUsed: true,
+      fallbackReason: "unsupported_locale"
+    });
+  });
+
+  it("marks missing inputs without reporting a fallback", () => {
+    expect(resolveLinkedInSelectorLocaleResolution(undefined)).toEqual({
+      locale: "en",
+      inputProvided: false,
+      fallbackUsed: false
+    });
   });
 });
 
@@ -60,6 +88,15 @@ describe("getLinkedInSelectorPhrases", () => {
 
   it("handles empty phrase sets without producing fallback matches", () => {
     expect(getLinkedInSelectorPhrases([] as const, "da")).toEqual([]);
+  });
+
+  it("ignores invalid phrase keys without throwing", () => {
+    expect(
+      getLinkedInSelectorPhrases(
+        ["connect", "not_a_phrase_key" as unknown as "connect"],
+        "da"
+      )
+    ).toEqual(["Opret forbindelse", "Forbind", "Connect"]);
   });
 });
 
@@ -150,5 +187,11 @@ describe("valueContainsLinkedInSelectorPhrase", () => {
   it("returns false for empty values and empty phrase sets", () => {
     expect(valueContainsLinkedInSelectorPhrase(undefined, "write_message", "da")).toBe(false);
     expect(valueContainsLinkedInSelectorPhrase("", [] as const, "da")).toBe(false);
+  });
+
+  it("matches Unicode-normalized phrase variants", () => {
+    expect(valueContainsLinkedInSelectorPhrase("A\u030Aben for", "open_to", "da")).toBe(
+      true
+    );
   });
 });

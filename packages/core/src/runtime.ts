@@ -3,7 +3,7 @@ import {
   ensureConfigPaths,
   resolveConfigPaths,
   resolveConfirmFailureArtifactConfig,
-  resolveLinkedInSelectorLocaleConfig,
+  resolveLinkedInSelectorLocaleConfigResolution,
   type ConfigPaths,
   type ConfirmFailureArtifactConfig
 } from "./config.js";
@@ -66,7 +66,26 @@ import {
 } from "./twoPhaseCommit.js";
 import { resolvePrivacyConfig, type PrivacyConfig } from "./privacy.js";
 import { LinkedInSelectorAuditService } from "./selectorAudit.js";
-import type { LinkedInSelectorLocale } from "./selectorLocale.js";
+import {
+  DEFAULT_LINKEDIN_SELECTOR_LOCALE,
+  type LinkedInSelectorLocale
+} from "./selectorLocale.js";
+
+function summarizeSelectorLocaleInput(
+  normalizedInput: string | undefined,
+  inputLength: number | undefined
+): Record<string, string | number> {
+  if (typeof normalizedInput !== "string") {
+    return {};
+  }
+
+  return {
+    normalized_selector_locale: normalizedInput,
+    ...(typeof inputLength === "number"
+      ? { requested_selector_locale_length: inputLength }
+      : {})
+  };
+}
 
 export interface CreateCoreRuntimeOptions {
   baseDir?: string;
@@ -114,9 +133,10 @@ export function createCoreRuntime(
   ensureConfigPaths(paths);
   const privacy = resolvePrivacyConfig(options.privacy);
   const postSafetyLint = resolveLinkedInPostSafetyLintConfig(paths.baseDir);
-  const selectorLocale = resolveLinkedInSelectorLocaleConfig(
+  const selectorLocaleResolution = resolveLinkedInSelectorLocaleConfigResolution(
     options.selectorLocale
   );
+  const selectorLocale = selectorLocaleResolution.locale;
 
   const db = new AssistantDatabase(options.dbPath ?? paths.dbPath);
   const runId = options.runId ?? createRunId();
@@ -125,6 +145,22 @@ export function createCoreRuntime(
   const confirmFailureArtifacts = resolveConfirmFailureArtifactConfig();
   const profileManager = new ProfileManager(paths);
   let runtime: CoreRuntime;
+
+  if (
+    selectorLocaleResolution.fallbackUsed &&
+    selectorLocale === DEFAULT_LINKEDIN_SELECTOR_LOCALE &&
+    selectorLocaleResolution.source !== "default"
+  ) {
+    logger.log("warn", "runtime.selector_locale.fallback_to_english", {
+      selector_locale_source: selectorLocaleResolution.source,
+      resolved_selector_locale: selectorLocale,
+      reason: selectorLocaleResolution.fallbackReason,
+      ...summarizeSelectorLocaleInput(
+        selectorLocaleResolution.normalizedInput,
+        selectorLocaleResolution.inputLength
+      )
+    });
+  }
 
   const testAutoConfirm = createDefaultTestAutoConfirmConfig();
   const linkedInExecutors = createLinkedInActionExecutors();
