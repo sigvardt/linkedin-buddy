@@ -1,9 +1,6 @@
 import { access, rm } from "node:fs/promises";
 import path from "node:path";
-import {
-  resolveLegacyRateLimitStateFilePath,
-  resolveRateLimitStateFilePath
-} from "./auth/rateLimitState.js";
+import { resolveRateLimitStateFilePaths } from "./auth/rateLimitState.js";
 import { resolveConfigPaths } from "./config.js";
 import { LinkedInAssistantError } from "./errors.js";
 
@@ -24,112 +21,32 @@ export interface LocalDataDeletionResult {
   missingPaths: string[];
 }
 
-function resolveKeepAliveDir(baseDir: string): string {
-  return path.join(baseDir, "keepalive");
+const SQLITE_SIDECAR_SUFFIXES = ["-journal", "-wal", "-shm"] as const;
+
+export function resolveKeepAliveDir(baseDir?: string): string {
+  return path.join(resolveConfigPaths(baseDir).baseDir, "keepalive");
 }
 
-function shouldIncludeLegacyRateLimitStatePath(
-  options: LocalDataDeletionPlanOptions
-): boolean {
-  return (
-    !options.rateLimitStatePath &&
-    typeof process.env.LINKEDIN_ASSISTANT_HOME !== "string"
-  );
+function resolveDatabasePaths(dbPath: string): string[] {
+  return [dbPath, ...SQLITE_SIDECAR_SUFFIXES.map((suffix) => `${dbPath}${suffix}`)];
 }
 
 function normalizePath(targetPath: string): string {
   return path.resolve(targetPath);
 }
 
-function isSameOrChildPath(parentPath: string, candidatePath: string): boolean {
-  return (
-    candidatePath === parentPath ||
-    candidatePath.startsWith(`${parentPath}${path.sep}`)
-  );
-}
-
 function dedupePaths(targetPaths: string[]): string[] {
   return [...new Set(targetPaths.map((targetPath) => normalizePath(targetPath)))];
 }
 
-function assertSafeBaseDir(baseDir: string): void {
-  const resolvedBaseDir = normalizePath(baseDir);
-  if (resolvedBaseDir === path.parse(resolvedBaseDir).root) {
-    throw new LinkedInAssistantError(
-      "ACTION_PRECONDITION_FAILED",
-      "Refusing to delete local data when the configured base directory is the filesystem root.",
-      {
-        base_dir: resolvedBaseDir
-      }
-    );
-  }
-}
-
-function createAllowedTargetSet(options: LocalDataDeletionPlanOptions): Set<string> {
-  const paths = resolveConfigPaths(options.baseDir);
-  return new Set(
-    dedupePaths([
-      paths.dbPath,
-      paths.artifactsDir,
-      resolveKeepAliveDir(paths.baseDir),
-      paths.profilesDir,
-      resolveRateLimitStateFilePath(options.rateLimitStatePath),
-      ...(shouldIncludeLegacyRateLimitStatePath(options)
-        ? [resolveLegacyRateLimitStateFilePath()]
-        : [])
-    ])
-  );
-}
-
-function assertSafeDeletionTarget(
-  targetPath: string,
-  options: LocalDataDeletionPlanOptions
-): void {
-  const paths = resolveConfigPaths(options.baseDir);
-  assertSafeBaseDir(paths.baseDir);
-
+function assertSafeDeletePath(targetPath: string, label: string): void {
   const resolvedTargetPath = normalizePath(targetPath);
-  const allowedTargets = createAllowedTargetSet(options);
-  const resolvedBaseDir = normalizePath(paths.baseDir);
-
-  if (!allowedTargets.has(resolvedTargetPath)) {
+  if (resolvedTargetPath === path.parse(resolvedTargetPath).root) {
     throw new LinkedInAssistantError(
       "ACTION_PRECONDITION_FAILED",
-      "Refusing to delete an unexpected local-data path.",
+      `Refusing to delete ${label} because it resolves to the filesystem root.`,
       {
         target_path: resolvedTargetPath
-      }
-    );
-  }
-
-  const isLegacyRateLimitStatePath =
-    resolvedTargetPath === normalizePath(resolveLegacyRateLimitStateFilePath());
-  const isExplicitRateLimitStatePath =
-    typeof options.rateLimitStatePath === "string" &&
-    resolvedTargetPath ===
-      normalizePath(resolveRateLimitStateFilePath(options.rateLimitStatePath));
-
-  if (
-    !isLegacyRateLimitStatePath &&
-    !isExplicitRateLimitStatePath &&
-    !isSameOrChildPath(resolvedBaseDir, resolvedTargetPath)
-  ) {
-    throw new LinkedInAssistantError(
-      "ACTION_PRECONDITION_FAILED",
-      "Refusing to delete a path outside the configured local-data directory.",
-      {
-        base_dir: resolvedBaseDir,
-        target_path: resolvedTargetPath
-      }
-    );
-  }
-
-  if (resolvedTargetPath === resolvedBaseDir) {
-    throw new LinkedInAssistantError(
-      "ACTION_PRECONDITION_FAILED",
-      "Refusing to delete the configured local-data base directory directly.",
-      {
-        base_dir: resolvedBaseDir
       }
     );
   }
@@ -157,25 +74,24 @@ export function createLocalDataDeletionPlan(
 ): LocalDataDeletionPlan {
   const paths = resolveConfigPaths(options.baseDir);
   const includeProfile = options.includeProfile ?? false;
-  const rateLimitTargets = options.rateLimitStatePath
-    ? [resolveRateLimitStateFilePath(options.rateLimitStatePath)]
-    : shouldIncludeLegacyRateLimitStatePath(options)
-      ? [
-          resolveRateLimitStateFilePath(),
-          resolveLegacyRateLimitStateFilePath()
-        ]
-      : [resolveRateLimitStateFilePath()];
+  const baseDir = normalizePath(paths.baseDir);
+
+  assertSafeDeletePath(baseDir, "local data");
 
   const targets = dedupePaths([
-    paths.dbPath,
+    ...resolveDatabasePaths(paths.dbPath),
     paths.artifactsDir,
     resolveKeepAliveDir(paths.baseDir),
-    ...rateLimitTargets,
+    ...resolveRateLimitStateFilePaths(options.rateLimitStatePath, options.baseDir),
     ...(includeProfile ? [paths.profilesDir] : [])
   ]);
 
+  for (const targetPath of targets) {
+    assertSafeDeletePath(targetPath, "a local-data target");
+  }
+
   return {
-    baseDir: normalizePath(paths.baseDir),
+    baseDir,
     includeProfile,
     targets
   };
@@ -189,8 +105,6 @@ export async function deleteLocalData(
   const missingPaths: string[] = [];
 
   for (const targetPath of deletionPlan.targets) {
-    assertSafeDeletionTarget(targetPath, options);
-
     if (!(await pathExists(targetPath))) {
       missingPaths.push(targetPath);
       continue;

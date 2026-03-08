@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { stdin, stdout } from "node:process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { resolveConfigPaths } from "../../core/src/index.js";
+import { resolveConfigPaths, resolveKeepAliveDir } from "../../core/src/index.js";
 
 const readlineMocks = vi.hoisted(() => ({
   close: vi.fn(),
@@ -72,15 +72,22 @@ describe("linkedin data delete", () => {
 
   async function seedLocalDataFixture(): Promise<{
     artifactsDir: string;
+    configFilePath: string;
     dbPath: string;
     keepAliveDir: string;
     profilesDir: string;
     rateLimitStatePath: string;
   }> {
     const paths = resolveConfigPaths();
-    const keepAliveDir = path.join(paths.baseDir, "keepalive");
+    const keepAliveDir = resolveKeepAliveDir();
     const rateLimitStatePath = path.join(paths.baseDir, "rate-limit-state.json");
+    const configFilePath = path.join(paths.baseDir, "config.json");
 
+    await mkdir(path.dirname(paths.dbPath), { recursive: true });
+    await writeFile(paths.dbPath, "sqlite-data", "utf8");
+    await writeFile(`${paths.dbPath}-journal`, "sqlite-journal", "utf8");
+    await writeFile(`${paths.dbPath}-wal`, "sqlite-wal", "utf8");
+    await writeFile(`${paths.dbPath}-shm`, "sqlite-shm", "utf8");
     await mkdir(path.join(paths.artifactsDir, "run-1"), { recursive: true });
     await writeFile(
       path.join(paths.artifactsDir, "run-1", "events.jsonl"),
@@ -102,9 +109,11 @@ describe("linkedin data delete", () => {
       "utf8"
     );
     await writeFile(rateLimitStatePath, "{\"cooldown\":true}\n", "utf8");
+    await writeFile(configFilePath, "{\"safe\":true}\n", "utf8");
 
     return {
       artifactsDir: paths.artifactsDir,
+      configFilePath,
       dbPath: paths.dbPath,
       keepAliveDir,
       profilesDir: paths.profilesDir,
@@ -133,10 +142,14 @@ describe("linkedin data delete", () => {
 
     expect(readlineMocks.question).toHaveBeenCalledTimes(1);
     expect(await pathExists(fixture.dbPath)).toBe(false);
+    expect(await pathExists(`${fixture.dbPath}-journal`)).toBe(false);
+    expect(await pathExists(`${fixture.dbPath}-wal`)).toBe(false);
+    expect(await pathExists(`${fixture.dbPath}-shm`)).toBe(false);
     expect(await pathExists(fixture.artifactsDir)).toBe(false);
     expect(await pathExists(fixture.keepAliveDir)).toBe(false);
     expect(await pathExists(fixture.rateLimitStatePath)).toBe(false);
     expect(await pathExists(fixture.profilesDir)).toBe(true);
+    expect(await pathExists(fixture.configFilePath)).toBe(true);
 
     const finalOutput = consoleLogSpy.mock.calls.at(-1)?.[0];
     expect(JSON.parse(String(finalOutput))).toMatchObject({
@@ -156,10 +169,14 @@ describe("linkedin data delete", () => {
 
     expect(readlineMocks.question).toHaveBeenCalledTimes(2);
     expect(await pathExists(fixture.dbPath)).toBe(false);
+    expect(await pathExists(`${fixture.dbPath}-journal`)).toBe(false);
+    expect(await pathExists(`${fixture.dbPath}-wal`)).toBe(false);
+    expect(await pathExists(`${fixture.dbPath}-shm`)).toBe(false);
     expect(await pathExists(fixture.artifactsDir)).toBe(false);
     expect(await pathExists(fixture.keepAliveDir)).toBe(false);
     expect(await pathExists(fixture.rateLimitStatePath)).toBe(false);
     expect(await pathExists(fixture.profilesDir)).toBe(false);
+    expect(await pathExists(fixture.configFilePath)).toBe(true);
 
     const finalOutput = consoleLogSpy.mock.calls.at(-1)?.[0];
     expect(JSON.parse(String(finalOutput))).toMatchObject({
@@ -167,5 +184,44 @@ describe("linkedin data delete", () => {
       include_profile_requested: true,
       include_profile_deleted: true
     });
+  });
+
+  it("refuses to run with --cdp-url", async () => {
+    await expect(
+      runCli([
+        "node",
+        "linkedin",
+        "--cdp-url",
+        "ws://127.0.0.1:9222/devtools/browser/test",
+        "data",
+        "delete"
+      ])
+    ).rejects.toMatchObject({
+      message:
+        "The data delete command only deletes tool-owned local filesystem state and does not support --cdp-url."
+    });
+
+    expect(readlineMocks.createInterface).not.toHaveBeenCalled();
+    expect(await pathExists(assistantHome)).toBe(false);
+  });
+
+  it("refuses to run while a keepalive daemon is active", async () => {
+    const fixture = await seedLocalDataFixture();
+    await writeFile(
+      path.join(fixture.keepAliveDir, "default.pid"),
+      `${process.pid}\n`,
+      "utf8"
+    );
+
+    await expect(
+      runCli(["node", "linkedin", "data", "delete"])
+    ).rejects.toMatchObject({
+      message: "Stop running keepalive daemons before deleting local data."
+    });
+
+    expect(readlineMocks.createInterface).not.toHaveBeenCalled();
+    expect(await pathExists(fixture.dbPath)).toBe(true);
+    expect(await pathExists(fixture.keepAliveDir)).toBe(true);
+    expect(await pathExists(fixture.rateLimitStatePath)).toBe(true);
   });
 });
