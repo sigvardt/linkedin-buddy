@@ -2,7 +2,6 @@ import { mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
-  DEFAULT_LINKEDIN_SELECTOR_LOCALE,
   resolveLinkedInSelectorLocale,
   type LinkedInSelectorLocale
 } from "./selectorLocale.js";
@@ -78,7 +77,6 @@ export function resolveLinkedInSelectorLocaleConfig(
   selectorLocale?: string | LinkedInSelectorLocale
 ): LinkedInSelectorLocale {
   return resolveLinkedInSelectorLocale(
-    selectorLocale ?? process.env[LINKEDIN_ASSISTANT_SELECTOR_LOCALE_ENV],
-    DEFAULT_LINKEDIN_SELECTOR_LOCALE
+    selectorLocale ?? process.env[LINKEDIN_ASSISTANT_SELECTOR_LOCALE_ENV]
   );
 }

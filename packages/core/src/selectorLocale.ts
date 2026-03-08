@@ -98,6 +98,8 @@ type SelectorPhraseDictionary = Record<
   readonly string[]
 >;
 
+type SelectorPhraseOverrides = Partial<SelectorPhraseDictionary>;
+
 const ENGLISH_SELECTOR_PHRASES: SelectorPhraseDictionary = {
   accept: ["Accept"],
   add_comment: ["Add a comment"],
@@ -154,8 +156,7 @@ const ENGLISH_SELECTOR_PHRASES: SelectorPhraseDictionary = {
   write_message: ["Write a message"]
 };
 
-const DANISH_SELECTOR_PHRASES: SelectorPhraseDictionary = {
-  ...ENGLISH_SELECTOR_PHRASES,
+const DANISH_SELECTOR_PHRASE_OVERRIDES: SelectorPhraseOverrides = {
   accept: ["Accepter"],
   add_comment: ["Tilføj en kommentar", "Skriv en kommentar"],
   add_note: ["Tilføj en note", "Tilføj en bemærkning"],
@@ -199,7 +200,6 @@ const DANISH_SELECTOR_PHRASES: SelectorPhraseDictionary = {
   resources: ["Ressourcer"],
   respond: ["Svar"],
   save: ["Gem"],
-  send: ["Send"],
   send_without_note: ["Send uden note", "Send uden en note"],
   start_post: ["Start et opslag", "Start et indlæg"],
   support: ["Støt", "Støtter"],
@@ -214,13 +214,37 @@ const DANISH_SELECTOR_PHRASES: SelectorPhraseDictionary = {
   write_message: ["Skriv en besked", "Skriv en meddelelse"]
 };
 
-const LINKEDIN_SELECTOR_PHRASES: Record<
+const LINKEDIN_SELECTOR_PHRASE_OVERRIDES: Record<
   LinkedInSelectorLocale,
-  SelectorPhraseDictionary
+  SelectorPhraseOverrides
 > = {
-  en: ENGLISH_SELECTOR_PHRASES,
-  da: DANISH_SELECTOR_PHRASES
+  en: {},
+  da: DANISH_SELECTOR_PHRASE_OVERRIDES
 };
+
+const LINKEDIN_SELECTOR_LOCALE_SET = new Set<LinkedInSelectorLocale>(
+  LINKEDIN_SELECTOR_LOCALES
+);
+
+function isLinkedInSelectorLocale(
+  value: string
+): value is LinkedInSelectorLocale {
+  return LINKEDIN_SELECTOR_LOCALE_SET.has(value as LinkedInSelectorLocale);
+}
+
+function getPrimaryLinkedInSelectorPhrases(
+  key: LinkedInSelectorPhraseKey,
+  locale: LinkedInSelectorLocale
+): readonly string[] {
+  if (locale === "en") {
+    return ENGLISH_SELECTOR_PHRASES[key];
+  }
+
+  return (
+    LINKEDIN_SELECTOR_PHRASE_OVERRIDES[locale][key] ??
+    ENGLISH_SELECTOR_PHRASES[key]
+  );
+}
 
 export function resolveLinkedInSelectorLocale(
   value: string | LinkedInSelectorLocale | undefined,
@@ -235,12 +259,8 @@ export function resolveLinkedInSelectorLocale(
     return fallback;
   }
 
-  const baseLocale = normalized.split(/[-_]/u)[0];
-  return LINKEDIN_SELECTOR_LOCALES.includes(
-    baseLocale as LinkedInSelectorLocale
-  )
-    ? (baseLocale as LinkedInSelectorLocale)
-    : fallback;
+  const [baseLocale = ""] = normalized.split(/[-_]/u);
+  return isLinkedInSelectorLocale(baseLocale) ? baseLocale : fallback;
 }
 
 interface SelectorPhraseOptions {
@@ -251,12 +271,27 @@ interface SelectorRegexOptions extends SelectorPhraseOptions {
   exact?: boolean;
 }
 
+interface ResolvedSelectorPhrasePattern {
+  phrases: string[];
+  body: string;
+}
+
 function normalizePhraseKeys(
   keys: LinkedInSelectorPhraseKey | readonly LinkedInSelectorPhraseKey[]
 ): LinkedInSelectorPhraseKey[] {
-  return Array.isArray(keys)
-    ? [...keys]
-    : [keys as LinkedInSelectorPhraseKey];
+  return typeof keys === "string" ? [keys] : [...keys];
+}
+
+function resolveLinkedInSelectorPhrasePattern(
+  keys: LinkedInSelectorPhraseKey | readonly LinkedInSelectorPhraseKey[],
+  locale: LinkedInSelectorLocale,
+  options: SelectorPhraseOptions = {}
+): ResolvedSelectorPhrasePattern {
+  const phrases = getLinkedInSelectorPhrases(keys, locale, options);
+  return {
+    phrases,
+    body: phrases.map((phrase) => escapeRegExp(phrase)).join("|") || "^$"
+  };
 }
 
 export function getLinkedInSelectorPhrases(
@@ -266,20 +301,17 @@ export function getLinkedInSelectorPhrases(
 ): string[] {
   const includeEnglishFallback = options.includeEnglishFallback ?? true;
   const normalizedKeys = normalizePhraseKeys(keys);
-  const localeDictionary = LINKEDIN_SELECTOR_PHRASES[locale];
 
-  const localizedValues = normalizedKeys.flatMap(
-    (key) => localeDictionary[key] ?? []
+  const primaryValues = normalizedKeys.flatMap((key) =>
+    getPrimaryLinkedInSelectorPhrases(key, locale)
   );
 
   if (!includeEnglishFallback || locale === "en") {
-    return dedupePhrases(localizedValues);
+    return dedupePhrases(primaryValues);
   }
 
-  const englishValues = normalizedKeys.flatMap(
-    (key) => ENGLISH_SELECTOR_PHRASES[key] ?? []
-  );
-  return dedupePhrases([...localizedValues, ...englishValues]);
+  const englishValues = normalizedKeys.flatMap((key) => ENGLISH_SELECTOR_PHRASES[key]);
+  return dedupePhrases([...primaryValues, ...englishValues]);
 }
 
 export function buildLinkedInSelectorPhraseRegex(
@@ -287,8 +319,7 @@ export function buildLinkedInSelectorPhraseRegex(
   locale: LinkedInSelectorLocale,
   options: SelectorRegexOptions = {}
 ): RegExp {
-  const phrases = getLinkedInSelectorPhrases(keys, locale, options);
-  const body = phrases.map((phrase) => escapeRegExp(phrase)).join("|") || "^$";
+  const { body } = resolveLinkedInSelectorPhrasePattern(keys, locale, options);
   const pattern = options.exact ? `^(?:${body})$` : `(?:${body})`;
   return new RegExp(pattern, "i");
 }
@@ -298,8 +329,7 @@ export function formatLinkedInSelectorRegexHint(
   locale: LinkedInSelectorLocale,
   options: SelectorRegexOptions = {}
 ): string {
-  const phrases = getLinkedInSelectorPhrases(keys, locale, options);
-  const body = phrases.map((phrase) => escapeRegExp(phrase)).join("|") || "^$";
+  const { body } = resolveLinkedInSelectorPhrasePattern(keys, locale, options);
   return options.exact ? `/^(?:${body})$/i` : `/${body}/i`;
 }
 
@@ -311,7 +341,7 @@ export function buildLinkedInAriaLabelContainsSelector(
   options: SelectorPhraseOptions = {}
 ): string {
   const selectors = Array.isArray(roots) ? roots : [roots];
-  const phrases = getLinkedInSelectorPhrases(keys, locale, options);
+  const { phrases } = resolveLinkedInSelectorPhrasePattern(keys, locale, options);
 
   return selectors
     .flatMap((root) =>
