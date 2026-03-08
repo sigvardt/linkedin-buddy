@@ -1,29 +1,12 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-  getRuntime,
-  checkCdpAvailable,
-  checkAuthenticated,
-  cleanupRuntime
-} from "./setup.js";
+import { describe, expect, it } from "vitest";
+import { setupE2ESuite } from "./setup.js";
 
 describe("Notifications E2E", () => {
-  let cdpOk = false;
-  let authOk = false;
-
-  beforeAll(async () => {
-    cdpOk = await checkCdpAvailable();
-    if (cdpOk) {
-      authOk = await checkAuthenticated();
-    }
-  });
-
-  afterAll(() => {
-    cleanupRuntime();
-  });
+  const e2e = setupE2ESuite();
 
   it("list notifications does not error, returns array", async () => {
-    if (!cdpOk || !authOk) return;
-    const runtime = getRuntime();
+    if (!e2e.canRun()) return;
+    const runtime = e2e.runtime();
     const notifications = await runtime.notifications.listNotifications({ limit: 5 });
 
     expect(Array.isArray(notifications)).toBe(true);

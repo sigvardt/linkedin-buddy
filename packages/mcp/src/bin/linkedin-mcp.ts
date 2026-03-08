@@ -53,6 +53,7 @@ type ToolErrorResult = {
   isError: true;
   content: Array<{ type: "text"; text: string }>;
 };
+type ToolHandler = (args: ToolArgs) => Promise<ToolResult>;
 
 const mcpPrivacyConfig = resolvePrivacyConfig();
 const SELECTOR_AUDIT_DOC_PATH = "docs/selector-audit.md";
@@ -1586,101 +1587,40 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   };
 });
 
+const TOOL_HANDLERS: Record<string, ToolHandler> = {
+  [LINKEDIN_SESSION_STATUS_TOOL]: handleSessionStatus,
+  [LINKEDIN_SESSION_OPEN_LOGIN_TOOL]: handleSessionOpenLogin,
+  [LINKEDIN_SESSION_HEALTH_TOOL]: handleSessionHealth,
+  [LINKEDIN_INBOX_LIST_THREADS_TOOL]: handleListThreads,
+  [LINKEDIN_INBOX_GET_THREAD_TOOL]: handleGetThread,
+  [LINKEDIN_INBOX_PREPARE_REPLY_TOOL]: handlePrepareReply,
+  [LINKEDIN_PROFILE_VIEW_TOOL]: handleProfileView,
+  [LINKEDIN_SEARCH_TOOL]: handleSearch,
+  [LINKEDIN_CONNECTIONS_LIST_TOOL]: handleConnectionsList,
+  [LINKEDIN_CONNECTIONS_PENDING_TOOL]: handleConnectionsPending,
+  [LINKEDIN_CONNECTIONS_INVITE_TOOL]: handleConnectionsInvite,
+  [LINKEDIN_CONNECTIONS_ACCEPT_TOOL]: handleConnectionsAccept,
+  [LINKEDIN_CONNECTIONS_WITHDRAW_TOOL]: handleConnectionsWithdraw,
+  [LINKEDIN_NETWORK_PREPARE_FOLLOWUP_AFTER_ACCEPT_TOOL]: handlePrepareFollowupAfterAccept,
+  [LINKEDIN_FEED_LIST_TOOL]: handleFeedList,
+  [LINKEDIN_FEED_VIEW_POST_TOOL]: handleFeedViewPost,
+  [LINKEDIN_FEED_LIKE_TOOL]: handleFeedLike,
+  [LINKEDIN_FEED_COMMENT_TOOL]: handleFeedComment,
+  [LINKEDIN_POST_PREPARE_CREATE_TOOL]: handlePostPrepareCreate,
+  [LINKEDIN_NOTIFICATIONS_LIST_TOOL]: handleNotificationsList,
+  [LINKEDIN_JOBS_SEARCH_TOOL]: handleJobsSearch,
+  [LINKEDIN_JOBS_VIEW_TOOL]: handleJobsView,
+  [LINKEDIN_ACTIONS_CONFIRM_TOOL]: handleConfirm
+};
+
 export async function handleToolCall(
   name: string,
   args: ToolArgs = {}
 ): Promise<ToolResult | ToolErrorResult> {
   try {
-    if (name === LINKEDIN_SESSION_STATUS_TOOL) {
-      return await handleSessionStatus(args);
-    }
-
-    if (name === LINKEDIN_SESSION_OPEN_LOGIN_TOOL) {
-      return await handleSessionOpenLogin(args);
-    }
-
-    if (name === LINKEDIN_SESSION_HEALTH_TOOL) {
-      return await handleSessionHealth(args);
-    }
-
-    if (name === LINKEDIN_INBOX_LIST_THREADS_TOOL) {
-      return await handleListThreads(args);
-    }
-
-    if (name === LINKEDIN_INBOX_GET_THREAD_TOOL) {
-      return await handleGetThread(args);
-    }
-
-    if (name === LINKEDIN_INBOX_PREPARE_REPLY_TOOL) {
-      return await handlePrepareReply(args);
-    }
-
-    if (name === LINKEDIN_PROFILE_VIEW_TOOL) {
-      return await handleProfileView(args);
-    }
-
-    if (name === LINKEDIN_SEARCH_TOOL) {
-      return await handleSearch(args);
-    }
-
-    if (name === LINKEDIN_CONNECTIONS_LIST_TOOL) {
-      return await handleConnectionsList(args);
-    }
-
-    if (name === LINKEDIN_CONNECTIONS_PENDING_TOOL) {
-      return await handleConnectionsPending(args);
-    }
-
-    if (name === LINKEDIN_CONNECTIONS_INVITE_TOOL) {
-      return await handleConnectionsInvite(args);
-    }
-
-    if (name === LINKEDIN_CONNECTIONS_ACCEPT_TOOL) {
-      return await handleConnectionsAccept(args);
-    }
-
-    if (name === LINKEDIN_CONNECTIONS_WITHDRAW_TOOL) {
-      return await handleConnectionsWithdraw(args);
-    }
-
-    if (name === LINKEDIN_NETWORK_PREPARE_FOLLOWUP_AFTER_ACCEPT_TOOL) {
-      return await handlePrepareFollowupAfterAccept(args);
-    }
-
-    if (name === LINKEDIN_FEED_LIST_TOOL) {
-      return await handleFeedList(args);
-    }
-
-    if (name === LINKEDIN_FEED_VIEW_POST_TOOL) {
-      return await handleFeedViewPost(args);
-    }
-
-    if (name === LINKEDIN_FEED_LIKE_TOOL) {
-      return await handleFeedLike(args);
-    }
-
-    if (name === LINKEDIN_FEED_COMMENT_TOOL) {
-      return await handleFeedComment(args);
-    }
-
-    if (name === LINKEDIN_POST_PREPARE_CREATE_TOOL) {
-      return await handlePostPrepareCreate(args);
-    }
-
-    if (name === LINKEDIN_NOTIFICATIONS_LIST_TOOL) {
-      return await handleNotificationsList(args);
-    }
-
-    if (name === LINKEDIN_JOBS_SEARCH_TOOL) {
-      return await handleJobsSearch(args);
-    }
-
-    if (name === LINKEDIN_JOBS_VIEW_TOOL) {
-      return await handleJobsView(args);
-    }
-
-    if (name === LINKEDIN_ACTIONS_CONFIRM_TOOL) {
-      return await handleConfirm(args);
+    const handler = TOOL_HANDLERS[name];
+    if (handler) {
+      return await handler(args);
     }
 
     return toErrorResult(`Unknown tool: ${name}`);
@@ -1689,16 +1629,13 @@ export async function handleToolCall(
   }
 }
 
-server.setRequestHandler(
-  CallToolRequestSchema,
-  async (request: CallToolRequest) => {
-    const name = request.params.name;
-    const args = (request.params.arguments ?? {}) as ToolArgs;
-    return handleToolCall(name, args);
-  }
-);
+server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest) => {
+  const name = request.params.name;
+  const args = (request.params.arguments ?? {}) as ToolArgs;
+  return handleToolCall(name, args);
+});
 
-export async function startLinkedInMcpServer(): Promise<void> {
+async function startLinkedInMcpServer(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }

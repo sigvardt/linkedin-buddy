@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   getCliCoverageFixtures,
   getDefaultConnectionTarget,
@@ -7,31 +7,17 @@ import {
   prepareEchoAction,
   runCliCommand
 } from "./helpers.js";
-import {
-  cleanupRuntime,
-  getE2EAvailability,
-  getRuntime,
-  type E2EAvailability
-} from "./setup.js";
+import { setupE2ESuite } from "./setup.js";
 
 describe.sequential("CLI E2E", () => {
-  let availability: E2EAvailability;
-  let fixtures: Awaited<ReturnType<typeof getCliCoverageFixtures>> | undefined;
+  const e2e = setupE2ESuite({
+    fixtures: getCliCoverageFixtures,
+    timeoutMs: 180_000
+  });
   const profileName = getDefaultProfileName();
 
-  beforeAll(async () => {
-    availability = await getE2EAvailability();
-    if (availability.canRun) {
-      fixtures = await getCliCoverageFixtures(getRuntime());
-    }
-  }, 180_000);
-
-  afterAll(() => {
-    cleanupRuntime();
-  });
-
   it("covers session, health, rate-limit, login, and selector audit commands", async () => {
-    if (!availability.canRun || !fixtures) {
+    if (!e2e.canRun()) {
       return;
     }
 
@@ -100,9 +86,10 @@ describe.sequential("CLI E2E", () => {
   }, 240_000);
 
   it("covers inbox commands and both confirm entrypoints", async () => {
-    if (!availability.canRun || !fixtures) {
+    if (!e2e.canRun()) {
       return;
     }
+    const fixtures = e2e.fixtures();
 
     const inboxList = await runCliCommand([
       "inbox",
@@ -153,7 +140,7 @@ describe.sequential("CLI E2E", () => {
       confirmToken: expect.stringMatching(/^ct_/)
     });
 
-    const runtime = getRuntime();
+    const runtime = e2e.runtime();
     const confirmAction = prepareEchoAction(runtime, {
       profileName,
       summary: "CLI actions.confirm echo"
@@ -202,9 +189,10 @@ describe.sequential("CLI E2E", () => {
   }, 180_000);
 
   it("covers connections, followups, and keepalive commands", async () => {
-    if (!availability.canRun || !fixtures) {
+    if (!e2e.canRun()) {
       return;
     }
+    const fixtures = e2e.fixtures();
 
     const connectionsList = await runCliCommand([
       "connections",
@@ -327,9 +315,10 @@ describe.sequential("CLI E2E", () => {
   }, 180_000);
 
   it("covers feed, post, profile, search, jobs, and notifications commands", async () => {
-    if (!availability.canRun || !fixtures) {
+    if (!e2e.canRun()) {
       return;
     }
+    const fixtures = e2e.fixtures();
 
     const feedList = await runCliCommand([
       "feed",

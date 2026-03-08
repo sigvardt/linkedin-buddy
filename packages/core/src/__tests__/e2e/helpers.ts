@@ -2,6 +2,7 @@ import type { CoreRuntime } from "../../runtime.js";
 import { TEST_ECHO_ACTION_TYPE } from "../../twoPhaseCommit.js";
 import { runCli } from "../../../../cli/src/bin/linkedin.js";
 import { handleToolCall } from "../../../../mcp/src/bin/linkedin-mcp.js";
+import { expect } from "vitest";
 import {
   LINKEDIN_ACTIONS_CONFIRM_TOOL,
   LINKEDIN_CONNECTIONS_ACCEPT_TOOL,
@@ -41,9 +42,11 @@ export interface MappedMcpResult {
   isError: boolean;
 }
 
-export interface ConfirmGateConfig {
-  enabled: boolean;
-  reason: string;
+export interface PreparedActionResult {
+  preparedActionId: string;
+  confirmToken: string;
+  expiresAtMs?: number;
+  preview: Record<string, unknown>;
 }
 
 const DEFAULT_PROFILE_NAME = process.env.LINKEDIN_E2E_PROFILE ?? "default";
@@ -167,12 +170,8 @@ export function getDefaultMessageTargetPattern(): RegExp {
   return new RegExp(DEFAULT_MESSAGE_TARGET_PATTERN, "i");
 }
 
-export function getWriteConfirmGate(name: string): ConfirmGateConfig {
-  const enabled = readEnabledFlag(name);
-  return {
-    enabled,
-    reason: enabled ? `${name} is enabled.` : `${name} is not enabled.`
-  };
+export function isOptInEnabled(name: string): boolean {
+  return readEnabledFlag(name);
 }
 
 export function getConnectionConfirmMode(): string {
@@ -251,6 +250,45 @@ export async function callMcpTool(
     payload: payload as Record<string, unknown>,
     isError: "isError" in rawResult && rawResult.isError === true
   };
+}
+
+function asRecord(value: unknown, label: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${label} must be an object.`);
+  }
+
+  return value as Record<string, unknown>;
+}
+
+export function expectPreparedAction(prepared: PreparedActionResult): void {
+  expect(prepared.preparedActionId).toMatch(/^pa_/);
+  expect(prepared.confirmToken).toMatch(/^ct_/);
+  if (typeof prepared.expiresAtMs === "number") {
+    expect(prepared.expiresAtMs).toBeGreaterThan(Date.now());
+  }
+  expect(prepared.preview).toHaveProperty("summary");
+  expect(prepared.preview).toHaveProperty("target");
+}
+
+export function expectPreparedOutboundText(
+  prepared: PreparedActionResult,
+  text: string
+): void {
+  const outbound = asRecord(prepared.preview.outbound, "prepared.preview.outbound");
+
+  expect(outbound.text).toBe(text);
+}
+
+export function expectRateLimitPreview(
+  preview: Record<string, unknown>,
+  counterKey: string
+): void {
+  expect(preview).toHaveProperty("rate_limit");
+
+  const rateLimit = asRecord(preview.rate_limit, "prepared.preview.rate_limit");
+  expect(rateLimit).toHaveProperty("counter_key", counterKey);
+  expect(typeof rateLimit.remaining).toBe("number");
+  expect(typeof rateLimit.allowed).toBe("boolean");
 }
 
 export function prepareEchoAction(
@@ -358,7 +396,6 @@ export async function getJob(runtime: CoreRuntime): Promise<{
 
 export async function getCliCoverageFixtures(runtime: CoreRuntime): Promise<{
   threadId: string;
-  threadUrl: string;
   postUrl: string;
   jobId: string;
   connectionTarget: string;
@@ -369,25 +406,10 @@ export async function getCliCoverageFixtures(runtime: CoreRuntime): Promise<{
 
   return {
     threadId: thread.thread_id,
-    threadUrl: thread.thread_url,
     postUrl: post.post_url,
     jobId: job.job_id,
     connectionTarget: DEFAULT_CONNECTION_TARGET
   };
-}
-
-export async function prepareMessageReply(runtime: CoreRuntime): Promise<{
-  preparedActionId: string;
-  confirmToken: string;
-  expiresAtMs: number;
-  preview: Record<string, unknown>;
-}> {
-  const thread = await getMessageThread(runtime);
-  return runtime.inbox.prepareReply({
-    profileName: DEFAULT_PROFILE_NAME,
-    thread: thread.thread_id,
-    text: `E2E preview message [${new Date().toISOString()}]`
-  });
 }
 
 export const MCP_TOOL_NAMES = {

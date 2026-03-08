@@ -1,3 +1,4 @@
+import { afterAll, beforeAll } from "vitest";
 import { createCoreRuntime, type CoreRuntime } from "../../runtime.js";
 
 const CDP_URL = process.env.LINKEDIN_CDP_URL ?? "http://localhost:18800";
@@ -11,6 +12,25 @@ export interface E2EAvailability {
   canRun: boolean;
   reason: string;
 }
+
+export interface E2ESuite<TFixtures = void> {
+  availability(): E2EAvailability;
+  canRun(): boolean;
+  runtime(): CoreRuntime;
+  fixtures(): TFixtures;
+}
+
+interface E2ESuiteOptions<TFixtures> {
+  fixtures?: (runtime: CoreRuntime) => Promise<TFixtures>;
+  timeoutMs?: number;
+}
+
+const UNINITIALIZED_AVAILABILITY: E2EAvailability = {
+  cdpAvailable: false,
+  authenticated: false,
+  canRun: false,
+  reason: "E2E availability has not been initialized."
+};
 
 export function getRuntime(): CoreRuntime {
   if (!sharedRuntime) {
@@ -69,6 +89,42 @@ export async function getE2EAvailability(): Promise<E2EAvailability> {
   };
 
   return sharedAvailability;
+}
+
+export function setupE2ESuite<TFixtures = void>(
+  options: E2ESuiteOptions<TFixtures> = {}
+): E2ESuite<TFixtures> {
+  let availability = UNINITIALIZED_AVAILABILITY;
+  let suiteFixtures: TFixtures | undefined;
+
+  beforeAll(async () => {
+    availability = await getE2EAvailability();
+    if (availability.canRun && options.fixtures) {
+      suiteFixtures = await options.fixtures(getRuntime());
+    }
+  }, options.timeoutMs);
+
+  afterAll(() => {
+    cleanupRuntime();
+    availability = UNINITIALIZED_AVAILABILITY;
+    suiteFixtures = undefined;
+  });
+
+  return {
+    availability: () => availability,
+    canRun: () => availability.canRun,
+    runtime: () => getRuntime(),
+    fixtures: () => {
+      if (!options.fixtures) {
+        throw new Error("This E2E suite does not define fixtures.");
+      }
+      if (suiteFixtures === undefined) {
+        throw new Error("E2E fixtures are not available for this suite.");
+      }
+
+      return suiteFixtures;
+    }
+  };
 }
 
 export function cleanupRuntime(): void {

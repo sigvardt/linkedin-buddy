@@ -1,12 +1,13 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
-  getRuntime,
-  checkCdpAvailable,
-  checkAuthenticated,
-  cleanupRuntime
-} from "./setup.js";
+  expectPreparedAction,
+  expectPreparedOutboundText,
+  expectRateLimitPreview,
+  isOptInEnabled
+} from "./helpers.js";
+import { setupE2ESuite } from "./setup.js";
 
-const writeTest = process.env.LINKEDIN_ENABLE_POST_WRITE_E2E === "1" ? it : it.skip;
+const writeTest = isOptInEnabled("LINKEDIN_ENABLE_POST_WRITE_E2E") ? it : it.skip;
 
 /**
  * Post Write E2E — two-phase commit create a LinkedIn post.
@@ -17,23 +18,11 @@ const writeTest = process.env.LINKEDIN_ENABLE_POST_WRITE_E2E === "1" ? it : it.s
  * Flow: posts.prepareCreate → twoPhaseCommit.confirmByToken
  */
 describe("Post Write E2E (2PC post.create)", () => {
-  let cdpOk = false;
-  let authOk = false;
-
-  beforeAll(async () => {
-    cdpOk = await checkCdpAvailable();
-    if (cdpOk) {
-      authOk = await checkAuthenticated();
-    }
-  });
-
-  afterAll(() => {
-    cleanupRuntime();
-  });
+  const e2e = setupE2ESuite();
 
   writeTest("creates a public post via prepare → confirm", async () => {
-    if (!cdpOk || !authOk) return;
-    const runtime = getRuntime();
+    if (!e2e.canRun()) return;
+    const runtime = e2e.runtime();
     const timestamp = new Date().toISOString();
     const postText = `E2E post from linkedin-owa-agentools [${timestamp}]`;
 
@@ -43,13 +32,8 @@ describe("Post Write E2E (2PC post.create)", () => {
       operatorNote: "Automated E2E post write test"
     });
 
-    expect(prepared.preparedActionId).toBeTruthy();
-    expect(prepared.preparedActionId).toMatch(/^pa_/);
-    expect(prepared.confirmToken).toBeTruthy();
-    expect(prepared.confirmToken).toMatch(/^ct_/);
-    expect(prepared.preview).toHaveProperty("summary");
-    expect(prepared.preview).toHaveProperty("target");
-    expect(prepared.preview).toHaveProperty("outbound");
+    expectPreparedAction(prepared);
+    expectPreparedOutboundText(prepared, postText);
 
     const result = await runtime.twoPhaseCommit.confirmByToken({
       confirmToken: prepared.confirmToken
@@ -64,17 +48,13 @@ describe("Post Write E2E (2PC post.create)", () => {
   }, 180_000);
 
   it("prepare returns valid preview with rate limit info", async () => {
-    if (!cdpOk || !authOk) return;
-    const runtime = getRuntime();
+    if (!e2e.canRun()) return;
+    const runtime = e2e.runtime();
     const prepared = await runtime.posts.prepareCreate({
       text: `E2E preview-only post [${new Date().toISOString()}]`,
       visibility: "public"
     });
 
-    expect(prepared.preview).toHaveProperty("rate_limit");
-    const rateLimit = prepared.preview.rate_limit as Record<string, unknown>;
-    expect(rateLimit).toHaveProperty("counter_key", "linkedin.post.create");
-    expect(typeof rateLimit.remaining).toBe("number");
-    expect(typeof rateLimit.allowed).toBe("boolean");
+    expectRateLimitPreview(prepared.preview, "linkedin.post.create");
   }, 60_000);
 });

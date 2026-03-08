@@ -1,29 +1,12 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-  getRuntime,
-  checkCdpAvailable,
-  checkAuthenticated,
-  cleanupRuntime
-} from "./setup.js";
+import { describe, expect, it } from "vitest";
+import { setupE2ESuite } from "./setup.js";
 
 describe("Jobs E2E", () => {
-  let cdpOk = false;
-  let authOk = false;
-
-  beforeAll(async () => {
-    cdpOk = await checkCdpAvailable();
-    if (cdpOk) {
-      authOk = await checkAuthenticated();
-    }
-  });
-
-  afterAll(() => {
-    cleanupRuntime();
-  });
+  const e2e = setupE2ESuite();
 
   it("search jobs returns structured results with count", async () => {
-    if (!cdpOk || !authOk) return;
-    const runtime = getRuntime();
+    if (!e2e.canRun()) return;
+    const runtime = e2e.runtime();
     const result = await runtime.jobs.searchJobs({
       query: "software engineer",
       limit: 5
