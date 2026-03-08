@@ -451,6 +451,9 @@ describe("linkedin data delete", () => {
     expect(help).toContain("--confirm");
     expect(help).toContain("Default behavior is a dry-run preview");
     expect(help).toContain("config.json is preserved by design");
+    expect(help).toContain("Answering anything other than \"yes\" cancels safely");
+    expect(help).toContain("failed_paths");
+    expect(help).toContain("recovery guidance");
     expect(help).toContain("--cdp-url");
   });
 });

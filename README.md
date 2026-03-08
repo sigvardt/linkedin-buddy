@@ -125,17 +125,28 @@ npm exec -w @linkedin-assistant/cli -- linkedin keepalive stop --profile default
 Delete local tool state:
 
 ```bash
+# Preview the shared local runtime footprint (default dry-run)
 npm exec -w @linkedin-assistant/cli -- linkedin data delete
+
+# Delete shared local runtime data after interactive confirmation
 npm exec -w @linkedin-assistant/cli -- linkedin data delete --confirm
+
+# Preview the wider wipe that also includes tool-owned browser profiles
 npm exec -w @linkedin-assistant/cli -- linkedin data delete --include-profile
+
+# Delete shared data plus tool-owned browser profiles (second confirmation)
 npm exec -w @linkedin-assistant/cli -- linkedin data delete --include-profile --confirm
 ```
 
 - `linkedin data delete` is a dry-run preview by default.
-- Rerun with `--confirm` to perform the destructive deletion in an interactive terminal.
+- The default scope is the shared local runtime footprint: `state.sqlite` and its SQLite sidecars, `artifacts/`, `keepalive/`, and the auth cooldown file.
+- Rerun with `--confirm` in an interactive terminal to perform the destructive deletion.
+- Answering anything other than `yes` cancels the deletion and leaves all files untouched.
 - Stop any running keepalive daemons before deleting local state.
-- `config.json` is preserved by design.
-- `--include-profile` prompts a second time before removing local browser profile data.
+- `config.json` is preserved by design, and data from external browsers attached with `--cdp-url` is never deleted.
+- `--include-profile` prompts a second time before removing tool-owned browser profiles, saved sessions, and cookies.
+- If that second prompt is declined, the command still deletes the shared runtime data and preserves `profiles/`.
+- If some paths cannot be removed, the command exits non-zero after deleting the paths it can and reports `failed_paths` entries with `path`, `code`, `message`, and `recoveryHint`.
 
 ### Selector audit
 
@@ -351,6 +362,7 @@ The read-only MCP tool descriptions reference this diagnostic path.
 - Errors use structured taxonomy:
   - `AUTH_REQUIRED`, `CAPTCHA_OR_CHALLENGE`, `RATE_LIMITED`, `UI_CHANGED_SELECTOR_FAILED`, `NETWORK_ERROR`, `TIMEOUT`, `TARGET_NOT_FOUND`, `ACTION_PRECONDITION_FAILED`, `UNKNOWN`
 - CLI and MCP return structured JSON errors (`code`, `message`, `details`).
+- `linkedin data delete` intentionally uses a filesystem-first helper instead of booting `createCoreRuntime()` so the command does not recreate directories, logs, or `state.sqlite` while wiping local state.
 
 ## Quality Gates
 

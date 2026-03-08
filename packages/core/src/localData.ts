@@ -5,35 +5,82 @@ import { resolveRateLimitStateFilePaths } from "./auth/rateLimitState.js";
 import { resolveConfigPaths } from "./config.js";
 import { LinkedInAssistantError } from "./errors.js";
 
+/**
+ * Filesystem-first helpers for inventorying and deleting tool-owned local
+ * state.
+ *
+ * @remarks
+ * These helpers intentionally avoid booting the normal runtime.
+ * `createCoreRuntime()` eagerly creates directories, opens `state.sqlite`, and
+ * writes lifecycle logs, which would recreate state during a deletion flow.
+ */
 export interface LocalDataDeletionPlanOptions {
+  /**
+   * Optional assistant home override used to resolve the owned local-state
+   * footprint.
+   */
   baseDir?: string;
+  /**
+   * When true, the deletion plan also includes tool-owned browser profile
+   * directories.
+   */
   includeProfile?: boolean;
+  /**
+   * Optional override for the auth cooldown file, mainly for tests and custom
+   * installs.
+   */
   rateLimitStatePath?: string;
 }
 
+/**
+ * Canonical local-data inventory resolved before any destructive action runs.
+ */
 export interface LocalDataDeletionPlan {
+  /** Canonical assistant home used to scope in-base deletion targets. */
   baseDir: string;
+  /** Indicates whether browser profiles were explicitly opted into the plan. */
   includeProfile: boolean;
+  /** Absolute target paths that the deletion workflow may remove. */
   targets: string[];
 }
 
+/**
+ * Actionable information about a single filesystem target that could not be
+ * removed.
+ */
 export interface LocalDataDeletionFailure {
+  /** Absolute path that failed deletion. */
   path: string;
+  /** Best-effort filesystem error code, when one is available. */
   code: string | null;
+  /** Human-readable error message surfaced to the operator. */
   message: string;
+  /** Optional retry guidance derived from the filesystem error code. */
   recoveryHint?: string;
 }
 
+/**
+ * Summary returned after a deletion attempt finishes scanning every target.
+ */
 export interface LocalDataDeletionResult {
+  /** Timestamp captured immediately before deletion begins. */
   startedAt: string;
+  /** Timestamp captured after the last deletion attempt completes. */
   completedAt: string;
+  /** Paths that were removed successfully. */
   deletedPaths: string[];
+  /** Paths that were already absent when the command reached them. */
   missingPaths: string[];
+  /** Paths that still require operator attention or a retry. */
   failedPaths: LocalDataDeletionFailure[];
 }
 
 const SQLITE_SIDECAR_SUFFIXES = ["-journal", "-wal", "-shm"] as const;
 
+/**
+ * Resolves the directory that stores keepalive PID, state, and event-log
+ * files.
+ */
 export function resolveKeepAliveDir(baseDir?: string): string {
   return path.join(resolveConfigPaths(baseDir).baseDir, "keepalive");
 }
@@ -195,6 +242,15 @@ function toDeletionFailure(
   };
 }
 
+/**
+ * Resolves the canonical set of tool-owned paths eligible for local-data
+ * deletion.
+ *
+ * @remarks
+ * The plan only includes runtime-owned state. `config.json` remains outside
+ * the deletion plan so the command behaves like privacy cleanup instead of a
+ * full factory reset.
+ */
 export function createLocalDataDeletionPlan(
   options: LocalDataDeletionPlanOptions = {}
 ): LocalDataDeletionPlan {
@@ -252,6 +308,15 @@ export function createLocalDataDeletionPlan(
   };
 }
 
+/**
+ * Deletes the planned local-data targets from disk.
+ *
+ * @remarks
+ * Missing paths are reported in `missingPaths` and do not fail the command.
+ * Other filesystem errors are accumulated so the helper can continue deleting
+ * remaining targets before throwing a `LinkedInAssistantError` with
+ * `failed_paths` details.
+ */
 export async function deleteLocalData(
   options: LocalDataDeletionPlanOptions = {}
 ): Promise<LocalDataDeletionResult> {

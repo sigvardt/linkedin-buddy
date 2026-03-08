@@ -92,6 +92,7 @@ function maybeWarnAboutSelectorLocaleConfig(selectorLocale?: string): void {
   writeCliNotice(warning.guidance);
 }
 
+/** Human-readable preview row for a single local-data target. */
 interface LocalDataPreviewItem {
   exists: boolean;
   label: string;
@@ -99,6 +100,10 @@ interface LocalDataPreviewItem {
   path: string;
 }
 
+/**
+ * Aggregated inventory reused by the dry-run output, confirmation prompts, and
+ * final JSON payloads for `linkedin data delete`.
+ */
 interface LocalDataDeletionPreview {
   baseDir: string;
   deleteItems: LocalDataPreviewItem[];
@@ -2449,19 +2454,20 @@ export function createCliProgram(): Command {
     .command("delete")
     .description(
       [
-        "Preview local runtime data deletion; rerun with --confirm to delete.",
-        "Default behavior is a dry-run preview of the local database, artifacts, keepalive state, and auth cooldown files.",
+        "Preview local runtime data deletion; rerun with --confirm in an interactive terminal to delete.",
+        "Default behavior is a dry-run preview of the shared local database, artifacts, keepalive state, and auth cooldown files. --include-profile expands the scope to all tool-owned browser profiles and adds a second confirmation before removing saved sessions and cookies.",
+        "Answering anything other than \"yes\" cancels safely. If some paths fail, the command reports failed_paths with recovery guidance after deleting what it can.",
         "config.json is preserved by design. Stop keepalive daemons first. Data from external browsers attached with --cdp-url is never deleted."
       ].join("\n\n")
     )
     .option(
       "--confirm",
-      "Permanently delete the listed tool-owned local data after interactive confirmation",
+      "Permanently delete the listed tool-owned local data after interactive confirmation prompts",
       false
     )
     .option(
       "--include-profile",
-      "Also delete tool-owned browser profile data after a second confirmation",
+      "Also preview/delete tool-owned browser profile data; destructive mode adds a second confirmation",
       false
     )
     .addHelpText(
@@ -2479,7 +2485,17 @@ export function createCliProgram(): Command {
         "  - default behavior is a dry-run preview",
         "  - config.json is preserved by design",
         "  - active keepalive daemons must be stopped first",
-        "  - data from external browsers attached with --cdp-url is never deleted"
+        "  - data from external browsers attached with --cdp-url is never deleted",
+        "",
+        "Interactive flow:",
+        "  - --confirm requires an interactive terminal",
+        "  - answering anything other than \"yes\" cancels without deleting files",
+        "  - --include-profile adds a second prompt for browser sessions and cookies",
+        "",
+        "Partial failures:",
+        "  - the command keeps deleting other targets when possible",
+        "  - failed_paths reports path, code, message, and recoveryHint",
+        "  - fix the reported issue and rerun the same command"
       ].join("\n")
     )
     .action(async (options: { confirm: boolean; includeProfile: boolean }) => {
