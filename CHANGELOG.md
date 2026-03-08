@@ -9,3 +9,9 @@ All notable changes to this project will be documented in this file.
 - Selector audit documentation covering CLI usage, sample output, core API
   configuration, README discoverability, CLI `--help` references, and MCP
   tool-description breadcrumbs.
+
+### Changed
+
+- Expanded the E2E testing documentation and runner help to cover coverage
+  lanes, profile-aware fixture replay, opt-in write flags, and contributor
+  workflow guidance for the real-session harness.

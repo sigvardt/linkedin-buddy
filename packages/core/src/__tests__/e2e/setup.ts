@@ -12,8 +12,13 @@ import path from "node:path";
 import { afterAll, beforeAll, type TestContext } from "vitest";
 import { createCoreRuntime, type CoreRuntime } from "../../runtime.js";
 
+/** Default CDP endpoint used by the shared real-session E2E harness. */
 export const DEFAULT_E2E_CDP_URL = "http://localhost:18800";
+
+/** Prefix used for temporary assistant-home directories created by E2E suites. */
 export const E2E_BASE_DIR_PREFIX = "linkedin-e2e-shared-";
+
+/** Metadata file stored inside each temporary E2E assistant-home directory. */
 export const E2E_OWNER_METADATA_FILE = ".owner.json";
 
 let sharedRuntime: CoreRuntime | undefined;
@@ -31,6 +36,9 @@ interface ErrnoLikeError extends Error {
   code?: string;
 }
 
+/**
+ * Cached availability result for the shared real-session E2E harness.
+ */
 export interface E2EAvailability {
   cdpAvailable: boolean;
   authenticated: boolean;
@@ -38,6 +46,10 @@ export interface E2EAvailability {
   reason: string;
 }
 
+/**
+ * Shared suite wrapper that exposes the live runtime, availability state, and
+ * any optional suite fixtures.
+ */
 export interface E2ESuite<TFixtures = void> {
   availability(): E2EAvailability;
   canRun(): boolean;
@@ -248,6 +260,10 @@ async function probeAuthentication(): Promise<{
   }
 }
 
+/**
+ * Returns the shared runtime instance used by all live E2E suites in the
+ * current process.
+ */
 export function getRuntime(): CoreRuntime {
   if (!sharedRuntime) {
     const cdpUrl = getCdpUrl();
@@ -264,10 +280,17 @@ export function getRuntime(): CoreRuntime {
   return sharedRuntime;
 }
 
+/**
+ * Resolves the effective CDP URL for the E2E harness.
+ */
 export function getCdpUrl(): string {
   return readConfiguredCdpUrl();
 }
 
+/**
+ * Returns the shared assistant-home directory used by the E2E harness,
+ * creating and ownership-tagging it on first use.
+ */
 export function getE2EBaseDir(): string {
   if (!sharedBaseDir) {
     cleanupStaleE2EBaseDirs();
@@ -280,6 +303,9 @@ export function getE2EBaseDir(): string {
   return sharedBaseDir;
 }
 
+/**
+ * Temporarily overrides `LINKEDIN_ASSISTANT_HOME` while executing `callback`.
+ */
 export async function withAssistantHome<T>(
   assistantHome: string,
   callback: () => Promise<T>
@@ -298,18 +324,32 @@ export async function withAssistantHome<T>(
   }
 }
 
+/**
+ * Runs `callback` inside the shared E2E assistant-home directory.
+ */
 export async function withE2EEnvironment<T>(callback: () => Promise<T>): Promise<T> {
   return withAssistantHome(getE2EBaseDir(), callback);
 }
 
+/**
+ * Probes whether the configured CDP endpoint is reachable.
+ */
 export async function checkCdpAvailable(): Promise<boolean> {
   return (await probeCdpEndpoint(getCdpUrl())).available;
 }
 
+/**
+ * Probes whether the configured CDP session is already authenticated with
+ * LinkedIn.
+ */
 export async function checkAuthenticated(): Promise<boolean> {
   return (await probeAuthentication()).authenticated;
 }
 
+/**
+ * Returns the cached E2E availability result, probing CDP and authentication on
+ * first access.
+ */
 export async function getE2EAvailability(): Promise<E2EAvailability> {
   if (sharedAvailability) {
     return sharedAvailability;
@@ -338,6 +378,10 @@ export async function getE2EAvailability(): Promise<E2EAvailability> {
   return sharedAvailability;
 }
 
+/**
+ * Registers a real-session E2E suite that shares one runtime and optional
+ * runtime-backed fixtures across all tests in the suite.
+ */
 export function setupE2ESuite<TFixtures = void>(
   options: E2ESuiteOptions<TFixtures> = {}
 ): E2ESuite<TFixtures> {
@@ -392,6 +436,9 @@ export function setupE2ESuite<TFixtures = void>(
   };
 }
 
+/**
+ * Skips the current test when the shared E2E prerequisites are unavailable.
+ */
 export function skipIfE2EUnavailable<TFixtures>(
   suite: E2ESuite<TFixtures>,
   context?: Pick<TestContext, "skip"> | null
@@ -413,6 +460,10 @@ export function skipIfE2EUnavailable<TFixtures>(
   return false;
 }
 
+/**
+ * Closes the shared runtime and removes the shared temporary assistant-home
+ * directory.
+ */
 export function cleanupRuntime(): void {
   const runtime = sharedRuntime;
   const baseDir = sharedBaseDir;

@@ -4,6 +4,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 
+/**
+ * Default CDP endpoint probed by the E2E runner when `LINKEDIN_CDP_URL` is
+ * unset.
+ */
 export const DEFAULT_CDP_URL = "http://localhost:18800";
 const LINKEDIN_FEED_URL = "https://www.linkedin.com/feed/";
 const RUNNER_PREFIX = "[linkedin:e2e]";
@@ -18,6 +22,9 @@ function logError(message) {
   process.stderr.write(`${RUNNER_PREFIX} ${message}\n`);
 }
 
+/**
+ * Converts unknown errors into a stable single-line message for runner logs.
+ */
 export function summarizeError(error) {
   if (error instanceof Error) {
     return error.message;
@@ -55,6 +62,10 @@ function parseFixtureFlag(argument) {
   return value;
 }
 
+/**
+ * Parses runner-specific flags while preserving any remaining arguments for
+ * direct Vitest forwarding.
+ */
 export function parseRunnerOptions(argv, env = process.env) {
   let showHelp = false;
   let requireSession = readEnabledFlag("LINKEDIN_E2E_REQUIRE_SESSION", env);
@@ -133,6 +144,9 @@ function getEnabledOptInLabels(env = process.env) {
   return labels;
 }
 
+/**
+ * Formats the effective runner configuration summary shown before each E2E run.
+ */
 export function formatRunnerConfiguration(options, env = process.env) {
   const profileName = readTrimmedEnv("LINKEDIN_E2E_PROFILE", env) ?? "default";
   const cdpUrl = readTrimmedEnv("LINKEDIN_CDP_URL", env) ?? DEFAULT_CDP_URL;
@@ -158,6 +172,9 @@ export function formatRunnerConfiguration(options, env = process.env) {
   ];
 }
 
+/**
+ * Returns the human-readable `npm run test:e2e -- --help` text.
+ */
 export function getRunnerHelpText() {
   return [
     "LinkedIn real-session E2E runner",
@@ -170,6 +187,10 @@ export function getRunnerHelpText() {
     "  --require-session      Fail instead of skipping when CDP/auth is unavailable.",
     "  --fixtures <file>      Read or record CLI/MCP coverage fixtures at <file>.",
     "  --refresh-fixtures     Re-discover fixtures and overwrite the fixture file.",
+    "",
+    "Safe defaults:",
+    "  Default runs stay read-only, preview-only, or use test.echo confirms.",
+    "  Real outbound confirms stay opt-in behind dedicated environment flags.",
     "",
     "Vitest examples:",
     "  npm run test:e2e -- packages/core/src/__tests__/e2e/cli.e2e.test.ts",
@@ -185,12 +206,30 @@ export function getRunnerHelpText() {
     "  LINKEDIN_E2E_REQUIRE_SESSION  Same as --require-session when set to 1/true",
     "  LINKEDIN_E2E_FIXTURE_FILE     Same as --fixtures <file>",
     "  LINKEDIN_E2E_REFRESH_FIXTURES Same as --refresh-fixtures when set to 1/true",
+    "  LINKEDIN_E2E_JOB_QUERY        Job query used for live fixture discovery",
+    "  LINKEDIN_E2E_JOB_LOCATION     Job location used for live fixture discovery",
+    "  LINKEDIN_E2E_MESSAGE_TARGET_PATTERN  Regex source for approved inbox-thread discovery",
+    "  LINKEDIN_E2E_CONNECTION_TARGET       Connection target slug (default: realsimonmiller)",
+    "",
+    "Opt-in write confirms:",
+    "  LINKEDIN_E2E_ENABLE_MESSAGE_CONFIRM     Enable the real message confirm test",
+    "  LINKEDIN_E2E_ENABLE_CONNECTION_CONFIRM  Enable one real connection confirm test",
+    "  LINKEDIN_E2E_CONNECTION_CONFIRM_MODE    invite | accept | withdraw",
+    "  LINKEDIN_E2E_ENABLE_LIKE_CONFIRM        Enable the real like confirm test",
+    "  LINKEDIN_E2E_LIKE_POST_URL              Approved post URL for like confirm",
+    "  LINKEDIN_E2E_ENABLE_COMMENT_CONFIRM     Enable the real comment confirm test",
+    "  LINKEDIN_E2E_COMMENT_POST_URL           Approved post URL for comment confirm",
+    "  LINKEDIN_ENABLE_POST_WRITE_E2E          Enable real post publishing after approval",
     "",
     "Docs:",
     "  docs/e2e-testing.md"
   ].join("\n");
 }
 
+/**
+ * Formats the guidance shown when CDP or LinkedIn authentication is
+ * unavailable.
+ */
 export function formatUnavailableGuidance(reason, options) {
   return [
     `${options.requireSession ? "LinkedIn E2E prerequisites are required but unavailable" : "Skipping LinkedIn E2E suite"}: ${reason}`,
@@ -283,6 +322,10 @@ function waitForExit(child) {
   });
 }
 
+/**
+ * Runs the E2E preflight checks and, when available, launches the Vitest E2E
+ * suite with the resolved runner configuration.
+ */
 export async function main(argv = process.argv.slice(2), env = process.env) {
   const options = parseRunnerOptions(argv, env);
 

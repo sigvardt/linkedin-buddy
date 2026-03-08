@@ -2378,6 +2378,7 @@ async function runConfirmAction(input: {
   }
 }
 
+/** Creates the Commander program for the `linkedin` CLI. */
 export function createCliProgram(): Command {
   const program = new Command();
 
@@ -3221,6 +3222,7 @@ export function createCliProgram(): Command {
   return program;
 }
 
+/** Runs the `linkedin` CLI with the provided argument vector. */
 export async function runCli(argv: string[] = process.argv): Promise<void> {
   const originalArgv = process.argv;
   process.argv = argv;

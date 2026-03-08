@@ -390,11 +390,24 @@ The runner now skips cleanly when no authenticated CDP session is available,
 which makes it safe to invoke in CI.
 
 See `docs/e2e-testing.md` for the full workflow, safe targets, and opt-in write
-flags.
+flags. Run `npm run test:e2e -- --help` for the runner's built-in flag and
+environment reference.
 
 Pass `npm run test:e2e -- --require-session` when a missing session should fail
 instead of skip, and use `--fixtures <file>` to capture or replay the shared
-CLI/MCP coverage fixtures while iterating on E2E failures.
+CLI/MCP coverage fixtures while iterating on E2E failures. Saved fixtures are
+profile-specific, so refresh them when `LINKEDIN_E2E_PROFILE` changes.
+
+### Coverage lanes
+
+- Default lane: read-only runtime coverage, prepare-only mutation previews, and
+  safe `test.echo` confirms for the generic confirm entrypoints
+- Contract lanes: thin CLI and MCP suites that reuse the same live fixtures
+  instead of rediscovering targets on every run
+- Opt-in write lanes: real message, connection, like, comment, and post
+  confirms guarded behind explicit environment flags
+- Non-live guard rails: helper and runner unit tests that cover option parsing,
+  fixture replay, skip semantics, and confirm contract hardening
 
 ### Prerequisites
 
@@ -414,8 +427,15 @@ confirm entrypoints. Real outbound confirms remain opt-in.
 # Default run: safe coverage only
 npm run test:e2e
 
+# Show the runner help, flags, and env overrides
+npm run test:e2e -- --help
+
 # Focus a specific E2E file while keeping the runner checks
 npm run test:e2e -- packages/core/src/__tests__/e2e/cli.e2e.test.ts
+
+# Capture or refresh the shared CLI/MCP fixtures while debugging contract bugs
+npm run test:e2e -- --fixtures .tmp/e2e-fixtures.json --refresh-fixtures \
+  packages/core/src/__tests__/e2e/cli.e2e.test.ts
 
 # Raw Vitest E2E run when you already know the session is available
 npm run test:e2e:raw
