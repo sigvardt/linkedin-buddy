@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from "node:fs";
+import { isIP } from "node:net";
+import path from "node:path";
 import {
   errors as playwrightErrors,
   type BrowserContext,
@@ -24,6 +27,10 @@ import type {
 } from "./twoPhaseCommit.js";
 
 const LINKEDIN_FEED_URL = "https://www.linkedin.com/feed/";
+const LINKEDIN_ASSISTANT_CONFIG_FILENAME = "config.json";
+const DEFAULT_LINK_PREVIEW_VALIDATION_TIMEOUT_MS = 5_000;
+const MAX_LINK_PREVIEW_VALIDATION_TIMEOUT_MS = 30_000;
+const LINK_PREVIEW_BODY_BYTE_LIMIT = 64 * 1024;
 
 export const CREATE_POST_ACTION_TYPE = "post.create";
 export const LINKEDIN_POST_MAX_LENGTH = 3000;
@@ -91,6 +98,7 @@ export interface LinkedInPostsRuntime extends LinkedInPostsExecutorRuntime {
     TwoPhaseCommitService<LinkedInPostsExecutorRuntime>,
     "prepare"
   >;
+  postSafetyLint: LinkedInPostSafetyLintConfig;
 }
 
 interface SelectorCandidate {
@@ -105,7 +113,7 @@ interface ScopedSelectorCandidate {
   locatorFactory: (root: Locator) => Locator;
 }
 
-interface ValidatedPostText {
+export interface ValidatedPostText {
   normalizedText: string;
   characterCount: number;
   lineCount: number;
@@ -115,8 +123,351 @@ interface ValidatedPostText {
   containsHashtag: boolean;
 }
 
+export interface LinkedInPostSafetyLintConfig {
+  maxLength: number;
+  bannedPhrases: string[];
+  validateLinkPreviews: boolean;
+  linkPreviewValidationTimeoutMs: number;
+}
+
+export interface LinkedInPostLintResult {
+  validatedText: ValidatedPostText;
+  urls: string[];
+}
+
+interface LinkPreviewValidationFailure {
+  url: string;
+  reason: string;
+}
+
+interface ExtractedPostLinks {
+  validUrls: string[];
+  invalidUrls: string[];
+}
+
+interface PostSafetyLintConfigShape {
+  maxLength?: unknown;
+  bannedPhrases?: unknown;
+  validateLinkPreviews?: unknown;
+  linkPreviewValidationTimeoutMs?: unknown;
+}
+
+export const DEFAULT_LINKEDIN_POST_SAFETY_LINT_CONFIG: LinkedInPostSafetyLintConfig = {
+  maxLength: LINKEDIN_POST_MAX_LENGTH,
+  bannedPhrases: [],
+  validateLinkPreviews: false,
+  linkPreviewValidationTimeoutMs: DEFAULT_LINK_PREVIEW_VALIDATION_TIMEOUT_MS
+};
+
 function normalizeText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseOptionalPositiveInteger(
+  value: unknown,
+  label: string,
+  options: { min?: number; max?: number } = {}
+): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "number" || !Number.isInteger(value)) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `${label} must be an integer.`,
+      {
+        label,
+        provided_value: value
+      }
+    );
+  }
+
+  const min = options.min ?? 1;
+  const max = options.max;
+  if (value < min || (max !== undefined && value > max)) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      max === undefined
+        ? `${label} must be at least ${min}.`
+        : `${label} must be between ${min} and ${max}.`,
+      {
+        label,
+        provided_value: value,
+        min,
+        ...(max === undefined ? {} : { max })
+      }
+    );
+  }
+
+  return value;
+}
+
+function parseOptionalBoolean(value: unknown, label: string): boolean | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "boolean") {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `${label} must be a boolean.`,
+      {
+        label,
+        provided_value: value
+      }
+    );
+  }
+
+  return value;
+}
+
+function normalizeConfiguredPhraseList(values: string[]): string[] {
+  const normalizedValues: string[] = [];
+  const seen = new Set<string>();
+
+  for (const value of values) {
+    const normalizedValue = normalizeText(value);
+    if (!normalizedValue) {
+      continue;
+    }
+
+    const dedupeKey = normalizedValue.toLowerCase();
+    if (seen.has(dedupeKey)) {
+      continue;
+    }
+
+    seen.add(dedupeKey);
+    normalizedValues.push(normalizedValue);
+  }
+
+  return normalizedValues;
+}
+
+function parseOptionalBannedPhraseList(
+  value: unknown,
+  label: string
+): string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `${label} must be an array of strings.`,
+      {
+        label,
+        provided_value: value
+      }
+    );
+  }
+
+  return normalizeConfiguredPhraseList(value);
+}
+
+function parseBooleanEnv(value: string | undefined, label: string): boolean | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const normalizedValue = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalizedValue)) {
+    return true;
+  }
+
+  if (["0", "false", "no", "off"].includes(normalizedValue)) {
+    return false;
+  }
+
+  throw new LinkedInAssistantError(
+    "ACTION_PRECONDITION_FAILED",
+    `${label} must be one of: true, false, 1, 0, yes, no, on, off.`,
+    {
+      label,
+      provided_value: value
+    }
+  );
+}
+
+function parseIntegerEnv(
+  value: string | undefined,
+  label: string,
+  options: { min?: number; max?: number } = {}
+): number | undefined {
+  if (value === undefined || value.trim().length === 0) {
+    return undefined;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed)) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `${label} must be an integer.`,
+      {
+        label,
+        provided_value: value
+      }
+    );
+  }
+
+  return parseOptionalPositiveInteger(parsed, label, options);
+}
+
+function parseBannedPhraseEnv(
+  value: string | undefined,
+  label: string
+): string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value.trim().length === 0) {
+    return [];
+  }
+
+  const trimmedValue = value.trim();
+  if (trimmedValue.startsWith("[")) {
+    let parsed: unknown;
+
+    try {
+      parsed = JSON.parse(trimmedValue);
+    } catch (error) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        `${label} must be a JSON string array or a comma/newline-separated list.`,
+        {
+          label,
+          provided_value: value,
+          message: error instanceof Error ? error.message : String(error)
+        },
+        error instanceof Error ? { cause: error } : undefined
+      );
+    }
+
+    return parseOptionalBannedPhraseList(parsed, label);
+  }
+
+  return normalizeConfiguredPhraseList(trimmedValue.split(/\r?\n|,/g));
+}
+
+function readPostSafetyLintConfigShape(baseDir: string): PostSafetyLintConfigShape {
+  const configPath = path.join(baseDir, LINKEDIN_ASSISTANT_CONFIG_FILENAME);
+  if (!existsSync(configPath)) {
+    return {};
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(configPath, "utf8"));
+  } catch (error) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `Failed to parse LinkedIn assistant config file at ${configPath}.`,
+      {
+        config_path: configPath,
+        message: error instanceof Error ? error.message : String(error)
+      },
+      error instanceof Error ? { cause: error } : undefined
+    );
+  }
+
+  if (!isRecord(parsed)) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `LinkedIn assistant config file at ${configPath} must contain a JSON object.`,
+      {
+        config_path: configPath
+      }
+    );
+  }
+
+  const directLintConfig = parsed.postSafetyLint;
+  if (directLintConfig === undefined) {
+    return {};
+  }
+
+  if (!isRecord(directLintConfig)) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `postSafetyLint in ${configPath} must be a JSON object.`,
+      {
+        config_path: configPath,
+        provided_value: directLintConfig
+      }
+    );
+  }
+
+  return directLintConfig;
+}
+
+export function resolveLinkedInPostSafetyLintConfig(
+  baseDir?: string
+): LinkedInPostSafetyLintConfig {
+  const fileConfig = baseDir ? readPostSafetyLintConfigShape(baseDir) : {};
+  const fileLabel = baseDir
+    ? `${path.join(baseDir, LINKEDIN_ASSISTANT_CONFIG_FILENAME)} postSafetyLint`
+    : "postSafetyLint";
+
+  const maxLength =
+    parseIntegerEnv(
+      process.env.LINKEDIN_ASSISTANT_POST_SAFETY_MAX_LENGTH,
+      "LINKEDIN_ASSISTANT_POST_SAFETY_MAX_LENGTH",
+      {
+      max: LINKEDIN_POST_MAX_LENGTH
+      }
+    ) ??
+    parseOptionalPositiveInteger(fileConfig.maxLength, `${fileLabel}.maxLength`, {
+      max: LINKEDIN_POST_MAX_LENGTH
+    }) ??
+    DEFAULT_LINKEDIN_POST_SAFETY_LINT_CONFIG.maxLength;
+
+  const bannedPhrases =
+    parseBannedPhraseEnv(
+      process.env.LINKEDIN_ASSISTANT_POST_SAFETY_BANNED_PHRASES,
+      "LINKEDIN_ASSISTANT_POST_SAFETY_BANNED_PHRASES"
+    ) ??
+    parseOptionalBannedPhraseList(fileConfig.bannedPhrases, `${fileLabel}.bannedPhrases`) ??
+    DEFAULT_LINKEDIN_POST_SAFETY_LINT_CONFIG.bannedPhrases;
+
+  const validateLinkPreviews =
+    parseBooleanEnv(
+      process.env.LINKEDIN_ASSISTANT_POST_SAFETY_VALIDATE_LINK_PREVIEWS,
+      "LINKEDIN_ASSISTANT_POST_SAFETY_VALIDATE_LINK_PREVIEWS"
+    ) ??
+    parseOptionalBoolean(
+      fileConfig.validateLinkPreviews,
+      `${fileLabel}.validateLinkPreviews`
+    ) ??
+    DEFAULT_LINKEDIN_POST_SAFETY_LINT_CONFIG.validateLinkPreviews;
+
+  const linkPreviewValidationTimeoutMs =
+    parseIntegerEnv(
+      process.env.LINKEDIN_ASSISTANT_POST_SAFETY_LINK_TIMEOUT_MS,
+      "LINKEDIN_ASSISTANT_POST_SAFETY_LINK_TIMEOUT_MS",
+      {
+        max: MAX_LINK_PREVIEW_VALIDATION_TIMEOUT_MS
+      }
+    ) ??
+    parseOptionalPositiveInteger(
+      fileConfig.linkPreviewValidationTimeoutMs,
+      `${fileLabel}.linkPreviewValidationTimeoutMs`,
+      {
+        max: MAX_LINK_PREVIEW_VALIDATION_TIMEOUT_MS
+      }
+    ) ??
+    DEFAULT_LINKEDIN_POST_SAFETY_LINT_CONFIG.linkPreviewValidationTimeoutMs;
+
+  return {
+    maxLength,
+    bannedPhrases,
+    validateLinkPreviews,
+    linkPreviewValidationTimeoutMs
+  };
 }
 
 function normalizePostText(value: string): string {
@@ -152,7 +503,10 @@ function hasUnsupportedControlCharacters(value: string): boolean {
   return false;
 }
 
-export function validateLinkedInPostText(value: string): ValidatedPostText {
+export function validateLinkedInPostText(
+  value: string,
+  maxLength: number = LINKEDIN_POST_MAX_LENGTH
+): ValidatedPostText {
   const normalizedText = normalizePostText(value);
 
   if (!normalizedText) {
@@ -170,13 +524,14 @@ export function validateLinkedInPostText(value: string): ValidatedPostText {
   }
 
   const characterCount = normalizedText.length;
-  if (characterCount > LINKEDIN_POST_MAX_LENGTH) {
+  if (characterCount > maxLength) {
     throw new LinkedInAssistantError(
       "ACTION_PRECONDITION_FAILED",
-      `Post text must be ${LINKEDIN_POST_MAX_LENGTH} characters or fewer.`,
+      `Post text must be ${maxLength} characters or fewer.`,
       {
         character_count: characterCount,
-        max_length: LINKEDIN_POST_MAX_LENGTH
+        max_length: maxLength,
+        linkedin_max_length: LINKEDIN_POST_MAX_LENGTH
       }
     );
   }
@@ -191,6 +546,312 @@ export function validateLinkedInPostText(value: string): ValidatedPostText {
     containsUrl: /(https?:\/\/|www\.)/i.test(normalizedText),
     containsMention: /(^|\s)@[\p{L}\p{N}_.-]+/iu.test(normalizedText),
     containsHashtag: /(^|\s)#[\p{L}\p{N}_-]+/iu.test(normalizedText)
+  };
+}
+
+function normalizeBannedPhraseMatcher(value: string): string {
+  return normalizeText(value).replace(/[\s\r\n]+/g, " ");
+}
+
+function matchConfiguredBannedPhrases(
+  text: string,
+  bannedPhrases: string[]
+): string[] {
+  return bannedPhrases.filter((phrase) => {
+    const normalizedPhrase = normalizeBannedPhraseMatcher(phrase);
+    if (!normalizedPhrase) {
+      return false;
+    }
+
+    const normalizedPattern = escapeRegExp(normalizedPhrase).replace(/\s+/g, "\\s+");
+    return new RegExp(
+      `(^|[^\\p{L}\\p{N}_])${normalizedPattern}($|[^\\p{L}\\p{N}_])`,
+      "iu"
+    ).test(text);
+  });
+}
+
+function trimTrailingUrlPunctuation(value: string): string {
+  return value.replace(/[.,!?;:]+$/u, "");
+}
+
+function extractUrlsFromPostText(text: string): ExtractedPostLinks {
+  const validUrls: string[] = [];
+  const invalidUrls: string[] = [];
+  const seenValidUrls = new Set<string>();
+  const seenInvalidUrls = new Set<string>();
+  const matches = text.match(/\b(?:https?:\/\/|www\.)[^\s<>{}"']+/giu) ?? [];
+
+  for (const match of matches) {
+    const trimmedUrl = trimTrailingUrlPunctuation(match);
+    const candidateUrl = /^https?:\/\//iu.test(trimmedUrl)
+      ? trimmedUrl
+      : `https://${trimmedUrl}`;
+
+    try {
+      const url = new URL(candidateUrl);
+      if (url.protocol !== "http:" && url.protocol !== "https:") {
+        throw new Error("Only http:// and https:// links are supported.");
+      }
+
+      const normalizedUrl = url.toString();
+      if (seenValidUrls.has(normalizedUrl)) {
+        continue;
+      }
+
+      seenValidUrls.add(normalizedUrl);
+      validUrls.push(normalizedUrl);
+    } catch {
+      if (seenInvalidUrls.has(trimmedUrl)) {
+        continue;
+      }
+
+      seenInvalidUrls.add(trimmedUrl);
+      invalidUrls.push(trimmedUrl);
+    }
+  }
+
+  return {
+    validUrls,
+    invalidUrls
+  };
+}
+
+function isPrivateHostname(hostname: string): boolean {
+  const normalizedHostname = hostname.trim().toLowerCase();
+  if (
+    normalizedHostname === "localhost" ||
+    normalizedHostname.endsWith(".localhost") ||
+    normalizedHostname.endsWith(".local") ||
+    normalizedHostname.endsWith(".home.arpa")
+  ) {
+    return true;
+  }
+
+  const ipVersion = isIP(normalizedHostname);
+  if (ipVersion === 4) {
+    const octets = normalizedHostname.split(".").map((segment) => Number.parseInt(segment, 10));
+    const firstOctet = octets[0] ?? -1;
+    const secondOctet = octets[1] ?? -1;
+
+    if (firstOctet === 10 || firstOctet === 127) {
+      return true;
+    }
+
+    if (firstOctet === 169 && secondOctet === 254) {
+      return true;
+    }
+
+    if (firstOctet === 192 && secondOctet === 168) {
+      return true;
+    }
+
+    if (firstOctet === 172 && secondOctet >= 16 && secondOctet <= 31) {
+      return true;
+    }
+
+    return false;
+  }
+
+  if (ipVersion === 6) {
+    return (
+      normalizedHostname === "::1" ||
+      normalizedHostname.startsWith("fc") ||
+      normalizedHostname.startsWith("fd") ||
+      normalizedHostname.startsWith("fe80:")
+    );
+  }
+
+  return false;
+}
+
+async function readResponseSnippet(response: Response, maxBytes: number): Promise<string> {
+  if (!response.body) {
+    return "";
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let remainingBytes = maxBytes;
+  let html = "";
+
+  try {
+    while (remainingBytes > 0) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+
+      const chunk = value.subarray(0, remainingBytes);
+      remainingBytes -= chunk.byteLength;
+      html += decoder.decode(chunk, { stream: remainingBytes > 0 });
+
+      if (chunk.byteLength < value.byteLength) {
+        break;
+      }
+    }
+
+    html += decoder.decode();
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      // Best effort.
+    }
+  }
+
+  return html;
+}
+
+function looksPreviewableHtml(html: string): boolean {
+  return (
+    /<title\b[^>]*>.*?<\/title>/isu.test(html) ||
+    /property=["']og:title["']/iu.test(html) ||
+    /name=["']twitter:title["']/iu.test(html) ||
+    /name=["']description["']/iu.test(html) ||
+    /property=["']og:description["']/iu.test(html)
+  );
+}
+
+async function validateLinkPreview(url: string, timeoutMs: number): Promise<string | null> {
+  const parsedUrl = new URL(url);
+  if (isPrivateHostname(parsedUrl.hostname)) {
+    return "Private, loopback, or local-network links cannot be preview-validated.";
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(parsedUrl, {
+      method: "GET",
+      redirect: "follow",
+      signal: controller.signal,
+      headers: {
+        accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.1"
+      }
+    });
+
+    if (!response.ok) {
+      return `Received HTTP ${response.status}.`;
+    }
+
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!/\bhtml\b/iu.test(contentType)) {
+      return `Expected HTML content but received ${contentType || "unknown content type"}.`;
+    }
+
+    const htmlSnippet = await readResponseSnippet(response, LINK_PREVIEW_BODY_BYTE_LIMIT);
+    if (!looksPreviewableHtml(htmlSnippet)) {
+      return "The page does not expose HTML title or preview metadata near the top of the document.";
+    }
+
+    return null;
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      return `Timed out after ${timeoutMs}ms.`;
+    }
+
+    return error instanceof Error ? error.message : String(error);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function validateConfiguredLinkPreviews(
+  urls: string[],
+  timeoutMs: number
+): Promise<void> {
+  const results = await Promise.all(
+    urls.map(async (url): Promise<LinkPreviewValidationFailure | null> => {
+      const failureReason = await validateLinkPreview(url, timeoutMs);
+      if (!failureReason) {
+        return null;
+      }
+
+      return {
+        url,
+        reason: failureReason
+      };
+    })
+  );
+
+  const failedLinks = results.filter(
+    (result): result is LinkPreviewValidationFailure => result !== null
+  );
+  if (failedLinks.length === 0) {
+    return;
+  }
+
+  const firstFailedLink = failedLinks[0];
+  if (!firstFailedLink) {
+    return;
+  }
+
+  throw new LinkedInAssistantError(
+    "ACTION_PRECONDITION_FAILED",
+    failedLinks.length === 1
+      ? `Link preview validation failed for ${firstFailedLink.url}.`
+      : `Link preview validation failed for ${failedLinks.length} links.`,
+    {
+      invalid_links: failedLinks,
+      link_preview_validation: {
+        enabled: true,
+        timeout_ms: timeoutMs
+      }
+    }
+  );
+}
+
+export async function lintLinkedInPostContent(
+  value: string,
+  config: LinkedInPostSafetyLintConfig = DEFAULT_LINKEDIN_POST_SAFETY_LINT_CONFIG
+): Promise<LinkedInPostLintResult> {
+  const validatedText = validateLinkedInPostText(value, config.maxLength);
+  const matchedBannedPhrases = matchConfiguredBannedPhrases(
+    validatedText.normalizedText,
+    config.bannedPhrases
+  );
+  if (matchedBannedPhrases.length > 0) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      matchedBannedPhrases.length === 1
+        ? `Post text contains banned phrase "${matchedBannedPhrases[0]}".`
+        : `Post text contains ${matchedBannedPhrases.length} banned phrases.`,
+      {
+        banned_phrases: matchedBannedPhrases,
+        configured_banned_phrase_count: config.bannedPhrases.length
+      }
+    );
+  }
+
+  const extractedLinks = extractUrlsFromPostText(validatedText.normalizedText);
+  if (config.validateLinkPreviews) {
+    if (extractedLinks.invalidUrls.length > 0) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        extractedLinks.invalidUrls.length === 1
+          ? `Post text contains an invalid URL: ${extractedLinks.invalidUrls[0]}.`
+          : `Post text contains ${extractedLinks.invalidUrls.length} invalid URLs.`,
+        {
+          invalid_urls: extractedLinks.invalidUrls,
+          link_preview_validation: {
+            enabled: true,
+            timeout_ms: config.linkPreviewValidationTimeoutMs
+          }
+        }
+      );
+    }
+
+    await validateConfiguredLinkPreviews(
+      extractedLinks.validUrls,
+      config.linkPreviewValidationTimeoutMs
+    );
+  }
+
+  return {
+    validatedText,
+    urls: extractedLinks.validUrls
   };
 }
 
@@ -972,7 +1633,11 @@ export class LinkedInPostsService {
     input: PrepareCreatePostInput
   ): Promise<PreparedActionResult> {
     const profileName = input.profileName ?? "default";
-    const validatedText = validateLinkedInPostText(input.text);
+    const lintResult = await lintLinkedInPostContent(
+      input.text,
+      this.runtime.postSafetyLint
+    );
+    const validatedText = lintResult.validatedText;
     const visibility = normalizeLinkedInPostVisibility(input.visibility, "public");
     const tracePath = `linkedin/trace-post-prepare-${Date.now()}.zip`;
     const artifactPaths: string[] = [tracePath];
@@ -1039,10 +1704,18 @@ export class LinkedInPostsService {
                 character_count: validatedText.characterCount,
                 line_count: validatedText.lineCount,
                 paragraph_count: validatedText.paragraphCount,
-                max_length: LINKEDIN_POST_MAX_LENGTH,
+                max_length: this.runtime.postSafetyLint.maxLength,
+                linkedin_max_length: LINKEDIN_POST_MAX_LENGTH,
                 contains_url: validatedText.containsUrl,
                 contains_mention: validatedText.containsMention,
-                contains_hashtag: validatedText.containsHashtag
+                contains_hashtag: validatedText.containsHashtag,
+                checked_url_count: lintResult.urls.length,
+                checked_urls: lintResult.urls,
+                banned_phrase_count: this.runtime.postSafetyLint.bannedPhrases.length,
+                link_preview_validation_enabled:
+                  this.runtime.postSafetyLint.validateLinkPreviews,
+                link_preview_validation_timeout_ms:
+                  this.runtime.postSafetyLint.linkPreviewValidationTimeoutMs
               },
               artifacts: artifactPaths.map((path) => ({
                 type: path.endsWith(".zip") ? "trace" : "screenshot",
