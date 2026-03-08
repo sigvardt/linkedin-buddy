@@ -47,6 +47,8 @@ import {
 import {
   LinkedInPostsService,
   createPostActionExecutors,
+  resolveLinkedInPostSafetyLintConfig,
+  type LinkedInPostSafetyLintConfig,
   type LinkedInPostsRuntime
 } from "./linkedinPosts.js";
 import { JsonEventLogger } from "./logging.js";
@@ -77,6 +79,7 @@ export interface CoreRuntime {
   cdpUrl?: string | undefined;
   confirmFailureArtifacts: ConfirmFailureArtifactConfig;
   privacy: PrivacyConfig;
+  postSafetyLint: LinkedInPostSafetyLintConfig;
   db: AssistantDatabase;
   logger: JsonEventLogger;
   artifacts: ArtifactHelpers;
@@ -104,6 +107,7 @@ export function createCoreRuntime(
   const paths = resolveConfigPaths(options.baseDir);
   ensureConfigPaths(paths);
   const privacy = resolvePrivacyConfig(options.privacy);
+  const postSafetyLint = resolveLinkedInPostSafetyLintConfig(paths.baseDir);
 
   const db = new AssistantDatabase(options.dbPath ?? paths.dbPath);
   const runId = options.runId ?? createRunId();
@@ -151,6 +155,7 @@ export function createCoreRuntime(
     cdpUrl: options.cdpUrl,
     confirmFailureArtifacts,
     privacy,
+    postSafetyLint,
     db,
     logger,
     artifacts,

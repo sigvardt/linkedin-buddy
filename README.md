@@ -46,6 +46,28 @@ Privacy / redaction controls:
 
 `partial` hashes names and stores/logs only short message excerpts. `full` replaces sensitive message bodies with fully redacted markers.
 
+Post safety lint configuration:
+
+- Optional config file: `~/.linkedin-assistant/linkedin-owa-agentools/config.json`
+- JSON shape:
+
+```json
+{
+  "postSafetyLint": {
+    "maxLength": 2800,
+    "bannedPhrases": ["take this offline", "guaranteed returns"],
+    "validateLinkPreviews": true,
+    "linkPreviewValidationTimeoutMs": 5000
+  }
+}
+```
+
+- Environment overrides:
+  - `LINKEDIN_ASSISTANT_POST_SAFETY_MAX_LENGTH`
+  - `LINKEDIN_ASSISTANT_POST_SAFETY_BANNED_PHRASES` (JSON array or comma/newline-separated list)
+  - `LINKEDIN_ASSISTANT_POST_SAFETY_VALIDATE_LINK_PREVIEWS`
+  - `LINKEDIN_ASSISTANT_POST_SAFETY_LINK_TIMEOUT_MS`
+
 ## CLI Usage
 
 Run commands via workspace binaries:
