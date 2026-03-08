@@ -1,4 +1,9 @@
 import type { Page } from "playwright-core";
+import {
+  DEFAULT_LINKEDIN_SELECTOR_LOCALE,
+  buildLinkedInAriaLabelContainsSelector,
+  type LinkedInSelectorLocale
+} from "../selectorLocale.js";
 
 export interface LinkedInSessionInspection {
   authenticated: boolean;
@@ -10,8 +15,13 @@ export interface LinkedInSessionInspection {
 const LOGIN_FORM_SELECTOR = "input[name='session_key'], input#username";
 const CHECKPOINT_FORM_SELECTOR = "form[action*='checkpoint']";
 const AUTH_NAV_SELECTOR = "nav.global-nav";
-const AUTH_PROFILE_SELECTOR =
-  "button[aria-label*='Me'], [data-control-name='nav.settings_view_profile']";
+
+function createAuthProfileSelector(selectorLocale: LinkedInSelectorLocale): string {
+  return [
+    buildLinkedInAriaLabelContainsSelector("button", "me", selectorLocale),
+    "[data-control-name='nav.settings_view_profile']"
+  ].join(", ");
+}
 
 async function isVisibleSafe(page: Page, selector: string): Promise<boolean> {
   try {
@@ -56,8 +66,11 @@ async function hasSessionCookie(page: Page): Promise<boolean> {
 }
 
 export async function inspectLinkedInSession(
-  page: Page
+  page: Page,
+  options: { selectorLocale?: LinkedInSelectorLocale } = {}
 ): Promise<LinkedInSessionInspection> {
+  const selectorLocale =
+    options.selectorLocale ?? DEFAULT_LINKEDIN_SELECTOR_LOCALE;
   const checkedAt = new Date().toISOString();
   const currentUrl = page.url();
 
@@ -88,7 +101,10 @@ export async function inspectLinkedInSession(
   }
 
   const navVisible = await isVisibleSafe(page, AUTH_NAV_SELECTOR);
-  const profileMenuVisible = await isVisibleSafe(page, AUTH_PROFILE_SELECTOR);
+  const profileMenuVisible = await isVisibleSafe(
+    page,
+    createAuthProfileSelector(selectorLocale)
+  );
   const sessionCookiePresent = await hasSessionCookie(page);
 
   if (navVisible || profileMenuVisible || sessionCookiePresent) {

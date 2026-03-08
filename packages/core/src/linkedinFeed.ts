@@ -10,6 +10,16 @@ import type { JsonEventLogger } from "./logging.js";
 import type { ProfileManager } from "./profileManager.js";
 import type { RateLimiter, RateLimiterState } from "./rateLimiter.js";
 import type {
+  LinkedInSelectorLocale,
+  LinkedInSelectorPhraseKey
+} from "./selectorLocale.js";
+import {
+  buildLinkedInAriaLabelContainsSelector,
+  buildLinkedInSelectorPhraseRegex,
+  formatLinkedInSelectorRegexHint,
+  valueContainsLinkedInSelectorPhrase
+} from "./selectorLocale.js";
+import type {
   ActionExecutor,
   ActionExecutorInput,
   ActionExecutorResult,
@@ -56,6 +66,7 @@ export interface CommentOnPostInput {
 export interface LinkedInFeedExecutorRuntime {
   auth: LinkedInAuthService;
   cdpUrl?: string | undefined;
+  selectorLocale: LinkedInSelectorLocale;
   profileManager: ProfileManager;
   logger: JsonEventLogger;
   rateLimiter: RateLimiter;
@@ -802,7 +813,22 @@ interface ReactionButtonState {
   buttonText: string;
 }
 
-function inferReactionFromText(value: string): LinkedInFeedReaction | null {
+const REACTION_SELECTOR_KEYS: Record<
+  LinkedInFeedReaction,
+  LinkedInSelectorPhraseKey
+> = {
+  like: "like",
+  celebrate: "celebrate",
+  support: "support",
+  love: "love",
+  insightful: "insightful",
+  funny: "funny"
+};
+
+function inferReactionFromText(
+  value: string,
+  selectorLocale: LinkedInSelectorLocale
+): LinkedInFeedReaction | null {
   const normalized = normalizeText(value).toLowerCase();
   if (!normalized) {
     return null;
@@ -810,7 +836,13 @@ function inferReactionFromText(value: string): LinkedInFeedReaction | null {
 
   for (const reaction of LINKEDIN_FEED_REACTION_TYPES) {
     const ui = LINKEDIN_FEED_REACTION_MAP[reaction];
-    if (normalized.includes(ui.label.toLowerCase())) {
+    if (
+      valueContainsLinkedInSelectorPhrase(
+        normalized,
+        REACTION_SELECTOR_KEYS[reaction],
+        selectorLocale
+      )
+    ) {
       return reaction;
     }
     if (normalized.includes(ui.iconType.toLowerCase())) {
@@ -821,7 +853,10 @@ function inferReactionFromText(value: string): LinkedInFeedReaction | null {
   return null;
 }
 
-async function getReactionButtonState(reactButton: Locator): Promise<ReactionButtonState> {
+async function getReactionButtonState(
+  reactButton: Locator,
+  selectorLocale: LinkedInSelectorLocale
+): Promise<ReactionButtonState> {
   const ariaPressed = normalizeText(await reactButton.getAttribute("aria-pressed")).toLowerCase();
   const className = normalizeText(await reactButton.getAttribute("class"));
   const ariaLabel = normalizeText(await reactButton.getAttribute("aria-label"));
@@ -832,8 +867,8 @@ async function getReactionButtonState(reactButton: Locator): Promise<ReactionBut
     className.toLowerCase().includes("react-button--active") ||
     /remove\s+your\s+reaction|unreact|reacted|undo/i.test(ariaLabel);
 
-  const reactionFromLabel = inferReactionFromText(ariaLabel);
-  const reactionFromText = inferReactionFromText(buttonText);
+  const reactionFromLabel = inferReactionFromText(ariaLabel, selectorLocale);
+  const reactionFromText = inferReactionFromText(buttonText, selectorLocale);
 
   return {
     reacted,
@@ -846,9 +881,10 @@ async function getReactionButtonState(reactButton: Locator): Promise<ReactionBut
 
 async function isDesiredReactionActive(
   reactButton: Locator,
-  desiredReaction: LinkedInFeedReaction
+  desiredReaction: LinkedInFeedReaction,
+  selectorLocale: LinkedInSelectorLocale
 ): Promise<boolean> {
-  const state = await getReactionButtonState(reactButton);
+  const state = await getReactionButtonState(reactButton, selectorLocale);
   if (!state.reacted) {
     return false;
   }
@@ -864,9 +900,30 @@ async function isDesiredReactionActive(
 async function selectReactionFromMenu(
   page: Page,
   reactButton: Locator,
-  reaction: LinkedInFeedReaction
+  reaction: LinkedInFeedReaction,
+  selectorLocale: LinkedInSelectorLocale
 ): Promise<string> {
-  const reactionUi = LINKEDIN_FEED_REACTION_MAP[reaction];
+  const reactionKey = REACTION_SELECTOR_KEYS[reaction];
+  const reactionLabelRegex = buildLinkedInSelectorPhraseRegex(
+    reactionKey,
+    selectorLocale,
+    { exact: true }
+  );
+  const reactionLabelRegexHint = formatLinkedInSelectorRegexHint(
+    reactionKey,
+    selectorLocale,
+    { exact: true }
+  );
+  const reactionAriaSelector = buildLinkedInAriaLabelContainsSelector(
+    "button.reactions-menu__reaction-index",
+    reactionKey,
+    selectorLocale
+  );
+  const reactionFallbackAriaSelector = buildLinkedInAriaLabelContainsSelector(
+    "button",
+    reactionKey,
+    selectorLocale
+  );
   await reactButton.hover({ timeout: 5_000 });
 
   const menu = page.locator("span.reactions-menu--active").first();
@@ -880,26 +937,22 @@ async function selectReactionFromMenu(
 
   const candidateButtons: SelectorCandidate[] = [
     {
-      key: "menu-reaction-aria",
-      selectorHint: `button.reactions-menu__reaction-index[aria-label='${reactionUi.menuAriaLabel}']`,
-      locatorFactory: () =>
-        menu.locator(
-          `button.reactions-menu__reaction-index[aria-label="${reactionUi.menuAriaLabel}"]`
-        )
-    },
-    {
       key: "menu-reaction-text",
-      selectorHint: `button.reactions-menu__reaction-index hasText=${reactionUi.label}`,
+      selectorHint: `button.reactions-menu__reaction-index hasText ${reactionLabelRegexHint}`,
       locatorFactory: () =>
         menu
           .locator("button.reactions-menu__reaction-index")
-          .filter({ hasText: new RegExp(`^${reactionUi.label}$`, "i") })
+          .filter({ hasText: reactionLabelRegex })
+    },
+    {
+      key: "menu-reaction-aria",
+      selectorHint: reactionAriaSelector,
+      locatorFactory: () => menu.locator(reactionAriaSelector)
     },
     {
       key: "menu-reaction-fallback",
-      selectorHint: `button[aria-label*='${reactionUi.label}']`,
-      locatorFactory: () =>
-        menu.locator(`button[aria-label*="${reactionUi.label}"]`)
+      selectorHint: reactionFallbackAriaSelector,
+      locatorFactory: () => menu.locator(reactionFallbackAriaSelector)
     }
   ];
 
@@ -977,7 +1030,25 @@ async function findTargetPostLocator(page: Page, postUrl: string): Promise<Targe
   };
 }
 
-async function expandCommentsForPost(page: Page, postRoot: Locator): Promise<string | null> {
+async function expandCommentsForPost(
+  page: Page,
+  postRoot: Locator,
+  selectorLocale: LinkedInSelectorLocale
+): Promise<string | null> {
+  const commentRegex = buildLinkedInSelectorPhraseRegex(
+    "comment",
+    selectorLocale
+  );
+  const commentRegexHint = formatLinkedInSelectorRegexHint(
+    "comment",
+    selectorLocale
+  );
+  const commentAriaSelector = buildLinkedInAriaLabelContainsSelector(
+    "button",
+    "comment",
+    selectorLocale
+  );
+
   const candidates: SelectorCandidate[] = [
     {
       key: "post-social-action-comment",
@@ -986,15 +1057,15 @@ async function expandCommentsForPost(page: Page, postRoot: Locator): Promise<str
     },
     {
       key: "post-aria-comment-button",
-      selectorHint: "button[aria-label*='Comment']",
-      locatorFactory: () => postRoot.locator("button[aria-label*='Comment']")
+      selectorHint: commentAriaSelector,
+      locatorFactory: () => postRoot.locator(commentAriaSelector)
     },
     {
       key: "post-role-button-comment",
-      selectorHint: "getByRole(button, /comment/i)",
+      selectorHint: `getByRole(button, ${commentRegexHint})`,
       locatorFactory: () =>
         postRoot.getByRole("button", {
-          name: /comment/i
+          name: commentRegex
         })
     }
   ];
@@ -1114,6 +1185,19 @@ export class LikePostActionExecutor
           await waitForPostSurface(page);
 
           let targetPost = await findTargetPostLocator(page, postUrl);
+          const likeOrReactRegex = buildLinkedInSelectorPhraseRegex(
+            ["like", "react"],
+            runtime.selectorLocale
+          );
+          const likeOrReactRegexHint = formatLinkedInSelectorRegexHint(
+            ["like", "react"],
+            runtime.selectorLocale
+          );
+          const likeReactAriaSelector = buildLinkedInAriaLabelContainsSelector(
+            "button",
+            ["like", "react", "reaction"],
+            runtime.selectorLocale
+          );
 
           const resolveReactionButton = async (postRoot: Locator) =>
             findVisibleLocatorOrThrow(
@@ -1134,19 +1218,15 @@ export class LikePostActionExecutor
                 },
                 {
                   key: "post-aria-like-button",
-                  selectorHint:
-                    "button[aria-label*='Like'], button[aria-label*='React'], button[aria-label*='reaction']",
-                  locatorFactory: () =>
-                    postRoot.locator(
-                      "button[aria-label*='Like'], button[aria-label*='React'], button[aria-label*='reaction']"
-                    )
+                  selectorHint: likeReactAriaSelector,
+                  locatorFactory: () => postRoot.locator(likeReactAriaSelector)
                 },
                 {
                   key: "post-role-button-like",
-                  selectorHint: "getByRole(button, /like|react/i)",
+                  selectorHint: `getByRole(button, ${likeOrReactRegexHint})`,
                   locatorFactory: () =>
                     postRoot.getByRole("button", {
-                      name: /\blike\b|\breact\b/i
+                      name: likeOrReactRegex
                     })
                 }
               ],
@@ -1156,7 +1236,8 @@ export class LikePostActionExecutor
           let reactButton = await resolveReactionButton(targetPost.locator);
           const wasAlreadyReacted = await isDesiredReactionActive(
             reactButton.locator,
-            reaction
+            reaction,
+            runtime.selectorLocale
           );
           let reactionSelectorKey: string | null = null;
 
@@ -1165,7 +1246,12 @@ export class LikePostActionExecutor
             if (reaction === "like") {
               await reactButton.locator.click({ timeout: 5_000 });
               verifiedReaction = await waitForCondition(
-                async () => isDesiredReactionActive(reactButton.locator, reaction),
+                async () =>
+                  isDesiredReactionActive(
+                    reactButton.locator,
+                    reaction,
+                    runtime.selectorLocale
+                  ),
                 6_000
               );
 
@@ -1174,10 +1260,16 @@ export class LikePostActionExecutor
                   reactionSelectorKey = await selectReactionFromMenu(
                     page,
                     reactButton.locator,
-                    reaction
+                    reaction,
+                    runtime.selectorLocale
                   );
                   verifiedReaction = await waitForCondition(
-                    async () => isDesiredReactionActive(reactButton.locator, reaction),
+                    async () =>
+                      isDesiredReactionActive(
+                        reactButton.locator,
+                        reaction,
+                        runtime.selectorLocale
+                      ),
                     6_000
                   );
                 } catch {
@@ -1188,10 +1280,16 @@ export class LikePostActionExecutor
               reactionSelectorKey = await selectReactionFromMenu(
                 page,
                 reactButton.locator,
-                reaction
+                reaction,
+                runtime.selectorLocale
               );
               verifiedReaction = await waitForCondition(
-                async () => isDesiredReactionActive(reactButton.locator, reaction),
+                async () =>
+                  isDesiredReactionActive(
+                    reactButton.locator,
+                    reaction,
+                    runtime.selectorLocale
+                  ),
                 8_000
               );
             }
@@ -1202,11 +1300,18 @@ export class LikePostActionExecutor
             await waitForPostSurface(page);
             targetPost = await findTargetPostLocator(page, postUrl);
             reactButton = await resolveReactionButton(targetPost.locator);
-            verifiedReaction = await isDesiredReactionActive(reactButton.locator, reaction);
+            verifiedReaction = await isDesiredReactionActive(
+              reactButton.locator,
+              reaction,
+              runtime.selectorLocale
+            );
           }
 
           if (!verifiedReaction) {
-            const currentReactionState = await getReactionButtonState(reactButton.locator);
+            const currentReactionState = await getReactionButtonState(
+              reactButton.locator,
+              runtime.selectorLocale
+            );
             throw new LinkedInAssistantError(
               "UNKNOWN",
               "Reaction action could not be verified on the target post.",
@@ -1330,6 +1435,42 @@ export class CommentOnPostActionExecutor
           await waitForPostSurface(page);
 
           let targetPost = await findTargetPostLocator(page, postUrl);
+          const commentRegex = buildLinkedInSelectorPhraseRegex(
+            "comment",
+            runtime.selectorLocale
+          );
+          const commentRegexHint = formatLinkedInSelectorRegexHint(
+            "comment",
+            runtime.selectorLocale
+          );
+          const commentAriaSelector = buildLinkedInAriaLabelContainsSelector(
+            "button",
+            "comment",
+            runtime.selectorLocale
+          );
+          const commentComposerRegex = buildLinkedInSelectorPhraseRegex(
+            ["add_comment", "comment"],
+            runtime.selectorLocale
+          );
+          const commentComposerRegexHint = formatLinkedInSelectorRegexHint(
+            ["add_comment", "comment"],
+            runtime.selectorLocale
+          );
+          const postRegex = buildLinkedInSelectorPhraseRegex(
+            "post",
+            runtime.selectorLocale,
+            { exact: true }
+          );
+          const postRegexHint = formatLinkedInSelectorRegexHint(
+            "post",
+            runtime.selectorLocale,
+            { exact: true }
+          );
+          const commentSubmitAriaSelector = buildLinkedInAriaLabelContainsSelector(
+            "button",
+            ["post_comment", "post"],
+            runtime.selectorLocale
+          );
 
           const commentTrigger = await findVisibleLocatorOrThrow(
             page,
@@ -1342,16 +1483,16 @@ export class CommentOnPostActionExecutor
               },
               {
                 key: "post-aria-comment-button",
-                selectorHint: "button[aria-label*='Comment']",
+                selectorHint: commentAriaSelector,
                 locatorFactory: () =>
-                  targetPost.locator.locator("button[aria-label*='Comment']")
+                  targetPost.locator.locator(commentAriaSelector)
               },
               {
                 key: "post-role-button-comment",
-                selectorHint: "getByRole(button, /comment/i)",
+                selectorHint: `getByRole(button, ${commentRegexHint})`,
                 locatorFactory: () =>
                   targetPost.locator.getByRole("button", {
-                    name: /comment/i
+                    name: commentRegex
                   })
               },
               {
@@ -1385,10 +1526,10 @@ export class CommentOnPostActionExecutor
               },
               {
                 key: "post-role-textbox-comment",
-                selectorHint: "getByRole(textbox, /add a comment|comment/i)",
+                selectorHint: `getByRole(textbox, ${commentComposerRegexHint})`,
                 locatorFactory: () =>
                   targetPost.locator.getByRole("textbox", {
-                    name: /add a comment|comment/i
+                    name: commentComposerRegex
                   })
               },
               {
@@ -1428,27 +1569,25 @@ export class CommentOnPostActionExecutor
               },
               {
                 key: "comment-submit-role-post",
-                selectorHint: "getByRole(button, /^post$/i)",
+                selectorHint: `getByRole(button, ${postRegexHint})`,
                 locatorFactory: () =>
                   composerRoot.getByRole("button", {
-                    name: /^post$/i
+                    name: postRegex
                   })
               },
               {
                 key: "comment-submit-role-comment",
-                selectorHint: "getByRole(button, /^comment$/i)",
+                selectorHint: `getByRole(button, ${commentRegexHint})`,
                 locatorFactory: () =>
                   composerRoot.getByRole("button", {
-                    name: /^comment$/i
+                    name: commentRegex
                   })
               },
               {
                 key: "comment-submit-aria",
-                selectorHint: "button[aria-label*='Post comment'], button[aria-label*='Post']",
+                selectorHint: commentSubmitAriaSelector,
                 locatorFactory: () =>
-                  composerRoot.locator(
-                    "button[aria-label*='Post comment'], button[aria-label*='Post']"
-                  )
+                  composerRoot.locator(commentSubmitAriaSelector)
               },
               {
                 key: "comment-submit-post-root-fallback",
@@ -1489,7 +1628,11 @@ export class CommentOnPostActionExecutor
           await page.reload({ waitUntil: "domcontentloaded" });
           await waitForPostSurface(page);
           targetPost = await findTargetPostLocator(page, postUrl);
-          const reopenCommentKey = await expandCommentsForPost(page, targetPost.locator);
+          const reopenCommentKey = await expandCommentsForPost(
+            page,
+            targetPost.locator,
+            runtime.selectorLocale
+          );
 
           const commentVerified = await waitForCondition(
             async () => isCommentVisibleInPost(targetPost.locator, text),

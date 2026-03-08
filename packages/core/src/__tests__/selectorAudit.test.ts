@@ -45,6 +45,15 @@ describe("createLinkedInSelectorAuditRegistry", () => {
       }
     }
   });
+
+  it("builds locale-aware selector hints with english fallback", () => {
+    const registry = createLinkedInSelectorAuditRegistry("da");
+    const feedDefinition = registry.find((pageDefinition) => pageDefinition.page === "feed");
+    const primaryCandidate = feedDefinition?.selectors[0]?.candidates[0];
+
+    expect(primaryCandidate?.selectorHint).toContain("Start et opslag");
+    expect(primaryCandidate?.selectorHint).toContain("Start a post");
+  });
 });
 
 describe("LinkedInSelectorAuditService", () => {

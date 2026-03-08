@@ -20,6 +20,11 @@ import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
 import type { RateLimiter, RateLimiterState } from "./rateLimiter.js";
+import type { LinkedInSelectorLocale } from "./selectorLocale.js";
+import {
+  buildLinkedInSelectorPhraseRegex,
+  formatLinkedInSelectorRegexHint
+} from "./selectorLocale.js";
 import type {
   ActionExecutor,
   ActionExecutorRegistry,
@@ -130,6 +135,7 @@ export interface LinkedInMessagingRuntime {
   db: AssistantDatabase;
   auth: LinkedInAuthService;
   cdpUrl?: string | undefined;
+  selectorLocale: LinkedInSelectorLocale;
   profileManager: ProfileManager;
   artifacts: ArtifactHelpers;
   confirmFailureArtifacts: ConfirmFailureArtifactConfig;
@@ -1386,20 +1392,47 @@ class SendMessageActionExecutor
             );
           }
 
+          const composerNameRegex = buildLinkedInSelectorPhraseRegex(
+            ["write_message", "message"],
+            runtime.selectorLocale
+          );
+          const composerNameRegexHint = formatLinkedInSelectorRegexHint(
+            ["write_message", "message"],
+            runtime.selectorLocale
+          );
+          const writeMessagePlaceholderRegex = buildLinkedInSelectorPhraseRegex(
+            "write_message",
+            runtime.selectorLocale
+          );
+          const writeMessagePlaceholderRegexHint = formatLinkedInSelectorRegexHint(
+            "write_message",
+            runtime.selectorLocale
+          );
+          const sendButtonRegex = buildLinkedInSelectorPhraseRegex(
+            "send",
+            runtime.selectorLocale,
+            { exact: true }
+          );
+          const sendButtonRegexHint = formatLinkedInSelectorRegexHint(
+            "send",
+            runtime.selectorLocale,
+            { exact: true }
+          );
+
           const composerSelectors: SelectorCandidate[] = [
             {
               key: "role-textbox-write-message",
-              selectorHint: "getByRole(textbox, /write a message|message/i)",
+              selectorHint: `getByRole(textbox, ${composerNameRegexHint})`,
               locatorFactory: (targetPage) =>
                 targetPage.getByRole("textbox", {
-                  name: /write a message|message/i
+                  name: composerNameRegex
                 })
             },
             {
               key: "placeholder-write-message",
-              selectorHint: "getByPlaceholder(/write a message/i)",
+              selectorHint: `getByPlaceholder(${writeMessagePlaceholderRegexHint})`,
               locatorFactory: (targetPage) =>
-                targetPage.getByPlaceholder(/write a message/i)
+                targetPage.getByPlaceholder(writeMessagePlaceholderRegex)
             },
             {
               key: "msg-contenteditable",
@@ -1429,9 +1462,9 @@ class SendMessageActionExecutor
           const sendButtonSelectors: SelectorCandidate[] = [
             {
               key: "role-button-send",
-              selectorHint: "getByRole(button, /send/i)",
+              selectorHint: `getByRole(button, ${sendButtonRegexHint})`,
               locatorFactory: (targetPage) =>
-                targetPage.getByRole("button", { name: /send/i })
+                targetPage.getByRole("button", { name: sendButtonRegex })
             },
             {
               key: "msg-form-send-button",

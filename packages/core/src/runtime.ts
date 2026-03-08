@@ -3,6 +3,7 @@ import {
   ensureConfigPaths,
   resolveConfigPaths,
   resolveConfirmFailureArtifactConfig,
+  resolveLinkedInSelectorLocaleConfig,
   type ConfigPaths,
   type ConfirmFailureArtifactConfig
 } from "./config.js";
@@ -65,6 +66,7 @@ import {
 } from "./twoPhaseCommit.js";
 import { resolvePrivacyConfig, type PrivacyConfig } from "./privacy.js";
 import { LinkedInSelectorAuditService } from "./selectorAudit.js";
+import type { LinkedInSelectorLocale } from "./selectorLocale.js";
 
 export interface CreateCoreRuntimeOptions {
   baseDir?: string;
@@ -72,12 +74,14 @@ export interface CreateCoreRuntimeOptions {
   runId?: string;
   cdpUrl?: string | undefined;
   privacy?: Partial<PrivacyConfig>;
+  selectorLocale?: string | LinkedInSelectorLocale;
 }
 
 export interface CoreRuntime {
   paths: ConfigPaths;
   runId: string;
   cdpUrl?: string | undefined;
+  selectorLocale: LinkedInSelectorLocale;
   confirmFailureArtifacts: ConfirmFailureArtifactConfig;
   privacy: PrivacyConfig;
   postSafetyLint: LinkedInPostSafetyLintConfig;
@@ -110,6 +114,9 @@ export function createCoreRuntime(
   ensureConfigPaths(paths);
   const privacy = resolvePrivacyConfig(options.privacy);
   const postSafetyLint = resolveLinkedInPostSafetyLintConfig(paths.baseDir);
+  const selectorLocale = resolveLinkedInSelectorLocaleConfig(
+    options.selectorLocale
+  );
 
   const db = new AssistantDatabase(options.dbPath ?? paths.dbPath);
   const runId = options.runId ?? createRunId();
@@ -155,6 +162,7 @@ export function createCoreRuntime(
     paths,
     runId,
     cdpUrl: options.cdpUrl,
+    selectorLocale,
     confirmFailureArtifacts,
     privacy,
     postSafetyLint,
@@ -164,7 +172,11 @@ export function createCoreRuntime(
     twoPhaseCommit,
     rateLimiter: new RateLimiter(db),
     profileManager,
-    auth: new LinkedInAuthService(profileManager, options.cdpUrl),
+    auth: new LinkedInAuthService(
+      profileManager,
+      options.cdpUrl,
+      selectorLocale
+    ),
     profile: undefined as unknown as LinkedInProfileService,
     search: undefined as unknown as LinkedInSearchService,
     jobs: undefined as unknown as LinkedInJobsService,
@@ -216,7 +228,8 @@ export function createCoreRuntime(
 
   logger.log("info", "runtime.started", {
     runId,
-    baseDir: paths.baseDir
+    baseDir: paths.baseDir,
+    selector_locale: selectorLocale
   });
 
   return runtime;

@@ -36,6 +36,7 @@ Default tool-owned state home (profiles, DB, artifacts):
 - `~/.linkedin-assistant/linkedin-owa-agentools`
 - Override with `LINKEDIN_ASSISTANT_HOME=/custom/path`
 - Confirm-failure trace size cap: `LINKEDIN_ASSISTANT_CONFIRM_TRACE_MAX_BYTES` (defaults to `26214400`)
+- Selector locale for UI-text fallbacks: `LINKEDIN_ASSISTANT_SELECTOR_LOCALE` (defaults to `en`; supports `en`, `da`)
 
 Privacy / redaction controls:
 
@@ -116,6 +117,9 @@ npm exec -w @linkedin-assistant/cli -- linkedin audit selectors --profile defaul
 # Audit an attached logged-in browser instead of the tool-owned profile
 npm exec -w @linkedin-assistant/cli -- linkedin audit selectors --profile default --cdp-url http://127.0.0.1:18800
 
+# Force Danish selector fallbacks with English as a safety net
+npm exec -w @linkedin-assistant/cli -- linkedin audit selectors --profile default --selector-locale da
+
 # Show command help and doc reference
 npm exec -w @linkedin-assistant/cli -- linkedin audit selectors --help
 ```
@@ -158,9 +162,9 @@ Failures
 - Reports are written under the run artifact directory as
   `selector-audit/report.json`; screenshots, DOM snapshots, and accessibility
   snapshots are captured only for failures.
-- The CLI has no selector-audit-specific env vars today; configuration is via
-  `--profile`, optional `--cdp-url`, and the programmatic core service options
-  documented in `docs/selector-audit.md`.
+- Selector audit also supports `--selector-locale <locale>` for localized UI
+  text fallbacks, and the default can be set with
+  `LINKEDIN_ASSISTANT_SELECTOR_LOCALE`.
 
 Inbox MVP commands:
 

@@ -22,6 +22,12 @@ import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
 import type { RateLimiter, RateLimiterState } from "./rateLimiter.js";
+import type { LinkedInSelectorLocale } from "./selectorLocale.js";
+import {
+  buildLinkedInAriaLabelContainsSelector,
+  buildLinkedInSelectorPhraseRegex,
+  formatLinkedInSelectorRegexHint
+} from "./selectorLocale.js";
 import type {
   ActionExecutor,
   ActionExecutorInput,
@@ -104,6 +110,7 @@ export interface LinkedInFollowupsExecutorRuntime {
   db: AssistantDatabase;
   auth: LinkedInAuthService;
   cdpUrl?: string | undefined;
+  selectorLocale: LinkedInSelectorLocale;
   profileManager: ProfileManager;
   artifacts: ArtifactHelpers;
   rateLimiter: RateLimiter;
@@ -458,65 +465,129 @@ async function findVisibleLocatorOrThrow(
   );
 }
 
-function profileMessageButtonCandidates(root: Locator): SelectorCandidate[] {
+function profileMessageButtonCandidates(
+  root: Locator,
+  selectorLocale: LinkedInSelectorLocale
+): SelectorCandidate[] {
+  const messageExactRegex = buildLinkedInSelectorPhraseRegex(
+    "message",
+    selectorLocale,
+    { exact: true }
+  );
+  const messageExactRegexHint = formatLinkedInSelectorRegexHint(
+    "message",
+    selectorLocale,
+    { exact: true }
+  );
+  const messageTextRegex = buildLinkedInSelectorPhraseRegex(
+    "message",
+    selectorLocale
+  );
+  const messageTextRegexHint = formatLinkedInSelectorRegexHint(
+    "message",
+    selectorLocale
+  );
+  const messageAriaSelector = buildLinkedInAriaLabelContainsSelector(
+    "button",
+    "message",
+    selectorLocale
+  );
+
   return [
     {
       key: "topcard-message-role",
-      selectorHint: "topCard.getByRole(button, /^message$/i)",
+      selectorHint: `topCard.getByRole(button, ${messageExactRegexHint})`,
       locatorFactory: () =>
         root.getByRole("button", {
-          name: /^message$/i
+          name: messageExactRegex
         })
     },
     {
       key: "topcard-message-text",
-      selectorHint: "topCard button:has-text('Message')",
-      locatorFactory: () => root.locator("button:has-text('Message')")
+      selectorHint: `topCard button hasText ${messageTextRegexHint}`,
+      locatorFactory: () => root.locator("button").filter({ hasText: messageTextRegex })
     },
     {
       key: "topcard-message-aria",
-      selectorHint: "topCard button[aria-label*='Message']",
-      locatorFactory: () => root.locator("button[aria-label*='Message' i]")
+      selectorHint: `topCard ${messageAriaSelector}`,
+      locatorFactory: () => root.locator(messageAriaSelector)
     },
     {
       key: "page-message-role",
-      selectorHint: "page.getByRole(button, /^message$/i)",
+      selectorHint: `page.getByRole(button, ${messageExactRegexHint})`,
       locatorFactory: (page) =>
         page.getByRole("button", {
-          name: /^message$/i
+          name: messageExactRegex
         })
     }
   ];
 }
 
 async function findProfileMessageTrigger(
-  page: Page
+  page: Page,
+  selectorLocale: LinkedInSelectorLocale
 ): Promise<{ locator: Locator; key: string } | null> {
   const topCardRoot = page.locator("main .pv-top-card, main").first();
-  const direct = await findVisibleLocator(page, profileMessageButtonCandidates(topCardRoot));
+  const direct = await findVisibleLocator(
+    page,
+    profileMessageButtonCandidates(topCardRoot, selectorLocale)
+  );
   if (direct) {
     return direct;
   }
 
+  const moreExactRegex = buildLinkedInSelectorPhraseRegex(
+    "more",
+    selectorLocale,
+    { exact: true }
+  );
+  const moreExactRegexHint = formatLinkedInSelectorRegexHint(
+    "more",
+    selectorLocale,
+    { exact: true }
+  );
+  const moreActionsAriaSelector = buildLinkedInAriaLabelContainsSelector(
+    "button",
+    "more_actions",
+    selectorLocale
+  );
+  const messageMenuExactRegex = buildLinkedInSelectorPhraseRegex(
+    "message",
+    selectorLocale,
+    { exact: true }
+  );
+  const messageMenuExactRegexHint = formatLinkedInSelectorRegexHint(
+    "message",
+    selectorLocale,
+    { exact: true }
+  );
+  const messageMenuTextRegex = buildLinkedInSelectorPhraseRegex(
+    "message",
+    selectorLocale
+  );
+  const messageMenuTextRegexHint = formatLinkedInSelectorRegexHint(
+    "message",
+    selectorLocale
+  );
+
   const moreCandidates: SelectorCandidate[] = [
     {
       key: "topcard-more-role",
-      selectorHint: "topCard.getByRole(button, /^more$/i)",
+      selectorHint: `topCard.getByRole(button, ${moreExactRegexHint})`,
       locatorFactory: () =>
         topCardRoot.getByRole("button", {
-          name: /^more$/i
+          name: moreExactRegex
         })
     },
     {
       key: "topcard-more-aria",
-      selectorHint: "topCard button[aria-label*='More actions']",
-      locatorFactory: () =>
-        topCardRoot.locator("button[aria-label*='More actions' i]")
+      selectorHint: `topCard ${moreActionsAriaSelector}`,
+      locatorFactory: () => topCardRoot.locator(moreActionsAriaSelector)
     },
     {
       key: "page-more-aria",
-      selectorHint: "page button[aria-label*='More actions']",
-      locatorFactory: (page) => page.locator("button[aria-label*='More actions' i]")
+      selectorHint: `page ${moreActionsAriaSelector}`,
+      locatorFactory: (page) => page.locator(moreActionsAriaSelector)
     }
   ];
 
@@ -531,21 +602,23 @@ async function findProfileMessageTrigger(
   const menuCandidates: SelectorCandidate[] = [
     {
       key: "menuitem-message-role",
-      selectorHint: "page.getByRole(menuitem, /^message$/i)",
+      selectorHint: `page.getByRole(menuitem, ${messageMenuExactRegexHint})`,
       locatorFactory: (page) =>
         page.getByRole("menuitem", {
-          name: /^message$/i
+          name: messageMenuExactRegex
         })
     },
     {
       key: "menu-message-text",
-      selectorHint: "[role='menu'] :text-is('Message')",
-      locatorFactory: (page) => page.locator("[role='menu'] :text-is('Message')")
+      selectorHint: `[role='menu'] hasText ${messageMenuTextRegexHint}`,
+      locatorFactory: (page) =>
+        page.locator("[role='menu']").filter({ hasText: messageMenuTextRegex })
     },
     {
       key: "menu-message-button-fallback",
-      selectorHint: "div[role='button']:has-text('Message')",
-      locatorFactory: (page) => page.locator("div[role='button']:has-text('Message')")
+      selectorHint: `div[role='button'] hasText ${messageMenuTextRegexHint}`,
+      locatorFactory: (page) =>
+        page.locator("div[role='button']").filter({ hasText: messageMenuTextRegex })
     }
   ];
 
@@ -603,14 +676,15 @@ async function extractProfileSummary(page: Page): Promise<{
 
 async function probeAcceptedConnection(
   page: Page,
-  profileUrl: string
+  profileUrl: string,
+  selectorLocale: LinkedInSelectorLocale
 ): Promise<AcceptanceProbeResult | null> {
   await page.goto(profileUrl, { waitUntil: "domcontentloaded" });
   await waitForNetworkIdleBestEffort(page);
   await page.waitForTimeout(500);
 
   const summary = await extractProfileSummary(page);
-  const messageTrigger = await findProfileMessageTrigger(page);
+  const messageTrigger = await findProfileMessageTrigger(page, selectorLocale);
   if (!messageTrigger) {
     return null;
   }
@@ -757,7 +831,10 @@ export class FollowupAfterAcceptActionExecutor
           await page.goto(profileUrl, { waitUntil: "domcontentloaded" });
           await waitForNetworkIdleBestEffort(page);
 
-          const messageTrigger = await findProfileMessageTrigger(page);
+          const messageTrigger = await findProfileMessageTrigger(
+            page,
+            runtime.selectorLocale
+          );
           if (!messageTrigger) {
             throw new LinkedInAssistantError(
               "ACTION_PRECONDITION_FAILED",
@@ -790,19 +867,54 @@ export class FollowupAfterAcceptActionExecutor
             );
           }
 
+          const composerNameRegex = buildLinkedInSelectorPhraseRegex(
+            ["write_message", "message"],
+            runtime.selectorLocale
+          );
+          const composerNameRegexHint = formatLinkedInSelectorRegexHint(
+            ["write_message", "message"],
+            runtime.selectorLocale
+          );
+          const placeholderRegex = buildLinkedInSelectorPhraseRegex(
+            "write_message",
+            runtime.selectorLocale
+          );
+          const placeholderRegexHint = formatLinkedInSelectorRegexHint(
+            "write_message",
+            runtime.selectorLocale
+          );
+          const sendButtonRegex = buildLinkedInSelectorPhraseRegex(
+            "send",
+            runtime.selectorLocale,
+            { exact: true }
+          );
+          const sendButtonRegexHint = formatLinkedInSelectorRegexHint(
+            "send",
+            runtime.selectorLocale,
+            { exact: true }
+          );
+          const dialogSendRegex = buildLinkedInSelectorPhraseRegex(
+            "send",
+            runtime.selectorLocale
+          );
+          const dialogSendRegexHint = formatLinkedInSelectorRegexHint(
+            "send",
+            runtime.selectorLocale
+          );
+
           const composerSelectors: SelectorCandidate[] = [
             {
               key: "role-textbox-write-message",
-              selectorHint: "getByRole(textbox, /write a message|message/i)",
+              selectorHint: `getByRole(textbox, ${composerNameRegexHint})`,
               locatorFactory: (page) =>
                 page.getByRole("textbox", {
-                  name: /write a message|message/i
+                  name: composerNameRegex
                 })
             },
             {
               key: "placeholder-write-message",
-              selectorHint: "getByPlaceholder(/write a message/i)",
-              locatorFactory: (page) => page.getByPlaceholder(/write a message/i)
+              selectorHint: `getByPlaceholder(${placeholderRegexHint})`,
+              locatorFactory: (page) => page.getByPlaceholder(placeholderRegex)
             },
             {
               key: "msg-contenteditable",
@@ -830,9 +942,9 @@ export class FollowupAfterAcceptActionExecutor
           const sendButtonSelectors: SelectorCandidate[] = [
             {
               key: "role-button-send",
-              selectorHint: "getByRole(button, /send/i)",
+              selectorHint: `getByRole(button, ${sendButtonRegexHint})`,
               locatorFactory: (page) =>
-                page.getByRole("button", { name: /send/i })
+                page.getByRole("button", { name: sendButtonRegex })
             },
             {
               key: "msg-form-send-button",
@@ -841,9 +953,11 @@ export class FollowupAfterAcceptActionExecutor
             },
             {
               key: "dialog-send-button",
-              selectorHint: "[role='dialog'] button:has-text('Send')",
+              selectorHint: `[role='dialog'] button hasText ${dialogSendRegexHint}`,
               locatorFactory: (page) =>
-                page.locator("[role='dialog'] button:has-text('Send')")
+                page.locator("[role='dialog'] button").filter({
+                  hasText: dialogSendRegex
+                })
             }
           ];
 
@@ -1062,7 +1176,11 @@ export class LinkedInFollowupsService {
 
         for (const state of candidates) {
           try {
-            const probe = await probeAcceptedConnection(page, state.profile_url);
+            const probe = await probeAcceptedConnection(
+              page,
+              state.profile_url,
+              this.runtime.selectorLocale
+            );
             if (!probe) {
               continue;
             }
@@ -1129,7 +1247,11 @@ export class LinkedInFollowupsService {
           }
 
           try {
-            const probe = await probeAcceptedConnection(page, state.profile_url);
+            const probe = await probeAcceptedConnection(
+              page,
+              state.profile_url,
+              this.runtime.selectorLocale
+            );
             if (!probe) {
               this.runtime.logger.log(
                 "warn",
