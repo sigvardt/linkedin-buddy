@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { appendFile, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { Command } from "commander";
 import {
   DEFAULT_FOLLOWUP_SINCE,
@@ -332,7 +334,7 @@ async function runKeepAliveStart(input: {
     await removeKeepAlivePid(input.profileName);
   }
 
-  const cliEntrypoint = process.argv[1];
+  const cliEntrypoint = resolveKeepAliveCliEntrypoint();
   if (!cliEntrypoint) {
     throw new LinkedInAssistantError(
       "UNKNOWN",
@@ -394,6 +396,23 @@ async function runKeepAliveStart(input: {
     pid: daemon.pid,
     state_path: getKeepAliveFiles(input.profileName).statePath
   });
+}
+
+function resolveKeepAliveCliEntrypoint(): string | undefined {
+  const overrideEntrypoint = process.env.LINKEDIN_CLI_ENTRYPOINT;
+  if (overrideEntrypoint && overrideEntrypoint.trim().length > 0) {
+    return overrideEntrypoint.trim();
+  }
+
+  const compiledEntrypoint = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../../dist/bin/linkedin.js"
+  );
+  if (existsSync(compiledEntrypoint)) {
+    return compiledEntrypoint;
+  }
+
+  return process.argv[1];
 }
 
 async function runKeepAliveStatus(profileName: string): Promise<void> {
@@ -1617,7 +1636,10 @@ async function runConfirmAction(input: {
   }
 }
 
-async function main(): Promise<void> {
+export async function runCli(argv: string[] = process.argv): Promise<void> {
+  const originalArgv = process.argv;
+  process.argv = argv;
+
   const program = new Command();
 
   program
@@ -2322,11 +2344,26 @@ async function main(): Promise<void> {
       }
     });
 
-  await program.parseAsync(process.argv);
+  try {
+    await program.parseAsync(argv);
+  } finally {
+    process.argv = originalArgv;
+  }
 }
 
-main().catch((error: unknown) => {
-  const payload = toLinkedInAssistantErrorPayload(error, cliPrivacyConfig);
-  console.error(JSON.stringify(payload, null, 2));
-  process.exit(1);
-});
+function isDirectExecution(moduleUrl: string): boolean {
+  const entrypoint = process.argv[1];
+  if (!entrypoint) {
+    return false;
+  }
+
+  return pathToFileURL(entrypoint).href === moduleUrl;
+}
+
+if (isDirectExecution(import.meta.url)) {
+  runCli().catch((error: unknown) => {
+    const payload = toLinkedInAssistantErrorPayload(error, cliPrivacyConfig);
+    console.error(JSON.stringify(payload, null, 2));
+    process.exit(1);
+  });
+}
