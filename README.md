@@ -36,7 +36,7 @@ Default tool-owned state home (profiles, DB, artifacts):
 - `~/.linkedin-assistant/linkedin-owa-agentools`
 - Override with `LINKEDIN_ASSISTANT_HOME=/custom/path`
 - Confirm-failure trace size cap: `LINKEDIN_ASSISTANT_CONFIRM_TRACE_MAX_BYTES` (defaults to `26214400`)
-- Selector locale for UI-text fallbacks: `LINKEDIN_ASSISTANT_SELECTOR_LOCALE` (defaults to `en`; supports `en`, `da`; region tags like `da-DK` normalize to `da`; unsupported values fall back to `en` with a warning)
+- Selector locale for UI-text fallbacks: `LINKEDIN_ASSISTANT_SELECTOR_LOCALE` (defaults to `en`; supports `en`, `da`; region tags like `da-DK` normalize to `da`; unsupported values fall back to `en` with a warning; see `docs/selector-locale.md`)
 
 Privacy / redaction controls:
 
@@ -68,6 +68,35 @@ Post safety lint configuration:
   - `LINKEDIN_ASSISTANT_POST_SAFETY_BANNED_PHRASES` (JSON array or comma/newline-separated list)
   - `LINKEDIN_ASSISTANT_POST_SAFETY_VALIDATE_LINK_PREVIEWS`
   - `LINKEDIN_ASSISTANT_POST_SAFETY_LINK_TIMEOUT_MS`
+
+## Selector Locale Support
+
+Locale-aware selectors let the runtime prefer localized LinkedIn UI phrases
+before falling back to English. This keeps the existing structural selectors
+and candidate ordering intact while making text-bearing selectors more reliable
+on supported non-English LinkedIn sessions.
+
+- Supported locales: `en`, `da`
+- Region tags normalize to their supported base locale (`da-DK` → `da`, `en-US` → `en`)
+- Precedence: explicit CLI / MCP / Core runtime input → `LINKEDIN_ASSISTANT_SELECTOR_LOCALE` → `en`
+- Unsupported, blank, malformed, or overly long locale values fall back to `en` with a warning
+- Browser language is diagnostic only; it does not silently override explicit config
+- Selector locale is not currently read from `config.json`; use the CLI flag, MCP input, runtime option, or env var
+
+```bash
+# Default the current shell to Danish selector phrases
+export LINKEDIN_ASSISTANT_SELECTOR_LOCALE=da
+npm exec -w @linkedin-assistant/cli -- linkedin status --profile default
+
+# Override the locale for one command with a normalized region tag
+npm exec -w @linkedin-assistant/cli -- linkedin --selector-locale da-DK audit selectors --profile default
+```
+
+MCP clients can pass `"selectorLocale": "da"` in tool arguments, and Core
+callers can pass `createCoreRuntime({ selectorLocale: "da" })`.
+
+See `docs/selector-locale.md` for CLI, MCP, Core API, architecture, and
+migration guidance.
 
 ## CLI Usage
 
@@ -236,6 +265,24 @@ Exposed tools:
 - `linkedin.jobs.view`
 - `linkedin.network.prepare_followup_after_accept`
 - `linkedin.actions.confirm`
+
+No locale-specific MCP tool names were added. Instead, all runtime-backed MCP
+tool inputs also accept optional `cdpUrl` and `selectorLocale` properties.
+Example tool arguments:
+
+```json
+{
+  "profileName": "default",
+  "selectorLocale": "da-DK"
+}
+```
+
+See `docs/selector-locale.md` for the full locale configuration guide and
+`docs/selector-audit.md` for the CLI-only selector audit workflow.
+
+- explicit `selectorLocale` wins over `LINKEDIN_ASSISTANT_SELECTOR_LOCALE`
+- supported values are `en`, `da`, and region tags like `da-DK`
+- unsupported values fall back to English with a runtime warning
 
 Selector audit is currently a CLI-only diagnostic. When an MCP read-only tool
 starts failing because LinkedIn's UI changed, run

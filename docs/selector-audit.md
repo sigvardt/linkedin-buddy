@@ -8,6 +8,9 @@ structured JSON report for humans and automation.
 The selector audit feature is also exported from `@linkedin-assistant/core` via
 `packages/core/src/index.ts`.
 
+For selector-locale configuration across the CLI, MCP server, and Core runtime,
+see `docs/selector-locale.md`.
+
 ## What it checks
 
 - Pages: `feed`, `inbox`, `profile`, `connections`, `notifications`
@@ -141,8 +144,10 @@ import {
   createLinkedInSelectorAuditRegistry
 } from "@linkedin-assistant/core";
 
-const runtime = createCoreRuntime();
-const registry = createLinkedInSelectorAuditRegistry();
+const runtime = createCoreRuntime({
+  selectorLocale: "da-DK"
+});
+const registry = createLinkedInSelectorAuditRegistry(runtime.selectorLocale);
 
 const selectorAudit = new LinkedInSelectorAuditService(runtime, {
   registry,
@@ -158,6 +163,13 @@ const report = await selectorAudit.auditSelectors({
 console.log(report.outcome, report.report_path);
 runtime.close();
 ```
+
+Selector audit uses `runtime.selectorLocale`; there is no per-call
+`selectorLocale` option on `auditSelectors()`. Set the locale when creating the
+runtime, or pass a locale-specific registry via
+`createLinkedInSelectorAuditRegistry(locale)`.
+
+See `docs/selector-locale.md` for broader CLI, MCP, and migration guidance.
 
 Public selector-audit exports include:
 
