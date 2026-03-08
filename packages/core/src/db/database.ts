@@ -237,6 +237,11 @@ export interface ClaimDueSchedulerJobsInput {
   leaseTtlMs: number;
 }
 
+export interface GetSchedulerJobByDedupeKeyInput {
+  profileName: string;
+  dedupeKey: string;
+}
+
 export interface UpdateSchedulerJobScheduleInput {
   id: string;
   scheduledAtMs: number;
@@ -947,6 +952,23 @@ LIMIT 1
 `
       )
       .get(id);
+  }
+
+  getSchedulerJobByDedupeKey(
+    input: GetSchedulerJobByDedupeKeyInput
+  ): SchedulerJobRow | undefined {
+    return this.db
+      .prepare<GetSchedulerJobByDedupeKeyInput, SchedulerJobRow>(
+        `
+SELECT
+${SCHEDULER_JOB_SELECT_COLUMNS}
+FROM scheduler_job
+WHERE profile_name = @profileName
+  AND dedupe_key = @dedupeKey
+LIMIT 1
+`
+      )
+      .get(input);
   }
 
   listSchedulerJobs(input: { profileName: string }): SchedulerJobRow[] {

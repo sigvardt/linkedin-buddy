@@ -9,6 +9,7 @@ import {
   type LinkedInSelectorLocaleResolution,
   type LinkedInSelectorLocale
 } from "./selectorLocale.js";
+import { LinkedInAssistantError } from "./errors.js";
 
 /**
  * Default directory used for tool-owned state when no custom home is configured.
@@ -56,6 +57,7 @@ export const DEFAULT_SCHEDULER_ENABLED_LANES: SchedulerLane[] = [
 
 export const DEFAULT_SCHEDULER_POLL_INTERVAL_MS = 5 * 60 * 1000;
 export const DEFAULT_SCHEDULER_MAX_JOBS_PER_TICK = 2;
+export const DEFAULT_SCHEDULER_MAX_ACTIVE_JOBS_PER_PROFILE = 100;
 export const DEFAULT_SCHEDULER_LEASE_TTL_MS = 2 * 60 * 1000;
 export const DEFAULT_SCHEDULER_FOLLOWUP_DELAY_MS = 15 * 60 * 1000;
 export const DEFAULT_SCHEDULER_FOLLOWUP_LOOKBACK_MS =
@@ -82,29 +84,13 @@ export interface SchedulerConfig {
   enabled: boolean;
   pollIntervalMs: number;
   maxJobsPerTick: number;
+  maxActiveJobsPerProfile: number;
   leaseTtlMs: number;
   enabledLanes: SchedulerLane[];
   businessHours: SchedulerBusinessHoursConfig;
   followupDelayMs: number;
   followupLookbackMs: number;
   retry: SchedulerRetryConfig;
-}
-
-function parseBoolean(value: string | undefined, fallback: boolean): boolean {
-  if (!value) {
-    return fallback;
-  }
-
-  const normalized = value.trim().toLowerCase();
-  if (["1", "true", "yes", "on"].includes(normalized)) {
-    return true;
-  }
-
-  if (["0", "false", "no", "off"].includes(normalized)) {
-    return false;
-  }
-
-  return fallback;
 }
 
 function isValidTimeZone(value: string | undefined): value is string {
@@ -166,41 +152,189 @@ function compareClockTimes(left: string, right: string): number {
   return leftHour * 60 + leftMinute - (rightHour * 60 + rightMinute);
 }
 
+function invalidSchedulerConfig(
+  message: string,
+  details: Record<string, unknown>
+): LinkedInAssistantError {
+  return new LinkedInAssistantError(
+    "ACTION_PRECONDITION_FAILED",
+    message,
+    details
+  );
+}
+
+function parseStrictBoolean(
+  value: string | undefined,
+  fallback: boolean,
+  envName: string
+): boolean {
+  if (value === undefined) {
+    return fallback;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+
+  throw invalidSchedulerConfig(
+    `${envName} must be one of: 1, 0, true, false, yes, no, on, off.`,
+    {
+      env: envName,
+      value
+    }
+  );
+}
+
+function parseStrictPositiveInteger(input: {
+  envName: string;
+  fallback: number;
+  max?: number;
+  min?: number;
+}): number {
+  const rawValue = process.env[input.envName];
+  if (rawValue === undefined) {
+    return input.fallback;
+  }
+
+  const trimmed = rawValue.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    throw invalidSchedulerConfig(
+      `${input.envName} must be a positive integer.`,
+      {
+        env: input.envName,
+        value: rawValue
+      }
+    );
+  }
+
+  const parsed = Number.parseInt(trimmed, 10);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw invalidSchedulerConfig(
+      `${input.envName} must be a positive integer.`,
+      {
+        env: input.envName,
+        value: rawValue
+      }
+    );
+  }
+
+  if (typeof input.min === "number" && parsed < input.min) {
+    throw invalidSchedulerConfig(
+      `${input.envName} must be at least ${input.min}.`,
+      {
+        env: input.envName,
+        min: input.min,
+        value: parsed
+      }
+    );
+  }
+
+  if (typeof input.max === "number" && parsed > input.max) {
+    throw invalidSchedulerConfig(
+      `${input.envName} must be at most ${input.max}.`,
+      {
+        env: input.envName,
+        max: input.max,
+        value: parsed
+      }
+    );
+  }
+
+  return parsed;
+}
+
+function parseStrictClockTime(
+  value: string | undefined,
+  fallback: string,
+  envName: string
+): string {
+  if (value === undefined) {
+    return fallback;
+  }
+
+  const normalized = normalizeClockTime(value, "");
+  if (!normalized) {
+    throw invalidSchedulerConfig(
+      `${envName} must use HH:MM 24-hour clock formatting.`,
+      {
+        env: envName,
+        value
+      }
+    );
+  }
+
+  return normalized;
+}
+
 function parseSchedulerEnabledLanes(value: string | undefined): SchedulerLane[] {
-  if (!value) {
+  if (value === undefined) {
     return [...DEFAULT_SCHEDULER_ENABLED_LANES];
   }
 
   const supported = new Set<string>(SCHEDULER_LANES);
-  const parsed = value
+  const rawEntries = value
     .split(",")
     .map((entry) => entry.trim())
-    .filter((entry): entry is SchedulerLane => supported.has(entry));
+    .filter((entry) => entry.length > 0);
 
-  return parsed.length > 0 ? parsed : [...DEFAULT_SCHEDULER_ENABLED_LANES];
+  if (rawEntries.length === 0) {
+    return [];
+  }
+
+  const invalidEntries = rawEntries.filter((entry) => !supported.has(entry));
+  if (invalidEntries.length > 0) {
+    throw invalidSchedulerConfig(
+      "LINKEDIN_ASSISTANT_SCHEDULER_ENABLED_LANES contains unsupported scheduler lanes.",
+      {
+        env: "LINKEDIN_ASSISTANT_SCHEDULER_ENABLED_LANES",
+        invalid_lanes: invalidEntries,
+        supported_lanes: SCHEDULER_LANES
+      }
+    );
+  }
+
+  return [...new Set(rawEntries)] as SchedulerLane[];
 }
 
 function resolveSchedulerBusinessHours(): SchedulerBusinessHoursConfig {
-  const startTime = normalizeClockTime(
+  const startTime = parseStrictClockTime(
     process.env.LINKEDIN_ASSISTANT_SCHEDULER_BUSINESS_START,
-    DEFAULT_SCHEDULER_BUSINESS_START
+    DEFAULT_SCHEDULER_BUSINESS_START,
+    "LINKEDIN_ASSISTANT_SCHEDULER_BUSINESS_START"
   );
-  const endTime = normalizeClockTime(
+  const endTime = parseStrictClockTime(
     process.env.LINKEDIN_ASSISTANT_SCHEDULER_BUSINESS_END,
-    DEFAULT_SCHEDULER_BUSINESS_END
+    DEFAULT_SCHEDULER_BUSINESS_END,
+    "LINKEDIN_ASSISTANT_SCHEDULER_BUSINESS_END"
   );
-  const timeZone = isValidTimeZone(
-    process.env.LINKEDIN_ASSISTANT_SCHEDULER_TIMEZONE
-  )
-    ? process.env.LINKEDIN_ASSISTANT_SCHEDULER_TIMEZONE
-    : resolveDefaultSchedulerTimeZone();
+  const rawTimeZone = process.env.LINKEDIN_ASSISTANT_SCHEDULER_TIMEZONE;
+  const timeZone =
+    rawTimeZone === undefined ? resolveDefaultSchedulerTimeZone() : rawTimeZone.trim();
+
+  if (!timeZone || !isValidTimeZone(timeZone)) {
+    throw invalidSchedulerConfig(
+      "LINKEDIN_ASSISTANT_SCHEDULER_TIMEZONE must be a valid IANA timezone, such as UTC or Europe/Copenhagen.",
+      {
+        env: "LINKEDIN_ASSISTANT_SCHEDULER_TIMEZONE",
+        value: rawTimeZone
+      }
+    );
+  }
 
   if (compareClockTimes(startTime, endTime) >= 0) {
-    return {
-      timeZone,
-      startTime: DEFAULT_SCHEDULER_BUSINESS_START,
-      endTime: DEFAULT_SCHEDULER_BUSINESS_END
-    };
+    throw invalidSchedulerConfig(
+      "Scheduler business hours must end after they start on the same local day.",
+      {
+        start_time: startTime,
+        end_time: endTime,
+        time_zone: timeZone
+      }
+    );
   }
 
   return {
@@ -303,58 +437,105 @@ export function resolveConfirmFailureArtifactConfig(): ConfirmFailureArtifactCon
 }
 
 export function resolveSchedulerConfig(): SchedulerConfig {
+  const pollIntervalMs =
+    parseStrictPositiveInteger({
+      envName: "LINKEDIN_ASSISTANT_SCHEDULER_POLL_INTERVAL_SECONDS",
+      fallback: DEFAULT_SCHEDULER_POLL_INTERVAL_MS / 1_000,
+      max: 24 * 60 * 60
+    }) * 1_000;
+  const maxJobsPerTick = parseStrictPositiveInteger({
+    envName: "LINKEDIN_ASSISTANT_SCHEDULER_MAX_JOBS_PER_TICK",
+    fallback: DEFAULT_SCHEDULER_MAX_JOBS_PER_TICK,
+    max: 100
+  });
+  const maxActiveJobsPerProfile = parseStrictPositiveInteger({
+    envName: "LINKEDIN_ASSISTANT_SCHEDULER_MAX_ACTIVE_JOBS_PER_PROFILE",
+    fallback: DEFAULT_SCHEDULER_MAX_ACTIVE_JOBS_PER_PROFILE,
+    max: 10_000
+  });
+  const leaseTtlMs =
+    parseStrictPositiveInteger({
+      envName: "LINKEDIN_ASSISTANT_SCHEDULER_LEASE_SECONDS",
+      fallback: DEFAULT_SCHEDULER_LEASE_TTL_MS / 1_000,
+      max: 24 * 60 * 60
+    }) * 1_000;
+  const enabledLanes = parseSchedulerEnabledLanes(
+    process.env.LINKEDIN_ASSISTANT_SCHEDULER_ENABLED_LANES
+  );
+  const businessHours = resolveSchedulerBusinessHours();
+  const followupDelayMs =
+    parseStrictPositiveInteger({
+      envName: "LINKEDIN_ASSISTANT_SCHEDULER_FOLLOWUP_DELAY_MINUTES",
+      fallback: DEFAULT_SCHEDULER_FOLLOWUP_DELAY_MS / (60 * 1_000),
+      max: 30 * 24 * 60
+    }) *
+    60 *
+    1_000;
+  const followupLookbackMs =
+    parseStrictPositiveInteger({
+      envName: "LINKEDIN_ASSISTANT_SCHEDULER_FOLLOWUP_LOOKBACK_DAYS",
+      fallback: DEFAULT_SCHEDULER_FOLLOWUP_LOOKBACK_MS / (24 * 60 * 60 * 1_000),
+      max: 365
+    }) *
+    24 *
+    60 *
+    60 *
+    1_000;
+  const retry = {
+    maxAttempts: parseStrictPositiveInteger({
+      envName: "LINKEDIN_ASSISTANT_SCHEDULER_MAX_ATTEMPTS",
+      fallback: DEFAULT_SCHEDULER_MAX_ATTEMPTS,
+      max: 100
+    }),
+    initialBackoffMs:
+      parseStrictPositiveInteger({
+        envName: "LINKEDIN_ASSISTANT_SCHEDULER_INITIAL_BACKOFF_SECONDS",
+        fallback: DEFAULT_SCHEDULER_INITIAL_BACKOFF_MS / 1_000,
+        max: 30 * 24 * 60 * 60
+      }) * 1_000,
+    maxBackoffMs:
+      parseStrictPositiveInteger({
+        envName: "LINKEDIN_ASSISTANT_SCHEDULER_MAX_BACKOFF_SECONDS",
+        fallback: DEFAULT_SCHEDULER_MAX_BACKOFF_MS / 1_000,
+        max: 30 * 24 * 60 * 60
+      }) * 1_000
+  };
+
+  if (maxJobsPerTick > maxActiveJobsPerProfile) {
+    throw invalidSchedulerConfig(
+      "Scheduler max jobs per tick must not exceed the per-profile active job limit.",
+      {
+        max_jobs_per_tick: maxJobsPerTick,
+        max_active_jobs_per_profile: maxActiveJobsPerProfile
+      }
+    );
+  }
+
+  if (retry.maxBackoffMs < retry.initialBackoffMs) {
+    throw invalidSchedulerConfig(
+      "Scheduler max backoff must be greater than or equal to the initial backoff.",
+      {
+        initial_backoff_ms: retry.initialBackoffMs,
+        max_backoff_ms: retry.maxBackoffMs
+      }
+    );
+  }
+
   return {
-    enabled: parseBoolean(process.env.LINKEDIN_ASSISTANT_SCHEDULER_ENABLED, true),
-    pollIntervalMs:
-      parsePositiveInteger(
-        process.env.LINKEDIN_ASSISTANT_SCHEDULER_POLL_INTERVAL_SECONDS,
-        DEFAULT_SCHEDULER_POLL_INTERVAL_MS / 1_000
-      ) * 1_000,
-    maxJobsPerTick: parsePositiveInteger(
-      process.env.LINKEDIN_ASSISTANT_SCHEDULER_MAX_JOBS_PER_TICK,
-      DEFAULT_SCHEDULER_MAX_JOBS_PER_TICK
+    enabled: parseStrictBoolean(
+      process.env.LINKEDIN_ASSISTANT_SCHEDULER_ENABLED,
+      true,
+      "LINKEDIN_ASSISTANT_SCHEDULER_ENABLED"
     ),
-    leaseTtlMs:
-      parsePositiveInteger(
-        process.env.LINKEDIN_ASSISTANT_SCHEDULER_LEASE_SECONDS,
-        DEFAULT_SCHEDULER_LEASE_TTL_MS / 1_000
-      ) * 1_000,
-    enabledLanes: parseSchedulerEnabledLanes(
-      process.env.LINKEDIN_ASSISTANT_SCHEDULER_ENABLED_LANES
-    ),
-    businessHours: resolveSchedulerBusinessHours(),
-    followupDelayMs:
-      parsePositiveInteger(
-        process.env.LINKEDIN_ASSISTANT_SCHEDULER_FOLLOWUP_DELAY_MINUTES,
-        DEFAULT_SCHEDULER_FOLLOWUP_DELAY_MS / (60 * 1_000)
-      ) *
-      60 *
-      1_000,
-    followupLookbackMs:
-      parsePositiveInteger(
-        process.env.LINKEDIN_ASSISTANT_SCHEDULER_FOLLOWUP_LOOKBACK_DAYS,
-        DEFAULT_SCHEDULER_FOLLOWUP_LOOKBACK_MS / (24 * 60 * 60 * 1_000)
-      ) *
-      24 *
-      60 *
-      60 *
-      1_000,
-    retry: {
-      maxAttempts: parsePositiveInteger(
-        process.env.LINKEDIN_ASSISTANT_SCHEDULER_MAX_ATTEMPTS,
-        DEFAULT_SCHEDULER_MAX_ATTEMPTS
-      ),
-      initialBackoffMs:
-        parsePositiveInteger(
-          process.env.LINKEDIN_ASSISTANT_SCHEDULER_INITIAL_BACKOFF_SECONDS,
-          DEFAULT_SCHEDULER_INITIAL_BACKOFF_MS / 1_000
-        ) * 1_000,
-      maxBackoffMs:
-        parsePositiveInteger(
-          process.env.LINKEDIN_ASSISTANT_SCHEDULER_MAX_BACKOFF_SECONDS,
-          DEFAULT_SCHEDULER_MAX_BACKOFF_MS / 1_000
-        ) * 1_000
-    }
+    pollIntervalMs,
+    maxJobsPerTick,
+    maxActiveJobsPerProfile,
+    leaseTtlMs,
+    enabledLanes,
+    businessHours,
+    followupDelayMs,
+    followupLookbackMs,
+    retry
   };
 }
 
