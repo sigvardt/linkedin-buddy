@@ -1,5 +1,5 @@
 import { stat } from "node:fs/promises";
-import { errors as playwrightErrors } from "playwright-core";
+import { errors as playwrightErrors, type Page } from "playwright-core";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   LINKEDIN_SELECTOR_AUDIT_PAGES,
@@ -20,6 +20,52 @@ import {
 afterEach(async () => {
   await cleanupSelectorAuditTestHarnesses();
 });
+
+function summarizeRegistryShape(
+  registry: ReturnType<typeof createLinkedInSelectorAuditRegistry>
+): Array<{
+  page: string;
+  selectors: Array<{
+    key: string;
+    candidates: Array<{ key: string; strategy: string }>;
+  }>;
+}> {
+  return registry.map((pageDefinition) => ({
+    page: pageDefinition.page,
+    selectors: pageDefinition.selectors.map((selectorDefinition) => ({
+      key: selectorDefinition.key,
+      candidates: selectorDefinition.candidates.map((candidate) => ({
+        key: candidate.key,
+        strategy: candidate.strategy
+      }))
+    }))
+  }));
+}
+
+function createRoleMatchingPage(
+  accessibleNamesByRole: Readonly<Record<string, readonly string[]>>
+): Page {
+  return {
+    getByRole: (role: string, options?: { name?: unknown }) =>
+      ({
+        waitFor: async () => {
+          const nameMatcher = options?.name;
+          if (!(nameMatcher instanceof RegExp)) {
+            throw new Error(
+              "Expected selector audit role candidates to compile regex name matchers."
+            );
+          }
+
+          const accessibleNames = accessibleNamesByRole[role] ?? [];
+          if (!accessibleNames.some((accessibleName) => nameMatcher.test(accessibleName))) {
+            throw new Error(
+              `No ${role} accessible name matched /${nameMatcher.source}/i.`
+            );
+          }
+        }
+      })
+  } as unknown as Page;
+}
 
 describe("createLinkedInSelectorAuditRegistry", () => {
   it("covers the audit-scope pages with normalized strategies", () => {
@@ -53,6 +99,43 @@ describe("createLinkedInSelectorAuditRegistry", () => {
 
     expect(primaryCandidate?.selectorHint).toContain("Start et opslag");
     expect(primaryCandidate?.selectorHint).toContain("Start a post");
+  });
+
+  it("preserves selector keys and candidate ordering across locales", () => {
+    const englishRegistry = createLinkedInSelectorAuditRegistry("en");
+    const danishRegistry = createLinkedInSelectorAuditRegistry("da");
+
+    expect(summarizeRegistryShape(danishRegistry)).toEqual(
+      summarizeRegistryShape(englishRegistry)
+    );
+  });
+
+  it("resolves localized and english fallback accessible names in the same candidate", async () => {
+    const registry = createLinkedInSelectorAuditRegistry("da");
+    const feedDefinition = registry.find((pageDefinition) => pageDefinition.page === "feed");
+    const primaryCandidate = feedDefinition?.selectors
+      .find((selectorDefinition) => selectorDefinition.key === "post_composer_trigger")
+      ?.candidates.find((candidate) => candidate.strategy === "primary");
+
+    expect(primaryCandidate).toBeDefined();
+
+    const localizedPage = createRoleMatchingPage({
+      button: ["Start et opslag"]
+    });
+    const englishFallbackPage = createRoleMatchingPage({
+      button: ["Start a post"]
+    });
+    const unsupportedLocalePage = createRoleMatchingPage({
+      button: ["Partager une publication"]
+    });
+
+    await expect(primaryCandidate!.locatorFactory(localizedPage).waitFor()).resolves.toBeUndefined();
+    await expect(
+      primaryCandidate!.locatorFactory(englishFallbackPage).waitFor()
+    ).resolves.toBeUndefined();
+    await expect(
+      primaryCandidate!.locatorFactory(unsupportedLocalePage).waitFor()
+    ).rejects.toThrow("No button accessible name matched");
   });
 });
 
