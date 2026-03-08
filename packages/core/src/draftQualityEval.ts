@@ -21,6 +21,7 @@ import {
   type DraftQualityParticipant,
   type DraftQualityParticipantRole,
   type DraftQualityReport,
+  type DraftQualityReportSummary,
   type DraftQualityRelevanceDetails,
   type DraftQualityRequiredPoint,
   type DraftQualityThread,
@@ -180,7 +181,6 @@ const CASUAL_SIGNALS = [
 
 interface ToneContext {
   original_text: string;
-  normalized_text: string;
   word_count: number;
   sentence_count: number;
   length_expectations: DraftQualityLengthExpectations;
@@ -789,6 +789,13 @@ function parseCandidateDraft(
     throw createInputError(`Expected ${location} to be an object.`, { location });
   }
 
+  return parseCandidateDraftRecord(record, location);
+}
+
+function parseCandidateDraftRecord(
+  record: Record<string, unknown>,
+  location: string
+): DraftQualityCandidateDraft {
   const id = readRequiredString(record, ["id"], location);
   const source = parseDraftSource(
     readRequiredString(record, ["source"], location),
@@ -820,7 +827,7 @@ function parseExternalCandidateDraft(
   }
 
   const caseId = readRequiredString(record, ["case_id", "caseId"], location);
-  const draft = parseCandidateDraft(record, location);
+  const draft = parseCandidateDraftRecord(record, location);
 
   return {
     case_id: caseId,
@@ -867,6 +874,10 @@ function assertUniqueDraftIds(
     }
     seen.add(draft.id);
   }
+}
+
+function createDraftKey(caseId: string, draftId: string): string {
+  return `${caseId}::${draftId}`;
 }
 
 function parseCase(value: unknown, location: string): DraftQualityCase {
@@ -963,7 +974,7 @@ export function parseDraftQualityCandidateSet(value: unknown): DraftQualityCandi
 
   const seenDraftKeys = new Set<string>();
   for (const draft of drafts) {
-    const draftKey = `${draft.case_id}::${draft.id}`;
+    const draftKey = createDraftKey(draft.case_id, draft.id);
     if (seenDraftKeys.has(draftKey)) {
       throw createInputError(
         `Duplicate draft id "${draft.id}" found for case "${draft.case_id}" in candidates file.`,
@@ -1183,7 +1194,7 @@ function extractKeywords(value: string): string[] {
 
 function buildOffTopicSignals(
   thread: DraftQualityThread,
-  draftText: string,
+  draftTokens: ReadonlySet<string>,
   totalRequiredPoints: number,
   coveredPointCount: number
 ): string[] {
@@ -1203,7 +1214,6 @@ function buildOffTopicSignals(
     return signals;
   }
 
-  const draftTokens = new Set(tokenizeText(draftText));
   const overlappingKeywords = latestKeywords.filter((keyword) => draftTokens.has(keyword));
 
   if (overlappingKeywords.length === 0) {
@@ -1225,6 +1235,7 @@ function evaluateRelevance(
   draftText: string,
   forbiddenPhraseHits: string[]
 ): DraftQualityMetricResult<DraftQualityRelevanceDetails> {
+  const draftTokens = new Set(tokenizeText(draftText));
   const pointMatches = expectations.required_points.map((point) => {
     const matchedAliases = point.aliases.filter((alias) =>
       containsNormalizedPhrase(draftText, alias)
@@ -1255,7 +1266,7 @@ function evaluateRelevance(
       point_matches: pointMatches,
       off_topic_signals: buildOffTopicSignals(
         thread,
-        draftText,
+        draftTokens,
         totalRequiredPoints,
         coveredPointIds.length
       ),
@@ -1272,7 +1283,6 @@ function evaluateTone(
 ): DraftQualityMetricResult<DraftQualityToneDetails> {
   const context: ToneContext = {
     original_text: draftText,
-    normalized_text: normalizeText(draftText),
     word_count: length.details.word_count,
     sentence_count: length.details.sentence_count,
     length_expectations: expectations.length
@@ -1436,70 +1446,129 @@ function buildCandidateLookup(
   dataset: DraftQualityDataset,
   candidates?: DraftQualityCandidateSet
 ): Map<string, DraftQualityCandidateDraft[]> {
-  const draftsByCaseId = new Map<string, DraftQualityCandidateDraft[]>();
-  const seenDraftKeys = new Set<string>();
-  const knownCaseIds = new Set(dataset.cases.map((draftCase) => draftCase.id));
-
-  for (const draftCase of dataset.cases) {
-    const caseDrafts = [...draftCase.candidate_drafts];
-    draftsByCaseId.set(draftCase.id, caseDrafts);
-    for (const draft of caseDrafts) {
-      seenDraftKeys.add(`${draftCase.id}::${draft.id}`);
-    }
-  }
+  const draftsByCaseId = new Map<string, DraftQualityCandidateDraft[]>(
+    dataset.cases.map((draftCase) => [draftCase.id, [...draftCase.candidate_drafts]])
+  );
+  const seenDraftKeys = new Set<string>(
+    dataset.cases.flatMap((draftCase) =>
+      draftCase.candidate_drafts.map((draft) => createDraftKey(draftCase.id, draft.id))
+    )
+  );
 
   for (const externalDraft of candidates?.drafts ?? []) {
-    if (!knownCaseIds.has(externalDraft.case_id)) {
+    const { case_id: caseId, ...draft } = externalDraft;
+    const caseDrafts = draftsByCaseId.get(caseId);
+    if (!caseDrafts) {
       throw createInputError(
-        `Candidates file references unknown case "${externalDraft.case_id}".`,
+        `Candidates file references unknown case "${caseId}".`,
         {
-          case_id: externalDraft.case_id,
-          draft_id: externalDraft.id
+          case_id: caseId,
+          draft_id: draft.id
         }
       );
     }
 
-    const draftKey = `${externalDraft.case_id}::${externalDraft.id}`;
+    const draftKey = createDraftKey(caseId, draft.id);
     if (seenDraftKeys.has(draftKey)) {
       throw createInputError(
-        `Duplicate draft id "${externalDraft.id}" found for case "${externalDraft.case_id}" across dataset and candidates inputs.`,
+        `Duplicate draft id "${draft.id}" found for case "${caseId}" across dataset and candidates inputs.`,
         {
-          case_id: externalDraft.case_id,
-          draft_id: externalDraft.id
+          case_id: caseId,
+          draft_id: draft.id
         }
       );
     }
 
     seenDraftKeys.add(draftKey);
-    const caseDrafts = draftsByCaseId.get(externalDraft.case_id);
-    if (!caseDrafts) {
-      throw createInputError(
-        `No case bucket found for external draft "${externalDraft.id}".`,
-        {
-          case_id: externalDraft.case_id,
-          draft_id: externalDraft.id
-        }
-      );
-    }
-
-    caseDrafts.push({
-      id: externalDraft.id,
-      source: externalDraft.source,
-      text: externalDraft.text,
-      ...(externalDraft.label ? { label: externalDraft.label } : {}),
-      ...(externalDraft.metadata ? { metadata: externalDraft.metadata } : {})
-    });
+    caseDrafts.push(draft);
   }
 
   return draftsByCaseId;
 }
 
 function createSourceCounts(): Record<DraftQualityDraftSource, number> {
+  return Object.fromEntries(
+    DRAFT_QUALITY_DRAFT_SOURCES.map((source) => [source, 0])
+  ) as Record<DraftQualityDraftSource, number>;
+}
+
+async function evaluateDraftCaseResult(input: {
+  draftCase: DraftQualityCase;
+  draft: DraftQualityCandidateDraft;
+  judge?: EvaluateDraftQualityInput["judge"];
+}): Promise<DraftQualityCaseResult> {
+  const deterministic = evaluateDeterministicDraft(input.draftCase, input.draft);
+  let relevance = deterministic.relevance;
+  let tone = deterministic.tone;
+  const length = deterministic.length;
+  const notes = [...input.draftCase.expectations.manual_notes];
+
+  if (input.judge) {
+    const judgeResult = await input.judge.evaluate({
+      draft_case: input.draftCase,
+      draft: input.draft,
+      deterministic
+    });
+    relevance = mergeJudgeMetric(relevance, judgeResult.relevance);
+    tone = mergeJudgeMetric(tone, judgeResult.tone);
+    notes.push(...(judgeResult.notes ?? []));
+  }
+
   return {
-    manual: 0,
-    model: 0,
-    imported: 0,
-    synthetic: 0
+    case_id: input.draftCase.id,
+    draft_id: input.draft.id,
+    draft_source: input.draft.source,
+    overall: createOverallResult({
+      relevance,
+      tone,
+      length,
+      hard_failures: deterministic.hard_failures
+    }),
+    metrics: {
+      relevance,
+      tone,
+      length
+    },
+    notes: uniqueStrings(notes),
+    ...(input.draftCase.channel ? { case_channel: input.draftCase.channel } : {}),
+    ...(input.draftCase.scenario ? { case_scenario: input.draftCase.scenario } : {}),
+    ...(input.draft.label ? { draft_label: input.draft.label } : {})
+  };
+}
+
+function createReportSummary(input: {
+  totalCases: number;
+  skippedCaseCount: number;
+  caseResults: DraftQualityCaseResult[];
+  sourceCounts: Record<DraftQualityDraftSource, number>;
+}): DraftQualityReportSummary {
+  const totalDrafts = input.caseResults.length;
+  const passedDrafts = input.caseResults.filter((result) => result.overall.passed).length;
+  const failedDrafts = totalDrafts - passedDrafts;
+  const totalMetricScores = input.caseResults.reduce(
+    (totals, result) => {
+      totals.relevance += result.metrics.relevance.score;
+      totals.tone += result.metrics.tone.score;
+      totals.length += result.metrics.length.score;
+      return totals;
+    },
+    { relevance: 0, tone: 0, length: 0 }
+  );
+
+  return {
+    total_cases: input.totalCases,
+    evaluated_case_count: input.totalCases - input.skippedCaseCount,
+    skipped_case_count: input.skippedCaseCount,
+    total_drafts: totalDrafts,
+    passed_drafts: passedDrafts,
+    failed_drafts: failedDrafts,
+    pass_rate: totalDrafts === 0 ? 0 : roundScore(passedDrafts / totalDrafts),
+    metric_averages: {
+      relevance: totalDrafts === 0 ? 0 : roundScore(totalMetricScores.relevance / totalDrafts),
+      tone: totalDrafts === 0 ? 0 : roundScore(totalMetricScores.tone / totalDrafts),
+      length: totalDrafts === 0 ? 0 : roundScore(totalMetricScores.length / totalDrafts)
+    },
+    source_counts: input.sourceCounts
   };
 }
 
@@ -1512,11 +1581,13 @@ export async function evaluateDraftQuality(
   const sourceCounts = createSourceCounts();
   const warnings: string[] = [];
   const caseResults: DraftQualityCaseResult[] = [];
+  let skippedCaseCount = 0;
 
   for (const draftCase of input.dataset.cases) {
     const drafts = draftsByCaseId.get(draftCase.id) ?? [];
 
     if (drafts.length === 0) {
+      skippedCaseCount += 1;
       warnings.push(`Case ${draftCase.id} has no candidate drafts and was skipped.`);
       continue;
     }
@@ -1524,43 +1595,13 @@ export async function evaluateDraftQuality(
     for (const draft of drafts) {
       sourceCounts[draft.source] += 1;
 
-      const deterministic = evaluateDeterministicDraft(draftCase, draft);
-      let relevance = deterministic.relevance;
-      let tone = deterministic.tone;
-      const length = deterministic.length;
-      const notes = [...draftCase.expectations.manual_notes];
-
-      if (input.judge) {
-        const judgeResult = await input.judge.evaluate({
-          draft_case: draftCase,
+      caseResults.push(
+        await evaluateDraftCaseResult({
+          draftCase,
           draft,
-          deterministic
-        });
-        relevance = mergeJudgeMetric(relevance, judgeResult.relevance);
-        tone = mergeJudgeMetric(tone, judgeResult.tone);
-        notes.push(...(judgeResult.notes ?? []));
-      }
-
-      caseResults.push({
-        case_id: draftCase.id,
-        draft_id: draft.id,
-        draft_source: draft.source,
-        overall: createOverallResult({
-          relevance,
-          tone,
-          length,
-          hard_failures: deterministic.hard_failures
-        }),
-        metrics: {
-          relevance,
-          tone,
-          length
-        },
-        notes: uniqueStrings(notes),
-        ...(draftCase.channel ? { case_channel: draftCase.channel } : {}),
-        ...(draftCase.scenario ? { case_scenario: draftCase.scenario } : {}),
-        ...(draft.label ? { draft_label: draft.label } : {})
-      });
+          judge: input.judge
+        })
+      );
     }
   }
 
@@ -1574,37 +1615,18 @@ export async function evaluateDraftQuality(
     );
   }
 
-  const passedDrafts = caseResults.filter((result) => result.overall.passed).length;
-  const failedDrafts = caseResults.length - passedDrafts;
-  const totalMetricScores = caseResults.reduce(
-    (totals, result) => {
-      totals.relevance += result.metrics.relevance.score;
-      totals.tone += result.metrics.tone.score;
-      totals.length += result.metrics.length.score;
-      return totals;
-    },
-    { relevance: 0, tone: 0, length: 0 }
-  );
+  const summary = createReportSummary({
+    totalCases: input.dataset.cases.length,
+    skippedCaseCount,
+    caseResults,
+    sourceCounts
+  });
 
   return {
     run_id: runId,
     generated_at: now.toISOString(),
-    outcome: failedDrafts === 0 ? "pass" : "fail",
-    summary: {
-      total_cases: input.dataset.cases.length,
-      evaluated_case_count: input.dataset.cases.length - warnings.length,
-      skipped_case_count: warnings.length,
-      total_drafts: caseResults.length,
-      passed_drafts: passedDrafts,
-      failed_drafts: failedDrafts,
-      pass_rate: roundScore(passedDrafts / caseResults.length),
-      metric_averages: {
-        relevance: roundScore(totalMetricScores.relevance / caseResults.length),
-        tone: roundScore(totalMetricScores.tone / caseResults.length),
-        length: roundScore(totalMetricScores.length / caseResults.length)
-      },
-      source_counts: sourceCounts
-    },
+    outcome: summary.failed_drafts === 0 ? "pass" : "fail",
+    summary,
     warnings,
     cases: caseResults,
     ...(input.dataset_path ? { dataset_path: input.dataset_path } : {}),

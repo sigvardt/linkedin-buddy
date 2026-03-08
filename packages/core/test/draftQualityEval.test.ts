@@ -155,6 +155,108 @@ describe("draft quality evaluator", () => {
     );
   });
 
+  it("tracks skipped cases separately from warning messages", async () => {
+    const dataset = parseDraftQualityDataset({
+      schemaVersion: 1,
+      cases: [
+        {
+          id: "skipped_case_001",
+          thread: {
+            participants: [
+              {
+                id: "assistant",
+                name: "You",
+                role: "assistant"
+              },
+              {
+                id: "contact",
+                name: "Jordan",
+                role: "contact"
+              }
+            ],
+            messages: [
+              {
+                id: "m1",
+                author: "Jordan",
+                direction: "inbound",
+                text: "Could you send a short note?"
+              }
+            ]
+          },
+          expectations: {
+            tone: {
+              required: [],
+              forbidden: []
+            },
+            length: {
+              minWords: 1,
+              maxWords: 10
+            },
+            requiredPoints: []
+          },
+          candidateDrafts: []
+        },
+        {
+          id: "evaluated_case_001",
+          thread: {
+            participants: [
+              {
+                id: "assistant",
+                name: "You",
+                role: "assistant"
+              },
+              {
+                id: "contact",
+                name: "Jordan",
+                role: "contact"
+              }
+            ],
+            messages: [
+              {
+                id: "m1",
+                author: "Jordan",
+                direction: "inbound",
+                text: "Could you send a short note?"
+              }
+            ]
+          },
+          expectations: {
+            tone: {
+              required: [],
+              forbidden: []
+            },
+            length: {
+              minWords: 1,
+              maxWords: 10
+            },
+            requiredPoints: []
+          },
+          candidateDrafts: [
+            {
+              id: "manual_ok",
+              source: "manual",
+              text: "Absolutely."
+            }
+          ]
+        }
+      ]
+    });
+
+    const report = await evaluateDraftQuality({
+      dataset,
+      now: FIXED_DATE,
+      run_id: "run_skipped"
+    });
+
+    expect(report.summary.total_cases).toBe(2);
+    expect(report.summary.evaluated_case_count).toBe(1);
+    expect(report.summary.skipped_case_count).toBe(1);
+    expect(report.summary.total_drafts).toBe(1);
+    expect(report.warnings).toEqual([
+      "Case skipped_case_001 has no candidate drafts and was skipped."
+    ]);
+  });
+
   it("preserves deterministic failures even when a judge is optimistic", async () => {
     const dataset = parseDraftQualityDataset({
       schemaVersion: 1,
@@ -311,5 +413,93 @@ describe("draft quality evaluator", () => {
         ]
       })
     ).toThrowError(LinkedInAssistantError);
+  });
+
+  it("rejects invalid external candidate merges during evaluation", async () => {
+    const dataset = parseDraftQualityDataset({
+      schemaVersion: 1,
+      cases: [
+        {
+          id: "case_1",
+          thread: {
+            participants: [
+              {
+                id: "assistant",
+                name: "You",
+                role: "assistant"
+              }
+            ],
+            messages: [
+              {
+                id: "m1",
+                author: "You",
+                direction: "outbound",
+                text: "Hello"
+              }
+            ]
+          },
+          expectations: {
+            tone: {
+              required: [],
+              forbidden: []
+            },
+            length: {
+              minWords: 1,
+              maxWords: 10
+            },
+            requiredPoints: []
+          },
+          candidateDrafts: [
+            {
+              id: "draft_1",
+              source: "manual",
+              text: "Hello"
+            }
+          ]
+        }
+      ]
+    });
+
+    const unknownCaseCandidates = parseDraftQualityCandidateSet({
+      schemaVersion: 1,
+      drafts: [
+        {
+          caseId: "missing_case",
+          id: "draft_2",
+          source: "model",
+          text: "Hi there"
+        }
+      ]
+    });
+
+    await expect(
+      evaluateDraftQuality({
+        dataset,
+        candidates: unknownCaseCandidates,
+        now: FIXED_DATE,
+        run_id: "run_unknown_case"
+      })
+    ).rejects.toThrowError(LinkedInAssistantError);
+
+    const duplicateMergeCandidates = parseDraftQualityCandidateSet({
+      schemaVersion: 1,
+      drafts: [
+        {
+          caseId: "case_1",
+          id: "draft_1",
+          source: "model",
+          text: "Hi again"
+        }
+      ]
+    });
+
+    await expect(
+      evaluateDraftQuality({
+        dataset,
+        candidates: duplicateMergeCandidates,
+        now: FIXED_DATE,
+        run_id: "run_duplicate_merge"
+      })
+    ).rejects.toThrowError(LinkedInAssistantError);
   });
 });
