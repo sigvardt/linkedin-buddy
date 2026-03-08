@@ -1402,6 +1402,39 @@ async function runJobsView(input: {
   }
 }
 
+async function runSelectorAudit(input: {
+  profileName: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.audit.selectors.start", {
+      profileName: input.profileName
+    });
+
+    const report = await runtime.selectorAudit.auditSelectors({
+      profileName: input.profileName
+    });
+
+    runtime.logger.log("info", "cli.audit.selectors.done", {
+      profileName: input.profileName,
+      totalCount: report.total_count,
+      passCount: report.pass_count,
+      failCount: report.fail_count,
+      fallbackCount: report.fallback_count,
+      reportPath: report.report_path
+    });
+
+    printJson(report);
+
+    if (report.fail_count > 0) {
+      process.exitCode = 1;
+    }
+  } finally {
+    runtime.close();
+  }
+}
+
 function readTargetProfileName(target: Record<string, unknown>): string | undefined {
   const value = target.profile_name;
   if (typeof value === "string" && value.trim().length > 0) {
@@ -2112,6 +2145,20 @@ async function main(): Promise<void> {
       await runProfileView({
         profileName: options.profile,
         target
+      }, readCdpUrl());
+    });
+
+  const auditCommand = program
+    .command("audit")
+    .description("Run read-only LinkedIn audits");
+
+  auditCommand
+    .command("selectors")
+    .description("Audit selector fallbacks across LinkedIn pages")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(async (options: { profile: string }) => {
+      await runSelectorAudit({
+        profileName: options.profile
       }, readCdpUrl());
     });
 

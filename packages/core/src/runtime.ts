@@ -64,6 +64,7 @@ import {
   type TestAutoConfirmConfig
 } from "./twoPhaseCommit.js";
 import { resolvePrivacyConfig, type PrivacyConfig } from "./privacy.js";
+import { LinkedInSelectorAuditService } from "./selectorAudit.js";
 
 export interface CreateCoreRuntimeOptions {
   baseDir?: string;
@@ -96,6 +97,7 @@ export interface CoreRuntime {
   feed: LinkedInFeedService;
   posts: LinkedInPostsService;
   inbox: LinkedInInboxService;
+  selectorAudit: LinkedInSelectorAuditService;
   testAutoConfirm: TestAutoConfirmConfig;
   healthCheck: (options?: { profileName?: string }) => Promise<FullHealthStatus>;
   close: () => void;
@@ -172,6 +174,7 @@ export function createCoreRuntime(
     feed: undefined as unknown as LinkedInFeedService,
     posts: undefined as unknown as LinkedInPostsService,
     inbox: undefined as unknown as LinkedInInboxService,
+    selectorAudit: undefined as unknown as LinkedInSelectorAuditService,
     testAutoConfirm,
     healthCheck: async (
       healthOptions: { profileName?: string } = {}
@@ -209,6 +212,7 @@ export function createCoreRuntime(
   const postsRuntime: LinkedInPostsRuntime = runtime;
   runtime.posts = new LinkedInPostsService(postsRuntime);
   runtime.inbox = new LinkedInInboxService(runtime);
+  runtime.selectorAudit = new LinkedInSelectorAuditService(runtime);
 
   logger.log("info", "runtime.started", {
     runId,
