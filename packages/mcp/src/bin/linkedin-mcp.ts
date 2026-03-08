@@ -8,6 +8,8 @@ import {
   normalizeLinkedInFeedReaction,
   normalizeLinkedInPostVisibility,
   resolveFollowupSinceWindow,
+  redactStructuredValue,
+  resolvePrivacyConfig,
   toLinkedInAssistantErrorPayload,
   type SearchCategory
 } from "@linkedin-assistant/core";
@@ -45,6 +47,8 @@ import {
 
 type ToolArgs = Record<string, unknown>;
 type ToolResult = { content: Array<{ type: "text"; text: string }> };
+
+const mcpPrivacyConfig = resolvePrivacyConfig();
 
 function readString(args: ToolArgs, key: string, fallback: string): string {
   const value = args[key];
@@ -115,7 +119,11 @@ function toToolResult(payload: unknown): ToolResult {
     content: [
       {
         type: "text",
-        text: JSON.stringify(payload, null, 2)
+        text: JSON.stringify(
+          redactStructuredValue(payload, mcpPrivacyConfig, "cli"),
+          null,
+          2
+        )
       }
     ]
   };
@@ -130,7 +138,11 @@ function toErrorResult(error: unknown): {
     content: [
       {
         type: "text",
-        text: JSON.stringify(toLinkedInAssistantErrorPayload(error), null, 2)
+        text: JSON.stringify(
+          toLinkedInAssistantErrorPayload(error, mcpPrivacyConfig),
+          null,
+          2
+        )
       }
     ]
   };
@@ -161,7 +173,11 @@ function withCdpSchemaProperties(
 
 function createRuntime(args: ToolArgs) {
   const cdpUrl = readString(args, "cdpUrl", "");
-  return createCoreRuntime(cdpUrl ? { cdpUrl } : {});
+  return createCoreRuntime(
+    cdpUrl
+      ? { cdpUrl, privacy: mcpPrivacyConfig }
+      : { privacy: mcpPrivacyConfig }
+  );
 }
 
 async function handleSessionStatus(args: ToolArgs): Promise<ToolResult> {
@@ -1602,6 +1618,8 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  console.error(JSON.stringify(toLinkedInAssistantErrorPayload(error), null, 2));
+  console.error(
+    JSON.stringify(toLinkedInAssistantErrorPayload(error, mcpPrivacyConfig), null, 2)
+  );
   process.exit(1);
 });

@@ -2,6 +2,11 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { ConfigPaths } from "./config.js";
 import type { AssistantDatabase } from "./db/database.js";
+import {
+  redactStructuredValue,
+  resolvePrivacyConfig,
+  type PrivacyConfig
+} from "./privacy.js";
 
 function assertWithinRunDir(runDir: string, targetPath: string): void {
   if (targetPath === runDir) {
@@ -19,7 +24,8 @@ export class ArtifactHelpers {
   constructor(
     private readonly paths: ConfigPaths,
     private readonly runId: string,
-    private readonly db?: AssistantDatabase
+    private readonly db?: AssistantDatabase,
+    private readonly privacy: PrivacyConfig = resolvePrivacyConfig()
   ) {
     this.runDir = path.join(this.paths.artifactsDir, this.runId);
     mkdirSync(this.runDir, { recursive: true });
@@ -43,7 +49,14 @@ export class ArtifactHelpers {
   ): string {
     const artifactPath = this.resolve(relativePath);
     mkdirSync(path.dirname(artifactPath), { recursive: true });
-    writeFileSync(artifactPath, contents, "utf8");
+    const redacted = redactStructuredValue(
+      { body: contents },
+      this.privacy,
+      "artifact"
+    );
+    const sanitizedContents =
+      typeof redacted.body === "string" ? redacted.body : contents;
+    writeFileSync(artifactPath, sanitizedContents, "utf8");
     this.indexArtifact(relativePath, artifactType, metadata);
     return artifactPath;
   }
@@ -53,12 +66,12 @@ export class ArtifactHelpers {
     value: unknown,
     metadata: Record<string, unknown> = {}
   ): string {
-    return this.writeText(
-      relativePath,
-      `${JSON.stringify(value, null, 2)}\n`,
-      "application/json",
-      metadata
-    );
+    const artifactPath = this.resolve(relativePath);
+    mkdirSync(path.dirname(artifactPath), { recursive: true });
+    const sanitizedValue = redactStructuredValue(value, this.privacy, "artifact");
+    writeFileSync(artifactPath, `${JSON.stringify(sanitizedValue, null, 2)}\n`, "utf8");
+    this.indexArtifact(relativePath, "application/json", metadata);
+    return artifactPath;
   }
 
   registerArtifact(
@@ -80,11 +93,17 @@ export class ArtifactHelpers {
       return;
     }
 
+    const sanitizedMetadata = redactStructuredValue(
+      metadata,
+      this.privacy,
+      "artifact"
+    );
+
     this.db.insertArtifactIndex({
       runId: this.runId,
       artifactPath: relativePath,
       artifactType,
-      metadataJson: JSON.stringify(metadata),
+      metadataJson: JSON.stringify(sanitizedMetadata),
       createdAtMs: Date.now()
     });
   }

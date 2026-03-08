@@ -170,5 +170,12 @@ CREATE INDEX IF NOT EXISTS sent_invitation_state_profile_accepted_idx
 CREATE INDEX IF NOT EXISTS sent_invitation_state_followup_action_idx
   ON sent_invitation_state(followup_prepared_action_id);
 `
+  },
+  {
+    id: "004_prepared_action_sealed_fields",
+    sql: `
+ALTER TABLE prepared_action ADD COLUMN sealed_target_json TEXT;
+ALTER TABLE prepared_action ADD COLUMN sealed_payload_json TEXT;
+`
   }
 ];

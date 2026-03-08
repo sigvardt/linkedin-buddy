@@ -1,3 +1,10 @@
+import {
+  redactFreeformText,
+  redactStructuredValue,
+  resolvePrivacyConfig,
+  type PrivacyConfig
+} from "./privacy.js";
+
 export const LINKEDIN_ASSISTANT_ERROR_CODES = [
   "AUTH_REQUIRED",
   "CAPTCHA_OR_CHALLENGE",
@@ -53,28 +60,48 @@ function summarizeUnknownError(error: unknown): Record<string, unknown> {
 }
 
 export function toLinkedInAssistantErrorPayload(
-  error: unknown
+  error: unknown,
+  privacy?: Partial<PrivacyConfig>
 ): LinkedInAssistantErrorPayload {
+  const privacyConfig = resolvePrivacyConfig(privacy);
+
   if (error instanceof LinkedInAssistantError) {
     return {
       code: error.code,
-      message: error.message,
-      details: error.details
+      message:
+        privacyConfig.redactionMode === "off"
+          ? error.message
+          : redactFreeformText(error.message, privacyConfig),
+      details: redactStructuredValue(error.details, privacyConfig, "error")
     };
   }
 
   if (error instanceof Error) {
     return {
       code: "UNKNOWN",
-      message: error.message,
-      details: summarizeUnknownError(error)
+      message:
+        privacyConfig.redactionMode === "off"
+          ? error.message
+          : redactFreeformText(error.message, privacyConfig),
+      details: redactStructuredValue(
+        summarizeUnknownError(error),
+        privacyConfig,
+        "error"
+      )
     };
   }
 
   return {
     code: "UNKNOWN",
-    message: String(error),
-    details: summarizeUnknownError(error)
+    message:
+      privacyConfig.redactionMode === "off"
+        ? String(error)
+        : redactFreeformText(String(error), privacyConfig),
+    details: redactStructuredValue(
+      summarizeUnknownError(error),
+      privacyConfig,
+      "error"
+    )
   };
 }
 
