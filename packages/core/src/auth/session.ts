@@ -7,6 +7,10 @@ import {
   isRateLimitedChallengeUrl
 } from "./sessionInspection.js";
 import {
+  DEFAULT_LINKEDIN_SELECTOR_LOCALE,
+  type LinkedInSelectorLocale
+} from "../selectorLocale.js";
+import {
   clearRateLimitState,
   isInRateLimitCooldown,
   recordRateLimit,
@@ -90,7 +94,9 @@ async function sleep(ms: number): Promise<void> {
 export class LinkedInAuthService {
   constructor(
     private readonly profileManager: ProfileManager,
-    private readonly cdpUrl?: string
+    private readonly cdpUrl?: string,
+    private readonly selectorLocale: LinkedInSelectorLocale =
+      DEFAULT_LINKEDIN_SELECTOR_LOCALE
   ) {}
 
   async status(options: SessionOptions = {}): Promise<SessionStatus> {
@@ -110,7 +116,9 @@ export class LinkedInAuthService {
         await page.goto("https://www.linkedin.com/feed/", {
           waitUntil: "domcontentloaded"
         });
-        const status = await inspectLinkedInSession(page);
+        const status = await inspectLinkedInSession(page, {
+          selectorLocale: this.selectorLocale
+        });
         if (status.authenticated) {
           await clearRateLimitState();
         }
@@ -226,7 +234,9 @@ export class LinkedInAuthService {
 
         const currentUrl = page.url();
         if (!currentUrl.includes("/login") && !currentUrl.includes("/checkpoint")) {
-          const earlyStatus = await inspectLinkedInSession(page);
+          const earlyStatus = await inspectLinkedInSession(page, {
+            selectorLocale: this.selectorLocale
+          });
           if (earlyStatus.authenticated) {
             await clearRateLimitState();
             return {
@@ -259,7 +269,9 @@ export class LinkedInAuthService {
         let mfaCodeSubmitted = false;
 
         while (Date.now() < deadline) {
-          const status = await inspectLinkedInSession(page);
+          const status = await inspectLinkedInSession(page, {
+            selectorLocale: this.selectorLocale
+          });
 
           if (status.authenticated) {
             await clearRateLimitState();
@@ -454,7 +466,9 @@ export class LinkedInAuthService {
           }
         }
 
-        const finalStatus = await inspectLinkedInSession(page);
+        const finalStatus = await inspectLinkedInSession(page, {
+          selectorLocale: this.selectorLocale
+        });
         if (finalStatus.authenticated) {
           await clearRateLimitState();
         }
@@ -492,7 +506,9 @@ export class LinkedInAuthService {
           waitUntil: "domcontentloaded"
         });
 
-        let status = await inspectLinkedInSession(page);
+        let status = await inspectLinkedInSession(page, {
+          selectorLocale: this.selectorLocale
+        });
         const deadline = Date.now() + timeoutMs;
 
         while (!status.authenticated && Date.now() < deadline) {
@@ -505,7 +521,9 @@ export class LinkedInAuthService {
             };
           }
 
-          status = await inspectLinkedInSession(page);
+          status = await inspectLinkedInSession(page, {
+            selectorLocale: this.selectorLocale
+          });
         }
 
         if (status.authenticated) {

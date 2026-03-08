@@ -18,6 +18,15 @@ import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
 import type { RateLimiter, RateLimiterState } from "./rateLimiter.js";
 import type {
+  LinkedInSelectorLocale,
+  LinkedInSelectorPhraseKey
+} from "./selectorLocale.js";
+import {
+  buildLinkedInAriaLabelContainsSelector,
+  buildLinkedInSelectorPhraseRegex,
+  formatLinkedInSelectorRegexHint
+} from "./selectorLocale.js";
+import type {
   ActionExecutor,
   ActionExecutorInput,
   ActionExecutorResult,
@@ -87,6 +96,7 @@ export interface PrepareCreatePostInput {
 export interface LinkedInPostsExecutorRuntime {
   auth: LinkedInAuthService;
   cdpUrl?: string | undefined;
+  selectorLocale: LinkedInSelectorLocale;
   profileManager: ProfileManager;
   logger: JsonEventLogger;
   rateLimiter: RateLimiter;
@@ -1114,7 +1124,6 @@ async function findOptionalScopedLocator(
 async function waitForFeedSurface(page: Page): Promise<void> {
   const candidates = [
     page.locator(".share-box-feed-entry").first(),
-    page.getByRole("button", { name: /start a post/i }).first(),
     page.locator(".feed-shared-update-v2, .occludable-update, main").first(),
     page.locator("main").first()
   ];
@@ -1137,20 +1146,44 @@ async function waitForFeedSurface(page: Page): Promise<void> {
   );
 }
 
-function createComposeTriggerCandidates(): SelectorCandidate[] {
+function createComposeTriggerCandidates(
+  selectorLocale: LinkedInSelectorLocale
+): SelectorCandidate[] {
+  const startPostExactRegex = buildLinkedInSelectorPhraseRegex(
+    "start_post",
+    selectorLocale,
+    { exact: true }
+  );
+  const startPostExactRegexHint = formatLinkedInSelectorRegexHint(
+    "start_post",
+    selectorLocale,
+    { exact: true }
+  );
+  const startPostTextRegex = buildLinkedInSelectorPhraseRegex(
+    "start_post",
+    selectorLocale
+  );
+  const startPostTextRegexHint = formatLinkedInSelectorRegexHint(
+    "start_post",
+    selectorLocale
+  );
+  const startPostAriaSelector = buildLinkedInAriaLabelContainsSelector(
+    ["button", "[role='button']"],
+    "start_post",
+    selectorLocale
+  );
+
   return [
     {
       key: "role-button-start-post",
-      selectorHint: "getByRole(button, /start a post/i)",
-      locatorFactory: (page) => page.getByRole("button", { name: /start a post/i })
+      selectorHint: `getByRole(button, ${startPostExactRegexHint})`,
+      locatorFactory: (page) =>
+        page.getByRole("button", { name: startPostExactRegex })
     },
     {
       key: "aria-start-post",
-      selectorHint: "button[aria-label*='Start a post' i]",
-      locatorFactory: (page) =>
-        page.locator(
-          "button[aria-label*='start a post' i], [role='button'][aria-label*='start a post' i]"
-        )
+      selectorHint: startPostAriaSelector,
+      locatorFactory: (page) => page.locator(startPostAriaSelector)
     },
     {
       key: "share-box-trigger",
@@ -1160,14 +1193,37 @@ function createComposeTriggerCandidates(): SelectorCandidate[] {
     },
     {
       key: "text-start-post",
-      selectorHint: "button, [role='button'] hasText /start a post/i",
+      selectorHint: `button, [role='button'] hasText ${startPostTextRegexHint}`,
       locatorFactory: (page) =>
-        page.locator("button, [role='button']").filter({ hasText: /start a post/i })
+        page
+          .locator("button, [role='button']")
+          .filter({ hasText: startPostTextRegex })
     }
   ];
 }
 
-function createComposerRootCandidates(): SelectorCandidate[] {
+function createComposerRootCandidates(
+  selectorLocale: LinkedInSelectorLocale
+): SelectorCandidate[] {
+  const postExactRegex = buildLinkedInSelectorPhraseRegex(
+    "post",
+    selectorLocale,
+    { exact: true }
+  );
+  const postExactRegexHint = formatLinkedInSelectorRegexHint(
+    "post",
+    selectorLocale,
+    { exact: true }
+  );
+  const composerPromptRegex = buildLinkedInSelectorPhraseRegex(
+    "what_do_you_want_to_talk_about",
+    selectorLocale
+  );
+  const composerPromptRegexHint = formatLinkedInSelectorRegexHint(
+    "what_do_you_want_to_talk_about",
+    selectorLocale
+  );
+
   return [
     {
       key: "dialog-with-textbox",
@@ -1179,19 +1235,19 @@ function createComposerRootCandidates(): SelectorCandidate[] {
     },
     {
       key: "dialog-with-post-button",
-      selectorHint: "[role='dialog'] has getByRole(button, /^post$/i)",
+      selectorHint: `[role='dialog'] has getByRole(button, ${postExactRegexHint})`,
       locatorFactory: (page) =>
         page
           .locator("[role='dialog']")
-          .filter({ has: page.getByRole("button", { name: /^post$/i }) })
+          .filter({ has: page.getByRole("button", { name: postExactRegex }) })
     },
     {
       key: "dialog-with-prompt",
-      selectorHint: "[role='dialog'] hasText /what do you want to talk about/i",
+      selectorHint: `[role='dialog'] hasText ${composerPromptRegexHint}`,
       locatorFactory: (page) =>
         page
           .locator("[role='dialog']")
-          .filter({ has: page.getByText(/what do you want to talk about/i) })
+          .filter({ has: page.getByText(composerPromptRegex) })
     },
     {
       key: "share-box-open",
@@ -1202,14 +1258,25 @@ function createComposerRootCandidates(): SelectorCandidate[] {
   ];
 }
 
-function createComposerInputCandidates(): ScopedSelectorCandidate[] {
+function createComposerInputCandidates(
+  selectorLocale: LinkedInSelectorLocale
+): ScopedSelectorCandidate[] {
+  const composerInputRegex = buildLinkedInSelectorPhraseRegex(
+    ["what_do_you_want_to_talk_about", "start_post"],
+    selectorLocale
+  );
+  const composerInputRegexHint = formatLinkedInSelectorRegexHint(
+    ["what_do_you_want_to_talk_about", "start_post"],
+    selectorLocale
+  );
+
   return [
     {
       key: "role-textbox-prompt",
-      selectorHint: "getByRole(textbox, /what do you want to talk about|start a post/i)",
+      selectorHint: `getByRole(textbox, ${composerInputRegexHint})`,
       locatorFactory: (root) =>
         root.getByRole("textbox", {
-          name: /what do you want to talk about|start a post/i
+          name: composerInputRegex
         })
     },
     {
@@ -1235,59 +1302,113 @@ function createComposerInputCandidates(): ScopedSelectorCandidate[] {
   ];
 }
 
-function createVisibilityButtonCandidates(): ScopedSelectorCandidate[] {
+function createVisibilityButtonCandidates(
+  selectorLocale: LinkedInSelectorLocale
+): ScopedSelectorCandidate[] {
+  const visibilityRegex = buildLinkedInSelectorPhraseRegex(
+    [
+      "anyone",
+      "connections_only",
+      "who_can_see_your_post",
+      "visibility",
+      "post_settings"
+    ],
+    selectorLocale
+  );
+  const visibilityRegexHint = formatLinkedInSelectorRegexHint(
+    [
+      "anyone",
+      "connections_only",
+      "who_can_see_your_post",
+      "visibility",
+      "post_settings"
+    ],
+    selectorLocale
+  );
+  const visibilityAriaSelector = buildLinkedInAriaLabelContainsSelector(
+    "button",
+    [
+      "anyone",
+      "connections_only",
+      "who_can_see_your_post",
+      "visibility",
+      "post_settings"
+    ],
+    selectorLocale
+  );
+  const visibilityTextRegex = buildLinkedInSelectorPhraseRegex(
+    ["anyone", "connections_only"],
+    selectorLocale
+  );
+  const visibilityTextRegexHint = formatLinkedInSelectorRegexHint(
+    ["anyone", "connections_only"],
+    selectorLocale
+  );
+
   return [
     {
       key: "role-button-visibility",
-      selectorHint:
-        "getByRole(button, /anyone|connections only|who can see your post|visibility|post settings/i)",
+      selectorHint: `getByRole(button, ${visibilityRegexHint})`,
       locatorFactory: (root) =>
         root.getByRole("button", {
-          name: /anyone|connections only|who can see your post|visibility|post settings/i
+          name: visibilityRegex
         })
     },
     {
       key: "aria-label-visibility",
-      selectorHint:
-        "button[aria-label*=anyone|connections only|visibility|post settings]",
-      locatorFactory: (root) =>
-        root.locator(
-          "button[aria-label*='Anyone' i], button[aria-label*='Connections only' i], button[aria-label*='Who can see your post' i], button[aria-label*='visibility' i], button[aria-label*='post settings' i]"
-        )
+      selectorHint: visibilityAriaSelector,
+      locatorFactory: (root) => root.locator(visibilityAriaSelector)
     },
     {
       key: "button-text-visibility",
-      selectorHint: "button hasText /anyone|connections only/i",
-      locatorFactory: (root) => root.locator("button").filter({ hasText: /anyone|connections only/i })
+      selectorHint: `button hasText ${visibilityTextRegexHint}`,
+      locatorFactory: (root) =>
+        root.locator("button").filter({ hasText: visibilityTextRegex })
     }
   ];
 }
 
-function createVisibilityOptionCandidates(
+function getVisibilityPhraseKey(
   visibility: LinkedInPostVisibility
+): LinkedInSelectorPhraseKey {
+  return visibility === "connections" ? "connections_only" : "anyone";
+}
+
+function createVisibilityOptionCandidates(
+  visibility: LinkedInPostVisibility,
+  selectorLocale: LinkedInSelectorLocale
 ): SelectorCandidate[] {
-  const audienceLabel = LINKEDIN_POST_VISIBILITY_MAP[visibility].audienceLabel;
-  const labelRegex = new RegExp(`^${escapeRegExp(audienceLabel)}$`, "i");
+  const visibilityPhraseKey = getVisibilityPhraseKey(visibility);
+  const labelRegex = buildLinkedInSelectorPhraseRegex(
+    visibilityPhraseKey,
+    selectorLocale,
+    { exact: true }
+  );
+  const labelRegexHint = formatLinkedInSelectorRegexHint(
+    visibilityPhraseKey,
+    selectorLocale,
+    { exact: true }
+  );
 
   return [
     {
       key: "role-radio-visibility-option",
-      selectorHint: `getByRole(radio, ${audienceLabel})`,
+      selectorHint: `getByRole(radio, ${labelRegexHint})`,
       locatorFactory: (page) => page.getByRole("radio", { name: labelRegex })
     },
     {
       key: "role-button-visibility-option",
-      selectorHint: `getByRole(button, ${audienceLabel})`,
+      selectorHint: `getByRole(button, ${labelRegexHint})`,
       locatorFactory: (page) => page.getByRole("button", { name: labelRegex })
     },
     {
       key: "label-visibility-option",
-      selectorHint: `label hasText ${audienceLabel}`,
+      selectorHint: `label hasText ${labelRegexHint}`,
       locatorFactory: (page) => page.locator("label").filter({ hasText: labelRegex })
     },
     {
       key: "generic-visibility-option",
-      selectorHint: `[role='radio'], button, label, li hasText ${audienceLabel}`,
+      selectorHint: `[role='radio'], button, label, li hasText ${labelRegexHint}`,
       locatorFactory: (page) =>
         page
           .locator("[role='radio'], button, label, li")
@@ -1296,27 +1417,51 @@ function createVisibilityOptionCandidates(
   ];
 }
 
-function createVisibilityDoneButtonCandidates(): SelectorCandidate[] {
+function createVisibilityDoneButtonCandidates(
+  selectorLocale: LinkedInSelectorLocale
+): SelectorCandidate[] {
+  const doneRegex = buildLinkedInSelectorPhraseRegex(
+    ["done", "save"],
+    selectorLocale
+  );
+  const doneRegexHint = formatLinkedInSelectorRegexHint(
+    ["done", "save"],
+    selectorLocale
+  );
+
   return [
     {
       key: "role-button-done",
-      selectorHint: "getByRole(button, /done|save/i)",
-      locatorFactory: (page) => page.getByRole("button", { name: /done|save/i })
+      selectorHint: `getByRole(button, ${doneRegexHint})`,
+      locatorFactory: (page) => page.getByRole("button", { name: doneRegex })
     },
     {
       key: "button-text-done",
-      selectorHint: "button hasText /done|save/i",
-      locatorFactory: (page) => page.locator("button").filter({ hasText: /done|save/i })
+      selectorHint: `button hasText ${doneRegexHint}`,
+      locatorFactory: (page) => page.locator("button").filter({ hasText: doneRegex })
     }
   ];
 }
 
-function createPublishButtonCandidates(): ScopedSelectorCandidate[] {
+function createPublishButtonCandidates(
+  selectorLocale: LinkedInSelectorLocale
+): ScopedSelectorCandidate[] {
+  const postExactRegex = buildLinkedInSelectorPhraseRegex(
+    "post",
+    selectorLocale,
+    { exact: true }
+  );
+  const postExactRegexHint = formatLinkedInSelectorRegexHint(
+    "post",
+    selectorLocale,
+    { exact: true }
+  );
+
   return [
     {
       key: "role-button-post",
-      selectorHint: "getByRole(button, /^post$/i)",
-      locatorFactory: (root) => root.getByRole("button", { name: /^post$/i })
+      selectorHint: `getByRole(button, ${postExactRegexHint})`,
+      locatorFactory: (root) => root.getByRole("button", { name: postExactRegex })
     },
     {
       key: "share-actions-primary",
@@ -1331,41 +1476,66 @@ function createPublishButtonCandidates(): ScopedSelectorCandidate[] {
   ];
 }
 
-function createComposerCloseButtonCandidates(): ScopedSelectorCandidate[] {
+function createComposerCloseButtonCandidates(
+  selectorLocale: LinkedInSelectorLocale
+): ScopedSelectorCandidate[] {
+  const closeRegex = buildLinkedInSelectorPhraseRegex(
+    ["dismiss", "close"],
+    selectorLocale
+  );
+  const closeRegexHint = formatLinkedInSelectorRegexHint(
+    ["dismiss", "close"],
+    selectorLocale
+  );
+  const closeAriaSelector = buildLinkedInAriaLabelContainsSelector(
+    "button",
+    ["dismiss", "close"],
+    selectorLocale
+  );
+
   return [
     {
       key: "role-button-dismiss",
-      selectorHint: "getByRole(button, /dismiss|close/i)",
-      locatorFactory: (root) => root.getByRole("button", { name: /dismiss|close/i })
+      selectorHint: `getByRole(button, ${closeRegexHint})`,
+      locatorFactory: (root) => root.getByRole("button", { name: closeRegex })
     },
     {
       key: "aria-dismiss-close",
-      selectorHint: "button[aria-label*=dismiss|close]",
-      locatorFactory: (root) =>
-        root.locator(
-          "button[aria-label*='dismiss' i], button[aria-label*='close' i]"
-        )
+      selectorHint: closeAriaSelector,
+      locatorFactory: (root) => root.locator(closeAriaSelector)
     }
   ];
 }
 
-function createDiscardDialogCandidates(): SelectorCandidate[] {
+function createDiscardDialogCandidates(
+  selectorLocale: LinkedInSelectorLocale
+): SelectorCandidate[] {
+  const discardRegex = buildLinkedInSelectorPhraseRegex(
+    ["discard", "leave"],
+    selectorLocale
+  );
+  const discardRegexHint = formatLinkedInSelectorRegexHint(
+    ["discard", "leave"],
+    selectorLocale
+  );
+
   return [
     {
       key: "role-button-discard",
-      selectorHint: "getByRole(button, /discard|leave/i)",
-      locatorFactory: (page) => page.getByRole("button", { name: /discard|leave/i })
+      selectorHint: `getByRole(button, ${discardRegexHint})`,
+      locatorFactory: (page) => page.getByRole("button", { name: discardRegex })
     },
     {
       key: "button-text-discard",
-      selectorHint: "button hasText /discard|leave/i",
-      locatorFactory: (page) => page.locator("button").filter({ hasText: /discard|leave/i })
+      selectorHint: `button hasText ${discardRegexHint}`,
+      locatorFactory: (page) => page.locator("button").filter({ hasText: discardRegex })
     }
   ];
 }
 
 async function openPostComposer(
   page: Page,
+  selectorLocale: LinkedInSelectorLocale,
   artifactPaths: string[]
 ): Promise<{ composerRoot: Locator; triggerKey: string; rootKey: string }> {
   await page.goto(LINKEDIN_FEED_URL, { waitUntil: "domcontentloaded" });
@@ -1374,7 +1544,7 @@ async function openPostComposer(
 
   const trigger = await findVisibleLocatorOrThrow(
     page,
-    createComposeTriggerCandidates(),
+    createComposeTriggerCandidates(selectorLocale),
     "post_composer_trigger",
     artifactPaths
   );
@@ -1382,7 +1552,7 @@ async function openPostComposer(
 
   const root = await findVisibleLocatorOrThrow(
     page,
-    createComposerRootCandidates(),
+    createComposerRootCandidates(selectorLocale),
     "post_composer_root",
     artifactPaths
   );
@@ -1394,10 +1564,14 @@ async function openPostComposer(
   };
 }
 
-async function closeComposerBestEffort(page: Page, composerRoot: Locator): Promise<void> {
+async function closeComposerBestEffort(
+  page: Page,
+  composerRoot: Locator,
+  selectorLocale: LinkedInSelectorLocale
+): Promise<void> {
   const closeButton = await findOptionalScopedLocator(
     composerRoot,
-    createComposerCloseButtonCandidates()
+    createComposerCloseButtonCandidates(selectorLocale)
   );
 
   try {
@@ -1412,7 +1586,7 @@ async function closeComposerBestEffort(page: Page, composerRoot: Locator): Promi
 
   const discardButton = await findOptionalVisibleLocator(
     page,
-    createDiscardDialogCandidates()
+    createDiscardDialogCandidates(selectorLocale)
   );
   if (discardButton) {
     await discardButton.locator.click({ timeout: 2_000 }).catch(() => undefined);
@@ -1424,12 +1598,13 @@ async function closeComposerBestEffort(page: Page, composerRoot: Locator): Promi
 async function setComposerText(
   page: Page,
   composerRoot: Locator,
+  selectorLocale: LinkedInSelectorLocale,
   text: string,
   artifactPaths: string[]
 ): Promise<string> {
   const composerInput = await findVisibleScopedLocatorOrThrow(
     composerRoot,
-    createComposerInputCandidates(),
+    createComposerInputCandidates(selectorLocale),
     "post_composer_input",
     artifactPaths,
     page.url()
@@ -1462,13 +1637,14 @@ async function readLocatorDetails(locator: Locator): Promise<string> {
 async function setPostVisibility(
   page: Page,
   composerRoot: Locator,
+  selectorLocale: LinkedInSelectorLocale,
   visibility: LinkedInPostVisibility,
   artifactPaths: string[]
 ): Promise<string> {
   const audienceLabel = LINKEDIN_POST_VISIBILITY_MAP[visibility].audienceLabel;
   const visibilityButton = await findVisibleScopedLocatorOrThrow(
     composerRoot,
-    createVisibilityButtonCandidates(),
+    createVisibilityButtonCandidates(selectorLocale),
     "post_visibility_button",
     artifactPaths,
     page.url()
@@ -1483,7 +1659,7 @@ async function setPostVisibility(
 
   const option = await findVisibleLocatorOrThrow(
     page,
-    createVisibilityOptionCandidates(visibility),
+    createVisibilityOptionCandidates(visibility, selectorLocale),
     "post_visibility_option",
     artifactPaths
   );
@@ -1491,7 +1667,7 @@ async function setPostVisibility(
 
   const doneButton = await findOptionalVisibleLocator(
     page,
-    createVisibilityDoneButtonCandidates()
+    createVisibilityDoneButtonCandidates(selectorLocale)
   );
   if (doneButton) {
     await doneButton.locator.click({ timeout: 5_000 });
@@ -1500,7 +1676,7 @@ async function setPostVisibility(
   const updated = await waitForCondition(async () => {
     const nextButton = await findOptionalScopedLocator(
       composerRoot,
-      createVisibilityButtonCandidates()
+      createVisibilityButtonCandidates(selectorLocale)
     );
     if (!nextButton) {
       return false;
@@ -1668,6 +1844,7 @@ export class LinkedInPostsService {
 
             const { composerRoot, triggerKey, rootKey } = await openPostComposer(
               page,
+              this.runtime.selectorLocale,
               artifactPaths
             );
 
@@ -1681,7 +1858,11 @@ export class LinkedInPostsService {
             });
             artifactPaths.push(screenshotPath);
 
-            await closeComposerBestEffort(page, composerRoot);
+            await closeComposerBestEffort(
+              page,
+              composerRoot,
+              this.runtime.selectorLocale
+            );
 
             const rateLimitState = this.runtime.rateLimiter.peek(
               CREATE_POST_RATE_LIMIT_CONFIG
@@ -1843,15 +2024,23 @@ class CreatePostActionExecutor
 
           const { composerRoot, triggerKey, rootKey } = await openPostComposer(
             page,
+            runtime.selectorLocale,
             artifactPaths
           );
           const visibilityKey = await setPostVisibility(
             page,
             composerRoot,
+            runtime.selectorLocale,
             visibility,
             artifactPaths
           );
-          const inputKey = await setComposerText(page, composerRoot, text, artifactPaths);
+          const inputKey = await setComposerText(
+            page,
+            composerRoot,
+            runtime.selectorLocale,
+            text,
+            artifactPaths
+          );
 
           const prePublishScreenshot = `linkedin/screenshot-post-confirm-before-${Date.now()}.png`;
           await captureScreenshotArtifact(runtime, page, prePublishScreenshot, {
@@ -1867,7 +2056,7 @@ class CreatePostActionExecutor
 
           const publishButton = await findVisibleScopedLocatorOrThrow(
             composerRoot,
-            createPublishButtonCandidates(),
+            createPublishButtonCandidates(runtime.selectorLocale),
             "post_publish_button",
             artifactPaths,
             page.url()

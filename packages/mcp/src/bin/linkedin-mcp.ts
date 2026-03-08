@@ -3,6 +3,7 @@ import {
   DEFAULT_FOLLOWUP_SINCE,
   LINKEDIN_FEED_REACTION_TYPES,
   LINKEDIN_POST_VISIBILITY_TYPES,
+  LINKEDIN_SELECTOR_LOCALES,
   LinkedInAssistantError,
   createCoreRuntime,
   normalizeLinkedInFeedReaction,
@@ -169,21 +170,37 @@ const cdpUrlInputSchemaProperty = {
     "Connect to an existing browser via CDP endpoint (for example http://127.0.0.1:18800)."
 } as const;
 
+const selectorLocaleInputSchemaProperty = {
+  type: "string",
+  description: `Selector locale for LinkedIn UI text fallbacks (${LINKEDIN_SELECTOR_LOCALES.join(
+    ", "
+  )}). Defaults to en.`
+} as const;
+
 function withCdpSchemaProperties(
   properties: Record<string, unknown>
 ): Record<string, unknown> {
   return {
     ...properties,
-    cdpUrl: cdpUrlInputSchemaProperty
+    cdpUrl: cdpUrlInputSchemaProperty,
+    selectorLocale: selectorLocaleInputSchemaProperty
   };
 }
 
 function createRuntime(args: ToolArgs) {
   const cdpUrl = readString(args, "cdpUrl", "");
+  const selectorLocale = readString(args, "selectorLocale", "");
   return createCoreRuntime(
     cdpUrl
-      ? { cdpUrl, privacy: mcpPrivacyConfig }
-      : { privacy: mcpPrivacyConfig }
+      ? {
+          cdpUrl,
+          privacy: mcpPrivacyConfig,
+          ...(selectorLocale ? { selectorLocale } : {})
+        }
+      : {
+          privacy: mcpPrivacyConfig,
+          ...(selectorLocale ? { selectorLocale } : {})
+        }
   );
 }
 

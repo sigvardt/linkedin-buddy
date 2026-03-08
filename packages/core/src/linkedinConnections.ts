@@ -11,6 +11,13 @@ import {
   normalizeLinkedInProfileUrl,
   resolveProfileUrl
 } from "./linkedinProfile.js";
+import type { LinkedInSelectorLocale } from "./selectorLocale.js";
+import {
+  buildLinkedInAriaLabelContainsSelector,
+  buildLinkedInSelectorPhraseRegex,
+  formatLinkedInSelectorRegexHint,
+  getLinkedInSelectorPhrases
+} from "./selectorLocale.js";
 import type { TwoPhaseCommitService } from "./twoPhaseCommit.js";
 import type { ArtifactHelpers } from "./artifacts.js";
 
@@ -70,6 +77,7 @@ export interface LinkedInConnectionsExecutorRuntime {
   db: AssistantDatabase;
   auth: LinkedInAuthService;
   cdpUrl?: string | undefined;
+  selectorLocale: LinkedInSelectorLocale;
   profileManager: ProfileManager;
   logger: JsonEventLogger;
   artifacts: ArtifactHelpers;
@@ -269,7 +277,8 @@ async function scrapeConnections(
 
 async function scrapePendingInvitations(
   page: Page,
-  sentOrReceived: "sent" | "received"
+  sentOrReceived: "sent" | "received",
+  selectorLocale: LinkedInSelectorLocale
 ): Promise<LinkedInPendingInvitation[]> {
   // Wait for invitation cards
   await page
@@ -278,9 +287,55 @@ async function scrapePendingInvitations(
     .waitFor({ state: "visible", timeout: 5_000 })
     .catch(() => undefined);
 
-  const invitations = await page.evaluate((direction: string) => {
+  const sentSignals = getLinkedInSelectorPhrases(
+    ["withdraw", "invitation_sent"],
+    selectorLocale
+  );
+  const receivedSignals = getLinkedInSelectorPhrases(
+    ["accept", "ignore", "decline", "respond"],
+    selectorLocale
+  );
+  const headlineNoiseSignals = getLinkedInSelectorPhrases(
+    [
+      "accept",
+      "decline",
+      "ignore",
+      "invitation",
+      "invitation_sent",
+      "respond",
+      "withdraw"
+    ],
+    selectorLocale
+  );
+
+  const invitations = await page.evaluate(
+    ({ direction, sentSignals, receivedSignals, headlineNoiseSignals }) => {
     const normalize = (v: string | null | undefined): string =>
       (v ?? "").replace(/\s+/g, " ").trim();
+
+      const containsAny = (value: string, phrases: string[]): boolean => {
+        const normalizedValue = normalize(value).toLowerCase();
+        return phrases.some((phrase) =>
+          normalizedValue.includes(normalize(phrase).toLowerCase())
+        );
+      };
+
+      const escapeRegExp = (value: string): string =>
+        value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+      const stripPhrases = (value: string, phrases: string[]): string => {
+        return phrases.reduce((stripped, phrase) => {
+          const normalizedPhrase = normalize(phrase);
+          if (!normalizedPhrase) {
+            return stripped;
+          }
+
+          return stripped.replace(
+            new RegExp(escapeRegExp(normalizedPhrase), "giu"),
+            " "
+          );
+        }, normalize(value));
+      };
 
     const legacyCards = Array.from(
       document.querySelectorAll(
@@ -297,10 +352,10 @@ async function scrapePendingInvitations(
       }
 
       if (direction === "sent") {
-        return /withdraw|sent/.test(text);
+        return containsAny(text, sentSignals);
       }
 
-      return /accept|ignore|decline|respond/.test(text);
+      return containsAny(text, receivedSignals);
     });
 
     const cards = legacyCards.length > 0 ? legacyCards : modernCards;
@@ -324,9 +379,10 @@ async function scrapePendingInvitations(
       const headlineEl =
         card.querySelector(".invitation-card__subtitle") ??
         card.querySelector(".entity-result__primary-subtitle");
-      let headline = normalize(headlineEl?.textContent)
-        .replace(/\b(sent|withdraw|accept|ignore)\b/gi, "")
-        .trim();
+      let headline = stripPhrases(
+        normalize(headlineEl?.textContent),
+        headlineNoiseSignals
+      ).trim();
 
       if (!headline) {
         const fallbackLine = Array.from(card.querySelectorAll("p, span"))
@@ -334,7 +390,7 @@ async function scrapePendingInvitations(
           .find((line) => {
             if (!line) return false;
             if (line === fullName) return false;
-            if (/sent|withdraw|accept|ignore|invitation/i.test(line)) return false;
+            if (containsAny(line, headlineNoiseSignals)) return false;
             return true;
           });
         headline = fallbackLine ?? "";
@@ -347,7 +403,14 @@ async function scrapePendingInvitations(
         sent_or_received: direction as "sent" | "received"
       };
     });
-  }, sentOrReceived);
+    },
+    {
+      direction: sentOrReceived,
+      sentSignals,
+      receivedSignals,
+      headlineNoiseSignals
+    }
+  );
 
   return invitations.map((inv) => ({
     vanity_name: extractVanityName(inv.profile_url),
@@ -411,62 +474,166 @@ async function executeSendInvitation(
       await page.goto(profileUrl, { waitUntil: "domcontentloaded" });
       await waitForNetworkIdleBestEffort(page);
 
+      const connectExactRegex = buildLinkedInSelectorPhraseRegex(
+        "connect",
+        runtime.selectorLocale,
+        { exact: true }
+      );
+      const connectExactRegexHint = formatLinkedInSelectorRegexHint(
+        "connect",
+        runtime.selectorLocale,
+        { exact: true }
+      );
+      const connectTextRegex = buildLinkedInSelectorPhraseRegex(
+        "connect",
+        runtime.selectorLocale
+      );
+      const connectTextRegexHint = formatLinkedInSelectorRegexHint(
+        "connect",
+        runtime.selectorLocale
+      );
+      const connectAriaSelector = buildLinkedInAriaLabelContainsSelector(
+        "button",
+        "connect",
+        runtime.selectorLocale
+      );
+      const moreExactRegex = buildLinkedInSelectorPhraseRegex(
+        "more",
+        runtime.selectorLocale,
+        { exact: true }
+      );
+      const moreExactRegexHint = formatLinkedInSelectorRegexHint(
+        "more",
+        runtime.selectorLocale,
+        { exact: true }
+      );
+      const moreActionsAriaSelector = buildLinkedInAriaLabelContainsSelector(
+        "button",
+        "more_actions",
+        runtime.selectorLocale
+      );
+      const addNoteRegex = buildLinkedInSelectorPhraseRegex(
+        "add_note",
+        runtime.selectorLocale
+      );
+      const addNoteRegexHint = formatLinkedInSelectorRegexHint(
+        "add_note",
+        runtime.selectorLocale
+      );
+      const addNoteAriaSelector = buildLinkedInAriaLabelContainsSelector(
+        "button",
+        "add_note",
+        runtime.selectorLocale
+      );
+      const invitationAriaSelector = buildLinkedInAriaLabelContainsSelector(
+        "textarea",
+        "invitation",
+        runtime.selectorLocale
+      );
+      const sendExactRegex = buildLinkedInSelectorPhraseRegex(
+        "send",
+        runtime.selectorLocale,
+        { exact: true }
+      );
+      const sendExactRegexHint = formatLinkedInSelectorRegexHint(
+        "send",
+        runtime.selectorLocale,
+        { exact: true }
+      );
+      const sendTextRegex = buildLinkedInSelectorPhraseRegex(
+        "send",
+        runtime.selectorLocale
+      );
+      const sendTextRegexHint = formatLinkedInSelectorRegexHint(
+        "send",
+        runtime.selectorLocale
+      );
+      const sendWithoutNoteRegex = buildLinkedInSelectorPhraseRegex(
+        "send_without_note",
+        runtime.selectorLocale
+      );
+      const sendWithoutNoteRegexHint = formatLinkedInSelectorRegexHint(
+        "send_without_note",
+        runtime.selectorLocale
+      );
+      const sendAriaSelector = buildLinkedInAriaLabelContainsSelector(
+        "button",
+        "send",
+        runtime.selectorLocale
+      );
+      const pendingRegex = buildLinkedInSelectorPhraseRegex(
+        ["pending", "withdraw"],
+        runtime.selectorLocale
+      );
+      const pendingRegexHint = formatLinkedInSelectorRegexHint(
+        ["pending", "withdraw"],
+        runtime.selectorLocale
+      );
+      const withdrawAriaSelector = buildLinkedInAriaLabelContainsSelector(
+        "button",
+        "withdraw",
+        runtime.selectorLocale
+      );
+      const invitationSentRegex = buildLinkedInSelectorPhraseRegex(
+        "invitation_sent",
+        runtime.selectorLocale
+      );
+      const invitationSentRegexHint = formatLinkedInSelectorRegexHint(
+        "invitation_sent",
+        runtime.selectorLocale
+      );
+
       const topCardRoot = page.locator("main .pv-top-card, main").first();
 
       const connectCandidates: VisibleLocatorCandidate[] = [
         {
           key: "topcard-connect-role",
-          selectorHint: "topCard.getByRole(button, /^connect$/i)",
+          selectorHint: `topCard.getByRole(button, ${connectExactRegexHint})`,
           locatorFactory: () =>
             topCardRoot.getByRole("button", {
-              name: /^connect$/i
+              name: connectExactRegex
             })
         },
         {
-          key: "topcard-connect-aria-invite",
-          selectorHint: "topCard button[aria-label*='Invite'][aria-label*='connect']",
-          locatorFactory: () =>
-            topCardRoot.locator(
-              "button[aria-label*='Invite' i][aria-label*='connect' i]"
-            )
+          key: "topcard-connect-aria",
+          selectorHint: `topCard ${connectAriaSelector}`,
+          locatorFactory: () => topCardRoot.locator(connectAriaSelector)
         },
         {
           key: "page-connect-role",
-          selectorHint: "page.getByRole(button, /^connect$/i)",
+          selectorHint: `page.getByRole(button, ${connectExactRegexHint})`,
           locatorFactory: (targetPage) =>
             targetPage.getByRole("button", {
-              name: /^connect$/i
+              name: connectExactRegex
             })
         },
         {
           key: "page-connect-aria",
-          selectorHint: "button[aria-label*='connect']",
-          locatorFactory: (targetPage) =>
-            targetPage.locator("button[aria-label*='connect' i]")
+          selectorHint: connectAriaSelector,
+          locatorFactory: (targetPage) => targetPage.locator(connectAriaSelector)
         }
       ];
 
       const moreCandidates: VisibleLocatorCandidate[] = [
         {
           key: "topcard-more-role",
-          selectorHint: "topCard.getByRole(button, /^more$/i)",
+          selectorHint: `topCard.getByRole(button, ${moreExactRegexHint})`,
           locatorFactory: () =>
             topCardRoot.getByRole("button", {
-              name: /^more$/i
+              name: moreExactRegex
             })
         },
         {
           key: "topcard-more-actions-aria",
-          selectorHint: "topCard button[aria-label='More actions']",
-          locatorFactory: () =>
-            topCardRoot.locator("button[aria-label='More actions']")
+          selectorHint: `topCard ${moreActionsAriaSelector}`,
+          locatorFactory: () => topCardRoot.locator(moreActionsAriaSelector)
         },
         {
           key: "page-more-role",
-          selectorHint: "page.getByRole(button, /^more$/i)",
+          selectorHint: `page.getByRole(button, ${moreExactRegexHint})`,
           locatorFactory: (targetPage) =>
             targetPage.getByRole("button", {
-              name: /^more$/i
+              name: moreExactRegex
             })
         }
       ];
@@ -474,26 +641,26 @@ async function executeSendInvitation(
       const menuConnectCandidates: VisibleLocatorCandidate[] = [
         {
           key: "menu-connect-roleitem",
-          selectorHint: "[role='menuitem'] hasText /^connect$/i",
+          selectorHint: `[role='menuitem'] hasText ${connectExactRegexHint}`,
           locatorFactory: (targetPage) =>
             targetPage.locator("[role='menuitem']").filter({
-              hasText: /^connect$/i
+              hasText: connectExactRegex
             })
         },
         {
           key: "menu-connect-dropdown-item",
-          selectorHint: ".artdeco-dropdown__content-inner [role='button'] hasText /^connect$/i",
+          selectorHint: `.artdeco-dropdown__content-inner [role='button'] hasText ${connectExactRegexHint}`,
           locatorFactory: (targetPage) =>
             targetPage.locator(".artdeco-dropdown__content-inner [role='button']").filter({
-              hasText: /^connect$/i
+              hasText: connectExactRegex
             })
         },
         {
           key: "menu-connect-li-text",
-          selectorHint: ".artdeco-dropdown__content-inner li:has-text('Connect')",
+          selectorHint: `.artdeco-dropdown__content-inner li hasText ${connectTextRegexHint}`,
           locatorFactory: (targetPage) =>
             targetPage.locator(".artdeco-dropdown__content-inner li").filter({
-              hasText: /^connect$/i
+              hasText: connectTextRegex
             })
         }
       ];
@@ -535,13 +702,14 @@ async function executeSendInvitation(
       const addNoteCandidates: VisibleLocatorCandidate[] = [
         {
           key: "add-note-text",
-          selectorHint: "button:has-text('Add a note')",
-          locatorFactory: (targetPage) => targetPage.locator("button:has-text('Add a note')")
+          selectorHint: `button hasText ${addNoteRegexHint}`,
+          locatorFactory: (targetPage) =>
+            targetPage.locator("button").filter({ hasText: addNoteRegex })
         },
         {
           key: "add-note-aria",
-          selectorHint: "button[aria-label*='Add a note']",
-          locatorFactory: (targetPage) => targetPage.locator("button[aria-label*='Add a note']")
+          selectorHint: addNoteAriaSelector,
+          locatorFactory: (targetPage) => targetPage.locator(addNoteAriaSelector)
         }
       ];
 
@@ -558,9 +726,8 @@ async function executeSendInvitation(
         },
         {
           key: "note-textarea-aria",
-          selectorHint: "textarea[aria-label*='invitation']",
-          locatorFactory: (targetPage) =>
-            targetPage.locator("textarea[aria-label*='invitation' i]")
+          selectorHint: invitationAriaSelector,
+          locatorFactory: (targetPage) => targetPage.locator(invitationAriaSelector)
         },
         {
           key: "note-textarea-fallback",
@@ -598,27 +765,28 @@ async function executeSendInvitation(
       const sendCandidates: VisibleLocatorCandidate[] = [
         {
           key: "send-text",
-          selectorHint: "button:has-text('Send')",
-          locatorFactory: (targetPage) => targetPage.locator("button:has-text('Send')")
+          selectorHint: `button hasText ${sendTextRegexHint}`,
+          locatorFactory: (targetPage) =>
+            targetPage.locator("button").filter({ hasText: sendTextRegex })
         },
         {
           key: "send-role",
-          selectorHint: "getByRole(button, /^send$/i)",
+          selectorHint: `getByRole(button, ${sendExactRegexHint})`,
           locatorFactory: (targetPage) =>
             targetPage.getByRole("button", {
-              name: /^send$/i
+              name: sendExactRegex
             })
         },
         {
           key: "send-aria",
-          selectorHint: "button[aria-label*='Send']",
-          locatorFactory: (targetPage) => targetPage.locator("button[aria-label*='Send' i]")
+          selectorHint: sendAriaSelector,
+          locatorFactory: (targetPage) => targetPage.locator(sendAriaSelector)
         },
         {
           key: "send-without-note",
-          selectorHint: "button:has-text('Send without a note')",
+          selectorHint: `button hasText ${sendWithoutNoteRegexHint}`,
           locatorFactory: (targetPage) =>
-            targetPage.locator("button:has-text('Send without a note')")
+            targetPage.locator("button").filter({ hasText: sendWithoutNoteRegex })
         }
       ];
 
@@ -639,23 +807,22 @@ async function executeSendInvitation(
       const pendingCandidates: VisibleLocatorCandidate[] = [
         {
           key: "pending-text",
-          selectorHint: "topCard.getByRole(button, /pending|withdraw/i)",
+          selectorHint: `topCard.getByRole(button, ${pendingRegexHint})`,
           locatorFactory: () =>
             topCardRoot.getByRole("button", {
-              name: /pending|withdraw/i
+              name: pendingRegex
             })
         },
         {
           key: "pending-aria",
-          selectorHint: "topCard button[aria-label*='Withdraw']",
-          locatorFactory: () =>
-            topCardRoot.locator("button[aria-label*='Withdraw' i]")
+          selectorHint: `topCard ${withdrawAriaSelector}`,
+          locatorFactory: () => topCardRoot.locator(withdrawAriaSelector)
         },
         {
           key: "pending-invitations-sent-text",
-          selectorHint: "page text=/invitation sent/i",
+          selectorHint: `page hasText ${invitationSentRegexHint}`,
           locatorFactory: (targetPage) =>
-            targetPage.locator(":text-matches('invitation sent', 'i')")
+            targetPage.locator("body").filter({ hasText: invitationSentRegex })
         }
       ];
 
@@ -748,10 +915,18 @@ async function executeAcceptInvitation(
       await page.goto(INVITATIONS_RECEIVED_URL, { waitUntil: "domcontentloaded" });
       await waitForNetworkIdleBestEffort(page);
 
+      const acceptRegex = buildLinkedInSelectorPhraseRegex(
+        "accept",
+        runtime.selectorLocale,
+        { exact: true }
+      );
+
       // Find the invitation card for the target
       const acceptBtn = page.locator(
-        `li:has(a[href*="${targetProfile}"]) button:has-text("Accept")`
-      ).first();
+        `li:has(a[href*="${targetProfile}"]) button`
+      ).filter({
+        hasText: acceptRegex
+      }).first();
 
       if (await acceptBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
         await acceptBtn.click();
@@ -818,17 +993,26 @@ async function executeWithdrawInvitation(
       await page.goto(INVITATIONS_SENT_URL, { waitUntil: "domcontentloaded" });
       await waitForNetworkIdleBestEffort(page);
 
+      const withdrawRegex = buildLinkedInSelectorPhraseRegex(
+        "withdraw",
+        runtime.selectorLocale,
+        { exact: true }
+      );
+
       const withdrawBtn = page.locator(
-        `li:has(a[href*="${targetProfile}"]) button:has-text("Withdraw")`
-      ).first();
+        `li:has(a[href*="${targetProfile}"]) button`
+      ).filter({
+        hasText: withdrawRegex
+      }).first();
 
       if (await withdrawBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
         await withdrawBtn.click();
         await page.waitForTimeout(1000);
         // Confirm withdrawal dialog
-        const confirmBtn = page.locator(
-          "button:has-text('Withdraw')"
-        ).last();
+        const confirmBtn = page
+          .locator("button")
+          .filter({ hasText: withdrawRegex })
+          .last();
         if (await confirmBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
           await confirmBtn.click();
           await page.waitForTimeout(2000);
@@ -1002,7 +1186,11 @@ export class LinkedInConnectionsService {
               waitUntil: "domcontentloaded"
             });
             await waitForNetworkIdleBestEffort(page);
-            return scrapePendingInvitations(page, "received");
+            return scrapePendingInvitations(
+              page,
+              "received",
+              this.runtime.selectorLocale
+            );
           }
         );
         results.push(...received);
@@ -1021,7 +1209,11 @@ export class LinkedInConnectionsService {
               waitUntil: "domcontentloaded"
             });
             await waitForNetworkIdleBestEffort(page);
-            return scrapePendingInvitations(page, "sent");
+            return scrapePendingInvitations(
+              page,
+              "sent",
+              this.runtime.selectorLocale
+            );
           }
         );
 

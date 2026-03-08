@@ -1,6 +1,11 @@
 import { mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import {
+  DEFAULT_LINKEDIN_SELECTOR_LOCALE,
+  resolveLinkedInSelectorLocale,
+  type LinkedInSelectorLocale
+} from "./selectorLocale.js";
 
 export const DEFAULT_LINKEDIN_ASSISTANT_HOME = path.join(
   os.homedir(),
@@ -20,6 +25,9 @@ export const DEFAULT_CONFIRM_TRACE_MAX_BYTES = 25 * 1024 * 1024;
 export interface ConfirmFailureArtifactConfig {
   traceMaxBytes: number;
 }
+
+export const LINKEDIN_ASSISTANT_SELECTOR_LOCALE_ENV =
+  "LINKEDIN_ASSISTANT_SELECTOR_LOCALE";
 
 function parsePositiveInteger(
   value: string | undefined,
@@ -64,4 +72,13 @@ export function resolveConfirmFailureArtifactConfig(): ConfirmFailureArtifactCon
       DEFAULT_CONFIRM_TRACE_MAX_BYTES
     )
   };
+}
+
+export function resolveLinkedInSelectorLocaleConfig(
+  selectorLocale?: string | LinkedInSelectorLocale
+): LinkedInSelectorLocale {
+  return resolveLinkedInSelectorLocale(
+    selectorLocale ?? process.env[LINKEDIN_ASSISTANT_SELECTOR_LOCALE_ENV],
+    DEFAULT_LINKEDIN_SELECTOR_LOCALE
+  );
 }

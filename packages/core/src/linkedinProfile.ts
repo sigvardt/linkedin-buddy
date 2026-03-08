@@ -4,6 +4,8 @@ import { LinkedInAssistantError, asLinkedInAssistantError } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
+import type { LinkedInSelectorLocale } from "./selectorLocale.js";
+import { getLinkedInSelectorPhrases } from "./selectorLocale.js";
 
 export interface LinkedInExperience {
   title: string;
@@ -40,6 +42,7 @@ export interface ViewProfileInput {
 export interface LinkedInProfileRuntime {
   auth: LinkedInAuthService;
   cdpUrl?: string | undefined;
+  selectorLocale: LinkedInSelectorLocale;
   profileManager: ProfileManager;
   logger: JsonEventLogger;
 }
@@ -118,8 +121,11 @@ async function getOrCreatePage(context: BrowserContext): Promise<Page> {
 }
 
 /* eslint-disable no-undef -- DOM types (ParentNode, Element) are valid inside page.evaluate() */
-async function extractProfileData(page: Page): Promise<LinkedInProfile> {
-  const extracted = await page.evaluate(() => {
+async function extractProfileData(
+  page: Page,
+  selectorLocale: LinkedInSelectorLocale
+): Promise<LinkedInProfile> {
+  const extracted = await page.evaluate((sectionLabels) => {
     const normalize = (value: string | null | undefined): string =>
       (value ?? "").replace(/\s+/g, " ").trim();
     const emptyProfile = {
@@ -162,7 +168,15 @@ async function extractProfileData(page: Page): Promise<LinkedInProfile> {
       return [];
     };
 
-    const findSectionRoot = (id: string, label: string): Element | null => {
+    const includesAnyLabel = (
+      value: string,
+      labels: string[]
+    ): boolean => {
+      const normalizedValue = normalize(value).toLowerCase();
+      return labels.some((label) => normalizedValue.includes(normalize(label).toLowerCase()));
+    };
+
+    const findSectionRoot = (id: string, labels: string[]): Element | null => {
       const byId = globalThis.document.querySelector(`#${id}`);
       if (byId) {
         return byId.closest("section") ?? byId;
@@ -175,7 +189,7 @@ async function extractProfileData(page: Page): Promise<LinkedInProfile> {
         const heading = normalize(
           section.querySelector("h2, h3, .pvs-header__title")?.textContent
         );
-        if (heading.toLowerCase().includes(label.toLowerCase())) {
+        if (includesAnyLabel(heading, labels)) {
           return section;
         }
       }
@@ -282,7 +296,7 @@ async function extractProfileData(page: Page): Promise<LinkedInProfile> {
           const heading = normalize(
             section.querySelector("h2, h3, .pvs-header__title")?.textContent
           );
-          if (!heading || !heading.toLowerCase().includes("about")) {
+          if (!heading || !includesAnyLabel(heading, sectionLabels.about)) {
             continue;
           }
 
@@ -313,7 +327,10 @@ async function extractProfileData(page: Page): Promise<LinkedInProfile> {
         connectionDegree = degreeMatch ? normalize(degreeMatch[1]) : "";
       }
 
-      const experienceSection = findSectionRoot("experience", "experience");
+      const experienceSection = findSectionRoot(
+        "experience",
+        sectionLabels.experience
+      );
       const experience = collectSectionItems(experienceSection)
         .map((item) => {
           const lines = pickList(
@@ -404,7 +421,10 @@ async function extractProfileData(page: Page): Promise<LinkedInProfile> {
             item.description
         );
 
-      const educationSection = findSectionRoot("education", "education");
+      const educationSection = findSectionRoot(
+        "education",
+        sectionLabels.education
+      );
       const education = collectSectionItems(educationSection)
         .map((item) => {
           const lines = pickList(
@@ -474,6 +494,10 @@ async function extractProfileData(page: Page): Promise<LinkedInProfile> {
     } catch {
       return emptyProfile;
     }
+  }, {
+    about: getLinkedInSelectorPhrases("about", selectorLocale),
+    experience: getLinkedInSelectorPhrases("experience", selectorLocale),
+    education: getLinkedInSelectorPhrases("education", selectorLocale)
   });
 
   return {
@@ -531,7 +555,7 @@ export class LinkedInProfileService {
             .first()
             .waitFor({ state: "visible", timeout: 10_000 })
             .catch(() => undefined);
-          return extractProfileData(page);
+          return extractProfileData(page, this.runtime.selectorLocale);
         }
       );
     } catch (error) {

@@ -24,5 +24,6 @@ export * from "./profileManager.js";
 export * from "./rateLimiter.js";
 export * from "./run.js";
 export * from "./runtime.js";
+export * from "./selectorLocale.js";
 export * from "./selectorAudit.js";
 export * from "./twoPhaseCommit.js";

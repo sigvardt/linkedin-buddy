@@ -11,6 +11,7 @@ import {
   isInRateLimitCooldown,
   LINKEDIN_FEED_REACTION_TYPES,
   LINKEDIN_POST_VISIBILITY_TYPES,
+  LINKEDIN_SELECTOR_LOCALES,
   LinkedInAssistantError,
   createCoreRuntime,
   normalizeLinkedInFeedReaction,
@@ -34,6 +35,7 @@ const cliPrivacyConfig = resolvePrivacyConfig();
 const SELECTOR_AUDIT_DOC_PATH = "docs/selector-audit.md";
 const SELECTOR_AUDIT_DOC_REFERENCE =
   `See ${SELECTOR_AUDIT_DOC_PATH} for sample output, configuration, and troubleshooting.`;
+let cliSelectorLocale: string | undefined;
 
 function coercePositiveInt(value: string, label: string): number {
   const parsed = Number.parseInt(value, 10);
@@ -95,8 +97,15 @@ function createRuntime(cdpUrl?: string) {
   }
   return createCoreRuntime(
     cdpUrl
-      ? { cdpUrl, privacy: cliPrivacyConfig }
-      : { privacy: cliPrivacyConfig }
+      ? {
+          cdpUrl,
+          privacy: cliPrivacyConfig,
+          ...(cliSelectorLocale ? { selectorLocale: cliSelectorLocale } : {})
+        }
+      : {
+          privacy: cliPrivacyConfig,
+          ...(cliSelectorLocale ? { selectorLocale: cliSelectorLocale } : {})
+        }
   );
 }
 
@@ -344,6 +353,9 @@ async function runKeepAliveStart(input: {
   if (cdpUrl) {
     daemonArgs.push("--cdp-url", cdpUrl);
   }
+  if (cliSelectorLocale) {
+    daemonArgs.push("--selector-locale", cliSelectorLocale);
+  }
   daemonArgs.push(
     "keepalive",
     "__run",
@@ -500,7 +512,16 @@ async function runKeepAliveDaemon(input: {
   jitterSeconds: number;
   maxConsecutiveFailures: number;
 }, cdpUrl?: string): Promise<void> {
-  const runtime = createCoreRuntime(cdpUrl ? { cdpUrl } : {});
+  const runtime = createCoreRuntime(
+    cdpUrl
+      ? {
+          cdpUrl,
+          ...(cliSelectorLocale ? { selectorLocale: cliSelectorLocale } : {})
+        }
+      : {
+          ...(cliSelectorLocale ? { selectorLocale: cliSelectorLocale } : {})
+        }
+  );
   const profileName = input.profileName;
   let stopRequested = false;
   let consecutiveFailures = 0;
@@ -1628,6 +1649,10 @@ async function main(): Promise<void> {
       "--cdp-url <url>",
       "Connect to existing browser via CDP endpoint (e.g., http://127.0.0.1:18800)"
     )
+    .option(
+      "--selector-locale <locale>",
+      `Selector locale for LinkedIn UI text fallbacks (${LINKEDIN_SELECTOR_LOCALES.join(", ")})`
+    )
     .addHelpText(
       "after",
       [
@@ -1644,6 +1669,18 @@ async function main(): Promise<void> {
       ? options.cdpUrl.trim()
       : undefined;
   };
+
+  const readSelectorLocale = (): string | undefined => {
+    const options = program.opts<{ selectorLocale?: string }>();
+    return typeof options.selectorLocale === "string" &&
+      options.selectorLocale.trim().length > 0
+      ? options.selectorLocale.trim()
+      : undefined;
+  };
+
+  program.hook("preAction", () => {
+    cliSelectorLocale = readSelectorLocale();
+  });
 
   program
     .command("status")

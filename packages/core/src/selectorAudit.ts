@@ -12,6 +12,13 @@ import { LinkedInAssistantError } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
+import {
+  DEFAULT_LINKEDIN_SELECTOR_LOCALE,
+  buildLinkedInAriaLabelContainsSelector,
+  buildLinkedInSelectorPhraseRegex,
+  formatLinkedInSelectorRegexHint,
+  type LinkedInSelectorLocale
+} from "./selectorLocale.js";
 
 /**
  * Canonical LinkedIn page identifiers covered by the built-in selector audit.
@@ -211,6 +218,7 @@ export interface LinkedInSelectorAuditRuntime {
   runId: string;
   auth: LinkedInAuthService;
   cdpUrl?: string | undefined;
+  selectorLocale?: LinkedInSelectorLocale;
   profileManager: ProfileManager;
   logger: JsonEventLogger;
   artifacts: ArtifactHelpers;
@@ -279,7 +287,81 @@ function createSelectorAuditSelectorDefinition(
   };
 }
 
-function createDefaultSelectorAuditRegistry(): SelectorAuditPageDefinition[] {
+function createDefaultSelectorAuditRegistry(
+  selectorLocale: LinkedInSelectorLocale = DEFAULT_LINKEDIN_SELECTOR_LOCALE
+): SelectorAuditPageDefinition[] {
+  const startPostExactRegex = buildLinkedInSelectorPhraseRegex(
+    "start_post",
+    selectorLocale,
+    { exact: true }
+  );
+  const startPostRegexHint = formatLinkedInSelectorRegexHint(
+    "start_post",
+    selectorLocale,
+    { exact: true }
+  );
+  const startPostTextRegex = buildLinkedInSelectorPhraseRegex(
+    "start_post",
+    selectorLocale
+  );
+  const startPostTextRegexHint = formatLinkedInSelectorRegexHint(
+    "start_post",
+    selectorLocale
+  );
+  const startPostAriaSelector = buildLinkedInAriaLabelContainsSelector(
+    ["button", "[role='button']"],
+    "start_post",
+    selectorLocale
+  );
+  const inboxSurfaceRegex = buildLinkedInSelectorPhraseRegex(
+    ["messaging", "write_message"],
+    selectorLocale
+  );
+  const inboxSurfaceRegexHint = formatLinkedInSelectorRegexHint(
+    ["messaging", "write_message"],
+    selectorLocale
+  );
+  const profileSurfaceRegex = buildLinkedInSelectorPhraseRegex(
+    ["about", "experience", "education", "resources", "open_to"],
+    selectorLocale
+  );
+  const profileSurfaceRegexHint = formatLinkedInSelectorRegexHint(
+    ["about", "experience", "education", "resources", "open_to"],
+    selectorLocale
+  );
+  const connectionsHeadingRegex = buildLinkedInSelectorPhraseRegex(
+    "connections",
+    selectorLocale
+  );
+  const connectionsHeadingRegexHint = formatLinkedInSelectorRegexHint(
+    "connections",
+    selectorLocale
+  );
+  const connectionsSurfaceRegex = buildLinkedInSelectorPhraseRegex(
+    ["connections", "message", "remove_connection"],
+    selectorLocale
+  );
+  const connectionsSurfaceRegexHint = formatLinkedInSelectorRegexHint(
+    ["connections", "message", "remove_connection"],
+    selectorLocale
+  );
+  const notificationsHeadingRegex = buildLinkedInSelectorPhraseRegex(
+    "notifications",
+    selectorLocale
+  );
+  const notificationsHeadingRegexHint = formatLinkedInSelectorRegexHint(
+    "notifications",
+    selectorLocale
+  );
+  const notificationsSurfaceRegex = buildLinkedInSelectorPhraseRegex(
+    ["notifications", "time_ago"],
+    selectorLocale
+  );
+  const notificationsSurfaceRegexHint = formatLinkedInSelectorRegexHint(
+    ["notifications", "time_ago"],
+    selectorLocale
+  );
+
   return [
     {
       page: "feed",
@@ -291,26 +373,25 @@ function createDefaultSelectorAuditRegistry(): SelectorAuditPageDefinition[] {
           {
             primary: {
               key: "role-button-start-post",
-              selectorHint: "getByRole(button, /start a post/i)",
+              selectorHint: `getByRole(button, ${startPostRegexHint})`,
               locatorFactory: (page) =>
-                page.getByRole("button", { name: /start a post/i })
+                page.getByRole("button", { name: startPostExactRegex })
             },
             secondary: {
               key: "aria-or-share-box-start-post",
-              selectorHint:
-                "button[aria-label*='start a post' i], .share-box-feed-entry__trigger, .share-box__open",
+              selectorHint: `${startPostAriaSelector}, .share-box-feed-entry__trigger, .share-box__open`,
               locatorFactory: (page) =>
                 page.locator(
-                  "button[aria-label*='start a post' i], [role='button'][aria-label*='start a post' i], .share-box-feed-entry__trigger, .share-box__open"
+                  `${startPostAriaSelector}, .share-box-feed-entry__trigger, .share-box__open`
                 )
             },
             tertiary: {
               key: "text-start-post",
-              selectorHint: "button, [role='button'] hasText /start a post/i",
+              selectorHint: `button, [role='button'] hasText ${startPostTextRegexHint}`,
               locatorFactory: (page) =>
                 page
                   .locator("button, [role='button']")
-                  .filter({ hasText: /start a post/i })
+                  .filter({ hasText: startPostTextRegex })
             }
           }
         )
@@ -343,10 +424,10 @@ function createDefaultSelectorAuditRegistry(): SelectorAuditPageDefinition[] {
             },
             tertiary: {
               key: "main-text-messaging",
-              selectorHint: "main hasText /messaging|write a message/i",
+              selectorHint: `main hasText ${inboxSurfaceRegexHint}`,
               locatorFactory: (page) =>
                 page.locator("main").filter({
-                  hasText: /messaging|write a message/i
+                  hasText: inboxSurfaceRegex
                 })
             }
           }
@@ -371,10 +452,10 @@ function createDefaultSelectorAuditRegistry(): SelectorAuditPageDefinition[] {
           },
           tertiary: {
             key: "main-text-profile-sections",
-            selectorHint: "main hasText /about|experience|education|resources|open to/i",
+            selectorHint: `main hasText ${profileSurfaceRegexHint}`,
             locatorFactory: (page) =>
               page.locator("main").filter({
-                hasText: /about|experience|education|resources|open to/i
+                hasText: profileSurfaceRegex
               })
           }
         })
@@ -390,9 +471,9 @@ function createDefaultSelectorAuditRegistry(): SelectorAuditPageDefinition[] {
           {
             primary: {
               key: "role-heading-connections",
-              selectorHint: "getByRole(heading, /connections/i)",
+              selectorHint: `getByRole(heading, ${connectionsHeadingRegexHint})`,
               locatorFactory: (page) =>
-                page.getByRole("heading", { name: /connections/i })
+                page.getByRole("heading", { name: connectionsHeadingRegex })
             },
             secondary: {
               key: "connection-card",
@@ -405,10 +486,10 @@ function createDefaultSelectorAuditRegistry(): SelectorAuditPageDefinition[] {
             },
             tertiary: {
               key: "main-text-connections",
-              selectorHint: "main hasText /connections|message|remove connection/i",
+              selectorHint: `main hasText ${connectionsSurfaceRegexHint}`,
               locatorFactory: (page) =>
                 page.locator("main").filter({
-                  hasText: /connections|message|remove connection/i
+                  hasText: connectionsSurfaceRegex
                 })
             }
           }
@@ -425,9 +506,9 @@ function createDefaultSelectorAuditRegistry(): SelectorAuditPageDefinition[] {
           {
             primary: {
               key: "role-heading-notifications",
-              selectorHint: "getByRole(heading, /notifications/i)",
+              selectorHint: `getByRole(heading, ${notificationsHeadingRegexHint})`,
               locatorFactory: (page) =>
-                page.getByRole("heading", { name: /notifications/i })
+                page.getByRole("heading", { name: notificationsHeadingRegex })
             },
             secondary: {
               key: "notification-card",
@@ -437,9 +518,9 @@ function createDefaultSelectorAuditRegistry(): SelectorAuditPageDefinition[] {
             },
             tertiary: {
               key: "main-text-notifications",
-              selectorHint: "main hasText /notifications|ago/i",
+              selectorHint: `main hasText ${notificationsSurfaceRegexHint}`,
               locatorFactory: (page) =>
-                page.locator("main").filter({ hasText: /notifications|ago/i })
+                page.locator("main").filter({ hasText: notificationsSurfaceRegex })
             }
           }
         )
@@ -1086,7 +1167,10 @@ export class LinkedInSelectorAuditService {
     options: LinkedInSelectorAuditServiceOptions = {}
   ) {
     this.registry = validateSelectorAuditRegistry(
-      options.registry ?? createDefaultSelectorAuditRegistry()
+      options.registry ??
+        createDefaultSelectorAuditRegistry(
+          this.runtime.selectorLocale ?? DEFAULT_LINKEDIN_SELECTOR_LOCALE
+        )
     );
     this.candidateTimeoutMs = validateTimeoutOption(
       options.candidateTimeoutMs,
@@ -1620,6 +1704,8 @@ export class LinkedInSelectorAuditService {
  * Callers can inspect or clone this registry before passing a customized copy
  * to {@link LinkedInSelectorAuditServiceOptions.registry}.
  */
-export function createLinkedInSelectorAuditRegistry(): SelectorAuditPageDefinition[] {
-  return createDefaultSelectorAuditRegistry();
+export function createLinkedInSelectorAuditRegistry(
+  selectorLocale: LinkedInSelectorLocale = DEFAULT_LINKEDIN_SELECTOR_LOCALE
+): SelectorAuditPageDefinition[] {
+  return createDefaultSelectorAuditRegistry(selectorLocale);
 }
