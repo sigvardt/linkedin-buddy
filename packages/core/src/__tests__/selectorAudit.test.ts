@@ -4,7 +4,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   LINKEDIN_SELECTOR_AUDIT_PAGES,
   LINKEDIN_SELECTOR_AUDIT_STRATEGIES,
-  createLinkedInSelectorAuditRegistry
+  LinkedInSelectorAuditService,
+  createLinkedInSelectorAuditRegistry,
+  type LinkedInSelectorAuditRuntime,
+  type SelectorAuditCandidate
 } from "../selectorAudit.js";
 import {
   cleanupSelectorAuditTestHarnesses,
@@ -266,6 +269,9 @@ describe("LinkedInSelectorAuditService", () => {
     expect(page.waitForLoadState).toHaveBeenCalledWith("networkidle", {
       timeout: 5_000
     });
+    expect(report.results[0]?.warnings).toEqual([
+      "The feed page did not reach network idle within 5000ms. Selector checks continued with the current DOM state."
+    ]);
   });
 
   it("marks selector groups failed when page stabilization throws", async () => {
@@ -281,7 +287,8 @@ describe("LinkedInSelectorAuditService", () => {
       page: "feed",
       selector_key: "selector_group",
       status: "fail",
-      error: "Renderer crashed"
+      error:
+        "Could not load the feed page: Renderer crashed. Refresh the LinkedIn session or attached browser and rerun the selector audit."
     });
   });
 
@@ -298,9 +305,24 @@ describe("LinkedInSelectorAuditService", () => {
       page: "feed",
       selector_key: "selector_group",
       status: "fail",
-      error: "Navigation failed"
+      error:
+        "Could not load the feed page: Navigation failed. Refresh the LinkedIn session or attached browser and rerun the selector audit."
     });
-    expect(report.results[0]?.strategies.primary.error).toBe("Navigation failed");
+    expect(report.results[0]?.strategies.primary.error).toBe(
+      "Could not load the feed page: Navigation failed. Refresh the LinkedIn session or attached browser and rerun the selector audit."
+    );
+  });
+
+  it("surfaces navigation timeout guidance when page loading times out", async () => {
+    const { service } = await createSelectorAuditTestHarness({
+      gotoError: new playwrightErrors.TimeoutError("Navigation timeout")
+    });
+
+    const report = await service.auditSelectors({ profileName: "default" });
+
+    expect(report.results[0]?.error).toBe(
+      "Timed out after 15000ms loading the feed page. Confirm the LinkedIn session can open https://example.test/feed and rerun the selector audit."
+    );
   });
 
   it("fills in missing strategy slots for partial selector definitions", async () => {
@@ -369,6 +391,133 @@ describe("LinkedInSelectorAuditService", () => {
     expect(runtime.profileManager.runWithContext).not.toHaveBeenCalled();
   });
 
+  it("rejects invalid profile names before opening a browser context", async () => {
+    const { runtime, service } = await createSelectorAuditTestHarness({
+      visibleSelectors: ["primary"]
+    });
+
+    await expect(
+      service.auditSelectors({ profileName: "../default" })
+    ).rejects.toThrow("profile must not contain path separators or relative path segments.");
+
+    expect(runtime.auth.ensureAuthenticated).not.toHaveBeenCalled();
+    expect(runtime.profileManager.runWithContext).not.toHaveBeenCalled();
+  });
+
+  it("keeps auditing later selector groups when a locator factory throws", async () => {
+    const brokenPrimaryCandidate: SelectorAuditCandidate = {
+      strategy: "primary",
+      key: "broken-primary",
+      selectorHint: "broken-primary",
+      locatorFactory: () => {
+        throw new Error("Broken locator factory");
+      }
+    };
+
+    const registry = [
+      createSelectorAuditPageDefinition({
+        page: "feed",
+        selectors: [
+          createSelectorAuditSelectorDefinition({
+            key: "broken_selector",
+            description: "Broken selector",
+            candidates: [
+              brokenPrimaryCandidate,
+              createSelectorAuditCandidate({
+                strategy: "secondary",
+                key: "broken-secondary",
+                selectorHint: "broken-secondary",
+                selector: "broken-secondary"
+              }),
+              createSelectorAuditCandidate({
+                strategy: "tertiary",
+                key: "broken-tertiary",
+                selectorHint: "broken-tertiary",
+                selector: "broken-tertiary"
+              })
+            ]
+          }),
+          createSelectorAuditSelectorDefinition({
+            key: "healthy_selector",
+            description: "Healthy selector",
+            candidates: [
+              createSelectorAuditCandidate({
+                strategy: "primary",
+                key: "healthy-primary",
+                selectorHint: "healthy-primary",
+                selector: "healthy-primary"
+              }),
+              createSelectorAuditCandidate({
+                strategy: "secondary",
+                key: "healthy-secondary",
+                selectorHint: "healthy-secondary",
+                selector: "healthy-secondary"
+              }),
+              createSelectorAuditCandidate({
+                strategy: "tertiary",
+                key: "healthy-tertiary",
+                selectorHint: "healthy-tertiary",
+                selector: "healthy-tertiary"
+              })
+            ]
+          })
+        ]
+      })
+    ];
+
+    const { service } = await createSelectorAuditTestHarness({
+      registry,
+      visibleSelectors: ["healthy-primary"]
+    });
+
+    const report = await service.auditSelectors({ profileName: "default" });
+
+    expect(report.pass_count).toBe(1);
+    expect(report.fail_count).toBe(1);
+    expect(report.results[0]).toMatchObject({
+      selector_key: "broken_selector",
+      status: "fail"
+    });
+    expect(report.results[0]?.strategies.primary.error).toContain(
+      "Broken locator factory"
+    );
+    expect(report.results[1]).toMatchObject({
+      selector_key: "healthy_selector",
+      status: "pass",
+      matched_strategy: "primary"
+    });
+  });
+
+  it("rejects invalid timeout options", async () => {
+    const { runtime } = await createSelectorAuditTestHarness();
+
+    expect(
+      () =>
+        new LinkedInSelectorAuditService(
+          runtime as unknown as LinkedInSelectorAuditRuntime,
+          {
+            candidateTimeoutMs: 0
+          }
+        )
+    ).toThrow("candidateTimeoutMs must be a positive integer number of milliseconds.");
+  });
+
+  it("surfaces selector timeout guidance when selector checks time out", async () => {
+    const { service } = await createSelectorAuditTestHarness({
+      locatorErrors: {
+        primary: new playwrightErrors.TimeoutError("Primary timeout"),
+        secondary: new playwrightErrors.TimeoutError("Secondary timeout"),
+        tertiary: new playwrightErrors.TimeoutError("Tertiary timeout")
+      }
+    });
+
+    const report = await service.auditSelectors({ profileName: "default" });
+
+    expect(report.results[0]?.strategies.primary.error).toBe(
+      "Timed out after 10ms waiting for primary selector primary-key (primary) to become visible. Confirm the page is loaded and authenticated, then rerun the selector audit."
+    );
+  });
+
   it("keeps failure reporting intact when artifact capture steps fail", async () => {
     const { service } = await createSelectorAuditTestHarness({
       accessibilitySnapshotError: new Error("Accessibility tree unavailable"),
@@ -379,7 +528,13 @@ describe("LinkedInSelectorAuditService", () => {
     const report = await service.auditSelectors({ profileName: "default" });
 
     expect(report.fail_count).toBe(1);
-    expect(report.results[0]?.failure_artifacts).toEqual({});
+    expect(report.results[0]?.failure_artifacts).toMatchObject({
+      capture_warnings: [
+        "Could not capture the screenshot for selector_group on feed: Screenshot unavailable.",
+        "Could not capture the DOM snapshot for selector_group on feed: DOM snapshot unavailable.",
+        "Could not capture the accessibility snapshot for selector_group on feed: Accessibility tree unavailable."
+      ]
+    });
     await expect(stat(report.report_path)).resolves.toBeTruthy();
   });
 

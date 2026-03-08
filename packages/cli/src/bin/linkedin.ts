@@ -47,6 +47,25 @@ function coerceSearchCategory(value: string): SearchCategory {
   );
 }
 
+function coerceProfileName(value: string, label: string = "profile"): string {
+  const normalized = value.trim();
+  if (normalized.length === 0) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `${label} must not be empty.`
+    );
+  }
+
+  if (normalized === "." || normalized === ".." || /[\\/]/.test(normalized)) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `${label} must not contain path separators or relative path segments.`
+    );
+  }
+
+  return normalized;
+}
+
 function printJson(value: unknown): void {
   console.log(
     JSON.stringify(redactStructuredValue(value, cliPrivacyConfig, "cli"), null, 2)
@@ -1405,19 +1424,18 @@ async function runJobsView(input: {
 async function runSelectorAudit(input: {
   profileName: string;
 }, cdpUrl?: string): Promise<void> {
+  const profileName = coerceProfileName(input.profileName);
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.audit.selectors.start", {
-      profileName: input.profileName
+      profileName
     });
 
-    const report = await runtime.selectorAudit.auditSelectors({
-      profileName: input.profileName
-    });
+    const report = await runtime.selectorAudit.auditSelectors({ profileName });
 
     runtime.logger.log("info", "cli.audit.selectors.done", {
-      profileName: input.profileName,
+      profileName,
       totalCount: report.total_count,
       passCount: report.pass_count,
       failCount: report.fail_count,
@@ -1430,6 +1448,12 @@ async function runSelectorAudit(input: {
     if (report.fail_count > 0) {
       process.exitCode = 1;
     }
+  } catch (error) {
+    runtime.logger.log("error", "cli.audit.selectors.failed", {
+      profileName,
+      error: toLinkedInAssistantErrorPayload(error, cliPrivacyConfig)
+    });
+    throw error;
   } finally {
     runtime.close();
   }
