@@ -92,6 +92,15 @@ npm exec -w @linkedin-assistant/cli -- linkedin keepalive stop --profile default
 
 - Keepalive state/log files are stored under `~/.linkedin-assistant/linkedin-owa-agentools/keepalive/`.
 
+Selector audit (read-only, CI-friendly):
+
+```bash
+npm exec -w @linkedin-assistant/cli -- linkedin audit selectors --profile default
+```
+
+- Produces structured JSON with selector status, fallback usage, and failure artifact paths.
+- Exits non-zero only when a selector group fully fails across all fallback strategies.
+
 Inbox MVP commands:
 
 ```bash
