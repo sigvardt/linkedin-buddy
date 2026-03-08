@@ -176,9 +176,9 @@ const cdpUrlInputSchemaProperty = {
 
 const selectorLocaleInputSchemaProperty = {
   type: "string",
-  description: `Selector locale for LinkedIn UI text fallbacks (${LINKEDIN_SELECTOR_LOCALES.join(
+  description: `Prefer localized LinkedIn UI text first (${LINKEDIN_SELECTOR_LOCALES.join(
     ", "
-  )}). Defaults to en.`
+  )}; region tags like da-DK normalize to da). Unsupported values fall back to en.`
 } as const;
 
 function withCdpSchemaProperties(

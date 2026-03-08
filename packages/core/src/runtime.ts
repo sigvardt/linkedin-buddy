@@ -1,6 +1,7 @@
 import { ArtifactHelpers } from "./artifacts.js";
 import {
   ensureConfigPaths,
+  getLinkedInSelectorLocaleConfigWarning,
   resolveConfigPaths,
   resolveConfirmFailureArtifactConfig,
   resolveLinkedInSelectorLocaleConfigResolution,
@@ -151,10 +152,23 @@ export function createCoreRuntime(
     selectorLocale === DEFAULT_LINKEDIN_SELECTOR_LOCALE &&
     selectorLocaleResolution.source !== "default"
   ) {
+    const selectorLocaleWarning = getLinkedInSelectorLocaleConfigWarning(
+      selectorLocaleResolution,
+      "runtime"
+    );
+
     logger.log("warn", "runtime.selector_locale.fallback_to_english", {
       selector_locale_source: selectorLocaleResolution.source,
       resolved_selector_locale: selectorLocale,
       reason: selectorLocaleResolution.fallbackReason,
+      ...(selectorLocaleWarning
+        ? {
+            message: selectorLocaleWarning.message,
+            action_taken: selectorLocaleWarning.actionTaken,
+            guidance: selectorLocaleWarning.guidance,
+            supported_selector_locales: selectorLocaleWarning.supportedLocales
+          }
+        : {}),
       ...summarizeSelectorLocaleInput(
         selectorLocaleResolution.normalizedInput,
         selectorLocaleResolution.inputLength

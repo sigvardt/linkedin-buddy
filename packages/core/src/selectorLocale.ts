@@ -103,10 +103,16 @@ function sanitizeSelectorPhrases(values: readonly unknown[] | undefined): string
   return dedupePhrases(Array.isArray(values) ? values : EMPTY_SELECTOR_PHRASES);
 }
 
+/**
+ * Selector locales with first-class phrase coverage.
+ */
 export const LINKEDIN_SELECTOR_LOCALES = ["en", "da"] as const;
 export type LinkedInSelectorLocale =
   (typeof LINKEDIN_SELECTOR_LOCALES)[number];
 
+/**
+ * Default selector locale used when no explicit locale resolves successfully.
+ */
 export const DEFAULT_LINKEDIN_SELECTOR_LOCALE: LinkedInSelectorLocale = "en";
 
 export type LinkedInSelectorPhraseKey =
@@ -307,6 +313,10 @@ export type LinkedInSelectorLocaleFallbackReason =
   | "unsupported_locale"
   | "too_long";
 
+/**
+ * Diagnostics for resolving arbitrary locale input onto a supported selector
+ * locale.
+ */
 export interface LinkedInSelectorLocaleResolution {
   locale: LinkedInSelectorLocale;
   inputProvided: boolean;
@@ -370,6 +380,14 @@ function buildLinkedInSelectorLocaleResolution(
   };
 }
 
+/**
+ * Resolves arbitrary locale input to the nearest supported selector locale.
+ *
+ * @remarks
+ * Region tags such as `da-DK` normalize to their supported base locale.
+ * Unsupported, malformed, blank, or overly long values fall back to the
+ * provided fallback locale.
+ */
 export function resolveLinkedInSelectorLocaleResolution(
   value: string | LinkedInSelectorLocale | undefined,
   fallback: LinkedInSelectorLocale = DEFAULT_LINKEDIN_SELECTOR_LOCALE
@@ -444,6 +462,9 @@ export function resolveLinkedInSelectorLocaleResolution(
   });
 }
 
+/**
+ * Convenience wrapper that returns only the resolved selector locale.
+ */
 export function resolveLinkedInSelectorLocale(
   value: string | LinkedInSelectorLocale | undefined,
   fallback: LinkedInSelectorLocale = DEFAULT_LINKEDIN_SELECTOR_LOCALE
@@ -578,6 +599,10 @@ function resolveLinkedInSelectorPhrasePattern(
   return pattern;
 }
 
+/**
+ * Returns localized selector phrases in locale-first order with optional
+ * English fallback phrases appended afterward.
+ */
 export function getLinkedInSelectorPhrases(
   keys: LinkedInSelectorPhraseKey | readonly LinkedInSelectorPhraseKey[],
   locale: LinkedInSelectorLocale,
@@ -587,6 +612,10 @@ export function getLinkedInSelectorPhrases(
   return [...getLinkedInSelectorPhrasesFromNormalizedKeys(normalizedKeys, locale, options)];
 }
 
+/**
+ * Builds a Unicode-aware regular expression that matches the localized selector
+ * phrases for the requested semantic key or keys.
+ */
 export function buildLinkedInSelectorPhraseRegex(
   keys: LinkedInSelectorPhraseKey | readonly LinkedInSelectorPhraseKey[],
   locale: LinkedInSelectorLocale,
@@ -615,6 +644,10 @@ export function buildLinkedInSelectorPhraseRegex(
   return regex;
 }
 
+/**
+ * Formats the phrase regex that would be used for a selector key in diagnostic
+ * output such as selector audit hints.
+ */
 export function formatLinkedInSelectorRegexHint(
   keys: LinkedInSelectorPhraseKey | readonly LinkedInSelectorPhraseKey[],
   locale: LinkedInSelectorLocale,
@@ -624,6 +657,10 @@ export function formatLinkedInSelectorRegexHint(
   return options.exact ? `/^(?:${body})$/iu` : `/${body}/iu`;
 }
 
+/**
+ * Builds a comma-joined CSS selector that matches localized attribute values on
+ * one or more selector roots.
+ */
 export function buildLinkedInAriaLabelContainsSelector(
   roots: string | readonly string[],
   keys: LinkedInSelectorPhraseKey | readonly LinkedInSelectorPhraseKey[],
@@ -654,6 +691,10 @@ export function buildLinkedInAriaLabelContainsSelector(
     .join(", ");
 }
 
+/**
+ * Checks whether a text value contains any localized selector phrase for the
+ * requested semantic key or keys.
+ */
 export function valueContainsLinkedInSelectorPhrase(
   value: string | null | undefined,
   keys: LinkedInSelectorPhraseKey | readonly LinkedInSelectorPhraseKey[],

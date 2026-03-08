@@ -18,9 +18,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { Command } from "commander";
 import {
   DEFAULT_FOLLOWUP_SINCE,
+  LINKEDIN_ASSISTANT_SELECTOR_LOCALE_ENV,
   clearRateLimitState,
   createLocalDataDeletionPlan,
   evaluateDraftQuality,
+  getLinkedInSelectorLocaleConfigWarning,
   isInRateLimitCooldown,
   LINKEDIN_FEED_REACTION_TYPES,
   LINKEDIN_POST_VISIBILITY_TYPES,
@@ -33,6 +35,7 @@ import {
   parseDraftQualityCandidateSet,
   parseDraftQualityDataset,
   resolveFollowupSinceWindow,
+  resolveLinkedInSelectorLocaleConfigResolution,
   redactStructuredValue,
   resolveKeepAliveDir,
   resolvePrivacyConfig,
@@ -59,6 +62,29 @@ const SELECTOR_AUDIT_DOC_REFERENCE =
   `See ${SELECTOR_AUDIT_DOC_PATH} for sample output, configuration, and troubleshooting.`;
 const MAX_JSON_INPUT_BYTES = 10 * 1024 * 1024;
 let cliSelectorLocale: string | undefined;
+
+function writeCliWarning(message: string): void {
+  process.stderr.write(`[linkedin] Warning: ${message}\n`);
+}
+
+function writeCliNotice(message: string): void {
+  process.stderr.write(`[linkedin] ${message}\n`);
+}
+
+function maybeWarnAboutSelectorLocaleConfig(selectorLocale?: string): void {
+  const warning = getLinkedInSelectorLocaleConfigWarning(
+    resolveLinkedInSelectorLocaleConfigResolution(selectorLocale),
+    "cli"
+  );
+
+  if (!warning) {
+    return;
+  }
+
+  writeCliWarning(warning.message);
+  writeCliNotice(warning.actionTaken);
+  writeCliNotice(warning.guidance);
+}
 
 function coercePositiveInt(value: string, label: string): number {
   const parsed = Number.parseInt(value, 10);
@@ -108,6 +134,8 @@ function printJson(value: unknown): void {
 }
 
 function createRuntime(cdpUrl?: string) {
+  maybeWarnAboutSelectorLocaleConfig(cliSelectorLocale);
+
   if (cdpUrl) {
     process.stderr.write(
       [
@@ -591,6 +619,8 @@ async function runKeepAliveStart(input: {
     await removeKeepAlivePid(input.profileName);
   }
 
+  maybeWarnAboutSelectorLocaleConfig(cliSelectorLocale);
+
   const cliEntrypoint = resolveKeepAliveCliEntrypoint();
   if (!cliEntrypoint) {
     throw new LinkedInAssistantError(
@@ -779,16 +809,7 @@ async function runKeepAliveDaemon(input: {
   jitterSeconds: number;
   maxConsecutiveFailures: number;
 }, cdpUrl?: string): Promise<void> {
-  const runtime = createCoreRuntime(
-    cdpUrl
-      ? {
-          cdpUrl,
-          ...(cliSelectorLocale ? { selectorLocale: cliSelectorLocale } : {})
-        }
-      : {
-          ...(cliSelectorLocale ? { selectorLocale: cliSelectorLocale } : {})
-        }
-  );
+  const runtime = createRuntime(cdpUrl);
   const profileName = input.profileName;
   let stopRequested = false;
   let consecutiveFailures = 0;
@@ -1987,11 +2008,18 @@ export async function runCli(argv: string[] = process.argv): Promise<void> {
     )
     .option(
       "--selector-locale <locale>",
-      `Selector locale for LinkedIn UI text fallbacks (${LINKEDIN_SELECTOR_LOCALES.join(", ")})`
+      `Prefer localized LinkedIn UI text first (${LINKEDIN_SELECTOR_LOCALES.join(
+        ", "
+      )}; region tags like da-DK normalize to da)`
     )
     .addHelpText(
       "after",
       [
+        "",
+        "Selector locale:",
+        `  --selector-locale <locale> overrides ${LINKEDIN_ASSISTANT_SELECTOR_LOCALE_ENV} for one command.`,
+        `  ${LINKEDIN_ASSISTANT_SELECTOR_LOCALE_ENV}=da sets the default for the current shell.`,
+        "  Unsupported locale values fall back to English with a warning on stderr.",
         "",
         "Diagnostics:",
         "  linkedin audit selectors --help",

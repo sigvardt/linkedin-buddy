@@ -36,7 +36,7 @@ Default tool-owned state home (profiles, DB, artifacts):
 - `~/.linkedin-assistant/linkedin-owa-agentools`
 - Override with `LINKEDIN_ASSISTANT_HOME=/custom/path`
 - Confirm-failure trace size cap: `LINKEDIN_ASSISTANT_CONFIRM_TRACE_MAX_BYTES` (defaults to `26214400`)
-- Selector locale for UI-text fallbacks: `LINKEDIN_ASSISTANT_SELECTOR_LOCALE` (defaults to `en`; supports `en`, `da`)
+- Selector locale for UI-text fallbacks: `LINKEDIN_ASSISTANT_SELECTOR_LOCALE` (defaults to `en`; supports `en`, `da`; region tags like `da-DK` normalize to `da`; unsupported values fall back to `en` with a warning)
 
 Privacy / redaction controls:
 
@@ -174,8 +174,10 @@ Failures
   `selector-audit/report.json`; screenshots, DOM snapshots, and accessibility
   snapshots are captured only for failures.
 - Selector audit also supports `--selector-locale <locale>` for localized UI
-  text fallbacks, and the default can be set with
-  `LINKEDIN_ASSISTANT_SELECTOR_LOCALE`.
+  text fallbacks. Region tags such as `da-DK` normalize to `da`, and
+  unsupported values fall back to `en` with a warning.
+- Set `LINKEDIN_ASSISTANT_SELECTOR_LOCALE` to change the default selector
+  locale for the current shell.
 
 Inbox MVP commands:
 
