@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 1,
+  "name": "draft-quality-smoke",
+  "cases": [
+    {
+      "id": "followup_meeting_request_001",
+      "channel": "linkedin_inbox",
+      "scenario": "Warm follow-up when the contact is busy this week",
+      "thread": {
+        "participants": [
+          {
+            "id": "assistant",
+            "name": "You",
+            "role": "assistant"
+          },
+          {
+            "id": "contact",
+            "name": "Pat Morgan",
+            "role": "contact"
+          }
+        ],
+        "messages": [
+          {
+            "id": "m1",
+            "author": "You",
+            "direction": "outbound",
+            "text": "Thanks again for connecting. Would you be open to a quick intro call next week?"
+          },
+          {
+            "id": "m2",
+            "author": "Pat Morgan",
+            "direction": "inbound",
+            "text": "Thanks for reaching out. This week is packed on my side, so I cannot commit to a call right now."
+          }
+        ]
+      },
+      "expectations": {
+        "tone": {
+          "required": ["warm", "professional", "concise"],
+          "forbidden": ["pushy", "robotic"]
+        },
+        "length": {
+          "minWords": 20,
+          "maxWords": 50,
+          "targetWords": 35,
+          "maxSentences": 2
+        },
+        "requiredPoints": [
+          {
+            "id": "acknowledge_busyness",
+            "aliases": ["packed", "busy", "totally understand", "no worries"]
+          },
+          {
+            "id": "propose_next_week",
+            "aliases": ["next week", "another time", "when your schedule opens up"]
+          }
+        ],
+        "forbiddenPhrases": ["just circling back", "as an AI"],
+        "manualNotes": ["Keep the reply low-pressure and kind."]
+      },
+      "candidateDrafts": [
+        {
+          "id": "baseline_manual",
+          "source": "manual",
+          "text": "Thanks for the reply — totally understand that this week is packed. Happy to reconnect next week if that is easier for you."
+        }
+      ],
+      "metadata": {
+        "difficulty": "normal",
+        "source": "synthetic"
+      }
+    },
+    {
+      "id": "timeline_clarification_001",
+      "channel": "linkedin_inbox",
+      "scenario": "Direct answer about pilot timing with an offer to send context",
+      "thread": {
+        "participants": [
+          {
+            "id": "assistant",
+            "name": "You",
+            "role": "assistant"
+          },
+          {
+            "id": "contact",
+            "name": "Jordan Lee",
+            "role": "contact"
+          }
+        ],
+        "messages": [
+          {
+            "id": "m1",
+            "author": "Jordan Lee",
+            "direction": "inbound",
+            "text": "Can you clarify whether the pilot is still on track for Q3, and do you have a short overview you can send?"
+          }
+        ]
+      },
+      "expectations": {
+        "tone": {
+          "required": ["professional", "direct"],
+          "forbidden": ["pushy", "casual"]
+        },
+        "length": {
+          "minWords": 12,
+          "maxWords": 35,
+          "targetWords": 24,
+          "maxSentences": 2
+        },
+        "requiredPoints": [
+          {
+            "id": "mention_q3_pilot",
+            "aliases": ["pilot in q3", "small pilot in q3", "q3 pilot"]
+          },
+          {
+            "id": "offer_overview",
+            "aliases": ["one-page overview", "short overview", "send an overview"]
+          }
+        ],
+        "forbiddenPhrases": ["urgent", "ASAP"],
+        "manualNotes": ["Answer the question directly before offering the follow-up asset."]
+      }
+    }
+  ]
+}
