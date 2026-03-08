@@ -7,7 +7,7 @@ import { ArtifactHelpers } from "../artifacts.js";
 import { ensureConfigPaths, resolveConfigPaths } from "../config.js";
 import {
   LinkedInSelectorAuditService,
-  type LinkedInSelectorAuditPageDefinition
+  type SelectorAuditPageDefinition
 } from "../selectorAudit.js";
 
 class MockLocatorImpl {
@@ -30,12 +30,17 @@ class MockLocatorImpl {
 function createMockPage(options: {
   initialUrl?: string;
   visibleSelectors: string[];
+  gotoError?: Error;
 }): Page {
   let currentUrl = options.initialUrl ?? "https://example.test/";
   const visibleSelectors = new Set(options.visibleSelectors);
 
   return {
     goto: vi.fn(async (url: string) => {
+      if (options.gotoError) {
+        throw options.gotoError;
+      }
+
       currentUrl = url;
       return null;
     }),
@@ -63,12 +68,11 @@ function createMockContext(page: Page): BrowserContext {
   } as unknown as BrowserContext;
 }
 
-function createRegistry(): LinkedInSelectorAuditPageDefinition[] {
+function createRegistry(): SelectorAuditPageDefinition[] {
   return [
     {
       page: "feed",
       url: "https://example.test/feed",
-      description: "Test page",
       selectors: [
         {
           key: "selector_group",
@@ -109,7 +113,13 @@ afterEach(async () => {
   );
 });
 
-async function createService(visibleSelectors: string[]) {
+async function createService(
+  options: {
+    visibleSelectors?: string[];
+    registry?: SelectorAuditPageDefinition[];
+    gotoError?: Error;
+  } = {}
+) {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "selector-audit-test-"));
   tempDirs.push(baseDir);
 
@@ -117,7 +127,10 @@ async function createService(visibleSelectors: string[]) {
   ensureConfigPaths(paths);
 
   const artifacts = new ArtifactHelpers(paths, "run_test");
-  const page = createMockPage({ visibleSelectors });
+  const page = createMockPage({
+    visibleSelectors: options.visibleSelectors ?? [],
+    gotoError: options.gotoError
+  });
   const context = createMockContext(page);
 
   const runtime = {
@@ -136,7 +149,7 @@ async function createService(visibleSelectors: string[]) {
   };
 
   const service = new LinkedInSelectorAuditService(runtime as never, {
-    registry: createRegistry(),
+    registry: options.registry ?? createRegistry(),
     candidateTimeoutMs: 10,
     pageReadyTimeoutMs: 10
   });
@@ -146,7 +159,9 @@ async function createService(visibleSelectors: string[]) {
 
 describe("LinkedInSelectorAuditService", () => {
   it("marks fallback usage when secondary selector is the first passing strategy", async () => {
-    const { service } = await createService(["secondary", "tertiary"]);
+    const { service } = await createService({
+      visibleSelectors: ["secondary", "tertiary"]
+    });
 
     const report = await service.auditSelectors({ profileName: "default" });
 
@@ -161,34 +176,6 @@ describe("LinkedInSelectorAuditService", () => {
         pass_count: 1,
         fail_count: 0,
         fallback_count: 1
-      },
-      {
-        page: "inbox",
-        total_count: 0,
-        pass_count: 0,
-        fail_count: 0,
-        fallback_count: 0
-      },
-      {
-        page: "profile",
-        total_count: 0,
-        pass_count: 0,
-        fail_count: 0,
-        fallback_count: 0
-      },
-      {
-        page: "connections",
-        total_count: 0,
-        pass_count: 0,
-        fail_count: 0,
-        fallback_count: 0
-      },
-      {
-        page: "notifications",
-        total_count: 0,
-        pass_count: 0,
-        fail_count: 0,
-        fallback_count: 0
       }
     ]);
     expect(report.results[0]).toMatchObject({
@@ -206,7 +193,7 @@ describe("LinkedInSelectorAuditService", () => {
   });
 
   it("captures failure artifacts when no selector strategy matches", async () => {
-    const { service } = await createService([]);
+    const { service } = await createService();
 
     const report = await service.auditSelectors({ profileName: "default" });
     const [result] = report.results;
@@ -233,5 +220,56 @@ describe("LinkedInSelectorAuditService", () => {
       stat(result!.failure_artifacts.accessibility_snapshot_path!)
     ).resolves.toBeTruthy();
     await expect(stat(report.report_path)).resolves.toBeTruthy();
+  });
+
+  it("marks selector groups failed when navigation fails", async () => {
+    const { service } = await createService({
+      gotoError: new Error("Navigation failed")
+    });
+
+    const report = await service.auditSelectors({ profileName: "default" });
+
+    expect(report.pass_count).toBe(0);
+    expect(report.fail_count).toBe(1);
+    expect(report.results[0]).toMatchObject({
+      page: "feed",
+      selector_key: "selector_group",
+      status: "fail",
+      error: "Navigation failed"
+    });
+    expect(report.results[0]?.strategies.primary.error).toBe("Navigation failed");
+  });
+
+  it("rejects duplicate strategies in injected selector registries", async () => {
+    await expect(
+      createService({
+        registry: [
+          {
+            page: "feed",
+            url: "https://example.test/feed",
+            selectors: [
+              {
+                key: "selector_group",
+                description: "Selector group",
+                candidates: [
+                  {
+                    strategy: "primary",
+                    key: "primary-one",
+                    selectorHint: "primary-one",
+                    locatorFactory: (page) => page.locator("primary-one")
+                  },
+                  {
+                    strategy: "primary",
+                    key: "primary-two",
+                    selectorHint: "primary-two",
+                    locatorFactory: (page) => page.locator("primary-two")
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      })
+    ).rejects.toThrow("Duplicate selector audit strategy primary on feed:selector_group.");
   });
 });
