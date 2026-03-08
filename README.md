@@ -35,6 +35,7 @@ Default tool-owned state home (profiles, DB, artifacts):
 
 - `~/.linkedin-assistant/linkedin-owa-agentools`
 - Override with `LINKEDIN_ASSISTANT_HOME=/custom/path`
+- Confirm-failure trace size cap: `LINKEDIN_ASSISTANT_CONFIRM_TRACE_MAX_BYTES` (defaults to `26214400`)
 
 ## CLI Usage
 

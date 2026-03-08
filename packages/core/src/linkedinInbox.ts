@@ -1,3 +1,5 @@
+import { mkdirSync } from "node:fs";
+import path from "node:path";
 import {
   errors as playwrightErrors,
   type BrowserContext,
@@ -7,6 +9,8 @@ import {
 } from "playwright-core";
 import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
+import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
+import type { ConfirmFailureArtifactConfig } from "./config.js";
 import {
   LinkedInAssistantError,
   asLinkedInAssistantError
@@ -126,6 +130,7 @@ export interface LinkedInMessagingRuntime {
   cdpUrl?: string | undefined;
   profileManager: ProfileManager;
   artifacts: ArtifactHelpers;
+  confirmFailureArtifacts: ConfirmFailureArtifactConfig;
   rateLimiter: RateLimiter;
   logger: JsonEventLogger;
 }
@@ -1033,6 +1038,7 @@ async function captureScreenshotArtifact(
   metadata: Record<string, unknown> = {}
 ): Promise<string> {
   const absolutePath = runtime.artifacts.resolve(relativePath);
+  mkdirSync(path.dirname(absolutePath), { recursive: true });
   await page.screenshot({ path: absolutePath, fullPage: true });
   runtime.artifacts.registerArtifact(relativePath, "image/png", metadata);
   return relativePath;
@@ -1320,8 +1326,6 @@ class SendMessageActionExecutor
       "target"
     );
     const text = getRequiredStringField(action.payload, "text", action.id, "payload");
-    const tracePath = `linkedin/trace-confirm-${Date.now()}.zip`;
-    const artifactPaths: string[] = [tracePath];
 
     await runtime.auth.ensureAuthenticated({
       profileName,
@@ -1336,15 +1340,30 @@ class SendMessageActionExecutor
       },
       async (context) => {
         const page = await getOrCreatePage(context);
-        let tracingStarted = false;
-
-        try {
-          await context.tracing.start({
-            screenshots: true,
-            snapshots: true,
-            sources: true
-          });
-          tracingStarted = true;
+        return executeConfirmActionWithArtifacts({
+          runtime,
+          context,
+          page,
+          actionId: action.id,
+          actionType: SEND_MESSAGE_ACTION_TYPE,
+          profileName,
+          targetUrl: threadUrl,
+          persistTraceOnSuccess: true,
+          metadata: {
+            thread_url: threadUrl,
+            selector_context: SEND_MESSAGE_ACTION_TYPE
+          },
+          errorDetails: {
+            selector_context: SEND_MESSAGE_ACTION_TYPE,
+            thread_url: threadUrl
+          },
+          mapError: (error) =>
+            toAutomationError(error, "Failed to execute LinkedIn send_message action.", {
+              selector_context: SEND_MESSAGE_ACTION_TYPE,
+              thread_url: threadUrl
+            }),
+          execute: async () => {
+            const artifactPaths: string[] = [];
 
           const detail = await extractThreadDetailWithNetwork(page, threadUrl, 20);
           validateThreadTarget(action, detail, page.url());
@@ -1438,6 +1457,7 @@ class SendMessageActionExecutor
           const postSendScreenshot = `linkedin/screenshot-confirm-${Date.now()}.png`;
           await captureScreenshotArtifact(runtime, page, postSendScreenshot, {
             action: SEND_MESSAGE_ACTION_TYPE,
+            action_id: action.id,
             profile_name: profileName,
             thread_url: threadUrl
           });
@@ -1450,46 +1470,8 @@ class SendMessageActionExecutor
             },
             artifacts: artifactPaths
           };
-        } catch (error) {
-          const failureScreenshot = `linkedin/screenshot-confirm-error-${Date.now()}.png`;
-          try {
-            await captureScreenshotArtifact(runtime, page, failureScreenshot, {
-              action: `${SEND_MESSAGE_ACTION_TYPE}_error`,
-              profile_name: profileName,
-              thread_url: threadUrl
-            });
-            artifactPaths.push(failureScreenshot);
-          } catch {
-            // Best-effort error screenshot.
           }
-
-          throw toAutomationError(
-            error,
-            "Failed to execute LinkedIn send_message action.",
-            {
-              action_id: action.id,
-              current_url: page.url(),
-              selector_context: SEND_MESSAGE_ACTION_TYPE,
-              artifact_paths: artifactPaths
-            }
-          );
-        } finally {
-          if (tracingStarted) {
-            try {
-              const absoluteTracePath = runtime.artifacts.resolve(tracePath);
-              await context.tracing.stop({ path: absoluteTracePath });
-              runtime.artifacts.registerArtifact(tracePath, "application/zip", {
-                action: SEND_MESSAGE_ACTION_TYPE,
-                profile_name: profileName
-              });
-            } catch (error) {
-              runtime.logger.log("warn", "linkedin.send_message.trace.stop_failed", {
-                action_id: action.id,
-                message: error instanceof Error ? error.message : String(error)
-              });
-            }
-          }
-        }
+        });
       }
     );
   }

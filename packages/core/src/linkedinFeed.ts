@@ -1,6 +1,10 @@
+import { mkdirSync } from "node:fs";
+import path from "node:path";
 import { type BrowserContext, type Locator, type Page } from "playwright-core";
 import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
+import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
+import type { ConfirmFailureArtifactConfig } from "./config.js";
 import { LinkedInAssistantError, asLinkedInAssistantError } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import type { ProfileManager } from "./profileManager.js";
@@ -56,6 +60,7 @@ export interface LinkedInFeedExecutorRuntime {
   logger: JsonEventLogger;
   rateLimiter: RateLimiter;
   artifacts: ArtifactHelpers;
+  confirmFailureArtifacts: ConfirmFailureArtifactConfig;
 }
 
 export interface LinkedInFeedRuntime extends LinkedInFeedExecutorRuntime {
@@ -402,6 +407,7 @@ async function captureScreenshotArtifact(
   metadata: Record<string, unknown> = {}
 ): Promise<string> {
   const absolutePath = runtime.artifacts.resolve(relativePath);
+  mkdirSync(path.dirname(absolutePath), { recursive: true });
   await page.screenshot({ path: absolutePath, fullPage: true });
   runtime.artifacts.registerArtifact(relativePath, "image/png", metadata);
   return relativePath;
@@ -1064,7 +1070,29 @@ export class LikePostActionExecutor
       async (context) => {
         const page = await getOrCreatePage(context);
 
-        try {
+        return executeConfirmActionWithArtifacts({
+          runtime,
+          context,
+          page,
+          actionId: action.id,
+          actionType: LIKE_POST_ACTION_TYPE,
+          profileName,
+          targetUrl: postUrl,
+          metadata: {
+            post_url: postUrl,
+            requested_reaction: reaction
+          },
+          errorDetails: {
+            post_url: postUrl,
+            requested_reaction: reaction
+          },
+          mapError: (error) =>
+            asLinkedInAssistantError(
+              error,
+              "UNKNOWN",
+              "Failed to execute LinkedIn like_post action."
+            ),
+          execute: async () => {
           const rateLimitState = runtime.rateLimiter.consume(
             LIKE_RATE_LIMIT_CONFIG
           );
@@ -1199,6 +1227,7 @@ export class LikePostActionExecutor
           const screenshotPath = `linkedin/screenshot-feed-like-${Date.now()}.png`;
           await captureScreenshotArtifact(runtime, page, screenshotPath, {
             action: LIKE_POST_ACTION_TYPE,
+            action_id: action.id,
             profile_name: profileName,
             post_url: postUrl,
             reaction,
@@ -1220,13 +1249,8 @@ export class LikePostActionExecutor
             },
             artifacts: [screenshotPath]
           };
-        } catch (error) {
-          throw asLinkedInAssistantError(
-            error,
-            "UNKNOWN",
-            "Failed to execute LinkedIn like_post action."
-          );
-        }
+          }
+        });
       }
     );
   }
@@ -1263,7 +1287,29 @@ export class CommentOnPostActionExecutor
       async (context) => {
         const page = await getOrCreatePage(context);
 
-        try {
+        return executeConfirmActionWithArtifacts({
+          runtime,
+          context,
+          page,
+          actionId: action.id,
+          actionType: COMMENT_ON_POST_ACTION_TYPE,
+          profileName,
+          targetUrl: postUrl,
+          metadata: {
+            post_url: postUrl,
+            comment_text: text
+          },
+          errorDetails: {
+            post_url: postUrl,
+            comment_text: text
+          },
+          mapError: (error) =>
+            asLinkedInAssistantError(
+              error,
+              "UNKNOWN",
+              "Failed to execute LinkedIn comment_on_post action."
+            ),
+          execute: async () => {
           const rateLimitState = runtime.rateLimiter.consume(
             COMMENT_RATE_LIMIT_CONFIG
           );
@@ -1469,6 +1515,7 @@ export class CommentOnPostActionExecutor
           const screenshotPath = `linkedin/screenshot-feed-comment-${Date.now()}.png`;
           await captureScreenshotArtifact(runtime, page, screenshotPath, {
             action: COMMENT_ON_POST_ACTION_TYPE,
+            action_id: action.id,
             profile_name: profileName,
             post_url: postUrl,
             selector_key: submitButton.key,
@@ -1485,13 +1532,8 @@ export class CommentOnPostActionExecutor
             },
             artifacts: [screenshotPath]
           };
-        } catch (error) {
-          throw asLinkedInAssistantError(
-            error,
-            "UNKNOWN",
-            "Failed to execute LinkedIn comment_on_post action."
-          );
-        }
+          }
+        });
       }
     );
   }

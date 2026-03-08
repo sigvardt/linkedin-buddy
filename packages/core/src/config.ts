@@ -15,6 +15,28 @@ export interface ConfigPaths {
   dbPath: string;
 }
 
+export const DEFAULT_CONFIRM_TRACE_MAX_BYTES = 25 * 1024 * 1024;
+
+export interface ConfirmFailureArtifactConfig {
+  traceMaxBytes: number;
+}
+
+function parsePositiveInteger(
+  value: string | undefined,
+  fallback: number
+): number {
+  if (!value) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+
+  return parsed;
+}
+
 export function resolveConfigPaths(baseDir?: string): ConfigPaths {
   const resolvedBaseDir =
     baseDir ??
@@ -33,4 +55,13 @@ export function ensureConfigPaths(paths: ConfigPaths): void {
   mkdirSync(paths.baseDir, { recursive: true });
   mkdirSync(paths.artifactsDir, { recursive: true });
   mkdirSync(paths.profilesDir, { recursive: true });
+}
+
+export function resolveConfirmFailureArtifactConfig(): ConfirmFailureArtifactConfig {
+  return {
+    traceMaxBytes: parsePositiveInteger(
+      process.env.LINKEDIN_ASSISTANT_CONFIRM_TRACE_MAX_BYTES,
+      DEFAULT_CONFIRM_TRACE_MAX_BYTES
+    )
+  };
 }

@@ -3,6 +3,7 @@ export * from "./auth/rateLimitState.js";
 export * from "./auth/session.js";
 export * from "./connectionPool.js";
 export * from "./config.js";
+export * from "./confirmArtifacts.js";
 export * from "./db/database.js";
 export * from "./errors.js";
 export * from "./healthCheck.js";
