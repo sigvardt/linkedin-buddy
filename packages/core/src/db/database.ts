@@ -15,6 +15,15 @@ export interface RunLogInsert {
   createdAtMs: number;
 }
 
+export interface RunLogRow {
+  id: number;
+  run_id: string;
+  level: string;
+  event_name: string;
+  payload_json: string;
+  created_at: number;
+}
+
 export interface ArtifactIndexInsert {
   runId: string;
   artifactPath: string;
@@ -23,11 +32,22 @@ export interface ArtifactIndexInsert {
   createdAtMs: number;
 }
 
+export interface ArtifactIndexRow {
+  id: number;
+  run_id: string;
+  artifact_path: string;
+  artifact_type: string;
+  metadata_json: string;
+  created_at: number;
+}
+
 export interface PreparedActionInsert {
   id: string;
   actionType: string;
   targetJson: string;
+  sealedTargetJson: string | null;
   payloadJson: string;
+  sealedPayloadJson: string | null;
   previewJson: string;
   payloadHash: string;
   previewHash: string;
@@ -42,7 +62,9 @@ export interface PreparedActionRow {
   id: string;
   action_type: string;
   target_json: string;
+  sealed_target_json: string | null;
   payload_json: string;
+  sealed_payload_json: string | null;
   preview_json: string;
   payload_hash: string;
   preview_hash: string;
@@ -201,7 +223,9 @@ INSERT INTO prepared_action (
   id,
   action_type,
   target_json,
+  sealed_target_json,
   payload_json,
+  sealed_payload_json,
   preview_json,
   payload_hash,
   preview_hash,
@@ -215,7 +239,9 @@ VALUES (
   @id,
   @actionType,
   @targetJson,
+  @sealedTargetJson,
   @payloadJson,
+  @sealedPayloadJson,
   @previewJson,
   @payloadHash,
   @previewHash,
@@ -238,7 +264,9 @@ SELECT
   id,
   action_type,
   target_json,
+  sealed_target_json,
   payload_json,
+  sealed_payload_json,
   preview_json,
   payload_hash,
   preview_hash,
@@ -269,7 +297,9 @@ SELECT
   id,
   action_type,
   target_json,
+  sealed_target_json,
   payload_json,
+  sealed_payload_json,
   preview_json,
   payload_hash,
   preview_hash,
@@ -290,6 +320,32 @@ LIMIT 1
 `
       )
       .get(confirmTokenHash);
+  }
+
+  listRunLogs(runId: string): RunLogRow[] {
+    return this.db
+      .prepare<unknown[], RunLogRow>(
+        `
+SELECT id, run_id, level, event_name, payload_json, created_at
+FROM run_log
+WHERE run_id = ?
+ORDER BY created_at ASC, id ASC
+`
+      )
+      .all(runId);
+  }
+
+  listArtifactIndex(runId: string): ArtifactIndexRow[] {
+    return this.db
+      .prepare<unknown[], ArtifactIndexRow>(
+        `
+SELECT id, run_id, artifact_path, artifact_type, metadata_json, created_at
+FROM artifact_index
+WHERE run_id = ?
+ORDER BY created_at ASC, id ASC
+`
+      )
+      .all(runId);
   }
 
   markPreparedActionExecuted(input: PreparedActionExecutedUpdate): boolean {

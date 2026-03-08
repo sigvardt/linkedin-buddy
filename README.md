@@ -37,6 +37,15 @@ Default tool-owned state home (profiles, DB, artifacts):
 - Override with `LINKEDIN_ASSISTANT_HOME=/custom/path`
 - Confirm-failure trace size cap: `LINKEDIN_ASSISTANT_CONFIRM_TRACE_MAX_BYTES` (defaults to `26214400`)
 
+Privacy / redaction controls:
+
+- `LINKEDIN_ASSISTANT_REDACTION_MODE=off|partial|full`
+- `LINKEDIN_ASSISTANT_STORAGE_MODE=full|excerpt`
+- `LINKEDIN_ASSISTANT_MESSAGE_EXCERPT_LENGTH=80`
+- `LINKEDIN_ASSISTANT_REDACTION_HASH_SALT=your-local-salt`
+
+`partial` hashes names and stores/logs only short message excerpts. `full` replaces sensitive message bodies with fully redacted markers.
+
 ## CLI Usage
 
 Run commands via workspace binaries:
@@ -108,7 +117,7 @@ Exposed tools:
 1. Prepare send:
    - `linkedin inbox prepare-reply ...`
    - captures pre-send screenshot artifact
-   - stores prepared action with preview JSON + payload/preview hashes
+   - stores redacted preview JSON plus hashes; sensitive target/payload fields are sealed for confirm-time restore when needed
    - returns `preparedActionId` and `confirmToken`
 2. Confirm send:
    - `linkedin actions confirm --token ct_...`
@@ -121,6 +130,7 @@ Exposed tools:
 
 - Two-phase commit stores:
   - `target_json`, `payload_json`, `preview_json`
+  - optional sealed target/payload blobs when storage redaction is enabled
   - `payload_hash` and `preview_hash` (`sha256` base64url)
   - confirmation and execution metadata (`confirmed_at`, `executed_at`, result/error fields)
 - Errors use structured taxonomy:

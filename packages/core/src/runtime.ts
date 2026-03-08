@@ -61,12 +61,14 @@ import {
   createDefaultTestAutoConfirmConfig,
   type TestAutoConfirmConfig
 } from "./twoPhaseCommit.js";
+import { resolvePrivacyConfig, type PrivacyConfig } from "./privacy.js";
 
 export interface CreateCoreRuntimeOptions {
   baseDir?: string;
   dbPath?: string;
   runId?: string;
   cdpUrl?: string | undefined;
+  privacy?: Partial<PrivacyConfig>;
 }
 
 export interface CoreRuntime {
@@ -74,6 +76,7 @@ export interface CoreRuntime {
   runId: string;
   cdpUrl?: string | undefined;
   confirmFailureArtifacts: ConfirmFailureArtifactConfig;
+  privacy: PrivacyConfig;
   db: AssistantDatabase;
   logger: JsonEventLogger;
   artifacts: ArtifactHelpers;
@@ -100,11 +103,12 @@ export function createCoreRuntime(
 ): CoreRuntime {
   const paths = resolveConfigPaths(options.baseDir);
   ensureConfigPaths(paths);
+  const privacy = resolvePrivacyConfig(options.privacy);
 
   const db = new AssistantDatabase(options.dbPath ?? paths.dbPath);
   const runId = options.runId ?? createRunId();
-  const logger = new JsonEventLogger(paths, runId, db);
-  const artifacts = new ArtifactHelpers(paths, runId, db);
+  const logger = new JsonEventLogger(paths, runId, db, privacy);
+  const artifacts = new ArtifactHelpers(paths, runId, db, privacy);
   const confirmFailureArtifacts = resolveConfirmFailureArtifactConfig();
   const profileManager = new ProfileManager(paths);
   let runtime: CoreRuntime;
@@ -129,6 +133,7 @@ export function createCoreRuntime(
   >;
   const testEchoExecutor = new TestEchoActionExecutor<LinkedInMessagingRuntime>();
   const twoPhaseCommit = new TwoPhaseCommitService<LinkedInMessagingRuntime>(db, {
+    privacy,
     executors: {
       ...linkedInExecutors,
       ...connectionExecutors,
@@ -145,6 +150,7 @@ export function createCoreRuntime(
     runId,
     cdpUrl: options.cdpUrl,
     confirmFailureArtifacts,
+    privacy,
     db,
     logger,
     artifacts,

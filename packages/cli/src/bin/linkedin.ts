@@ -16,10 +16,14 @@ import {
   normalizeLinkedInFeedReaction,
   normalizeLinkedInPostVisibility,
   resolveFollowupSinceWindow,
+  redactStructuredValue,
   resolveConfigPaths,
+  resolvePrivacyConfig,
   toLinkedInAssistantErrorPayload,
   type SearchCategory
 } from "@linkedin-assistant/core";
+
+const cliPrivacyConfig = resolvePrivacyConfig();
 
 function coercePositiveInt(value: string, label: string): number {
   const parsed = Number.parseInt(value, 10);
@@ -44,7 +48,9 @@ function coerceSearchCategory(value: string): SearchCategory {
 }
 
 function printJson(value: unknown): void {
-  console.log(JSON.stringify(value, null, 2));
+  console.log(
+    JSON.stringify(redactStructuredValue(value, cliPrivacyConfig, "cli"), null, 2)
+  );
 }
 
 function createRuntime(cdpUrl?: string) {
@@ -58,7 +64,11 @@ function createRuntime(cdpUrl?: string) {
     );
     process.stderr.write("\n");
   }
-  return createCoreRuntime(cdpUrl ? { cdpUrl } : {});
+  return createCoreRuntime(
+    cdpUrl
+      ? { cdpUrl, privacy: cliPrivacyConfig }
+      : { privacy: cliPrivacyConfig }
+  );
 }
 
 interface KeepAliveState {
@@ -1432,8 +1442,13 @@ async function runConfirmAction(input: {
       typeof preview.preview.summary === "string"
         ? preview.preview.summary
         : `Action ${preview.actionType}`;
+    const summaryPayload = redactStructuredValue(
+      { summary },
+      cliPrivacyConfig,
+      "cli"
+    );
 
-    console.log(`Preview summary: ${summary}`);
+    console.log(`Preview summary: ${summaryPayload.summary}`);
     printJson({
       prepared_action_id: preview.preparedActionId,
       action_type: preview.actionType,
@@ -2141,7 +2156,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  const payload = toLinkedInAssistantErrorPayload(error);
+  const payload = toLinkedInAssistantErrorPayload(error, cliPrivacyConfig);
   console.error(JSON.stringify(payload, null, 2));
   process.exit(1);
 });

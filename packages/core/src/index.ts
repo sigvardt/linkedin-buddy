@@ -19,6 +19,7 @@ export * from "./linkedinNotifications.js";
 export * from "./linkedinPosts.js";
 export * from "./linkedinSearch.js";
 export * from "./logging.js";
+export * from "./privacy.js";
 export * from "./profileManager.js";
 export * from "./rateLimiter.js";
 export * from "./run.js";

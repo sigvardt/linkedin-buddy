@@ -2,8 +2,16 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { AssistantDatabase, PreparedActionRow } from "./db/database.js";
 import {
   LinkedInAssistantError,
-  asLinkedInAssistantError
+  asLinkedInAssistantError,
+  toLinkedInAssistantErrorPayload
 } from "./errors.js";
+import {
+  redactStructuredValue,
+  resolvePrivacyConfig,
+  sealJsonRecord,
+  unsealJsonRecord,
+  type PrivacyConfig
+} from "./privacy.js";
 
 export const DEFAULT_CONFIRM_TOKEN_TTL_MS = 30 * 60 * 1000;
 
@@ -20,10 +28,8 @@ export function createDefaultTestAutoConfirmConfig(): TestAutoConfirmConfig {
   const enabled =
     process.env.LINKEDIN_TEST_AUTO_CONFIRM_ENABLED === "true" ||
     process.env.LINKEDIN_TEST_AUTO_CONFIRM_ENABLED === "1";
-  const ttlMs = Number.parseInt(
-    process.env.LINKEDIN_TEST_AUTO_CONFIRM_TTL_MS ?? "0",
-    10
-  ) || 0;
+  const ttlMs =
+    Number.parseInt(process.env.LINKEDIN_TEST_AUTO_CONFIRM_TTL_MS ?? "0", 10) || 0;
   const allowedTargetsRaw = process.env.LINKEDIN_TEST_AUTO_CONFIRM_TARGETS ?? "";
   const allowedTargets = allowedTargetsRaw
     .split(",")
@@ -51,9 +57,7 @@ export function isTestAutoConfirmAllowedTarget(
   if (config.allowedTargets.length === 0) {
     return true;
   }
-  return config.allowedTargets.some(
-    (allowed) => targetUrl.includes(allowed)
-  );
+  return config.allowedTargets.some((allowed) => targetUrl.includes(allowed));
 }
 
 export interface PrepareActionInput {
@@ -140,6 +144,7 @@ export interface PreparedActionPreview {
 export interface TwoPhaseCommitServiceOptions<TRuntime> {
   executors?: ActionExecutorRegistry<TRuntime>;
   getRuntime?: () => TRuntime;
+  privacy?: Partial<PrivacyConfig>;
 }
 
 export function generateConfirmToken(entropyBytes: number = 24): string {
@@ -182,6 +187,28 @@ function parseJsonObject(
   }
 }
 
+function unsealPreparedJsonObject(
+  label: string,
+  value: string,
+  actionId: string,
+  confirmToken: string,
+  privacy: PrivacyConfig
+): Record<string, unknown> {
+  try {
+    return unsealJsonRecord(value, confirmToken, privacy);
+  } catch (error) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `Prepared action ${actionId} has invalid ${label}.`,
+      {
+        action_id: actionId,
+        label
+      },
+      { cause: error instanceof Error ? error : undefined }
+    );
+  }
+}
+
 function parseExecutionResult(
   executionResultJson: string | null,
   actionId: string
@@ -193,12 +220,19 @@ function parseExecutionResult(
   return parseJsonObject("execution_result_json", executionResultJson, actionId);
 }
 
-function mapPreparedActionRow(row: PreparedActionRow): PreparedAction {
+function mapPreparedActionRow(
+  row: PreparedActionRow,
+  overrides: {
+    target?: Record<string, unknown>;
+    payload?: Record<string, unknown>;
+  } = {}
+): PreparedAction {
   return {
     id: row.id,
     actionType: row.action_type,
-    target: parseJsonObject("target_json", row.target_json, row.id),
-    payload: parseJsonObject("payload_json", row.payload_json, row.id),
+    target: overrides.target ?? parseJsonObject("target_json", row.target_json, row.id),
+    payload:
+      overrides.payload ?? parseJsonObject("payload_json", row.payload_json, row.id),
     preview: parseJsonObject("preview_json", row.preview_json, row.id),
     payloadHash: row.payload_hash,
     previewHash: row.preview_hash,
@@ -212,6 +246,36 @@ function mapPreparedActionRow(row: PreparedActionRow): PreparedAction {
     errorCode: row.error_code,
     errorMessage: row.error_message
   };
+}
+
+function hydratePreparedActionForConfirmation(
+  row: PreparedActionRow,
+  confirmToken: string,
+  privacy: PrivacyConfig
+): PreparedAction {
+  const target = row.sealed_target_json
+    ? unsealPreparedJsonObject(
+        "sealed_target_json",
+        row.sealed_target_json,
+        row.id,
+        confirmToken,
+        privacy
+      )
+    : parseJsonObject("target_json", row.target_json, row.id);
+  const payload = row.sealed_payload_json
+    ? unsealPreparedJsonObject(
+        "sealed_payload_json",
+        row.sealed_payload_json,
+        row.id,
+        confirmToken,
+        privacy
+      )
+    : parseJsonObject("payload_json", row.payload_json, row.id);
+
+  return mapPreparedActionRow(row, {
+    target,
+    payload
+  });
 }
 
 function assertPreparedActionByToken(
@@ -231,10 +295,7 @@ function assertPreparedActionByToken(
   return row;
 }
 
-function assertPreparedActionIsReady(
-  action: PreparedAction,
-  nowMs: number
-): void {
+function assertPreparedActionIsReady(action: PreparedAction, nowMs: number): void {
   if (action.status !== "prepared") {
     throw new LinkedInAssistantError(
       "ACTION_PRECONDITION_FAILED",
@@ -262,6 +323,7 @@ function assertPreparedActionIsReady(
 export class TwoPhaseCommitService<TRuntime = unknown> {
   private readonly executors: ActionExecutorRegistry<TRuntime>;
   private readonly getRuntime: (() => TRuntime) | undefined;
+  private readonly privacy: PrivacyConfig;
 
   constructor(
     private readonly db: AssistantDatabase,
@@ -269,6 +331,7 @@ export class TwoPhaseCommitService<TRuntime = unknown> {
   ) {
     this.executors = options.executors ?? {};
     this.getRuntime = options.getRuntime;
+    this.privacy = resolvePrivacyConfig(options.privacy);
   }
 
   prepare(input: PrepareActionInput): PreparedActionResult {
@@ -282,22 +345,49 @@ export class TwoPhaseCommitService<TRuntime = unknown> {
     const targetJson = JSON.stringify(input.target);
     const payloadJson = JSON.stringify(input.payload);
     const previewJson = JSON.stringify(input.preview);
+    const storedTarget = redactStructuredValue(input.target, this.privacy, "storage");
+    const storedPayload = redactStructuredValue(input.payload, this.privacy, "storage");
+    const storedPreview = redactStructuredValue(input.preview, this.privacy, "storage");
+    const storedTargetJson = JSON.stringify(storedTarget);
+    const storedPayloadJson = JSON.stringify(storedPayload);
+    const storedPreviewJson = JSON.stringify(storedPreview);
+    const storedOperatorNote =
+      typeof input.operatorNote === "string"
+        ? (() => {
+            const sanitized = redactStructuredValue(
+              { note: input.operatorNote },
+              this.privacy,
+              "storage"
+            );
+            return typeof sanitized.note === "string"
+              ? sanitized.note
+              : input.operatorNote;
+          })()
+        : null;
     const payloadHash = hashJsonPayload(payloadJson);
     const previewHash = hashJsonPayload(previewJson);
 
     this.db.insertPreparedAction({
       id: preparedActionId,
       actionType: input.actionType,
-      targetJson,
-      payloadJson,
-      previewJson,
+      targetJson: storedTargetJson,
+      sealedTargetJson:
+        storedTargetJson === targetJson
+          ? null
+          : sealJsonRecord(input.target, confirmToken, this.privacy),
+      payloadJson: storedPayloadJson,
+      sealedPayloadJson:
+        storedPayloadJson === payloadJson
+          ? null
+          : sealJsonRecord(input.payload, confirmToken, this.privacy),
+      previewJson: storedPreviewJson,
       payloadHash,
       previewHash,
       status: "prepared",
       confirmTokenHash,
       expiresAtMs,
       createdAtMs: nowMs,
-      operatorNote: input.operatorNote ?? null
+      operatorNote: storedOperatorNote
     });
 
     return {
@@ -337,7 +427,11 @@ export class TwoPhaseCommitService<TRuntime = unknown> {
       this.db.getPreparedActionByConfirmTokenHash(confirmTokenHash),
       confirmTokenHash
     );
-    const action = mapPreparedActionRow(row);
+    const action = hydratePreparedActionForConfirmation(
+      row,
+      input.confirmToken,
+      this.privacy
+    );
     const nowMs = input.nowMs ?? Date.now();
 
     assertPreparedActionIsReady(action, nowMs);
@@ -373,12 +467,13 @@ export class TwoPhaseCommitService<TRuntime = unknown> {
       });
     } catch (error) {
       const assistantError = asLinkedInAssistantError(error);
+      const errorPayload = toLinkedInAssistantErrorPayload(assistantError, this.privacy);
       const updated = this.db.markPreparedActionFailed({
         id: action.id,
         confirmedAtMs: nowMs,
         executedAtMs: nowMs,
         errorCode: assistantError.code,
-        errorMessage: assistantError.message
+        errorMessage: errorPayload.message
       });
 
       if (!updated) {
@@ -394,14 +489,19 @@ export class TwoPhaseCommitService<TRuntime = unknown> {
       throw assistantError;
     }
 
+    const storedExecutionResult = redactStructuredValue(
+      {
+        result: executionResult.result,
+        artifacts: executionResult.artifacts
+      },
+      this.privacy,
+      "storage"
+    );
     const updated = this.db.markPreparedActionExecuted({
       id: action.id,
       confirmedAtMs: nowMs,
       executedAtMs: nowMs,
-      executionResultJson: JSON.stringify({
-        result: executionResult.result,
-        artifacts: executionResult.artifacts
-      })
+      executionResultJson: JSON.stringify(storedExecutionResult)
     });
 
     if (!updated) {
