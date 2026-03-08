@@ -208,6 +208,40 @@ Failures
 - Set `LINKEDIN_ASSISTANT_SELECTOR_LOCALE` to change the default selector
   locale for the current shell.
 
+### Draft quality evaluation
+
+Draft quality evaluation is a read-only, offline harness for scoring reply
+drafts against case-specific expectations for relevance, tone, length, and
+forbidden phrases. It works entirely from JSON files, defaults to a
+human-readable summary in interactive terminals, and can emit structured JSON
+for CI, scripts, or agent workflows.
+
+See `docs/draft-quality-evaluation.md` for the full guide, including the input
+format, output semantics, core API, and CI examples.
+
+```bash
+# Human-readable summary for a dataset with embedded candidates
+npm exec -w @linkedin-assistant/cli -- linkedin audit draft-quality --dataset eval/dataset.json
+
+# Add an external candidates file and expand the summary with per-draft detail
+npm exec -w @linkedin-assistant/cli -- linkedin audit draft-quality --dataset eval/dataset.json --candidates eval/candidates.json --verbose
+
+# Emit machine-readable JSON and save a copy to disk
+npm exec -w @linkedin-assistant/cli -- linkedin audit draft-quality --dataset eval/dataset.json --candidates eval/candidates.json --json --output reports/draft-quality.json
+
+# Show command help and usage examples
+npm exec -w @linkedin-assistant/cli -- linkedin audit draft-quality --help
+```
+
+- `--dataset <path>` is required; `--candidates <path>` is optional when the
+  dataset already embeds `candidate_drafts`.
+- Interactive terminals show per-case progress plus a human-readable summary;
+  non-interactive terminals default to JSON.
+- `--verbose` adds per-draft metric detail, and `--no-progress` suppresses the
+  live progress lines in human-readable mode.
+- The command exits with `1` when any evaluated draft fails or when input
+  validation fails.
+
 Inbox MVP commands:
 
 ```bash
