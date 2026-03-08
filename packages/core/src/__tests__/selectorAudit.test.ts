@@ -59,6 +59,10 @@ describe("LinkedInSelectorAuditService", () => {
     expect(report.pass_count).toBe(1);
     expect(report.fail_count).toBe(0);
     expect(report.fallback_count).toBe(1);
+    expect(report.outcome).toBe("pass_with_fallbacks");
+    expect(report.summary).toBe(
+      "Checked 1 selector group across 1 page. 1 passed. 0 failed. 1 used fallback selectors."
+    );
     expect(report.page_summaries).toEqual([
       {
         page: "feed",
@@ -79,6 +83,23 @@ describe("LinkedInSelectorAuditService", () => {
     });
     expect(report.results[0]?.strategies.primary.status).toBe("fail");
     expect(report.results[0]?.strategies.secondary.status).toBe("pass");
+    expect(report.failed_selectors).toEqual([]);
+    expect(report.page_warnings).toEqual([]);
+    expect(report.fallback_selectors).toMatchObject([
+      {
+        page: "feed",
+        selector_key: "selector_group",
+        description: "Selector group",
+        fallback_strategy: "secondary",
+        fallback_used: "secondary-key"
+      }
+    ]);
+    expect(report.fallback_selectors[0]?.recommended_action).toContain(
+      "Primary selectors did not match"
+    );
+    expect(report.recommended_actions).toEqual([
+      "Review selector groups that only matched via fallback and refresh their primary selectors before they fail completely."
+    ]);
     await expect(stat(report.report_path)).resolves.toBeTruthy();
   });
 
@@ -92,6 +113,7 @@ describe("LinkedInSelectorAuditService", () => {
     expect(report.pass_count).toBe(0);
     expect(report.fail_count).toBe(1);
     expect(report.fallback_count).toBe(0);
+    expect(report.outcome).toBe("fail");
     expect(result).toMatchObject({
       page: "feed",
       selector_key: "selector_group",
@@ -109,6 +131,38 @@ describe("LinkedInSelectorAuditService", () => {
     await expect(
       stat(result!.failure_artifacts.accessibility_snapshot_path!)
     ).resolves.toBeTruthy();
+    expect(report.page_warnings).toEqual([
+      {
+        page: "feed",
+        warnings: [
+          "Could not confirm that the feed page was ready within 10ms. Last check: Selector check failed for primary selector primary-key (primary): Selector not visible: primary. Verify the page is fully loaded, or update the selector registry before rerunning the selector audit.. Selector checks continued with the current DOM state; if failures persist, reload the page or update the ready selectors and rerun the selector audit."
+        ]
+      }
+    ]);
+    expect(report.fallback_selectors).toEqual([]);
+    expect(report.failed_selectors).toMatchObject([
+      {
+        page: "feed",
+        selector_key: "selector_group",
+        description: "Selector group",
+        error:
+          "No selector strategy matched for selector_group on feed. Review the failure artifacts, update the selector registry if LinkedIn's UI changed, and rerun the selector audit.",
+        failure_artifacts: {
+          screenshot_path: result?.failure_artifacts.screenshot_path,
+          dom_snapshot_path: result?.failure_artifacts.dom_snapshot_path,
+          accessibility_snapshot_path: result?.failure_artifacts.accessibility_snapshot_path
+        }
+      }
+    ]);
+    expect(report.failed_selectors[0]?.recommended_action).toContain(
+      "update that selector group in the registry"
+    );
+    expect(report.recommended_actions).toContain(
+      `Open ${report.report_path} and the captured artifacts for failed selector groups before changing the registry.`
+    );
+    expect(report.recommended_actions).toContain(
+      "Some pages were not fully stable during the audit. Refresh the LinkedIn session or attached browser and rerun before treating warnings as definitive UI drift."
+    );
     await expect(stat(report.report_path)).resolves.toBeTruthy();
   });
 
@@ -272,6 +326,17 @@ describe("LinkedInSelectorAuditService", () => {
     expect(report.results[0]?.warnings).toEqual([
       "The feed page did not reach network idle within 5000ms. Selector checks continued with the current DOM state."
     ]);
+    expect(report.page_warnings).toEqual([
+      {
+        page: "feed",
+        warnings: [
+          "The feed page did not reach network idle within 5000ms. Selector checks continued with the current DOM state."
+        ]
+      }
+    ]);
+    expect(report.recommended_actions).toContain(
+      "Some pages were not fully stable during the audit. Refresh the LinkedIn session or attached browser and rerun before treating warnings as definitive UI drift."
+    );
   });
 
   it("marks selector groups failed when page stabilization throws", async () => {

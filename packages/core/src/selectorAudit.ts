@@ -96,10 +96,41 @@ export interface SelectorAuditPageSummary {
   fallback_count: number;
 }
 
+export type SelectorAuditOutcome = "pass" | "pass_with_fallbacks" | "fail";
+
+export interface SelectorAuditPageWarningSummary {
+  page: LinkedInSelectorAuditPage;
+  warnings: string[];
+}
+
+export interface SelectorAuditFailureSummary {
+  page: LinkedInSelectorAuditPage;
+  page_url: string;
+  selector_key: string;
+  description: string;
+  error: string;
+  warnings?: string[];
+  failure_artifacts: SelectorAuditFailureArtifacts;
+  recommended_action: string;
+}
+
+export interface SelectorAuditFallbackSummary {
+  page: LinkedInSelectorAuditPage;
+  page_url: string;
+  selector_key: string;
+  description: string;
+  fallback_strategy: Exclude<LinkedInSelectorAuditStrategy, "primary">;
+  fallback_used: string;
+  warnings?: string[];
+  recommended_action: string;
+}
+
 export interface SelectorAuditReport {
   run_id: string;
   profile_name: string;
   checked_at: string;
+  outcome: SelectorAuditOutcome;
+  summary: string;
   total_count: number;
   pass_count: number;
   fail_count: number;
@@ -107,6 +138,10 @@ export interface SelectorAuditReport {
   artifact_dir: string;
   report_path: string;
   page_summaries: SelectorAuditPageSummary[];
+  page_warnings: SelectorAuditPageWarningSummary[];
+  failed_selectors: SelectorAuditFailureSummary[];
+  fallback_selectors: SelectorAuditFallbackSummary[];
+  recommended_actions: string[];
   results: SelectorAuditResult[];
 }
 
@@ -520,6 +555,178 @@ function countSelectorAuditResults(
   );
 }
 
+function formatCountLabel(
+  count: number,
+  singular: string,
+  plural: string = `${singular}s`
+): string {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function createSelectorAuditOutcome(
+  counts: SelectorAuditSummaryCounts
+): SelectorAuditOutcome {
+  if (counts.failCount > 0) {
+    return "fail";
+  }
+
+  if (counts.fallbackCount > 0) {
+    return "pass_with_fallbacks";
+  }
+
+  return "pass";
+}
+
+function createSelectorAuditSummary(
+  counts: SelectorAuditSummaryCounts,
+  pageCount: number
+): string {
+  return [
+    `Checked ${formatCountLabel(counts.totalCount, "selector group")} across ${formatCountLabel(pageCount, "page")}.`,
+    `${counts.passCount} passed.`,
+    `${counts.failCount} failed.`,
+    `${counts.fallbackCount} used fallback selectors.`
+  ].join(" ");
+}
+
+function createFailureRecommendedAction(result: SelectorAuditResult): string {
+  return `Open the captured failure artifacts for ${result.selector_key} on ${result.page}, update that selector group in the registry, and rerun the selector audit.`;
+}
+
+function createFallbackRecommendedAction(result: SelectorAuditResult): string {
+  return `Primary selectors did not match for ${result.selector_key} on ${result.page}. Review the primary selector and keep ${result.fallback_used} (${result.fallback_strategy}) only if it reflects the stable LinkedIn UI.`;
+}
+
+function buildPageWarningSummaries(
+  pageOrder: readonly LinkedInSelectorAuditPage[],
+  results: SelectorAuditResult[]
+): SelectorAuditPageWarningSummary[] {
+  const warningsByPage = new Map<LinkedInSelectorAuditPage, string[]>();
+
+  for (const result of results) {
+    if (!result.warnings || result.warnings.length === 0) {
+      continue;
+    }
+
+    const warnings = warningsByPage.get(result.page) ?? [];
+    for (const warning of result.warnings) {
+      if (!warnings.includes(warning)) {
+        warnings.push(warning);
+      }
+    }
+    warningsByPage.set(result.page, warnings);
+  }
+
+  return pageOrder.flatMap((page) => {
+    const warnings = warningsByPage.get(page);
+    return warnings && warnings.length > 0 ? [{ page, warnings }] : [];
+  });
+}
+
+function buildFailureSummaries(
+  results: SelectorAuditResult[]
+): SelectorAuditFailureSummary[] {
+  return results.flatMap((result) => {
+    if (result.status !== "fail") {
+      return [];
+    }
+
+    return [
+      {
+        page: result.page,
+        page_url: result.page_url,
+        selector_key: result.selector_key,
+        description: result.description,
+        error:
+          result.error ??
+          createSelectorDefinitionFailureMessage(
+            {
+              page: result.page,
+              url: result.page_url,
+              selectors: [],
+              ...(result.warnings ? { readyCandidates: [] } : {})
+            },
+            {
+              key: result.selector_key,
+              description: result.description,
+              candidates: []
+            }
+          ),
+        ...(result.warnings ? { warnings: [...result.warnings] } : {}),
+        failure_artifacts: result.failure_artifacts,
+        recommended_action: createFailureRecommendedAction(result)
+      }
+    ];
+  });
+}
+
+function buildFallbackSummaries(
+  results: SelectorAuditResult[]
+): SelectorAuditFallbackSummary[] {
+  return results.flatMap((result) => {
+    if (
+      result.status !== "pass" ||
+      result.fallback_strategy === null ||
+      result.fallback_strategy === "primary" ||
+      result.fallback_used === null
+    ) {
+      return [];
+    }
+
+    return [
+      {
+        page: result.page,
+        page_url: result.page_url,
+        selector_key: result.selector_key,
+        description: result.description,
+        fallback_strategy: result.fallback_strategy,
+        fallback_used: result.fallback_used,
+        ...(result.warnings ? { warnings: [...result.warnings] } : {}),
+        recommended_action: createFallbackRecommendedAction(result)
+      }
+    ];
+  });
+}
+
+function buildRecommendedActions(options: {
+  profileName: string;
+  reportPath: string;
+  failedSelectors: SelectorAuditFailureSummary[];
+  fallbackSelectors: SelectorAuditFallbackSummary[];
+  pageWarnings: SelectorAuditPageWarningSummary[];
+}): string[] {
+  const actions: string[] = [];
+
+  if (options.failedSelectors.length > 0) {
+    actions.push(
+      `Open ${options.reportPath} and the captured artifacts for failed selector groups before changing the registry.`
+    );
+    actions.push(
+      `Update the selector registry entries for the failed selector groups, then rerun linkedin audit selectors --profile ${options.profileName}.`
+    );
+  }
+
+  if (options.fallbackSelectors.length > 0) {
+    actions.push(
+      "Review selector groups that only matched via fallback and refresh their primary selectors before they fail completely."
+    );
+  }
+
+  if (options.pageWarnings.length > 0) {
+    actions.push(
+      "Some pages were not fully stable during the audit. Refresh the LinkedIn session or attached browser and rerun before treating warnings as definitive UI drift."
+    );
+  }
+
+  if (actions.length === 0) {
+    actions.push(
+      "No follow-up is required right now. Keep the selector audit in regular maintenance or CI to catch future UI drift."
+    );
+  }
+
+  return actions;
+}
+
 function validateSelectorAuditRegistry(
   registry: SelectorAuditPageDefinition[]
 ): SelectorAuditPageDefinition[] {
@@ -888,10 +1095,25 @@ export class LinkedInSelectorAuditService {
     const checkedAt = new Date().toISOString();
     const pageSummaries = this.buildPageSummaries(results);
     const counts = countSelectorAuditResults(results);
+    const pageWarnings = buildPageWarningSummaries(
+      this.registry.map((pageDefinition) => pageDefinition.page),
+      results
+    );
+    const failedSelectors = buildFailureSummaries(results);
+    const fallbackSelectors = buildFallbackSummaries(results);
+    const recommendedActions = buildRecommendedActions({
+      profileName,
+      reportPath,
+      failedSelectors,
+      fallbackSelectors,
+      pageWarnings
+    });
     const report: SelectorAuditReport = {
       run_id: this.runtime.runId,
       profile_name: profileName,
       checked_at: checkedAt,
+      outcome: createSelectorAuditOutcome(counts),
+      summary: createSelectorAuditSummary(counts, this.registry.length),
       total_count: counts.totalCount,
       pass_count: counts.passCount,
       fail_count: counts.failCount,
@@ -899,6 +1121,10 @@ export class LinkedInSelectorAuditService {
       artifact_dir: artifactDir,
       report_path: reportPath,
       page_summaries: pageSummaries,
+      page_warnings: pageWarnings,
+      failed_selectors: failedSelectors,
+      fallback_selectors: fallbackSelectors,
+      recommended_actions: recommendedActions,
       results
     };
 

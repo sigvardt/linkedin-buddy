@@ -20,8 +20,15 @@ import {
   resolveConfigPaths,
   resolvePrivacyConfig,
   toLinkedInAssistantErrorPayload,
-  type SearchCategory
+  type SearchCategory,
+  type SelectorAuditReport
 } from "@linkedin-assistant/core";
+import {
+  formatSelectorAuditError,
+  formatSelectorAuditReport,
+  resolveSelectorAuditOutputMode,
+  SelectorAuditProgressReporter
+} from "../selectorAuditOutput.js";
 
 const cliPrivacyConfig = resolvePrivacyConfig();
 
@@ -1423,18 +1430,49 @@ async function runJobsView(input: {
 
 async function runSelectorAudit(input: {
   profileName: string;
+  json: boolean;
+  progress: boolean;
+  verbose: boolean;
 }, cdpUrl?: string): Promise<void> {
-  const profileName = coerceProfileName(input.profileName);
-  const runtime = createRuntime(cdpUrl);
+  const outputMode = resolveSelectorAuditOutputMode(
+    { json: input.json },
+    Boolean(stdout.isTTY)
+  );
+  const progressReporter = new SelectorAuditProgressReporter({
+    enabled:
+      outputMode === "human" &&
+      input.progress &&
+      Boolean(process.stderr.isTTY)
+  });
+  let profileName = input.profileName;
+  let runtime: ReturnType<typeof createRuntime> | undefined;
+  let restoreLogger = () => {};
 
   try {
-    runtime.logger.log("info", "cli.audit.selectors.start", {
-      profileName
+    profileName = coerceProfileName(input.profileName);
+    runtime = createRuntime(cdpUrl);
+    const selectorAuditRuntime = runtime;
+
+    const originalLog = selectorAuditRuntime.logger.log.bind(selectorAuditRuntime.logger);
+    selectorAuditRuntime.logger.log = ((level, event, payload = {}) => {
+      const entry = originalLog(level, event, payload);
+      progressReporter.handleLog(entry);
+      return entry;
+    }) as typeof selectorAuditRuntime.logger.log;
+    restoreLogger = () => {
+      selectorAuditRuntime.logger.log = originalLog;
+    };
+
+    selectorAuditRuntime.logger.log("info", "cli.audit.selectors.start", {
+      profileName,
+      outputMode,
+      verbose: input.verbose,
+      progress: outputMode === "human" && input.progress
     });
 
-    const report = await runtime.selectorAudit.auditSelectors({ profileName });
+    const report = await selectorAuditRuntime.selectorAudit.auditSelectors({ profileName });
 
-    runtime.logger.log("info", "cli.audit.selectors.done", {
+    selectorAuditRuntime.logger.log("info", "cli.audit.selectors.done", {
       profileName,
       totalCount: report.total_count,
       passCount: report.pass_count,
@@ -1443,19 +1481,42 @@ async function runSelectorAudit(input: {
       reportPath: report.report_path
     });
 
-    printJson(report);
+    if (outputMode === "json") {
+      printJson(report);
+    } else {
+      const redactedReport = redactStructuredValue(
+        report,
+        cliPrivacyConfig,
+        "cli"
+      ) as SelectorAuditReport;
+
+      console.log(
+        formatSelectorAuditReport(redactedReport, {
+          verbose: input.verbose
+        })
+      );
+    }
 
     if (report.fail_count > 0) {
       process.exitCode = 1;
     }
   } catch (error) {
-    runtime.logger.log("error", "cli.audit.selectors.failed", {
+    const errorPayload = toLinkedInAssistantErrorPayload(error, cliPrivacyConfig);
+
+    runtime?.logger.log("error", "cli.audit.selectors.failed", {
       profileName,
-      error: toLinkedInAssistantErrorPayload(error, cliPrivacyConfig)
+      error: errorPayload
     });
-    throw error;
+
+    if (outputMode === "json") {
+      throw error;
+    }
+
+    process.stderr.write(`${formatSelectorAuditError(errorPayload)}\n`);
+    process.exitCode = 1;
   } finally {
-    runtime.close();
+    restoreLogger();
+    runtime?.close();
   }
 }
 
@@ -2174,15 +2235,38 @@ async function main(): Promise<void> {
 
   const auditCommand = program
     .command("audit")
-    .description("Run read-only LinkedIn audits");
+    .description("Run read-only LinkedIn audits and diagnostics");
 
   auditCommand
     .command("selectors")
-    .description("Audit selector fallbacks across LinkedIn pages")
+    .description("Audit selector groups across key LinkedIn pages and capture failure artifacts")
     .option("-p, --profile <profile>", "Profile name", "default")
-    .action(async (options: { profile: string }) => {
+    .option("--json", "Print the full JSON report (recommended for automation)", false)
+    .option(
+      "--verbose",
+      "Show selector-by-selector details in human-readable output",
+      false
+    )
+    .option("--no-progress", "Hide per-page progress updates in human-readable output")
+    .addHelpText(
+      "after",
+      [
+        "",
+        "Interactive terminals default to a human-readable summary with per-page progress.",
+        "Use --json for automation, piping, or other agent workflows."
+      ].join("\n")
+    )
+    .action(async (options: {
+      profile: string;
+      json: boolean;
+      progress: boolean;
+      verbose: boolean;
+    }) => {
       await runSelectorAudit({
-        profileName: options.profile
+        profileName: options.profile,
+        json: options.json,
+        progress: options.progress,
+        verbose: options.verbose
       }, readCdpUrl());
     });
 

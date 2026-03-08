@@ -96,9 +96,13 @@ Selector audit (read-only, CI-friendly):
 
 ```bash
 npm exec -w @linkedin-assistant/cli -- linkedin audit selectors --profile default
+npm exec -w @linkedin-assistant/cli -- linkedin audit selectors --profile default --json
 ```
 
-- Produces structured JSON with selector status, fallback usage, and failure artifact paths.
+- Interactive terminals show per-page progress plus a human-readable summary with clear failures, fallbacks, warnings, and next steps.
+- Use `--json` for machine-readable output in CI, scripts, or agent workflows.
+- Use `--verbose` to expand the human-readable summary with selector-by-selector details.
+- Use `--no-progress` to suppress live progress updates when you only want the final summary.
 - Exits non-zero only when a selector group fully fails across all fallback strategies.
 
 Inbox MVP commands:
