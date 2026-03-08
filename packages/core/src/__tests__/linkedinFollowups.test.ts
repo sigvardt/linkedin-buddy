@@ -340,4 +340,131 @@ describe("LinkedInFollowupsService", () => {
       db.close();
     }
   });
+
+  it("prepares a single accepted-connection follow-up by profile key", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(FIXED_NOW);
+
+    const db = new AssistantDatabase(":memory:");
+
+    try {
+      seedAcceptedInvitation({
+        db,
+        profileName: "default",
+        profileUrl: "https://www.linkedin.com/in/jane-doe/",
+        vanityName: "jane-doe",
+        fullName: "Jane Doe",
+        headline: "Product Manager",
+        firstSeenSentAtMs: FIXED_NOW.getTime() - 3 * 24 * 60 * 60 * 1000,
+        lastSeenSentAtMs: FIXED_NOW.getTime() - 2 * 24 * 60 * 60 * 1000,
+        acceptedAtMs: FIXED_NOW.getTime() - 12 * 60 * 60 * 1000
+      });
+
+      const runtime = createTestRuntime(db);
+      const service = new LinkedInFollowupsService(runtime);
+      const refreshSpy = vi.spyOn(
+        service as unknown as { refreshAcceptanceState: () => Promise<void> },
+        "refreshAcceptanceState"
+      ).mockResolvedValue(undefined);
+
+      const preparedFollowup: PreparedAcceptedConnectionFollowup = {
+        connection: {
+          profile_url_key: "https://www.linkedin.com/in/jane-doe/",
+          profile_url: "https://www.linkedin.com/in/jane-doe/",
+          vanity_name: "jane-doe",
+          full_name: "Jane Doe",
+          headline: "Product Manager",
+          first_seen_sent_at_ms: FIXED_NOW.getTime() - 3 * 24 * 60 * 60 * 1000,
+          last_seen_sent_at_ms: FIXED_NOW.getTime() - 2 * 24 * 60 * 60 * 1000,
+          accepted_at_ms: FIXED_NOW.getTime() - 12 * 60 * 60 * 1000,
+          accepted_detection: "topcard-message-role",
+          followup_status: "prepared",
+          followup_prepared_action_id: "pa_followup_jane",
+          followup_prepared_at_ms: FIXED_NOW.getTime(),
+          followup_confirmed_at_ms: null,
+          followup_expires_at_ms: FIXED_NOW.getTime() + 30 * 60 * 1000
+        },
+        preparedActionId: "pa_followup_jane",
+        confirmToken: "ct_followup_jane",
+        expiresAtMs: FIXED_NOW.getTime() + 30 * 60 * 1000,
+        preview: {
+          summary: "Send accepted-connection follow-up to Jane Doe"
+        }
+      };
+
+      const prepareSpy = vi.spyOn(
+        service as unknown as {
+          prepareAcceptedConnections: (
+            profileName: string,
+            connections: LinkedInAcceptedConnection[]
+          ) => Promise<PreparedAcceptedConnectionFollowup[]>;
+        },
+        "prepareAcceptedConnections"
+      ).mockResolvedValue([preparedFollowup]);
+
+      const result = await service.prepareFollowupForAcceptedConnection({
+        profileName: "default",
+        profileUrlKey: "https://www.linkedin.com/in/jane-doe/"
+      });
+
+      expect(refreshSpy).not.toHaveBeenCalled();
+      expect(prepareSpy).toHaveBeenCalledTimes(1);
+      expect(prepareSpy.mock.calls[0]?.[1]).toHaveLength(1);
+      expect(prepareSpy.mock.calls[0]?.[1]?.[0]?.full_name).toBe("Jane Doe");
+      expect(result).toEqual(preparedFollowup);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("returns null when a single accepted connection no longer needs preparation", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(FIXED_NOW);
+
+    const db = new AssistantDatabase(":memory:");
+
+    try {
+      seedAcceptedInvitation({
+        db,
+        profileName: "default",
+        profileUrl: "https://www.linkedin.com/in/jane-doe/",
+        vanityName: "jane-doe",
+        fullName: "Jane Doe",
+        headline: "Product Manager",
+        firstSeenSentAtMs: FIXED_NOW.getTime() - 3 * 24 * 60 * 60 * 1000,
+        lastSeenSentAtMs: FIXED_NOW.getTime() - 2 * 24 * 60 * 60 * 1000,
+        acceptedAtMs: FIXED_NOW.getTime() - 12 * 60 * 60 * 1000
+      });
+
+      seedPreparedFollowup({
+        db,
+        profileName: "default",
+        profileUrl: "https://www.linkedin.com/in/jane-doe/",
+        fullName: "Jane Doe",
+        preparedAtMs: FIXED_NOW.getTime() - 10 * 60 * 1000
+      });
+
+      const runtime = createTestRuntime(db);
+      const service = new LinkedInFollowupsService(runtime);
+      const prepareSpy = vi.spyOn(
+        service as unknown as {
+          prepareAcceptedConnections: (
+            profileName: string,
+            connections: LinkedInAcceptedConnection[]
+          ) => Promise<PreparedAcceptedConnectionFollowup[]>;
+        },
+        "prepareAcceptedConnections"
+      );
+
+      const result = await service.prepareFollowupForAcceptedConnection({
+        profileName: "default",
+        profileUrlKey: "https://www.linkedin.com/in/jane-doe/"
+      });
+
+      expect(prepareSpy).not.toHaveBeenCalled();
+      expect(result).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
 });

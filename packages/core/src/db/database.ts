@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
+import type { SchedulerLane } from "../config.js";
 import { migrations, type Migration } from "./migrations.js";
 
 interface MigrationRow {
@@ -170,6 +171,111 @@ export interface SentInvitationFollowupConfirmedUpdate {
   confirmedAtMs: number;
   preparedActionId: string;
   updatedAtMs: number;
+}
+
+export const SCHEDULER_JOB_STATUSES = [
+  "pending",
+  "leased",
+  "prepared",
+  "failed",
+  "cancelled"
+] as const;
+
+export type SchedulerJobStatus = (typeof SCHEDULER_JOB_STATUSES)[number];
+
+export interface SchedulerJobInsert {
+  id: string;
+  profileName: string;
+  lane: SchedulerLane;
+  actionType: string;
+  targetJson: string;
+  dedupeKey: string;
+  scheduledAtMs: number;
+  status?: SchedulerJobStatus;
+  attemptCount?: number;
+  maxAttempts: number;
+  leaseOwner?: string | null;
+  leasedAtMs?: number | null;
+  leaseExpiresAtMs?: number | null;
+  preparedActionId?: string | null;
+  lastErrorCode?: string | null;
+  lastErrorMessage?: string | null;
+  lastAttemptAtMs?: number | null;
+  completedAtMs?: number | null;
+  createdAtMs: number;
+  updatedAtMs: number;
+}
+
+export interface SchedulerJobRow {
+  id: string;
+  profile_name: string;
+  lane: SchedulerLane;
+  action_type: string;
+  target_json: string;
+  dedupe_key: string;
+  scheduled_at: number;
+  status: SchedulerJobStatus;
+  attempt_count: number;
+  max_attempts: number;
+  lease_owner: string | null;
+  leased_at: number | null;
+  lease_expires_at: number | null;
+  prepared_action_id: string | null;
+  last_error_code: string | null;
+  last_error_message: string | null;
+  last_attempt_at: number | null;
+  completed_at: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface ClaimDueSchedulerJobsInput {
+  profileName: string;
+  nowMs: number;
+  limit: number;
+  leaseOwner: string;
+  leaseTtlMs: number;
+}
+
+export interface UpdateSchedulerJobScheduleInput {
+  id: string;
+  scheduledAtMs: number;
+  targetJson?: string;
+  updatedAtMs: number;
+}
+
+export interface RequeueSchedulerJobInput {
+  id: string;
+  scheduledAtMs: number;
+  targetJson?: string;
+  updatedAtMs: number;
+}
+
+export interface CompleteSchedulerJobInput {
+  id: string;
+  nowMs: number;
+  preparedActionId: string;
+}
+
+export interface RescheduleSchedulerJobInput {
+  id: string;
+  scheduledAtMs: number;
+  nowMs: number;
+  errorCode?: string | null;
+  errorMessage: string;
+}
+
+export interface FailSchedulerJobInput {
+  id: string;
+  nowMs: number;
+  errorCode?: string | null;
+  errorMessage: string;
+}
+
+export interface CancelSchedulerJobInput {
+  id: string;
+  nowMs: number;
+  reason: string;
 }
 
 export class AssistantDatabase {
@@ -672,6 +778,474 @@ SET
 WHERE profile_name = @profileName
   AND profile_url_key = @profileUrlKey
   AND followup_prepared_action_id = @preparedActionId
+`
+      )
+      .run(input);
+
+    return result.changes === 1;
+  }
+
+  getSentInvitationState(input: {
+    profileName: string;
+    profileUrlKey: string;
+  }): SentInvitationStateRow | undefined {
+    return this.db
+      .prepare<
+        {
+          profileName: string;
+          profileUrlKey: string;
+        },
+        SentInvitationStateRow
+      >(
+        `
+SELECT
+  profile_name,
+  profile_url_key,
+  vanity_name,
+  full_name,
+  headline,
+  profile_url,
+  first_seen_sent_at,
+  last_seen_sent_at,
+  closed_at,
+  closed_reason,
+  accepted_at,
+  accepted_detection,
+  followup_prepared_at,
+  followup_prepared_action_id,
+  followup_confirmed_at,
+  created_at,
+  updated_at
+FROM sent_invitation_state
+WHERE profile_name = @profileName
+  AND profile_url_key = @profileUrlKey
+LIMIT 1
+`
+      )
+      .get(input);
+  }
+
+  insertSchedulerJob(input: SchedulerJobInsert): void {
+    this.db
+      .prepare(
+        `
+INSERT INTO scheduler_job (
+  id,
+  profile_name,
+  lane,
+  action_type,
+  target_json,
+  dedupe_key,
+  scheduled_at,
+  status,
+  attempt_count,
+  max_attempts,
+  lease_owner,
+  leased_at,
+  lease_expires_at,
+  prepared_action_id,
+  last_error_code,
+  last_error_message,
+  last_attempt_at,
+  completed_at,
+  created_at,
+  updated_at
+)
+VALUES (
+  @id,
+  @profileName,
+  @lane,
+  @actionType,
+  @targetJson,
+  @dedupeKey,
+  @scheduledAtMs,
+  @status,
+  @attemptCount,
+  @maxAttempts,
+  @leaseOwner,
+  @leasedAtMs,
+  @leaseExpiresAtMs,
+  @preparedActionId,
+  @lastErrorCode,
+  @lastErrorMessage,
+  @lastAttemptAtMs,
+  @completedAtMs,
+  @createdAtMs,
+  @updatedAtMs
+)
+`
+      )
+      .run({
+        ...input,
+        attemptCount: input.attemptCount ?? 0,
+        status: input.status ?? "pending",
+        leaseOwner: input.leaseOwner ?? null,
+        leasedAtMs: input.leasedAtMs ?? null,
+        leaseExpiresAtMs: input.leaseExpiresAtMs ?? null,
+        preparedActionId: input.preparedActionId ?? null,
+        lastErrorCode: input.lastErrorCode ?? null,
+        lastErrorMessage: input.lastErrorMessage ?? null,
+        lastAttemptAtMs: input.lastAttemptAtMs ?? null,
+        completedAtMs: input.completedAtMs ?? null
+      });
+  }
+
+  getSchedulerJobById(id: string): SchedulerJobRow | undefined {
+    return this.db
+      .prepare<unknown[], SchedulerJobRow>(
+        `
+SELECT
+  id,
+  profile_name,
+  lane,
+  action_type,
+  target_json,
+  dedupe_key,
+  scheduled_at,
+  status,
+  attempt_count,
+  max_attempts,
+  lease_owner,
+  leased_at,
+  lease_expires_at,
+  prepared_action_id,
+  last_error_code,
+  last_error_message,
+  last_attempt_at,
+  completed_at,
+  created_at,
+  updated_at
+FROM scheduler_job
+WHERE id = ?
+LIMIT 1
+`
+      )
+      .get(id);
+  }
+
+  getSchedulerJobByDedupeKey(dedupeKey: string): SchedulerJobRow | undefined {
+    return this.db
+      .prepare<unknown[], SchedulerJobRow>(
+        `
+SELECT
+  id,
+  profile_name,
+  lane,
+  action_type,
+  target_json,
+  dedupe_key,
+  scheduled_at,
+  status,
+  attempt_count,
+  max_attempts,
+  lease_owner,
+  leased_at,
+  lease_expires_at,
+  prepared_action_id,
+  last_error_code,
+  last_error_message,
+  last_attempt_at,
+  completed_at,
+  created_at,
+  updated_at
+FROM scheduler_job
+WHERE dedupe_key = ?
+LIMIT 1
+`
+      )
+      .get(dedupeKey);
+  }
+
+  listSchedulerJobs(input: { profileName: string }): SchedulerJobRow[] {
+    return this.db
+      .prepare<{ profileName: string }, SchedulerJobRow>(
+        `
+SELECT
+  id,
+  profile_name,
+  lane,
+  action_type,
+  target_json,
+  dedupe_key,
+  scheduled_at,
+  status,
+  attempt_count,
+  max_attempts,
+  lease_owner,
+  leased_at,
+  lease_expires_at,
+  prepared_action_id,
+  last_error_code,
+  last_error_message,
+  last_attempt_at,
+  completed_at,
+  created_at,
+  updated_at
+FROM scheduler_job
+WHERE profile_name = @profileName
+ORDER BY
+  CASE lane
+    WHEN 'inbox_triage' THEN 0
+    WHEN 'pending_invite_checks' THEN 1
+    WHEN 'followup_preparation' THEN 2
+    WHEN 'feed_engagement' THEN 3
+    ELSE 99
+  END ASC,
+  scheduled_at ASC,
+  created_at ASC
+`
+      )
+      .all(input);
+  }
+
+  updateSchedulerJobSchedule(
+    input: UpdateSchedulerJobScheduleInput
+  ): boolean {
+    const result = this.db
+      .prepare(
+        `
+UPDATE scheduler_job
+SET
+  scheduled_at = @scheduledAtMs,
+  target_json = COALESCE(@targetJson, target_json),
+  updated_at = @updatedAtMs
+WHERE id = @id
+  AND status = 'pending'
+`
+      )
+      .run({
+        ...input,
+        targetJson: input.targetJson ?? null
+      });
+
+    return result.changes === 1;
+  }
+
+  requeueSchedulerJob(input: RequeueSchedulerJobInput): boolean {
+    const result = this.db
+      .prepare(
+        `
+UPDATE scheduler_job
+SET
+  status = 'pending',
+  scheduled_at = @scheduledAtMs,
+  target_json = COALESCE(@targetJson, target_json),
+  lease_owner = NULL,
+  leased_at = NULL,
+  lease_expires_at = NULL,
+  prepared_action_id = NULL,
+  last_error_code = NULL,
+  last_error_message = NULL,
+  completed_at = NULL,
+  updated_at = @updatedAtMs
+WHERE id = @id
+  AND (status = 'prepared' OR status = 'cancelled')
+`
+      )
+      .run({
+        ...input,
+        targetJson: input.targetJson ?? null
+      });
+
+    return result.changes === 1;
+  }
+
+  claimDueSchedulerJobs(input: ClaimDueSchedulerJobsInput): SchedulerJobRow[] {
+    const claimJobs = this.db.transaction(
+      (claimInput: ClaimDueSchedulerJobsInput): SchedulerJobRow[] => {
+        const candidates = this.db
+          .prepare<ClaimDueSchedulerJobsInput, SchedulerJobRow>(
+            `
+SELECT
+  id,
+  profile_name,
+  lane,
+  action_type,
+  target_json,
+  dedupe_key,
+  scheduled_at,
+  status,
+  attempt_count,
+  max_attempts,
+  lease_owner,
+  leased_at,
+  lease_expires_at,
+  prepared_action_id,
+  last_error_code,
+  last_error_message,
+  last_attempt_at,
+  completed_at,
+  created_at,
+  updated_at
+FROM scheduler_job
+WHERE profile_name = @profileName
+  AND scheduled_at <= @nowMs
+  AND (
+    status = 'pending'
+    OR (status = 'leased' AND lease_expires_at IS NOT NULL AND lease_expires_at < @nowMs)
+  )
+ORDER BY
+  CASE lane
+    WHEN 'inbox_triage' THEN 0
+    WHEN 'pending_invite_checks' THEN 1
+    WHEN 'followup_preparation' THEN 2
+    WHEN 'feed_engagement' THEN 3
+    ELSE 99
+  END ASC,
+  scheduled_at ASC,
+  created_at ASC
+LIMIT @limit
+`
+          )
+          .all(claimInput);
+
+        const claimed: SchedulerJobRow[] = [];
+        const leaseExpiresAtMs = claimInput.nowMs + claimInput.leaseTtlMs;
+
+        for (const candidate of candidates) {
+          const result = this.db
+            .prepare(
+              `
+UPDATE scheduler_job
+SET
+  status = 'leased',
+  lease_owner = @leaseOwner,
+  leased_at = @nowMs,
+  lease_expires_at = @leaseExpiresAtMs,
+  updated_at = @nowMs
+WHERE id = @id
+  AND scheduled_at <= @nowMs
+  AND (
+    status = 'pending'
+    OR (status = 'leased' AND lease_expires_at IS NOT NULL AND lease_expires_at < @nowMs)
+  )
+`
+            )
+            .run({
+              id: candidate.id,
+              leaseExpiresAtMs,
+              leaseOwner: claimInput.leaseOwner,
+              nowMs: claimInput.nowMs
+            });
+
+          if (result.changes === 1) {
+            claimed.push({
+              ...candidate,
+              status: "leased",
+              lease_owner: claimInput.leaseOwner,
+              leased_at: claimInput.nowMs,
+              lease_expires_at: leaseExpiresAtMs,
+              updated_at: claimInput.nowMs
+            });
+          }
+        }
+
+        return claimed;
+      }
+    );
+
+    return claimJobs(input);
+  }
+
+  markSchedulerJobPrepared(input: CompleteSchedulerJobInput): boolean {
+    const result = this.db
+      .prepare(
+        `
+UPDATE scheduler_job
+SET
+  status = 'prepared',
+  prepared_action_id = @preparedActionId,
+  lease_owner = NULL,
+  leased_at = NULL,
+  lease_expires_at = NULL,
+  last_error_code = NULL,
+  last_error_message = NULL,
+  last_attempt_at = @nowMs,
+  completed_at = @nowMs,
+  updated_at = @nowMs
+WHERE id = @id
+  AND status = 'leased'
+`
+      )
+      .run(input);
+
+    return result.changes === 1;
+  }
+
+  rescheduleSchedulerJob(input: RescheduleSchedulerJobInput): boolean {
+    const result = this.db
+      .prepare(
+        `
+UPDATE scheduler_job
+SET
+  status = 'pending',
+  attempt_count = attempt_count + 1,
+  scheduled_at = @scheduledAtMs,
+  lease_owner = NULL,
+  leased_at = NULL,
+  lease_expires_at = NULL,
+  last_error_code = @errorCode,
+  last_error_message = @errorMessage,
+  last_attempt_at = @nowMs,
+  completed_at = NULL,
+  updated_at = @nowMs
+WHERE id = @id
+  AND status = 'leased'
+`
+      )
+      .run({
+        ...input,
+        errorCode: input.errorCode ?? null
+      });
+
+    return result.changes === 1;
+  }
+
+  failSchedulerJob(input: FailSchedulerJobInput): boolean {
+    const result = this.db
+      .prepare(
+        `
+UPDATE scheduler_job
+SET
+  status = 'failed',
+  attempt_count = attempt_count + 1,
+  lease_owner = NULL,
+  leased_at = NULL,
+  lease_expires_at = NULL,
+  last_error_code = @errorCode,
+  last_error_message = @errorMessage,
+  last_attempt_at = @nowMs,
+  completed_at = @nowMs,
+  updated_at = @nowMs
+WHERE id = @id
+  AND status = 'leased'
+`
+      )
+      .run({
+        ...input,
+        errorCode: input.errorCode ?? null
+      });
+
+    return result.changes === 1;
+  }
+
+  cancelSchedulerJob(input: CancelSchedulerJobInput): boolean {
+    const result = this.db
+      .prepare(
+        `
+UPDATE scheduler_job
+SET
+  status = 'cancelled',
+  lease_owner = NULL,
+  leased_at = NULL,
+  lease_expires_at = NULL,
+  last_error_code = NULL,
+  last_error_message = @reason,
+  last_attempt_at = @nowMs,
+  completed_at = @nowMs,
+  updated_at = @nowMs
+WHERE id = @id
+  AND (status = 'pending' OR status = 'leased')
 `
       )
       .run(input);

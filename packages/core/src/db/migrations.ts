@@ -177,5 +177,44 @@ CREATE INDEX IF NOT EXISTS sent_invitation_state_followup_action_idx
 ALTER TABLE prepared_action ADD COLUMN sealed_target_json TEXT;
 ALTER TABLE prepared_action ADD COLUMN sealed_payload_json TEXT;
 `
+  },
+  {
+    id: "005_scheduler_jobs",
+    sql: `
+CREATE TABLE IF NOT EXISTS scheduler_job (
+  id TEXT PRIMARY KEY,
+  profile_name TEXT NOT NULL,
+  lane TEXT NOT NULL,
+  action_type TEXT NOT NULL,
+  target_json TEXT NOT NULL,
+  dedupe_key TEXT NOT NULL UNIQUE,
+  scheduled_at INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL DEFAULT 5,
+  lease_owner TEXT,
+  leased_at INTEGER,
+  lease_expires_at INTEGER,
+  prepared_action_id TEXT,
+  last_error_code TEXT,
+  last_error_message TEXT,
+  last_attempt_at INTEGER,
+  completed_at INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS scheduler_job_profile_status_schedule_idx
+  ON scheduler_job(profile_name, status, scheduled_at);
+
+CREATE INDEX IF NOT EXISTS scheduler_job_status_schedule_idx
+  ON scheduler_job(status, scheduled_at);
+
+CREATE INDEX IF NOT EXISTS scheduler_job_lane_schedule_idx
+  ON scheduler_job(lane, scheduled_at);
+
+CREATE INDEX IF NOT EXISTS scheduler_job_prepared_action_idx
+  ON scheduler_job(prepared_action_id);
+`
   }
 ];

@@ -30,6 +30,7 @@ import {
   LINKEDIN_POST_VISIBILITY_TYPES,
   LINKEDIN_SELECTOR_LOCALES,
   LinkedInAssistantError,
+  LinkedInSchedulerService,
   createCoreRuntime,
   deleteLocalData,
   normalizeLinkedInFeedReaction,
@@ -43,9 +44,12 @@ import {
   resolveKeepAliveDir,
   resolveLegacyRateLimitStateFilePath,
   resolvePrivacyConfig,
+  resolveSchedulerConfig,
   toLinkedInAssistantErrorPayload,
   type DraftQualityReport,
   type LocalDataDeletionFailure,
+  type SchedulerConfig,
+  type SchedulerTickResult,
   type SearchCategory,
   type SelectorAuditReport
 } from "@linkedin-assistant/core";
@@ -215,6 +219,49 @@ interface KeepAliveFiles {
   logPath: string;
 }
 
+type SchedulerStateSummary = Pick<
+  SchedulerTickResult,
+  | "skippedReason"
+  | "discoveredAcceptedConnections"
+  | "queuedJobs"
+  | "updatedJobs"
+  | "reopenedJobs"
+  | "cancelledJobs"
+  | "claimedJobs"
+  | "preparedJobs"
+  | "rescheduledJobs"
+  | "failedJobs"
+>;
+
+interface SchedulerState {
+  pid: number;
+  profileName: string;
+  startedAt: string;
+  updatedAt: string;
+  status: "starting" | "running" | "idle" | "degraded" | "stopped";
+  pollIntervalMs: number;
+  businessHours: SchedulerConfig["businessHours"];
+  maxJobsPerTick: number;
+  consecutiveFailures: number;
+  maxConsecutiveFailures: number;
+  lastTickAt?: string;
+  lastSuccessfulTickAt?: string;
+  lastPreparedAt?: string;
+  lastSummary?: SchedulerStateSummary;
+  lastError?: string;
+  cdpUrl?: string;
+  stoppedAt?: string;
+}
+
+interface SchedulerFiles {
+  dir: string;
+  pidPath: string;
+  statePath: string;
+  logPath: string;
+}
+
+const SCHEDULER_DAEMON_MAX_CONSECUTIVE_FAILURES = 5;
+
 function profileSlug(profileName: string): string {
   return profileName.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
@@ -230,7 +277,22 @@ function getKeepAliveFiles(profileName: string): KeepAliveFiles {
   };
 }
 
+function getSchedulerFiles(profileName: string): SchedulerFiles {
+  const slug = profileSlug(profileName);
+  const dir = path.join(resolveConfigPaths().baseDir, "scheduler");
+  return {
+    dir,
+    pidPath: path.join(dir, `${slug}.pid`),
+    statePath: path.join(dir, `${slug}.state.json`),
+    logPath: path.join(dir, `${slug}.events.jsonl`)
+  };
+}
+
 async function ensureKeepAliveDir(files: KeepAliveFiles): Promise<void> {
+  await mkdir(files.dir, { recursive: true });
+}
+
+async function ensureSchedulerDir(files: SchedulerFiles): Promise<void> {
   await mkdir(files.dir, { recursive: true });
 }
 
@@ -418,6 +480,71 @@ async function appendKeepAliveEvent(
 ): Promise<void> {
   const files = getKeepAliveFiles(profileName);
   await ensureKeepAliveDir(files);
+  await appendFile(files.logPath, `${JSON.stringify(event)}\n`, "utf8");
+}
+
+async function readSchedulerPid(profileName: string): Promise<number | null> {
+  const files = getSchedulerFiles(profileName);
+  try {
+    const raw = await readFile(files.pidPath, "utf8");
+    const pid = Number.parseInt(raw.trim(), 10);
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "ENOENT"
+    ) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function writeSchedulerPid(profileName: string, pid: number): Promise<void> {
+  const files = getSchedulerFiles(profileName);
+  await ensureSchedulerDir(files);
+  await writeFile(files.pidPath, `${pid}\n`, "utf8");
+}
+
+async function removeSchedulerPid(profileName: string): Promise<void> {
+  const files = getSchedulerFiles(profileName);
+  try {
+    await unlink(files.pidPath);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "ENOENT"
+    ) {
+      return;
+    }
+    throw error;
+  }
+}
+
+async function readSchedulerState(
+  profileName: string
+): Promise<SchedulerState | null> {
+  const files = getSchedulerFiles(profileName);
+  return readJsonFile<SchedulerState>(files.statePath);
+}
+
+async function writeSchedulerState(
+  profileName: string,
+  state: SchedulerState
+): Promise<void> {
+  const files = getSchedulerFiles(profileName);
+  await ensureSchedulerDir(files);
+  await writeJsonFile(files.statePath, state);
+}
+
+async function appendSchedulerEvent(
+  profileName: string,
+  event: Record<string, unknown>
+): Promise<void> {
+  const files = getSchedulerFiles(profileName);
+  await ensureSchedulerDir(files);
   await appendFile(files.logPath, `${JSON.stringify(event)}\n`, "utf8");
 }
 
@@ -1332,6 +1459,397 @@ async function runKeepAliveDaemon(input: {
 
     await removeKeepAlivePid(profileName).catch(() => undefined);
     runtime.close();
+  }
+}
+
+function summarizeSchedulerTick(result: SchedulerTickResult): SchedulerStateSummary {
+  return {
+    skippedReason: result.skippedReason,
+    discoveredAcceptedConnections: result.discoveredAcceptedConnections,
+    queuedJobs: result.queuedJobs,
+    updatedJobs: result.updatedJobs,
+    reopenedJobs: result.reopenedJobs,
+    cancelledJobs: result.cancelledJobs,
+    claimedJobs: result.claimedJobs,
+    preparedJobs: result.preparedJobs,
+    rescheduledJobs: result.rescheduledJobs,
+    failedJobs: result.failedJobs
+  };
+}
+
+async function runSchedulerRunOnce(
+  profileName: string,
+  cdpUrl?: string
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+  const schedulerConfig = resolveSchedulerConfig();
+
+  try {
+    const scheduler = new LinkedInSchedulerService({
+      db: runtime.db,
+      logger: runtime.logger,
+      followups: runtime.followups,
+      schedulerConfig
+    });
+    const result = await scheduler.runTick({
+      profileName,
+      workerId: `cli:${runtime.runId}`
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      scheduler_config: schedulerConfig,
+      ...result
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runSchedulerStart(
+  profileName: string,
+  cdpUrl?: string
+): Promise<void> {
+  const existingPid = await readSchedulerPid(profileName);
+  if (existingPid && isProcessRunning(existingPid)) {
+    const currentState = await readSchedulerState(profileName);
+    printJson({
+      started: false,
+      reason: "Scheduler daemon is already running for this profile.",
+      profile_name: profileName,
+      pid: existingPid,
+      state: currentState
+    });
+    return;
+  }
+
+  if (existingPid && !isProcessRunning(existingPid)) {
+    await removeSchedulerPid(profileName);
+  }
+
+  maybeWarnAboutSelectorLocaleConfig(cliSelectorLocale);
+
+  const schedulerConfig = resolveSchedulerConfig();
+  const cliEntrypoint = resolveKeepAliveCliEntrypoint();
+  if (!cliEntrypoint) {
+    throw new LinkedInAssistantError(
+      "UNKNOWN",
+      "Could not resolve CLI entrypoint for scheduler daemon startup."
+    );
+  }
+
+  const daemonArgs = [cliEntrypoint];
+  if (cdpUrl) {
+    daemonArgs.push("--cdp-url", cdpUrl);
+  }
+  if (cliSelectorLocale) {
+    daemonArgs.push("--selector-locale", cliSelectorLocale);
+  }
+  daemonArgs.push("scheduler", "__run", "--profile", profileName);
+
+  const daemon = spawn(process.execPath, daemonArgs, {
+    detached: true,
+    stdio: "ignore",
+    env: process.env
+  });
+  daemon.unref();
+
+  if (!daemon.pid) {
+    throw new LinkedInAssistantError(
+      "UNKNOWN",
+      "Scheduler daemon did not return a process id."
+    );
+  }
+
+  const now = new Date().toISOString();
+  const initialState: SchedulerState = {
+    pid: daemon.pid,
+    profileName,
+    startedAt: now,
+    updatedAt: now,
+    status: "starting",
+    pollIntervalMs: schedulerConfig.pollIntervalMs,
+    businessHours: schedulerConfig.businessHours,
+    maxJobsPerTick: schedulerConfig.maxJobsPerTick,
+    consecutiveFailures: 0,
+    maxConsecutiveFailures: SCHEDULER_DAEMON_MAX_CONSECUTIVE_FAILURES,
+    ...(cdpUrl ? { cdpUrl } : {})
+  };
+
+  await writeSchedulerPid(profileName, daemon.pid);
+  await writeSchedulerState(profileName, initialState);
+
+  printJson({
+    started: true,
+    profile_name: profileName,
+    pid: daemon.pid,
+    state_path: getSchedulerFiles(profileName).statePath,
+    scheduler_config: schedulerConfig
+  });
+}
+
+async function runSchedulerStatus(profileName: string): Promise<void> {
+  const pid = await readSchedulerPid(profileName);
+  const state = await readSchedulerState(profileName);
+  const running = typeof pid === "number" ? isProcessRunning(pid) : false;
+
+  printJson({
+    profile_name: profileName,
+    running,
+    pid,
+    state,
+    stale_pid_file: Boolean(pid && !running)
+  });
+}
+
+async function runSchedulerStop(profileName: string): Promise<void> {
+  const pid = await readSchedulerPid(profileName);
+  const previousState = await readSchedulerState(profileName);
+
+  if (!pid) {
+    printJson({
+      stopped: false,
+      profile_name: profileName,
+      reason: "No scheduler daemon pid file found."
+    });
+    return;
+  }
+
+  if (!isProcessRunning(pid)) {
+    await removeSchedulerPid(profileName);
+    const now = new Date().toISOString();
+    if (previousState) {
+      await writeSchedulerState(profileName, {
+        ...previousState,
+        status: "stopped",
+        updatedAt: now,
+        stoppedAt: now,
+        lastError: "Recovered from stale pid file."
+      });
+    }
+    printJson({
+      stopped: true,
+      profile_name: profileName,
+      pid,
+      reason: "Recovered stale scheduler pid file."
+    });
+    return;
+  }
+
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch (error) {
+    throw new LinkedInAssistantError(
+      "UNKNOWN",
+      "Failed to send SIGTERM to scheduler daemon.",
+      {
+        profile_name: profileName,
+        pid,
+        cause: error instanceof Error ? error.message : String(error)
+      }
+    );
+  }
+
+  const deadline = Date.now() + 5_000;
+  let running = true;
+  while (Date.now() < deadline) {
+    await sleep(200);
+    running = isProcessRunning(pid);
+    if (!running) {
+      break;
+    }
+  }
+
+  if (running) {
+    process.kill(pid, "SIGKILL");
+  }
+
+  await removeSchedulerPid(profileName);
+  const now = new Date().toISOString();
+  if (previousState) {
+    await writeSchedulerState(profileName, {
+      ...previousState,
+      status: "stopped",
+      updatedAt: now,
+      stoppedAt: now,
+      ...(running
+        ? { lastError: "Scheduler daemon required SIGKILL to stop." }
+        : {})
+    });
+  }
+
+  printJson({
+    stopped: true,
+    profile_name: profileName,
+    pid,
+    forced: running
+  });
+}
+
+async function runSchedulerDaemon(
+  profileName: string,
+  cdpUrl?: string
+): Promise<void> {
+  const schedulerConfig = resolveSchedulerConfig();
+  let stopRequested = false;
+  let consecutiveFailures = 0;
+
+  const requestStop = () => {
+    stopRequested = true;
+  };
+  process.on("SIGTERM", requestStop);
+  process.on("SIGINT", requestStop);
+
+  const startedAt = new Date().toISOString();
+  const initialState: SchedulerState = {
+    pid: process.pid,
+    profileName,
+    startedAt,
+    updatedAt: startedAt,
+    status: "running",
+    pollIntervalMs: schedulerConfig.pollIntervalMs,
+    businessHours: schedulerConfig.businessHours,
+    maxJobsPerTick: schedulerConfig.maxJobsPerTick,
+    consecutiveFailures: 0,
+    maxConsecutiveFailures: SCHEDULER_DAEMON_MAX_CONSECUTIVE_FAILURES,
+    ...(cdpUrl ? { cdpUrl } : {})
+  };
+
+  await writeSchedulerPid(profileName, process.pid);
+  await writeSchedulerState(profileName, initialState);
+  await appendSchedulerEvent(profileName, {
+    ts: startedAt,
+    event: "scheduler.daemon.started",
+    pid: process.pid,
+    profile_name: profileName,
+    cdp_url: cdpUrl ?? null,
+    scheduler_config: schedulerConfig
+  });
+
+  try {
+    while (!stopRequested) {
+      const tickAt = new Date().toISOString();
+
+      try {
+        const runtime = createRuntime(cdpUrl);
+
+        try {
+          const scheduler = new LinkedInSchedulerService({
+            db: runtime.db,
+            logger: runtime.logger,
+            followups: runtime.followups,
+            schedulerConfig
+          });
+          const result = await scheduler.runTick({
+            profileName,
+            workerId: `scheduler-daemon:${process.pid}`
+          });
+
+          consecutiveFailures = 0;
+          const nextState: SchedulerState = {
+            ...(await readSchedulerState(profileName)) ?? initialState,
+            pid: process.pid,
+            profileName,
+            updatedAt: tickAt,
+            status:
+              result.skippedReason === "outside_business_hours" ||
+              result.skippedReason === "profile_busy" ||
+              result.skippedReason === "disabled" ||
+              result.claimedJobs === 0
+                ? "idle"
+                : "running",
+            pollIntervalMs: schedulerConfig.pollIntervalMs,
+            businessHours: schedulerConfig.businessHours,
+            maxJobsPerTick: schedulerConfig.maxJobsPerTick,
+            consecutiveFailures,
+            maxConsecutiveFailures: SCHEDULER_DAEMON_MAX_CONSECUTIVE_FAILURES,
+            lastTickAt: tickAt,
+            lastSuccessfulTickAt: tickAt,
+            lastSummary: summarizeSchedulerTick(result)
+          };
+          if (result.preparedJobs > 0) {
+            nextState.lastPreparedAt = tickAt;
+          }
+          delete nextState.lastError;
+
+          await writeSchedulerState(profileName, nextState);
+          await appendSchedulerEvent(profileName, {
+            ts: tickAt,
+            event:
+              result.skippedReason === null ? "scheduler.tick" : "scheduler.tick.skipped",
+            profile_name: profileName,
+            summary: summarizeSchedulerTick(result),
+            skipped_reason: result.skippedReason,
+            next_window_start_at: result.nextWindowStartAt
+          });
+        } finally {
+          runtime.close();
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const lockHeld = isProfileLockHeldError(error);
+        if (!lockHeld) {
+          consecutiveFailures += 1;
+        }
+
+        const nextState: SchedulerState = {
+          ...(await readSchedulerState(profileName)) ?? initialState,
+          pid: process.pid,
+          profileName,
+          updatedAt: tickAt,
+          status:
+            consecutiveFailures >= SCHEDULER_DAEMON_MAX_CONSECUTIVE_FAILURES
+              ? "degraded"
+              : "running",
+          pollIntervalMs: schedulerConfig.pollIntervalMs,
+          businessHours: schedulerConfig.businessHours,
+          maxJobsPerTick: schedulerConfig.maxJobsPerTick,
+          consecutiveFailures,
+          maxConsecutiveFailures: SCHEDULER_DAEMON_MAX_CONSECUTIVE_FAILURES,
+          lastTickAt: tickAt,
+          lastError: message
+        };
+        await writeSchedulerState(profileName, nextState);
+        await appendSchedulerEvent(profileName, {
+          ts: tickAt,
+          event: lockHeld ? "scheduler.tick.skipped" : "scheduler.tick.error",
+          profile_name: profileName,
+          consecutive_failures: consecutiveFailures,
+          error: message,
+          ...(lockHeld ? { reason: "profile_lock_held" } : {})
+        });
+      }
+
+      if (stopRequested) {
+        break;
+      }
+
+      let sleepRemainingMs = Math.max(1_000, schedulerConfig.pollIntervalMs);
+      while (!stopRequested && sleepRemainingMs > 0) {
+        const chunkMs = Math.min(500, sleepRemainingMs);
+        await sleep(chunkMs);
+        sleepRemainingMs -= chunkMs;
+      }
+    }
+  } finally {
+    const now = new Date().toISOString();
+    const lastState = (await readSchedulerState(profileName)) ?? initialState;
+    await writeSchedulerState(profileName, {
+      ...lastState,
+      pid: process.pid,
+      profileName,
+      status: "stopped",
+      updatedAt: now,
+      stoppedAt: now
+    });
+    await appendSchedulerEvent(profileName, {
+      ts: now,
+      event: "scheduler.daemon.stopped",
+      pid: process.pid,
+      profile_name: profileName
+    });
+
+    await removeSchedulerPid(profileName).catch(() => undefined);
   }
 }
 
@@ -2610,6 +3128,50 @@ export function createCliProgram(): Command {
         );
       }
     );
+
+  const schedulerCommand = program
+    .command("scheduler")
+    .description("Run and manage the local follow-up scheduler daemon");
+
+  schedulerCommand
+    .command("start")
+    .description("Start the scheduler daemon for a profile")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(async (options: { profile: string }) => {
+      await runSchedulerStart(options.profile, readCdpUrl());
+    });
+
+  schedulerCommand
+    .command("status")
+    .description("Show scheduler daemon status for a profile")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(async (options: { profile: string }) => {
+      await runSchedulerStatus(options.profile);
+    });
+
+  schedulerCommand
+    .command("stop")
+    .description("Stop the scheduler daemon for a profile")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(async (options: { profile: string }) => {
+      await runSchedulerStop(options.profile);
+    });
+
+  schedulerCommand
+    .command("run-once")
+    .description("Run one scheduler tick immediately")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(async (options: { profile: string }) => {
+      await runSchedulerRunOnce(options.profile, readCdpUrl());
+    });
+
+  schedulerCommand
+    .command("__run", { hidden: true })
+    .description("Internal daemon command")
+    .requiredOption("-p, --profile <profile>", "Profile name")
+    .action(async (options: { profile: string }) => {
+      await runSchedulerDaemon(options.profile, readCdpUrl());
+    });
 
   program
     .command("login")
