@@ -92,6 +92,13 @@ export interface PrepareFollowupsAfterAcceptInput {
   operatorNote?: string;
 }
 
+export interface PrepareAcceptedConnectionFollowupInput {
+  profileName?: string;
+  profileUrlKey: string;
+  operatorNote?: string;
+  refreshState?: boolean;
+}
+
 export interface PreparedAcceptedConnectionFollowup {
   connection: LinkedInAcceptedConnection;
   preparedActionId: string;
@@ -376,6 +383,12 @@ function deriveFollowupStatus(input: {
   }
 
   return "not_prepared";
+}
+
+function shouldPrepareAcceptedConnectionFollowup(
+  status: FollowupPreparationStatus
+): boolean {
+  return status === "not_prepared" || status === "failed" || status === "expired";
 }
 
 async function getOrCreatePage(context: BrowserContext): Promise<Page> {
@@ -1105,13 +1118,9 @@ export class LinkedInFollowupsService {
     const stateByKey = new Map(
       acceptedStates.map((state) => [state.profile_url_key, state])
     );
-    const candidates = acceptedConnections.filter((connection) => {
-      return (
-        connection.followup_status === "not_prepared" ||
-        connection.followup_status === "failed" ||
-        connection.followup_status === "expired"
-      );
-    });
+    const candidates = acceptedConnections.filter((connection) =>
+      shouldPrepareAcceptedConnectionFollowup(connection.followup_status)
+    );
 
     const preparedFollowups =
       candidates.length > 0
@@ -1137,6 +1146,37 @@ export class LinkedInFollowupsService {
       ),
       preparedFollowups
     };
+  }
+
+  async prepareFollowupForAcceptedConnection(
+    input: PrepareAcceptedConnectionFollowupInput
+  ): Promise<PreparedAcceptedConnectionFollowup | null> {
+    const profileName = input.profileName ?? "default";
+    if (input.refreshState) {
+      await this.refreshAcceptanceState(profileName);
+    }
+
+    const state = this.runtime.db.getSentInvitationState({
+      profileName,
+      profileUrlKey: input.profileUrlKey
+    });
+    if (!state || state.closed_at !== null || state.accepted_at === null) {
+      return null;
+    }
+
+    const connection = mapAcceptedConnection(this.runtime, state, Date.now());
+    if (!shouldPrepareAcceptedConnectionFollowup(connection.followup_status)) {
+      return null;
+    }
+
+    const prepared = await this.prepareAcceptedConnections(
+      profileName,
+      [connection],
+      new Map([[state.profile_url_key, state]]),
+      input.operatorNote
+    );
+
+    return prepared[0] ?? null;
   }
 
   private async refreshAcceptanceState(profileName: string): Promise<void> {

@@ -41,6 +41,175 @@ export interface ConfirmFailureArtifactConfig {
   traceMaxBytes: number;
 }
 
+export const SCHEDULER_LANES = [
+  "inbox_triage",
+  "pending_invite_checks",
+  "followup_preparation",
+  "feed_engagement"
+] as const;
+
+export type SchedulerLane = (typeof SCHEDULER_LANES)[number];
+
+export const DEFAULT_SCHEDULER_ENABLED_LANES: SchedulerLane[] = [
+  "followup_preparation"
+];
+
+export const DEFAULT_SCHEDULER_POLL_INTERVAL_MS = 5 * 60 * 1000;
+export const DEFAULT_SCHEDULER_MAX_JOBS_PER_TICK = 2;
+export const DEFAULT_SCHEDULER_LEASE_TTL_MS = 2 * 60 * 1000;
+export const DEFAULT_SCHEDULER_FOLLOWUP_DELAY_MS = 15 * 60 * 1000;
+export const DEFAULT_SCHEDULER_FOLLOWUP_LOOKBACK_MS =
+  30 * 24 * 60 * 60 * 1000;
+export const DEFAULT_SCHEDULER_MAX_ATTEMPTS = 5;
+export const DEFAULT_SCHEDULER_INITIAL_BACKOFF_MS = 5 * 60 * 1000;
+export const DEFAULT_SCHEDULER_MAX_BACKOFF_MS = 6 * 60 * 60 * 1000;
+export const DEFAULT_SCHEDULER_BUSINESS_START = "09:00";
+export const DEFAULT_SCHEDULER_BUSINESS_END = "17:00";
+
+export interface SchedulerBusinessHoursConfig {
+  timeZone: string;
+  startTime: string;
+  endTime: string;
+}
+
+export interface SchedulerRetryConfig {
+  maxAttempts: number;
+  initialBackoffMs: number;
+  maxBackoffMs: number;
+}
+
+export interface SchedulerConfig {
+  enabled: boolean;
+  pollIntervalMs: number;
+  maxJobsPerTick: number;
+  leaseTtlMs: number;
+  enabledLanes: SchedulerLane[];
+  businessHours: SchedulerBusinessHoursConfig;
+  followupDelayMs: number;
+  followupLookbackMs: number;
+  retry: SchedulerRetryConfig;
+}
+
+function parseBoolean(value: string | undefined, fallback: boolean): boolean {
+  if (!value) {
+    return fallback;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+
+  return fallback;
+}
+
+function isValidTimeZone(value: string | undefined): value is string {
+  if (!value) {
+    return false;
+  }
+
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format(new Date());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolveDefaultSchedulerTimeZone(): string {
+  const systemTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return isValidTimeZone(systemTimeZone) ? systemTimeZone : "UTC";
+}
+
+function normalizeClockTime(
+  value: string | undefined,
+  fallback: string
+): string {
+  if (!value) {
+    return fallback;
+  }
+
+  const trimmed = value.trim();
+  const match = /^(\d{1,2}):(\d{2})$/.exec(trimmed);
+  if (!match) {
+    return fallback;
+  }
+
+  const hour = Number.parseInt(match[1] ?? "", 10);
+  const minute = Number.parseInt(match[2] ?? "", 10);
+  if (
+    !Number.isFinite(hour) ||
+    !Number.isFinite(minute) ||
+    hour < 0 ||
+    hour > 23 ||
+    minute < 0 ||
+    minute > 59
+  ) {
+    return fallback;
+  }
+
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function compareClockTimes(left: string, right: string): number {
+  const [leftHourText = "0", leftMinuteText = "0"] = left.split(":");
+  const [rightHourText = "0", rightMinuteText = "0"] = right.split(":");
+  const leftHour = Number.parseInt(leftHourText, 10);
+  const leftMinute = Number.parseInt(leftMinuteText, 10);
+  const rightHour = Number.parseInt(rightHourText, 10);
+  const rightMinute = Number.parseInt(rightMinuteText, 10);
+
+  return leftHour * 60 + leftMinute - (rightHour * 60 + rightMinute);
+}
+
+function parseSchedulerEnabledLanes(value: string | undefined): SchedulerLane[] {
+  if (!value) {
+    return [...DEFAULT_SCHEDULER_ENABLED_LANES];
+  }
+
+  const supported = new Set<string>(SCHEDULER_LANES);
+  const parsed = value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry): entry is SchedulerLane => supported.has(entry));
+
+  return parsed.length > 0 ? parsed : [...DEFAULT_SCHEDULER_ENABLED_LANES];
+}
+
+function resolveSchedulerBusinessHours(): SchedulerBusinessHoursConfig {
+  const startTime = normalizeClockTime(
+    process.env.LINKEDIN_ASSISTANT_SCHEDULER_BUSINESS_START,
+    DEFAULT_SCHEDULER_BUSINESS_START
+  );
+  const endTime = normalizeClockTime(
+    process.env.LINKEDIN_ASSISTANT_SCHEDULER_BUSINESS_END,
+    DEFAULT_SCHEDULER_BUSINESS_END
+  );
+  const timeZone = isValidTimeZone(
+    process.env.LINKEDIN_ASSISTANT_SCHEDULER_TIMEZONE
+  )
+    ? process.env.LINKEDIN_ASSISTANT_SCHEDULER_TIMEZONE
+    : resolveDefaultSchedulerTimeZone();
+
+  if (compareClockTimes(startTime, endTime) >= 0) {
+    return {
+      timeZone,
+      startTime: DEFAULT_SCHEDULER_BUSINESS_START,
+      endTime: DEFAULT_SCHEDULER_BUSINESS_END
+    };
+  }
+
+  return {
+    timeZone,
+    startTime,
+    endTime
+  };
+}
+
 /**
  * Environment variable that sets the default selector locale for the current
  * shell or process tree.
@@ -130,6 +299,62 @@ export function resolveConfirmFailureArtifactConfig(): ConfirmFailureArtifactCon
       process.env.LINKEDIN_ASSISTANT_CONFIRM_TRACE_MAX_BYTES,
       DEFAULT_CONFIRM_TRACE_MAX_BYTES
     )
+  };
+}
+
+export function resolveSchedulerConfig(): SchedulerConfig {
+  return {
+    enabled: parseBoolean(process.env.LINKEDIN_ASSISTANT_SCHEDULER_ENABLED, true),
+    pollIntervalMs:
+      parsePositiveInteger(
+        process.env.LINKEDIN_ASSISTANT_SCHEDULER_POLL_INTERVAL_SECONDS,
+        DEFAULT_SCHEDULER_POLL_INTERVAL_MS / 1_000
+      ) * 1_000,
+    maxJobsPerTick: parsePositiveInteger(
+      process.env.LINKEDIN_ASSISTANT_SCHEDULER_MAX_JOBS_PER_TICK,
+      DEFAULT_SCHEDULER_MAX_JOBS_PER_TICK
+    ),
+    leaseTtlMs:
+      parsePositiveInteger(
+        process.env.LINKEDIN_ASSISTANT_SCHEDULER_LEASE_SECONDS,
+        DEFAULT_SCHEDULER_LEASE_TTL_MS / 1_000
+      ) * 1_000,
+    enabledLanes: parseSchedulerEnabledLanes(
+      process.env.LINKEDIN_ASSISTANT_SCHEDULER_ENABLED_LANES
+    ),
+    businessHours: resolveSchedulerBusinessHours(),
+    followupDelayMs:
+      parsePositiveInteger(
+        process.env.LINKEDIN_ASSISTANT_SCHEDULER_FOLLOWUP_DELAY_MINUTES,
+        DEFAULT_SCHEDULER_FOLLOWUP_DELAY_MS / (60 * 1_000)
+      ) *
+      60 *
+      1_000,
+    followupLookbackMs:
+      parsePositiveInteger(
+        process.env.LINKEDIN_ASSISTANT_SCHEDULER_FOLLOWUP_LOOKBACK_DAYS,
+        DEFAULT_SCHEDULER_FOLLOWUP_LOOKBACK_MS / (24 * 60 * 60 * 1_000)
+      ) *
+      24 *
+      60 *
+      60 *
+      1_000,
+    retry: {
+      maxAttempts: parsePositiveInteger(
+        process.env.LINKEDIN_ASSISTANT_SCHEDULER_MAX_ATTEMPTS,
+        DEFAULT_SCHEDULER_MAX_ATTEMPTS
+      ),
+      initialBackoffMs:
+        parsePositiveInteger(
+          process.env.LINKEDIN_ASSISTANT_SCHEDULER_INITIAL_BACKOFF_SECONDS,
+          DEFAULT_SCHEDULER_INITIAL_BACKOFF_MS / 1_000
+        ) * 1_000,
+      maxBackoffMs:
+        parsePositiveInteger(
+          process.env.LINKEDIN_ASSISTANT_SCHEDULER_MAX_BACKOFF_SECONDS,
+          DEFAULT_SCHEDULER_MAX_BACKOFF_MS / 1_000
+        ) * 1_000
+    }
   };
 }
 
