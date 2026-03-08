@@ -1,7 +1,15 @@
 #!/usr/bin/env node
+import type { Dirent } from "node:fs";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { appendFile, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import {
+  appendFile,
+  mkdir,
+  readFile,
+  readdir,
+  unlink,
+  writeFile
+} from "node:fs/promises";
 import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
@@ -10,6 +18,7 @@ import { Command } from "commander";
 import {
   DEFAULT_FOLLOWUP_SINCE,
   clearRateLimitState,
+  createLocalDataDeletionPlan,
   evaluateDraftQuality,
   isInRateLimitCooldown,
   LINKEDIN_FEED_REACTION_TYPES,
@@ -17,6 +26,7 @@ import {
   LINKEDIN_SELECTOR_LOCALES,
   LinkedInAssistantError,
   createCoreRuntime,
+  deleteLocalData,
   normalizeLinkedInFeedReaction,
   normalizeLinkedInPostVisibility,
   parseDraftQualityCandidateSet,
@@ -354,6 +364,172 @@ async function promptYesNo(question: string): Promise<boolean> {
   } finally {
     readline.close();
   }
+}
+
+function assertInteractiveTerminal(operation: string): void {
+  if (!stdin.isTTY || !stdout.isTTY) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `Refusing to ${operation} in non-interactive mode.`
+    );
+  }
+}
+
+function printDeletionTargets(targetPaths: string[]): void {
+  for (const targetPath of targetPaths) {
+    console.log(`- ${targetPath}`);
+  }
+}
+
+async function stopKeepAliveDaemonByPid(pid: number): Promise<void> {
+  if (!isProcessRunning(pid)) {
+    return;
+  }
+
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch (error) {
+    throw new LinkedInAssistantError(
+      "UNKNOWN",
+      "Failed to stop a running keepalive daemon before deleting local data.",
+      {
+        pid,
+        cause: error instanceof Error ? error.message : String(error)
+      }
+    );
+  }
+
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    await sleep(200);
+    if (!isProcessRunning(pid)) {
+      return;
+    }
+  }
+
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "ESRCH"
+    ) {
+      return;
+    }
+
+    throw new LinkedInAssistantError(
+      "UNKNOWN",
+      "Failed to force-stop a running keepalive daemon before deleting local data.",
+      {
+        pid,
+        cause: error instanceof Error ? error.message : String(error)
+      }
+    );
+  }
+}
+
+async function stopAllKeepAliveDaemons(): Promise<number[]> {
+  const keepAliveDir = path.join(resolveConfigPaths().baseDir, "keepalive");
+  let entries: Dirent[];
+
+  try {
+    entries = await readdir(keepAliveDir, { withFileTypes: true });
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "ENOENT"
+    ) {
+      return [];
+    }
+
+    throw error;
+  }
+
+  const runningPids = new Set<number>();
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".pid")) {
+      continue;
+    }
+
+    const pidFilePath = path.join(keepAliveDir, entry.name);
+    const rawPid = await readFile(pidFilePath, "utf8");
+    const pid = Number.parseInt(rawPid.trim(), 10);
+    if (Number.isInteger(pid) && pid > 0 && isProcessRunning(pid)) {
+      runningPids.add(pid);
+    }
+  }
+
+  const stoppedPids: number[] = [];
+  for (const pid of runningPids) {
+    await stopKeepAliveDaemonByPid(pid);
+    stoppedPids.push(pid);
+  }
+
+  return stoppedPids;
+}
+
+async function runDataDelete(input: { includeProfile: boolean }): Promise<void> {
+  assertInteractiveTerminal("delete local data");
+
+  const requestedPlan = createLocalDataDeletionPlan({
+    includeProfile: input.includeProfile
+  });
+  const { profilesDir } = resolveConfigPaths();
+
+  console.log("This permanently deletes local LinkedIn Assistant data:");
+  printDeletionTargets(requestedPlan.targets);
+  if (!input.includeProfile) {
+    console.log(`- preserving browser profiles at ${profilesDir}`);
+  }
+
+  const deleteAllConfirmed = await promptYesNo(
+    "Delete the listed local data?"
+  );
+  if (!deleteAllConfirmed) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      "Operator declined local data deletion."
+    );
+  }
+
+  let includeProfile = false;
+  if (input.includeProfile) {
+    includeProfile = await promptYesNo(
+      `Delete browser profile data at ${profilesDir}?`
+    );
+
+    if (!includeProfile) {
+      console.log("Browser profile deletion declined. Profiles will be preserved.");
+    }
+  }
+
+  const finalPlan = createLocalDataDeletionPlan({ includeProfile });
+  const runtime = createCoreRuntime({ privacy: cliPrivacyConfig });
+
+  try {
+    runtime.logger.log("warn", "cli.data.delete.start", {
+      includeProfileRequested: input.includeProfile,
+      includeProfileDeleted: includeProfile,
+      targets: finalPlan.targets
+    });
+  } finally {
+    runtime.close();
+  }
+
+  const stoppedKeepAlivePids = await stopAllKeepAliveDaemons();
+  const deletionResult = await deleteLocalData({ includeProfile });
+
+  printJson({
+    deleted: true,
+    run_id: runtime.runId,
+    include_profile_requested: input.includeProfile,
+    include_profile_deleted: includeProfile,
+    deleted_paths: deletionResult.deletedPaths,
+    missing_paths: deletionResult.missingPaths,
+    stopped_keepalive_pids: stoppedKeepAlivePids
+  });
 }
 
 async function runStatus(profileName: string, cdpUrl?: string): Promise<void> {
@@ -1850,6 +2026,24 @@ export async function runCli(argv: string[] = process.argv): Promise<void> {
     .option("--clear", "Clear saved rate-limit cooldown state", false)
     .action(async (options: { clear: boolean }) => {
       await runRateLimitStatus(options.clear);
+    });
+
+  const dataCommand = program
+    .command("data")
+    .description("Inspect and delete local LinkedIn Assistant data");
+
+  dataCommand
+    .command("delete")
+    .description("Delete local database, artifacts, logs, and optional browser profiles")
+    .option(
+      "--include-profile",
+      "Also delete local browser profile data after extra confirmation",
+      false
+    )
+    .action(async (options: { includeProfile: boolean }) => {
+      await runDataDelete({
+        includeProfile: options.includeProfile
+      });
     });
 
   const keepAliveCommand = program

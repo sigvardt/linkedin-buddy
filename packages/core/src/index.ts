@@ -11,6 +11,7 @@ export * from "./errors.js";
 export * from "./healthCheck.js";
 export * from "./humanize.js";
 export * from "./keepAlive.js";
+export * from "./localData.js";
 export * from "./linkedinConnections.js";
 export * from "./linkedinFeed.js";
 export * from "./linkedinFollowups.js";
