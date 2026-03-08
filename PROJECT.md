@@ -66,6 +66,7 @@ All errors use machine-readable codes: `AUTH_REQUIRED`, `CAPTCHA_OR_CHALLENGE`, 
 - Inbox: list threads, get thread, prepare reply, confirm send message
 - Connections: list, pending invitations, prepare/confirm send/accept/withdraw invitation
 - Feed: list posts, view post, prepare/confirm like, prepare/confirm comment
+- Posts: prepare/confirm create post
 - Profile: view (own or others)
 - Search: people, companies, jobs
 - Notifications: list
@@ -73,7 +74,7 @@ All errors use machine-readable codes: `AUTH_REQUIRED`, `CAPTCHA_OR_CHALLENGE`, 
 - Two-phase commit framework with token generation, expiry, and DB persistence
 - Rate limiter with per-action token buckets
 - Full CLI with all commands
-- Full MCP server with 22 tools
+- Full MCP server with 23 tools
 - Artifacts: screenshots, traces, structured event logs
 - 72 unit tests passing
 

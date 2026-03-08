@@ -33,6 +33,11 @@ import {
   LinkedInSearchService,
   type LinkedInSearchRuntime
 } from "./linkedinSearch.js";
+import {
+  LinkedInPostsService,
+  createPostActionExecutors,
+  type LinkedInPostsRuntime
+} from "./linkedinPosts.js";
 import { JsonEventLogger } from "./logging.js";
 import { ProfileManager } from "./profileManager.js";
 import { RateLimiter } from "./rateLimiter.js";
@@ -70,6 +75,7 @@ export interface CoreRuntime {
   notifications: LinkedInNotificationsService;
   connections: LinkedInConnectionsService;
   feed: LinkedInFeedService;
+  posts: LinkedInPostsService;
   inbox: LinkedInInboxService;
   testAutoConfirm: TestAutoConfirmConfig;
   healthCheck: (options?: { profileName?: string }) => Promise<FullHealthStatus>;
@@ -99,12 +105,17 @@ export function createCoreRuntime(
     string,
     import("./twoPhaseCommit.js").ActionExecutor<LinkedInMessagingRuntime>
   >;
+  const postExecutors = createPostActionExecutors() as unknown as Record<
+    string,
+    import("./twoPhaseCommit.js").ActionExecutor<LinkedInMessagingRuntime>
+  >;
   const testEchoExecutor = new TestEchoActionExecutor<LinkedInMessagingRuntime>();
   const twoPhaseCommit = new TwoPhaseCommitService<LinkedInMessagingRuntime>(db, {
     executors: {
       ...linkedInExecutors,
       ...connectionExecutors,
       ...feedExecutors,
+      ...postExecutors,
       [TEST_ECHO_ACTION_TYPE]: testEchoExecutor
     },
     getRuntime: () => runtime
@@ -127,6 +138,7 @@ export function createCoreRuntime(
     notifications: undefined as unknown as LinkedInNotificationsService,
     connections: undefined as unknown as LinkedInConnectionsService,
     feed: undefined as unknown as LinkedInFeedService,
+    posts: undefined as unknown as LinkedInPostsService,
     inbox: undefined as unknown as LinkedInInboxService,
     testAutoConfirm,
     healthCheck: async (
@@ -160,6 +172,8 @@ export function createCoreRuntime(
   runtime.connections = new LinkedInConnectionsService(connectionsRuntime);
   const feedRuntime: LinkedInFeedRuntime = runtime;
   runtime.feed = new LinkedInFeedService(feedRuntime);
+  const postsRuntime: LinkedInPostsRuntime = runtime;
+  runtime.posts = new LinkedInPostsService(postsRuntime);
   runtime.inbox = new LinkedInInboxService(runtime);
 
   logger.log("info", "runtime.started", {

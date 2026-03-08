@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 import {
   LINKEDIN_FEED_REACTION_TYPES,
+  LINKEDIN_POST_VISIBILITY_TYPES,
   LinkedInAssistantError,
   createCoreRuntime,
   normalizeLinkedInFeedReaction,
+  normalizeLinkedInPostVisibility,
   toLinkedInAssistantErrorPayload,
   type SearchCategory
 } from "@linkedin-assistant/core";
@@ -32,6 +34,7 @@ import {
   LINKEDIN_JOBS_SEARCH_TOOL,
   LINKEDIN_JOBS_VIEW_TOOL,
   LINKEDIN_NOTIFICATIONS_LIST_TOOL,
+  LINKEDIN_POST_PREPARE_CREATE_TOOL,
   LINKEDIN_SEARCH_TOOL,
   LINKEDIN_SESSION_OPEN_LOGIN_TOOL,
   LINKEDIN_SESSION_STATUS_TOOL
@@ -818,6 +821,46 @@ async function handleFeedComment(args: ToolArgs): Promise<ToolResult> {
   }
 }
 
+async function handlePostPrepareCreate(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const text = readRequiredString(args, "text");
+    const visibility = normalizeLinkedInPostVisibility(
+      readString(args, "visibility", "public"),
+      "public"
+    );
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.post.prepare_create.start", {
+      profileName,
+      visibility
+    });
+
+    const prepared = await runtime.posts.prepareCreate({
+      profileName,
+      text,
+      visibility,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.post.prepare_create.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId,
+      visibility
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 async function handleConfirm(args: ToolArgs): Promise<ToolResult> {
   const runtime = createRuntime(args);
 
@@ -1257,6 +1300,36 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
+        name: LINKEDIN_POST_PREPARE_CREATE_TOOL,
+        description:
+          "Prepare a new LinkedIn post (two-phase: returns confirm token). Use linkedin.actions.confirm to publish.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["text"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            text: {
+              type: "string",
+              description: "Post text to prepare for publishing."
+            },
+            visibility: {
+              type: "string",
+              enum: [...LINKEDIN_POST_VISIBILITY_TYPES],
+              description: "Post visibility. Defaults to public."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
         name: LINKEDIN_NOTIFICATIONS_LIST_TOOL,
         description:
           "List your LinkedIn notifications. Returns notification type, message, timestamp, link, and read/unread status.",
@@ -1418,6 +1491,10 @@ server.setRequestHandler(
 
       if (name === LINKEDIN_FEED_COMMENT_TOOL) {
         return await handleFeedComment(args);
+      }
+
+      if (name === LINKEDIN_POST_PREPARE_CREATE_TOOL) {
+        return await handlePostPrepareCreate(args);
       }
 
       if (name === LINKEDIN_NOTIFICATIONS_LIST_TOOL) {
