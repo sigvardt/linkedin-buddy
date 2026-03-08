@@ -3,7 +3,6 @@ import os from "node:os";
 import path from "node:path";
 import { stdin, stdout } from "node:process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { resolveConfigPaths, resolveKeepAliveDir } from "../../core/src/index.js";
 
 const readlineMocks = vi.hoisted(() => ({
   close: vi.fn(),
@@ -11,7 +10,9 @@ const readlineMocks = vi.hoisted(() => ({
   question: vi.fn()
 }));
 
-vi.mock("@linkedin-assistant/core", async () => await import("../../core/src/index.js"));
+vi.mock("@linkedin-assistant/core", async () =>
+  await import("../../core/src/index.js")
+);
 
 vi.mock("node:readline/promises", () => ({
   createInterface: readlineMocks.createInterface.mockImplementation(() => ({
@@ -20,7 +21,8 @@ vi.mock("node:readline/promises", () => ({
   }))
 }));
 
-import { runCli } from "../src/bin/linkedin.js";
+import * as core from "@linkedin-assistant/core";
+import { createCliProgram, runCli } from "../src/bin/linkedin.js";
 
 async function pathExists(targetPath: string): Promise<boolean> {
   try {
@@ -53,6 +55,7 @@ function setInteractiveMode(inputIsTty: boolean, outputIsTty: boolean): void {
 describe("linkedin data delete", () => {
   let tempDir = "";
   let assistantHome = "";
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
   let consoleLogSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
@@ -61,14 +64,25 @@ describe("linkedin data delete", () => {
     process.env.LINKEDIN_ASSISTANT_HOME = assistantHome;
     setInteractiveMode(true, true);
     vi.clearAllMocks();
+    readlineMocks.createInterface.mockImplementation(() => ({
+      close: readlineMocks.close,
+      question: readlineMocks.question
+    }));
     consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   });
 
   afterEach(async () => {
+    consoleErrorSpy.mockRestore();
     consoleLogSpy.mockRestore();
     delete process.env.LINKEDIN_ASSISTANT_HOME;
     await rm(tempDir, { recursive: true, force: true });
   });
+
+  function getLastJsonOutput(): Record<string, unknown> {
+    const finalOutput = consoleLogSpy.mock.calls.at(-1)?.[0];
+    return JSON.parse(String(finalOutput)) as Record<string, unknown>;
+  }
 
   async function seedLocalDataFixture(): Promise<{
     artifactsDir: string;
@@ -78,8 +92,8 @@ describe("linkedin data delete", () => {
     profilesDir: string;
     rateLimitStatePath: string;
   }> {
-    const paths = resolveConfigPaths();
-    const keepAliveDir = resolveKeepAliveDir();
+    const paths = core.resolveConfigPaths();
+    const keepAliveDir = core.resolveKeepAliveDir();
     const rateLimitStatePath = path.join(paths.baseDir, "rate-limit-state.json");
     const configFilePath = path.join(paths.baseDir, "config.json");
 
@@ -121,24 +135,72 @@ describe("linkedin data delete", () => {
     };
   }
 
-  it("refuses to run in non-interactive mode", async () => {
+  it("shows a dry-run preview by default without deleting anything", async () => {
+    const fixture = await seedLocalDataFixture();
+    setInteractiveMode(false, false);
+
+    await runCli(["node", "linkedin", "data", "delete"]);
+
+    expect(readlineMocks.createInterface).not.toHaveBeenCalled();
+    expect(await pathExists(fixture.dbPath)).toBe(true);
+    expect(await pathExists(`${fixture.dbPath}-journal`)).toBe(true);
+    expect(await pathExists(`${fixture.dbPath}-wal`)).toBe(true);
+    expect(await pathExists(`${fixture.dbPath}-shm`)).toBe(true);
+    expect(await pathExists(fixture.artifactsDir)).toBe(true);
+    expect(await pathExists(fixture.keepAliveDir)).toBe(true);
+    expect(await pathExists(fixture.rateLimitStatePath)).toBe(true);
+    expect(await pathExists(fixture.profilesDir)).toBe(true);
+    expect(await pathExists(fixture.configFilePath)).toBe(true);
+
+    const finalOutput = getLastJsonOutput();
+    expect(finalOutput).toMatchObject({
+      confirm_required: true,
+      dry_run: true,
+      include_profile_requested: false,
+      nothing_to_delete: false
+    });
+    expect(finalOutput.existing_paths).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(path.join("assistant-home", "state.sqlite")),
+        expect.stringContaining(path.join("assistant-home", "state.sqlite-journal")),
+        expect.stringContaining(path.join("assistant-home", "state.sqlite-wal")),
+        expect.stringContaining(path.join("assistant-home", "state.sqlite-shm")),
+        expect.stringContaining(path.join("assistant-home", "artifacts")),
+        expect.stringContaining(path.join("assistant-home", "keepalive")),
+        expect.stringContaining(path.join("assistant-home", "rate-limit-state.json"))
+      ])
+    );
+    expect(finalOutput.preserved_paths).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(path.join("assistant-home", "profiles")),
+        expect.stringContaining(path.join("assistant-home", "config.json"))
+      ])
+    );
+    expect(
+      consoleLogSpy.mock.calls.some(([message]) =>
+        String(message).includes("Rerun with --confirm")
+      )
+    ).toBe(true);
+  });
+
+  it("refuses destructive deletion in non-interactive mode", async () => {
+    await seedLocalDataFixture();
     setInteractiveMode(false, false);
 
     await expect(
-      runCli(["node", "linkedin", "data", "delete"])
+      runCli(["node", "linkedin", "data", "delete", "--confirm"])
     ).rejects.toMatchObject({
-      message: "Refusing to delete local data in non-interactive mode."
+      message: "Refusing to delete local data with --confirm in non-interactive mode."
     });
 
     expect(readlineMocks.createInterface).not.toHaveBeenCalled();
-    expect(await pathExists(assistantHome)).toBe(false);
   });
 
   it("deletes local state while preserving browser profiles by default", async () => {
     const fixture = await seedLocalDataFixture();
     readlineMocks.question.mockResolvedValueOnce("yes");
 
-    await runCli(["node", "linkedin", "data", "delete"]);
+    await runCli(["node", "linkedin", "data", "delete", "--confirm"]);
 
     expect(readlineMocks.question).toHaveBeenCalledTimes(1);
     expect(await pathExists(fixture.dbPath)).toBe(false);
@@ -151,19 +213,15 @@ describe("linkedin data delete", () => {
     expect(await pathExists(fixture.profilesDir)).toBe(true);
     expect(await pathExists(fixture.configFilePath)).toBe(true);
 
-    const finalOutput = consoleLogSpy.mock.calls.at(-1)?.[0];
-    expect(JSON.parse(String(finalOutput))).toMatchObject({
+    expect(getLastJsonOutput()).toMatchObject({
       deleted: true,
-      include_profile_requested: false,
+      dry_run: false,
+      failed_paths: [],
       include_profile_deleted: false,
-      failed_paths: []
+      include_profile_requested: false,
+      started_at: expect.any(String),
+      completed_at: expect.any(String)
     });
-    expect(JSON.parse(String(finalOutput))).toEqual(
-      expect.objectContaining({
-        started_at: expect.any(String),
-        completed_at: expect.any(String)
-      })
-    );
   });
 
   it("deletes browser profiles only after the extra confirmation", async () => {
@@ -172,7 +230,14 @@ describe("linkedin data delete", () => {
       .mockResolvedValueOnce("yes")
       .mockResolvedValueOnce("yes");
 
-    await runCli(["node", "linkedin", "data", "delete", "--include-profile"]);
+    await runCli([
+      "node",
+      "linkedin",
+      "data",
+      "delete",
+      "--include-profile",
+      "--confirm"
+    ]);
 
     expect(readlineMocks.question).toHaveBeenCalledTimes(2);
     expect(await pathExists(fixture.dbPath)).toBe(false);
@@ -185,23 +250,18 @@ describe("linkedin data delete", () => {
     expect(await pathExists(fixture.profilesDir)).toBe(false);
     expect(await pathExists(fixture.configFilePath)).toBe(true);
 
-    const finalOutput = consoleLogSpy.mock.calls.at(-1)?.[0];
-    expect(JSON.parse(String(finalOutput))).toMatchObject({
+    expect(getLastJsonOutput()).toMatchObject({
       deleted: true,
       include_profile_requested: true,
       include_profile_deleted: true
     });
   });
 
-  it("aborts without deleting anything when the operator declines deletion", async () => {
+  it("cancels without deleting anything when the operator declines confirmation", async () => {
     const fixture = await seedLocalDataFixture();
     readlineMocks.question.mockResolvedValueOnce("no");
 
-    await expect(
-      runCli(["node", "linkedin", "data", "delete"])
-    ).rejects.toMatchObject({
-      message: "Operator declined local data deletion."
-    });
+    await runCli(["node", "linkedin", "data", "delete", "--confirm"]);
 
     expect(readlineMocks.question).toHaveBeenCalledTimes(1);
     expect(await pathExists(fixture.dbPath)).toBe(true);
@@ -213,6 +273,14 @@ describe("linkedin data delete", () => {
     expect(await pathExists(fixture.rateLimitStatePath)).toBe(true);
     expect(await pathExists(fixture.profilesDir)).toBe(true);
     expect(await pathExists(fixture.configFilePath)).toBe(true);
+
+    expect(getLastJsonOutput()).toMatchObject({
+      cancelled: true,
+      deleted: false,
+      dry_run: false,
+      include_profile_deleted: false,
+      include_profile_requested: false
+    });
   });
 
   it("preserves profiles when the extra profile confirmation is declined", async () => {
@@ -221,7 +289,14 @@ describe("linkedin data delete", () => {
       .mockResolvedValueOnce("yes")
       .mockResolvedValueOnce("no");
 
-    await runCli(["node", "linkedin", "data", "delete", "--include-profile"]);
+    await runCli([
+      "node",
+      "linkedin",
+      "data",
+      "delete",
+      "--include-profile",
+      "--confirm"
+    ]);
 
     expect(readlineMocks.question).toHaveBeenCalledTimes(2);
     expect(await pathExists(fixture.dbPath)).toBe(false);
@@ -238,12 +313,29 @@ describe("linkedin data delete", () => {
         String(message).includes("Browser profile deletion declined")
       )
     ).toBe(true);
-
-    const finalOutput = consoleLogSpy.mock.calls.at(-1)?.[0];
-    expect(JSON.parse(String(finalOutput))).toMatchObject({
+    expect(getLastJsonOutput()).toMatchObject({
       deleted: true,
       include_profile_requested: true,
       include_profile_deleted: false
+    });
+  });
+
+  it("shows a friendly nothing-to-delete preview when local state is absent", async () => {
+    setInteractiveMode(false, false);
+
+    await runCli(["node", "linkedin", "data", "delete"]);
+
+    expect(readlineMocks.createInterface).not.toHaveBeenCalled();
+    expect(await pathExists(assistantHome)).toBe(false);
+    expect(
+      consoleLogSpy.mock.calls.some(([message]) =>
+        String(message).includes("Nothing to delete")
+      )
+    ).toBe(true);
+    expect(getLastJsonOutput()).toMatchObject({
+      confirm_required: true,
+      dry_run: true,
+      nothing_to_delete: true
     });
   });
 
@@ -266,7 +358,7 @@ describe("linkedin data delete", () => {
     expect(await pathExists(assistantHome)).toBe(false);
   });
 
-  it("allows deletion to proceed when keepalive pid files are stale", async () => {
+  it("allows destructive deletion to proceed when keepalive pid files are stale", async () => {
     const fixture = await seedLocalDataFixture();
     await writeFile(
       path.join(fixture.keepAliveDir, "default.pid"),
@@ -275,7 +367,7 @@ describe("linkedin data delete", () => {
     );
     readlineMocks.question.mockResolvedValueOnce("yes");
 
-    await runCli(["node", "linkedin", "data", "delete"]);
+    await runCli(["node", "linkedin", "data", "delete", "--confirm"]);
 
     expect(readlineMocks.question).toHaveBeenCalledTimes(1);
     expect(await pathExists(fixture.dbPath)).toBe(false);
@@ -285,7 +377,7 @@ describe("linkedin data delete", () => {
     expect(await pathExists(fixture.configFilePath)).toBe(true);
   });
 
-  it("refuses to run while a keepalive daemon is active", async () => {
+  it("refuses destructive deletion while a keepalive daemon is active", async () => {
     const fixture = await seedLocalDataFixture();
     await writeFile(
       path.join(fixture.keepAliveDir, "default.pid"),
@@ -294,14 +386,71 @@ describe("linkedin data delete", () => {
     );
 
     await expect(
-      runCli(["node", "linkedin", "data", "delete"])
+      runCli(["node", "linkedin", "data", "delete", "--confirm"])
     ).rejects.toMatchObject({
-      message: "Stop running keepalive daemons before deleting local data."
+      message: expect.stringContaining(
+        "Stop running keepalive daemons before deleting local data. Active PID"
+      )
     });
 
     expect(readlineMocks.createInterface).not.toHaveBeenCalled();
     expect(await pathExists(fixture.dbPath)).toBe(true);
     expect(await pathExists(fixture.keepAliveDir)).toBe(true);
     expect(await pathExists(fixture.rateLimitStatePath)).toBe(true);
+  });
+
+  it("formats actionable partial-failure guidance when deletion fails", async () => {
+    const fixture = await seedLocalDataFixture();
+    readlineMocks.question.mockResolvedValueOnce("yes");
+    const deleteSpy = vi.spyOn(core, "deleteLocalData").mockRejectedValueOnce(
+      new core.LinkedInAssistantError(
+        "UNKNOWN",
+        "Local data deletion completed with some failures.",
+        {
+          deleted_paths: [fixture.artifactsDir],
+          failed_paths: [
+            {
+              code: "EACCES",
+              message: "permission denied",
+              path: fixture.dbPath,
+              recoveryHint: "Check filesystem permissions for this path and retry."
+            }
+          ],
+          missing_paths: []
+        }
+      )
+    );
+
+    await expect(
+      runCli(["node", "linkedin", "data", "delete", "--confirm"])
+    ).rejects.toMatchObject({
+      message: expect.stringContaining(
+        "Check filesystem permissions for this path and retry."
+      )
+    });
+
+    expect(
+      consoleErrorSpy.mock.calls.some(([message]) =>
+        String(message).includes("Local data deletion could not finish cleanly")
+      )
+    ).toBe(true);
+
+    deleteSpy.mockRestore();
+  });
+
+  it("documents dry-run safety and recovery details in --help", () => {
+    const program = createCliProgram();
+    const dataCommand = program.commands.find((command) => command.name() === "data");
+    const deleteCommand = dataCommand?.commands.find(
+      (command) => command.name() === "delete"
+    );
+
+    expect(deleteCommand).toBeDefined();
+
+    const help = deleteCommand?.helpInformation() ?? "";
+    expect(help).toContain("--confirm");
+    expect(help).toContain("Default behavior is a dry-run preview");
+    expect(help).toContain("config.json is preserved by design");
+    expect(help).toContain("--cdp-url");
   });
 });

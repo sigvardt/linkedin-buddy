@@ -126,11 +126,15 @@ Delete local tool state:
 
 ```bash
 npm exec -w @linkedin-assistant/cli -- linkedin data delete
+npm exec -w @linkedin-assistant/cli -- linkedin data delete --confirm
 npm exec -w @linkedin-assistant/cli -- linkedin data delete --include-profile
+npm exec -w @linkedin-assistant/cli -- linkedin data delete --include-profile --confirm
 ```
 
-- `linkedin data delete` always requires an interactive terminal confirmation.
+- `linkedin data delete` is a dry-run preview by default.
+- Rerun with `--confirm` to perform the destructive deletion in an interactive terminal.
 - Stop any running keepalive daemons before deleting local state.
+- `config.json` is preserved by design.
 - `--include-profile` prompts a second time before removing local browser profile data.
 
 ### Selector audit
