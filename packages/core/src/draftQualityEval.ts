@@ -2166,9 +2166,16 @@ export async function evaluateDraftQuality(
     const limits = resolveEvaluationLimits(input.limits);
     validateResourceLimits(dataset, candidates, limits);
 
+    const draftsByCaseId = buildCandidateLookup(dataset, candidates);
+    const totalDraftCount = Array.from(draftsByCaseId.values()).reduce(
+      (total, drafts) => total + drafts.length,
+      0
+    );
+
     logEvaluationEvent(input.logger, "info", "draft_quality.evaluate.start", {
       run_id: runId,
       total_cases: dataset.cases.length,
+      candidate_draft_count: totalDraftCount,
       embedded_draft_count: dataset.cases.reduce(
         (total, draftCase) => total + draftCase.candidate_drafts.length,
         0
@@ -2177,15 +2184,15 @@ export async function evaluateDraftQuality(
       judge_enabled: Boolean(input.judge)
     });
 
-    const draftsByCaseId = buildCandidateLookup(dataset, candidates);
     const sourceCounts = createSourceCounts();
     const warnings: string[] = [];
     const caseResults: DraftQualityCaseResult[] = [];
     let skippedCaseCount = 0;
     let judgeFailureCount = 0;
 
-    for (const draftCase of dataset.cases) {
+    for (const [caseOffset, draftCase] of dataset.cases.entries()) {
       const drafts = draftsByCaseId.get(draftCase.id) ?? [];
+      const caseIndex = caseOffset + 1;
 
       if (drafts.length === 0) {
         skippedCaseCount += 1;
@@ -2194,10 +2201,23 @@ export async function evaluateDraftQuality(
         logEvaluationEvent(input.logger, "warn", "draft_quality.case.skipped", {
           run_id: runId,
           case_id: draftCase.id,
+          case_index: caseIndex,
+          total_cases: dataset.cases.length,
           reason: "no_candidate_drafts"
         });
         continue;
       }
+
+      logEvaluationEvent(input.logger, "info", "draft_quality.case.start", {
+        run_id: runId,
+        case_id: draftCase.id,
+        case_index: caseIndex,
+        total_cases: dataset.cases.length,
+        draft_count: drafts.length
+      });
+
+      let casePassedDrafts = 0;
+      let caseFailedDrafts = 0;
 
       for (const draft of drafts) {
         sourceCounts[draft.source] += 1;
@@ -2211,6 +2231,12 @@ export async function evaluateDraftQuality(
         });
         caseResults.push(evaluation.result);
 
+        if (evaluation.result.overall.passed) {
+          casePassedDrafts += 1;
+        } else {
+          caseFailedDrafts += 1;
+        }
+
         if (evaluation.warning) {
           warnings.push(evaluation.warning);
         }
@@ -2219,6 +2245,16 @@ export async function evaluateDraftQuality(
           judgeFailureCount += 1;
         }
       }
+
+      logEvaluationEvent(input.logger, "info", "draft_quality.case.done", {
+        run_id: runId,
+        case_id: draftCase.id,
+        case_index: caseIndex,
+        total_cases: dataset.cases.length,
+        draft_count: drafts.length,
+        passed_drafts: casePassedDrafts,
+        failed_drafts: caseFailedDrafts
+      });
     }
 
     if (caseResults.length === 0) {

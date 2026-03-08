@@ -17,6 +17,10 @@ function setInteractiveMode(inputIsTty: boolean, outputIsTty: boolean): void {
     configurable: true,
     value: outputIsTty
   });
+  Object.defineProperty(process.stderr, "isTTY", {
+    configurable: true,
+    value: outputIsTty
+  });
 }
 
 async function writeJsonFixture(filePath: string, value: unknown): Promise<void> {
@@ -227,10 +231,31 @@ describe("linkedin audit draft-quality", () => {
 
     expect(process.exitCode).toBe(1);
     expect(output).toContain("Draft Quality Evaluation: FAIL");
-    expect(output).toContain("Summary: Evaluated 1 drafts across 1/1 cases. 0 passed. 1 failed.");
+    expect(output).toContain("Summary: 0 of 1 drafts passed (0.0%) across 1/1 cases.");
     expect(output).toContain(
       "Hard checks: Draft used forbidden phrases: just circling back"
     );
+    expect(stderrChunks.join("")).toContain(
+      "Starting draft quality evaluation (1 case, 1 draft)."
+    );
+  });
+
+  it("can hide per-case progress lines in human mode", async () => {
+    const datasetPath = path.join(tempDir, "passing-dataset.json");
+
+    await writeJsonFixture(datasetPath, createPassingDataset());
+
+    await runCli([
+      "node",
+      "linkedin",
+      "audit",
+      "draft-quality",
+      "--dataset",
+      datasetPath,
+      "--no-progress"
+    ]);
+
+    expect(process.exitCode ?? 0).toBe(0);
     expect(stderrChunks).toEqual([]);
   });
 
@@ -255,10 +280,10 @@ describe("linkedin audit draft-quality", () => {
 
     expect(process.exitCode).toBe(1);
     expect(consoleLogSpy).not.toHaveBeenCalled();
-    expect(stderrOutput).toContain(
-      "Draft quality evaluation failed: Draft-quality dataset must contain at least one case."
-    );
+    expect(stderrOutput).toContain("Draft quality evaluation failed [ACTION_PRECONDITION_FAILED]");
+    expect(stderrOutput).toContain("Draft-quality dataset must contain at least one case.");
     expect(stderrOutput).toContain("Location: dataset.cases");
+    expect(stderrOutput).toContain("Tip: run linkedin audit draft-quality --help");
   });
 
   it("rejects non-file dataset paths before reading", async () => {
@@ -278,9 +303,51 @@ describe("linkedin audit draft-quality", () => {
 
     expect(process.exitCode).toBe(1);
     expect(consoleLogSpy).not.toHaveBeenCalled();
+    expect(stderrOutput).toContain("Draft quality evaluation failed [ACTION_PRECONDITION_FAILED]");
     expect(stderrOutput).toContain(
-      "Draft quality evaluation failed: Expected draft-quality dataset path to point to a file."
+      "Expected draft-quality dataset path to point to a file."
     );
-    expect(stderrOutput).toContain(`Location: ${path.resolve(datasetDir)}`);
+    expect(stderrOutput).toContain(`Path: ${path.resolve(datasetDir)}`);
+  });
+
+  it("shows complete help output for the draft-quality command", async () => {
+    const stdoutChunks: string[] = [];
+    const stdoutWriteSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation((...args: Parameters<typeof process.stdout.write>) => {
+        const [chunk] = args;
+        stdoutChunks.push(String(chunk));
+        return true;
+      });
+    const exitSpy = vi
+      .spyOn(process, "exit")
+      .mockImplementation((((code?: Parameters<typeof process.exit>[0]) => {
+        throw new Error(`process.exit:${String(code ?? 0)}`);
+      }) as typeof process.exit));
+
+    try {
+      await expect(
+        runCli(["node", "linkedin", "audit", "draft-quality", "--help"])
+      ).rejects.toThrow("process.exit:0");
+    } finally {
+      stdoutWriteSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
+
+    const helpOutput = stdoutChunks.join("");
+
+    expect(helpOutput).toContain(
+      "Evaluate draft replies against case-specific quality expectations"
+    );
+    expect(helpOutput).toContain("--dataset <path>");
+    expect(helpOutput).toContain("--candidates <path>");
+    expect(helpOutput).toContain("--json");
+    expect(helpOutput).toContain("--verbose");
+    expect(helpOutput).toContain("--no-progress");
+    expect(helpOutput).toContain("--output <path>");
+    expect(helpOutput).toContain("Examples:");
+    expect(helpOutput).toContain(
+      "linkedin audit draft-quality --dataset dataset.json --candidates candidates.json --verbose"
+    );
   });
 });

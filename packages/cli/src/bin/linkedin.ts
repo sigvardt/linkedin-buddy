@@ -43,6 +43,7 @@ import {
   type SelectorAuditReport
 } from "@linkedin-assistant/core";
 import {
+  DraftQualityProgressReporter,
   formatDraftQualityError,
   formatDraftQualityReport,
   resolveDraftQualityOutputMode
@@ -284,6 +285,22 @@ async function writeOutputJsonFile(filePath: string, value: unknown): Promise<st
   await mkdir(path.dirname(resolvedPath), { recursive: true });
   await writeJsonFile(resolvedPath, value);
   return resolvedPath;
+}
+
+function createDraftQualityProgressLogger(
+  onLog: (entry: { event: string; payload: Record<string, unknown> }) => void
+): {
+  log(
+    level: "debug" | "info" | "warn" | "error",
+    event: string,
+    payload?: Record<string, unknown>
+  ): void;
+} {
+  return {
+    log(_level, event, payload = {}) {
+      onLog({ event, payload });
+    }
+  };
 }
 
 async function readKeepAlivePid(profileName: string): Promise<number | null> {
@@ -1815,6 +1832,7 @@ async function runDraftQualityAudit(input: {
   datasetPath: string;
   candidatesPath?: string;
   json: boolean;
+  progress: boolean;
   verbose: boolean;
   outputPath?: string;
 }): Promise<void> {
@@ -1822,6 +1840,16 @@ async function runDraftQualityAudit(input: {
     { json: input.json },
     Boolean(stdout.isTTY)
   );
+  const progressEnabled =
+    outputMode === "human" && input.progress && Boolean(process.stderr.isTTY);
+  const progressReporter = new DraftQualityProgressReporter({
+    enabled: progressEnabled
+  });
+  const logger = progressEnabled
+    ? createDraftQualityProgressLogger((entry) => {
+        progressReporter.handleLog(entry);
+      })
+    : undefined;
 
   try {
     const datasetPath = path.resolve(input.datasetPath);
@@ -1839,6 +1867,7 @@ async function runDraftQualityAudit(input: {
     const report = await evaluateDraftQuality({
       dataset,
       ...(candidates ? { candidates } : {}),
+      ...(logger ? { logger } : {}),
       dataset_path: datasetPath,
       ...(candidatesPath ? { candidates_path: candidatesPath } : {})
     });
@@ -1855,12 +1884,11 @@ async function runDraftQualityAudit(input: {
         "cli"
       ) as DraftQualityReport;
       const output = formatDraftQualityReport(redactedReport, {
-        verbose: input.verbose
+        verbose: input.verbose,
+        ...(writtenReportPath ? { reportPath: writtenReportPath } : {})
       });
 
-      console.log(
-        writtenReportPath ? `${output}\nJSON report written to ${writtenReportPath}` : output
-      );
+      console.log(output);
     }
 
     if (report.outcome === "fail") {
@@ -2678,38 +2706,49 @@ export async function runCli(argv: string[] = process.argv): Promise<void> {
 
   auditCommand
     .command("draft-quality")
-    .description("Evaluate draft replies against thread-specific quality expectations")
-    .requiredOption("--dataset <path>", "Path to the draft-quality dataset JSON file")
+    .description("Evaluate draft replies against case-specific quality expectations")
+    .requiredOption(
+      "--dataset <path>",
+      "Path to the draft-quality dataset JSON file (cases + expectations)"
+    )
     .option(
       "--candidates <path>",
-      "Optional JSON file with external candidate drafts keyed by case_id"
+      "Optional JSON file with candidate drafts keyed by case_id/draft_id"
     )
     .option("--json", "Print the full JSON report (recommended for automation)", false)
     .option(
       "--verbose",
-      "Show draft-by-draft detail in human-readable output",
+      "Show per-draft metric details in human-readable output",
       false
     )
+    .option("--no-progress", "Hide per-case progress updates in human-readable output")
     .option("--output <path>", "Write the JSON report to a file")
     .addHelpText(
       "after",
       [
         "",
-        "The dataset can embed candidate_drafts or you can provide --candidates.",
-        "Interactive terminals default to a human-readable summary.",
-        "Use --json for automation and --output to persist the JSON report."
+        "The dataset can embed candidate_drafts/candidateDrafts or you can provide --candidates.",
+        "Interactive terminals default to a human-readable summary with per-case progress.",
+        "Use --json for automation and --output to persist the JSON report.",
+        "",
+        "Examples:",
+        "  linkedin audit draft-quality --dataset dataset.json",
+        "  linkedin audit draft-quality --dataset dataset.json --candidates candidates.json --verbose",
+        "  linkedin audit draft-quality --dataset dataset.json --json --output reports/draft-quality.json"
       ].join("\n")
     )
     .action(async (options: {
       dataset: string;
       candidates?: string;
       json: boolean;
+      progress: boolean;
       verbose: boolean;
       output?: string;
     }) => {
       await runDraftQualityAudit({
         datasetPath: options.dataset,
         json: options.json,
+        progress: options.progress,
         verbose: options.verbose,
         ...(options.candidates ? { candidatesPath: options.candidates } : {}),
         ...(options.output ? { outputPath: options.output } : {})

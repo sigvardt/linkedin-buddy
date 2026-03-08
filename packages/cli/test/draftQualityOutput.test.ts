@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DraftQualityReport, LinkedInAssistantErrorPayload } from "@linkedin-assistant/core";
 import {
+  DraftQualityProgressReporter,
   formatDraftQualityError,
   formatDraftQualityReport,
   resolveDraftQualityOutputMode
@@ -207,20 +208,22 @@ describe("draft quality output helpers", () => {
   });
 
   it("renders a scannable human-readable report", () => {
-    const output = formatDraftQualityReport(createDraftQualityReportFixture());
+    const output = formatDraftQualityReport(createDraftQualityReportFixture(), {
+      reportPath: "reports/draft-quality.json"
+    });
 
     expect(output).toContain("Draft Quality Evaluation: FAIL");
-    expect(output).toContain(
-      "Summary: Evaluated 2 drafts across 2/2 cases. 1 passed. 1 failed. Pass rate 50.0%."
-    );
-    expect(output).toContain(
-      "Metric Averages: relevance 75.0% | tone 83.3% | length 100.0%"
-    );
-    expect(output).toContain(
-      "Failure Counts: relevance 1 | tone 1 | length 0 | hard checks 1 | judge fallbacks 0 | warnings 1"
-    );
+    expect(output).toContain("Generated At: 2026-03-08T12:00:00.000Z");
+    expect(output).toContain("Report JSON: reports/draft-quality.json");
+    expect(output).toContain("Summary: 1 of 2 drafts passed (50.0%) across 2/2 cases.");
+    expect(output).toContain("Overview");
+    expect(output).toContain("- Cases: 2 total | 2 evaluated | 0 skipped");
+    expect(output).toContain("- Checks: 1 hard-check hit | 0 judge fallbacks | 1 warning");
+    expect(output).toContain("Metrics");
+    expect(output).toContain("- Relevance: 75.0% average | 1 failing draft");
     expect(output).toContain("Warnings");
     expect(output).toContain("Failures");
+    expect(output).toContain("Next Steps");
     expect(output).toContain("Hard checks: Draft used forbidden phrases: just circling back");
   });
 
@@ -236,7 +239,10 @@ describe("draft quality output helpers", () => {
     expect(output).toContain(
       "FAIL followup_meeting_request_001/too_pushy (model)"
     );
-    expect(output).toContain("Tone: FAIL matched concise");
+    expect(output).toContain("Overall: FAIL score 56.1%");
+    expect(output).toContain(
+      "Tone: FAIL matched concise; missing warm, professional; forbidden pushy"
+    );
   });
 
   it("formats friendly human-readable errors", () => {
@@ -250,10 +256,10 @@ describe("draft quality output helpers", () => {
 
     const output = formatDraftQualityError(error);
 
-    expect(output).toContain(
-      "Draft quality evaluation failed: Draft-quality dataset must contain at least one case."
-    );
+    expect(output).toContain("Draft quality evaluation failed [ACTION_PRECONDITION_FAILED]");
+    expect(output).toContain("Draft-quality dataset must contain at least one case.");
     expect(output).toContain("Location: dataset.cases");
+    expect(output).toContain("Tip: run linkedin audit draft-quality --help");
   });
 
   it("sanitizes terminal control characters in human-readable output", () => {
@@ -269,5 +275,65 @@ describe("draft quality output helpers", () => {
     expect(output).toContain("Run: run danger");
     expect(output).toContain("- Beware next line");
     expect(output).toContain("Notes: Line one line two");
+  });
+
+  it("emits clear per-case progress lines", () => {
+    const lines: string[] = [];
+    const reporter = new DraftQualityProgressReporter({
+      writeLine: (line) => {
+        lines.push(line);
+      }
+    });
+
+    reporter.handleLog({
+      event: "draft_quality.evaluate.start",
+      payload: {
+        total_cases: 2,
+        candidate_draft_count: 3
+      }
+    });
+    reporter.handleLog({
+      event: "draft_quality.case.start",
+      payload: {
+        case_id: "case_a",
+        case_index: 1,
+        total_cases: 2,
+        draft_count: 2
+      }
+    });
+    reporter.handleLog({
+      event: "draft_quality.case.done",
+      payload: {
+        case_id: "case_a",
+        case_index: 1,
+        total_cases: 2,
+        passed_drafts: 1,
+        failed_drafts: 1
+      }
+    });
+    reporter.handleLog({
+      event: "draft_quality.case.skipped",
+      payload: {
+        case_id: "case_b",
+        case_index: 2,
+        total_cases: 2,
+        reason: "no_candidate_drafts"
+      }
+    });
+    reporter.handleLog({
+      event: "draft_quality.evaluate.complete",
+      payload: {
+        total_drafts: 2,
+        failed_drafts: 1
+      }
+    });
+
+    expect(lines).toEqual([
+      "Starting draft quality evaluation (2 cases, 3 drafts).",
+      "Evaluating case 1/2: case_a (2 drafts)...",
+      "Finished case 1/2: case_a — 1 passed, 1 failed.",
+      "Skipping case 2/2: case_b — no candidate drafts.",
+      "Draft quality evaluation finished. 1 passed, 1 failed."
+    ]);
   });
 });
