@@ -392,6 +392,10 @@ which makes it safe to invoke in CI.
 See `docs/e2e-testing.md` for the full workflow, safe targets, and opt-in write
 flags.
 
+Pass `npm run test:e2e -- --require-session` when a missing session should fail
+instead of skip, and use `--fixtures <file>` to capture or replay the shared
+CLI/MCP coverage fixtures while iterating on E2E failures.
+
 ### Prerequisites
 
 - Node.js 22+
@@ -409,6 +413,9 @@ confirm entrypoints. Real outbound confirms remain opt-in.
 ```bash
 # Default run: safe coverage only
 npm run test:e2e
+
+# Focus a specific E2E file while keeping the runner checks
+npm run test:e2e -- packages/core/src/__tests__/e2e/cli.e2e.test.ts
 
 # Raw Vitest E2E run when you already know the session is available
 npm run test:e2e:raw

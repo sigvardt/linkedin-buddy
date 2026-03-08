@@ -1,3 +1,5 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import type { CoreRuntime } from "../../runtime.js";
 import { toLinkedInAssistantErrorPayload } from "../../errors.js";
 import { TEST_ECHO_ACTION_TYPE } from "../../twoPhaseCommit.js";
@@ -50,6 +52,13 @@ export interface PreparedActionResult {
   preview: Record<string, unknown>;
 }
 
+export interface CliCoverageFixtures {
+  threadId: string;
+  postUrl: string;
+  jobId: string;
+  connectionTarget: string;
+}
+
 export interface CommandExecutionOptions {
   assistantHome?: string;
   timeoutMs?: number;
@@ -63,23 +72,40 @@ export type McpToolCaller = (
   args: Record<string, unknown>
 ) => Promise<unknown>;
 
-const DEFAULT_PROFILE_NAME = process.env.LINKEDIN_E2E_PROFILE ?? "default";
-const DEFAULT_MESSAGE_TARGET_PATTERN =
-  process.env.LINKEDIN_E2E_MESSAGE_TARGET_PATTERN ?? "Simon Miller";
-const DEFAULT_CONNECTION_TARGET =
-  process.env.LINKEDIN_E2E_CONNECTION_TARGET ?? "realsimonmiller";
-const DEFAULT_LIKE_POST_URL = process.env.LINKEDIN_E2E_LIKE_POST_URL;
-const DEFAULT_COMMENT_POST_URL = process.env.LINKEDIN_E2E_COMMENT_POST_URL;
-const DEFAULT_CONNECTION_CONFIRM_MODE =
-  process.env.LINKEDIN_E2E_CONNECTION_CONFIRM_MODE ?? "";
 const DEFAULT_MAX_ATTEMPTS = 1;
 const DEFAULT_RETRY_DELAY_MS = 250;
+const DEFAULT_JOB_QUERY = "software engineer";
+const DEFAULT_JOB_LOCATION = "Copenhagen";
+const E2E_FIXTURE_FORMAT_VERSION = 1;
 const TRANSIENT_E2E_ERROR_PATTERN =
   /timed out|timeout|Target closed|Execution context was destroyed|page crashed|browser has been closed|context was closed|ECONNRESET|ECONNREFUSED|EPIPE/i;
 
-function readEnabledFlag(name: string): boolean {
+function readTrimmedEnv(name: string): string | undefined {
   const value = process.env[name];
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function readEnabledFlag(name: string): boolean {
+  const value = readTrimmedEnv(name);
   return value === "1" || value === "true";
+}
+
+function getDefaultJobQuery(): string {
+  return readTrimmedEnv("LINKEDIN_E2E_JOB_QUERY") ?? DEFAULT_JOB_QUERY;
+}
+
+function getDefaultJobLocation(): string {
+  return readTrimmedEnv("LINKEDIN_E2E_JOB_LOCATION") ?? DEFAULT_JOB_LOCATION;
+}
+
+function getFixtureFilePath(): string | undefined {
+  const configuredPath = readTrimmedEnv("LINKEDIN_E2E_FIXTURE_FILE");
+  return configuredPath ? path.resolve(configuredPath) : undefined;
 }
 
 function coerceChunk(
@@ -111,6 +137,9 @@ function createWriteInterceptor(
   }) as typeof process.stdout.write;
 }
 
+// CLI and MCP E2Es often print progress lines before their final JSON payload.
+// Extract every top-level JSON object so tests can reliably assert on the last
+// machine-readable result without forcing the command surface to stay silent.
 function parseJsonObjects(text: string): Record<string, unknown>[] {
   const objects: Record<string, unknown>[] = [];
   let depth = 0;
@@ -174,6 +203,89 @@ function parseJsonObjects(text: string): Record<string, unknown>[] {
   }
 
   return objects;
+}
+
+function assertNonEmptyString(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${label} must be a non-empty string.`);
+  }
+
+  return value.trim();
+}
+
+function parseCliCoverageFixtures(
+  value: unknown,
+  sourceLabel: string
+): CliCoverageFixtures {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${sourceLabel} must contain a JSON object.`);
+  }
+
+  const record = value as Record<string, unknown>;
+  const fixtureFormat = record.format;
+  if (fixtureFormat !== undefined && fixtureFormat !== E2E_FIXTURE_FORMAT_VERSION) {
+    throw new Error(
+      `${sourceLabel} uses unsupported format ${String(fixtureFormat)}. ` +
+        "Refresh the fixtures to rewrite the file with the current format."
+    );
+  }
+
+  const capturedProfileName = record.profileName;
+  const expectedProfileName = getDefaultProfileName();
+  if (
+    typeof capturedProfileName === "string" &&
+    capturedProfileName.trim().length > 0 &&
+    capturedProfileName.trim() !== expectedProfileName
+  ) {
+    throw new Error(
+      `${sourceLabel} was captured for profile ${capturedProfileName.trim()} but the current ` +
+        `E2E profile is ${expectedProfileName}. Refresh the fixtures or set LINKEDIN_E2E_PROFILE to match.`
+    );
+  }
+
+  return {
+    threadId: assertNonEmptyString(record.threadId, `${sourceLabel}.threadId`),
+    postUrl: assertNonEmptyString(record.postUrl, `${sourceLabel}.postUrl`),
+    jobId: assertNonEmptyString(record.jobId, `${sourceLabel}.jobId`),
+    connectionTarget: assertNonEmptyString(
+      record.connectionTarget,
+      `${sourceLabel}.connectionTarget`
+    )
+  };
+}
+
+function readCliCoverageFixturesFromFile(filePath: string): CliCoverageFixtures {
+  try {
+    const raw = readFileSync(filePath, "utf8");
+    return parseCliCoverageFixtures(JSON.parse(raw) as unknown, `Fixture file ${filePath}`);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Could not load coverage fixtures from ${filePath}. ${reason} ` +
+        "Delete the file or rerun with --refresh-fixtures (LINKEDIN_E2E_REFRESH_FIXTURES=1)."
+    );
+  }
+}
+
+function writeCliCoverageFixturesToFile(
+  filePath: string,
+  fixtures: CliCoverageFixtures
+): void {
+  mkdirSync(path.dirname(filePath), { recursive: true });
+  writeFileSync(
+    filePath,
+    `${JSON.stringify(
+      {
+        format: E2E_FIXTURE_FORMAT_VERSION,
+        capturedAt: new Date().toISOString(),
+        profileName: getDefaultProfileName(),
+        ...fixtures
+      },
+      null,
+      2
+    )}\n`,
+    "utf8"
+  );
 }
 
 function summarizeUnknownValue(value: unknown): string {
@@ -364,15 +476,18 @@ export function mapMcpToolResult(name: string, rawResult: unknown): MappedMcpRes
 }
 
 export function getDefaultProfileName(): string {
-  return DEFAULT_PROFILE_NAME;
+  return readTrimmedEnv("LINKEDIN_E2E_PROFILE") ?? "default";
 }
 
 export function getDefaultConnectionTarget(): string {
-  return DEFAULT_CONNECTION_TARGET;
+  return readTrimmedEnv("LINKEDIN_E2E_CONNECTION_TARGET") ?? "realsimonmiller";
 }
 
 export function getDefaultMessageTargetPattern(): RegExp {
-  return new RegExp(DEFAULT_MESSAGE_TARGET_PATTERN, "i");
+  return new RegExp(
+    readTrimmedEnv("LINKEDIN_E2E_MESSAGE_TARGET_PATTERN") ?? "Simon Miller",
+    "i"
+  );
 }
 
 export function isOptInEnabled(name: string): boolean {
@@ -380,15 +495,15 @@ export function isOptInEnabled(name: string): boolean {
 }
 
 export function getConnectionConfirmMode(): string {
-  return DEFAULT_CONNECTION_CONFIRM_MODE;
+  return readTrimmedEnv("LINKEDIN_E2E_CONNECTION_CONFIRM_MODE") ?? "";
 }
 
 export function getOptInLikePostUrl(): string | undefined {
-  return DEFAULT_LIKE_POST_URL;
+  return readTrimmedEnv("LINKEDIN_E2E_LIKE_POST_URL");
 }
 
 export function getOptInCommentPostUrl(): string | undefined {
-  return DEFAULT_COMMENT_POST_URL;
+  return readTrimmedEnv("LINKEDIN_E2E_COMMENT_POST_URL");
 }
 
 export async function runCliCommandWith(
@@ -446,6 +561,9 @@ export async function runCliCommand(
   return runCliCommandWith(runCli, args, options);
 }
 
+// The CLI emits human guidance plus JSON. Tests assert against the last JSON
+// object so command output can stay useful for operators without breaking
+// programmatic E2E checks.
 export function getLastJsonObject(text: string): Record<string, unknown> {
   const objects = parseJsonObjects(text);
   const lastObject = objects.at(-1);
@@ -561,7 +679,7 @@ export function prepareEchoAction(
   expiresAtMs: number;
   preview: Record<string, unknown>;
 } {
-  const profileName = input.profileName ?? DEFAULT_PROFILE_NAME;
+  const profileName = input.profileName ?? getDefaultProfileName();
   const text = input.text ?? `echo-${Date.now()}`;
   const target = {
     profile_name: profileName
@@ -588,15 +706,17 @@ export async function getMessageThread(runtime: CoreRuntime): Promise<{
   title: string;
   thread_url: string;
 }> {
+  const profileName = getDefaultProfileName();
   const threads = await runtime.inbox.listThreads({
     limit: 40,
-    profileName: DEFAULT_PROFILE_NAME
+    profileName
   });
 
   const match = threads.find((thread) => getDefaultMessageTargetPattern().test(thread.title));
   if (!match) {
     throw new Error(
-      `Could not find inbox thread matching ${DEFAULT_MESSAGE_TARGET_PATTERN}.`
+      `Could not find an inbox thread matching ${getDefaultMessageTargetPattern()} for profile ${profileName}. ` +
+        "Adjust LINKEDIN_E2E_MESSAGE_TARGET_PATTERN or reuse a saved fixture file with --fixtures <file>."
     );
   }
 
@@ -613,13 +733,15 @@ export async function getFeedPost(runtime: CoreRuntime): Promise<{
   author_name: string;
 }> {
   const posts = await runtime.feed.viewFeed({
-    profileName: DEFAULT_PROFILE_NAME,
+    profileName: getDefaultProfileName(),
     limit: 10
   });
 
   const post = posts[0];
   if (!post) {
-    throw new Error("No feed post was available for E2E coverage.");
+    throw new Error(
+      "No feed post was available for E2E coverage. Scroll the dedicated browser session to load the feed or refresh the saved fixtures with --refresh-fixtures."
+    );
   }
 
   return {
@@ -633,16 +755,22 @@ export async function getJob(runtime: CoreRuntime): Promise<{
   job_id: string;
   title: string;
 }> {
+  const profileName = getDefaultProfileName();
+  const jobQuery = getDefaultJobQuery();
+  const jobLocation = getDefaultJobLocation();
   const search = await runtime.jobs.searchJobs({
-    profileName: DEFAULT_PROFILE_NAME,
-    query: "software engineer",
-    location: "Copenhagen",
+    profileName,
+    query: jobQuery,
+    location: jobLocation,
     limit: 5
   });
 
   const job = search.results[0];
   if (!job) {
-    throw new Error("No LinkedIn job result was available for E2E coverage.");
+    throw new Error(
+      `No LinkedIn job result was available for E2E coverage with query ${jobQuery} in ${jobLocation}. ` +
+        "Adjust LINKEDIN_E2E_JOB_QUERY / LINKEDIN_E2E_JOB_LOCATION or refresh the saved fixtures."
+    );
   }
 
   return {
@@ -651,12 +779,7 @@ export async function getJob(runtime: CoreRuntime): Promise<{
   };
 }
 
-export async function getCliCoverageFixtures(runtime: CoreRuntime): Promise<{
-  threadId: string;
-  postUrl: string;
-  jobId: string;
-  connectionTarget: string;
-}> {
+async function discoverCliCoverageFixtures(runtime: CoreRuntime): Promise<CliCoverageFixtures> {
   const thread = await getMessageThread(runtime);
   const post = await getFeedPost(runtime);
   const job = await getJob(runtime);
@@ -665,8 +788,27 @@ export async function getCliCoverageFixtures(runtime: CoreRuntime): Promise<{
     threadId: thread.thread_id,
     postUrl: post.post_url,
     jobId: job.job_id,
-    connectionTarget: DEFAULT_CONNECTION_TARGET
+    connectionTarget: getDefaultConnectionTarget()
   };
+}
+
+// CLI and MCP surface tests only need a few stable identifiers. Keeping that
+// contract in one small fixture object makes it easy to capture once and replay
+// when iterating on contract bugs without rediscovering every LinkedIn target.
+export async function getCliCoverageFixtures(runtime: CoreRuntime): Promise<CliCoverageFixtures> {
+  const fixtureFilePath = getFixtureFilePath();
+
+  if (!fixtureFilePath) {
+    return discoverCliCoverageFixtures(runtime);
+  }
+
+  if (!readEnabledFlag("LINKEDIN_E2E_REFRESH_FIXTURES") && existsSync(fixtureFilePath)) {
+    return readCliCoverageFixturesFromFile(fixtureFilePath);
+  }
+
+  const fixtures = await discoverCliCoverageFixtures(runtime);
+  writeCliCoverageFixturesToFile(fixtureFilePath, fixtures);
+  return fixtures;
 }
 
 export const MCP_TOOL_NAMES = {
