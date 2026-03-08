@@ -13,14 +13,32 @@ npm run test:e2e
 
 The runner:
 
-1. Checks that a CDP endpoint is reachable.
-2. Verifies that the attached browser is already authenticated with LinkedIn.
-3. Builds the workspace.
+1. Prints the effective E2E configuration.
+2. Checks that a CDP endpoint is reachable.
+3. Verifies that the attached browser is already authenticated with LinkedIn.
 4. Runs the Vitest E2E suite.
 
 If no authenticated session is available, the runner prints a skip reason and
 exits successfully. This makes it safe for CI environments that do not have a
 LinkedIn browser session.
+
+Pass `--require-session` when a missing CDP/authenticated session should fail
+instead of skip:
+
+```bash
+npm run test:e2e -- --require-session
+```
+
+The same strict behavior is available through
+`LINKEDIN_E2E_REQUIRE_SESSION=1`.
+
+The runner forwards any remaining arguments to Vitest, so focused reruns stay
+simple:
+
+```bash
+npm run test:e2e -- packages/core/src/__tests__/e2e/cli.e2e.test.ts
+npm run test:e2e -- --reporter=verbose packages/core/src/__tests__/e2e/error-paths.e2e.test.ts
+```
 
 To force the raw Vitest suite directly, use:
 
@@ -39,6 +57,38 @@ Environment variables:
 
 - `LINKEDIN_CDP_URL` — optional, defaults to `http://localhost:18800`
 - `LINKEDIN_E2E_PROFILE` — optional logical profile name, defaults to `default`
+- `LINKEDIN_E2E_REQUIRE_SESSION` — optional, set to `1` or `true` to fail instead of skip
+- `LINKEDIN_E2E_FIXTURE_FILE` — optional JSON file used to record or replay shared CLI/MCP fixtures
+- `LINKEDIN_E2E_REFRESH_FIXTURES` — optional, set to `1` or `true` to overwrite the fixture file
+- `LINKEDIN_E2E_JOB_QUERY` — optional job query override for live fixture discovery, defaults to `software engineer`
+- `LINKEDIN_E2E_JOB_LOCATION` — optional job location override for live fixture discovery, defaults to `Copenhagen`
+
+## Fixture replay workflow
+
+The CLI and MCP contract suites only need a few stable identifiers: a message
+thread id, a feed post URL, a job id, and a connection target. The runner can
+capture those into a small JSON file so you can replay the same targets while
+iterating on contract or output bugs.
+
+Capture or refresh the fixtures:
+
+```bash
+npm run test:e2e -- \
+  --fixtures .tmp/e2e-fixtures.json \
+  --refresh-fixtures \
+  packages/core/src/__tests__/e2e/cli.e2e.test.ts
+```
+
+Replay the saved fixtures on later runs:
+
+```bash
+npm run test:e2e -- \
+  --fixtures .tmp/e2e-fixtures.json \
+  packages/core/src/__tests__/e2e/mcp.e2e.test.ts
+```
+
+If the replay file becomes stale or malformed, rerun with `--refresh-fixtures`
+to overwrite it with fresh live-discovery output.
 
 ## Safe defaults
 
@@ -137,3 +187,5 @@ The E2E suite now covers:
   outbound actions.
 - The confirm E2Es are intentionally split between safe default coverage and
   explicit opt-in side effects.
+- The default runner does not build the workspace; it executes the Vitest E2E
+  config directly from source.

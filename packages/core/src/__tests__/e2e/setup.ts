@@ -347,6 +347,9 @@ export function setupE2ESuite<TFixtures = void>(
   let suiteRegistered = false;
 
   beforeAll(async () => {
+    // Real-session E2Es share one runtime so the suite only pays the CDP/auth
+    // probe cost once. Optional fixtures are resolved after the availability
+    // check so callers can safely reuse the same runtime-backed discovery.
     if (!suiteRegistered) {
       activeSuites.add(suiteId);
       suiteRegistered = true;
@@ -374,6 +377,9 @@ export function setupE2ESuite<TFixtures = void>(
     canRun: () => availability.canRun,
     runtime: () => getRuntime(),
     fixtures: () => {
+      // Fixtures are populated in beforeAll after the suite confirms that a
+      // live LinkedIn session is actually runnable. Accessing them earlier is a
+      // test bug, so fail loudly with a specific message.
       if (!options.fixtures) {
         throw new Error("This E2E suite does not define fixtures.");
       }
