@@ -145,6 +145,7 @@ export function createCoreRuntime(
   const artifacts = new ArtifactHelpers(paths, runId, db, privacy);
   const confirmFailureArtifacts = resolveConfirmFailureArtifactConfig();
   const profileManager = new ProfileManager(paths);
+  let closed = false;
   let runtime: CoreRuntime;
 
   if (
@@ -252,6 +253,11 @@ export function createCoreRuntime(
       );
     },
     close: () => {
+      if (closed) {
+        return;
+      }
+
+      closed = true;
       logger.log("info", "runtime.closed", { runId });
       db.close();
     }
