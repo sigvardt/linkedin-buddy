@@ -7,7 +7,7 @@ import {
   MCP_TOOL_NAMES,
   prepareEchoAction
 } from "./helpers.js";
-import { setupE2ESuite } from "./setup.js";
+import { setupE2ESuite, skipIfE2EUnavailable } from "./setup.js";
 
 describe.sequential("MCP E2E", () => {
   const e2e = setupE2ESuite({
@@ -16,10 +16,8 @@ describe.sequential("MCP E2E", () => {
   });
   const profileName = getDefaultProfileName();
 
-  it("covers session tools", async () => {
-    if (!e2e.canRun()) {
-      return;
-    }
+  it("covers session tools", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
 
     const status = await callMcpTool(MCP_TOOL_NAMES.sessionStatus, {
       profileName
@@ -60,10 +58,8 @@ describe.sequential("MCP E2E", () => {
     });
   }, 120_000);
 
-  it("covers inbox, connections, and followup tools", async () => {
-    if (!e2e.canRun()) {
-      return;
-    }
+  it("covers inbox, connections, and followup tools", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
     const fixtures = e2e.fixtures();
 
     const inboxList = await callMcpTool(MCP_TOOL_NAMES.inboxListThreads, {
@@ -151,10 +147,8 @@ describe.sequential("MCP E2E", () => {
     });
   }, 180_000);
 
-  it("covers feed, post, actions confirm, and notifications tools", async () => {
-    if (!e2e.canRun()) {
-      return;
-    }
+  it("covers feed, post, actions confirm, and notifications tools", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
     const fixtures = e2e.fixtures();
 
     const feedList = await callMcpTool(MCP_TOOL_NAMES.feedList, {
@@ -246,10 +240,8 @@ describe.sequential("MCP E2E", () => {
     });
   }, 180_000);
 
-  it("covers profile, search, and jobs tools", async () => {
-    if (!e2e.canRun()) {
-      return;
-    }
+  it("covers profile, search, and jobs tools", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
     const fixtures = e2e.fixtures();
 
     const profile = await callMcpTool(MCP_TOOL_NAMES.profileView, {

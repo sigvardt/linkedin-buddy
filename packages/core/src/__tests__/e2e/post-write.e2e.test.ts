@@ -5,7 +5,7 @@ import {
   expectRateLimitPreview,
   isOptInEnabled
 } from "./helpers.js";
-import { setupE2ESuite } from "./setup.js";
+import { setupE2ESuite, skipIfE2EUnavailable } from "./setup.js";
 
 const writeTest = isOptInEnabled("LINKEDIN_ENABLE_POST_WRITE_E2E") ? it : it.skip;
 
@@ -20,8 +20,8 @@ const writeTest = isOptInEnabled("LINKEDIN_ENABLE_POST_WRITE_E2E") ? it : it.ski
 describe("Post Write E2E (2PC post.create)", () => {
   const e2e = setupE2ESuite();
 
-  writeTest("creates a public post via prepare → confirm", async () => {
-    if (!e2e.canRun()) return;
+  writeTest("creates a public post via prepare → confirm", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
     const runtime = e2e.runtime();
     const timestamp = new Date().toISOString();
     const postText = `E2E post from linkedin-owa-agentools [${timestamp}]`;
@@ -47,8 +47,8 @@ describe("Post Write E2E (2PC post.create)", () => {
     expect(result.result).toHaveProperty("verification_snippet");
   }, 180_000);
 
-  it("prepare returns valid preview with rate limit info", async () => {
-    if (!e2e.canRun()) return;
+  it("prepare returns valid preview with rate limit info", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
     const runtime = e2e.runtime();
     const prepared = await runtime.posts.prepareCreate({
       text: `E2E preview-only post [${new Date().toISOString()}]`,

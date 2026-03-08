@@ -7,7 +7,7 @@ import {
   getOptInCommentPostUrl,
   isOptInEnabled
 } from "./helpers.js";
-import { setupE2ESuite } from "./setup.js";
+import { setupE2ESuite, skipIfE2EUnavailable } from "./setup.js";
 
 const commentConfirmPostUrl = getOptInCommentPostUrl();
 const commentConfirmTest =
@@ -30,8 +30,8 @@ const commentConfirmTest =
 describe("Feed Write E2E (2PC comment_on_post)", () => {
   const e2e = setupE2ESuite();
 
-  commentConfirmTest("comments on a feed post via prepare → confirm", async () => {
-    if (!e2e.canRun()) return;
+  commentConfirmTest("comments on a feed post via prepare → confirm", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
     const runtime = e2e.runtime();
 
     const targetPostUrl = commentConfirmPostUrl!;
@@ -61,8 +61,8 @@ describe("Feed Write E2E (2PC comment_on_post)", () => {
     expect(result.result).toHaveProperty("text", commentText);
   }, 120_000);
 
-  it("prepare returns valid preview with rate limit info", async () => {
-    if (!e2e.canRun()) return;
+  it("prepare returns valid preview with rate limit info", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
     const runtime = e2e.runtime();
     const targetPost = await getFeedPost(runtime);
     const prepared = runtime.feed.prepareCommentOnPost({

@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { setupE2ESuite } from "./setup.js";
+import { setupE2ESuite, skipIfE2EUnavailable } from "./setup.js";
 
 describe("Search E2E", () => {
   const e2e = setupE2ESuite();
 
-  it("search people Simon Miller returns results with name, headline", async () => {
-    if (!e2e.canRun()) return;
+  it("search people Simon Miller returns results with name, headline", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
     const runtime = e2e.runtime();
     const result = await runtime.search.search({
       query: "Simon Miller",
@@ -26,8 +26,8 @@ describe("Search E2E", () => {
     }
   });
 
-  it("search companies Power International returns results", async () => {
-    if (!e2e.canRun()) return;
+  it("search companies Power International returns results", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
     const runtime = e2e.runtime();
     const result = await runtime.search.search({
       query: "Power International",
@@ -47,8 +47,8 @@ describe("Search E2E", () => {
     }
   });
 
-  it("search jobs software engineer copenhagen returns results", async () => {
-    if (!e2e.canRun()) return;
+  it("search jobs software engineer copenhagen returns results", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
     const runtime = e2e.runtime();
     const result = await runtime.search.search({
       query: "software engineer copenhagen",

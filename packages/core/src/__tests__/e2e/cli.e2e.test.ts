@@ -7,7 +7,7 @@ import {
   prepareEchoAction,
   runCliCommand
 } from "./helpers.js";
-import { setupE2ESuite } from "./setup.js";
+import { setupE2ESuite, skipIfE2EUnavailable } from "./setup.js";
 
 describe.sequential("CLI E2E", () => {
   const e2e = setupE2ESuite({
@@ -16,10 +16,8 @@ describe.sequential("CLI E2E", () => {
   });
   const profileName = getDefaultProfileName();
 
-  it("covers session, health, rate-limit, login, and selector audit commands", async () => {
-    if (!e2e.canRun()) {
-      return;
-    }
+  it("covers session, health, rate-limit, login, and selector audit commands", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
 
     const status = await runCliCommand(["status", "--profile", profileName]);
     expect(status.error).toBeUndefined();
@@ -85,10 +83,8 @@ describe.sequential("CLI E2E", () => {
     }
   }, 240_000);
 
-  it("covers inbox commands and both confirm entrypoints", async () => {
-    if (!e2e.canRun()) {
-      return;
-    }
+  it("covers inbox commands and both confirm entrypoints", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
     const fixtures = e2e.fixtures();
 
     const inboxList = await runCliCommand([
@@ -188,10 +184,8 @@ describe.sequential("CLI E2E", () => {
     });
   }, 180_000);
 
-  it("covers connections, followups, and keepalive commands", async () => {
-    if (!e2e.canRun()) {
-      return;
-    }
+  it("covers connections, followups, and keepalive commands", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
     const fixtures = e2e.fixtures();
 
     const connectionsList = await runCliCommand([
@@ -314,10 +308,8 @@ describe.sequential("CLI E2E", () => {
     });
   }, 180_000);
 
-  it("covers feed, post, profile, search, jobs, and notifications commands", async () => {
-    if (!e2e.canRun()) {
-      return;
-    }
+  it("covers feed, post, profile, search, jobs, and notifications commands", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
     const fixtures = e2e.fixtures();
 
     const feedList = await runCliCommand([

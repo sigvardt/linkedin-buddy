@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { setupE2ESuite } from "./setup.js";
+import { setupE2ESuite, skipIfE2EUnavailable } from "./setup.js";
 
 describe("Inbox E2E", () => {
   const e2e = setupE2ESuite();
 
-  it("list threads returns array with thread_id, title", async () => {
-    if (!e2e.canRun()) return;
+  it("list threads returns array with thread_id, title", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
     const runtime = e2e.runtime();
     const threads = await runtime.inbox.listThreads({ limit: 20 });
 
@@ -17,8 +17,8 @@ describe("Inbox E2E", () => {
     }
   });
 
-  it("list with limit respects parameter", async () => {
-    if (!e2e.canRun()) return;
+  it("list with limit respects parameter", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
     const runtime = e2e.runtime();
     const threads = await runtime.inbox.listThreads({ limit: 5 });
 

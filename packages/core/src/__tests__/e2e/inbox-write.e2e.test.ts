@@ -6,7 +6,7 @@ import {
   getMessageThread,
   isOptInEnabled
 } from "./helpers.js";
-import { setupE2ESuite } from "./setup.js";
+import { setupE2ESuite, skipIfE2EUnavailable } from "./setup.js";
 
 const messageConfirmTest = isOptInEnabled("LINKEDIN_E2E_ENABLE_MESSAGE_CONFIRM")
   ? it
@@ -25,8 +25,8 @@ const messageConfirmTest = isOptInEnabled("LINKEDIN_E2E_ENABLE_MESSAGE_CONFIRM")
 describe("Inbox Write E2E (2PC send_message)", () => {
   const e2e = setupE2ESuite();
 
-  messageConfirmTest("sends a message to Simon Miller via prepare → confirm", async () => {
-    if (!e2e.canRun()) return;
+  messageConfirmTest("sends a message to Simon Miller via prepare → confirm", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
     const runtime = e2e.runtime();
 
     const simonThread = await getMessageThread(runtime);
@@ -53,8 +53,8 @@ describe("Inbox Write E2E (2PC send_message)", () => {
     expect(result.result).toHaveProperty("sent", true);
   }, 120_000);
 
-  it("prepare returns valid preview with rate limit info", async () => {
-    if (!e2e.canRun()) return;
+  it("prepare returns valid preview with rate limit info", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
     const runtime = e2e.runtime();
     const simonThread = await getMessageThread(runtime);
 

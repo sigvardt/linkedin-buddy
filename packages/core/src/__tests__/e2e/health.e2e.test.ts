@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getCdpUrl, setupE2ESuite } from "./setup.js";
+import { getCdpUrl, setupE2ESuite, skipIfE2EUnavailable } from "./setup.js";
 import { CDPConnectionPool } from "../../connectionPool.js";
 import {
   SessionKeepAliveService,
@@ -9,8 +9,8 @@ import {
 describe("Health E2E", () => {
   const e2e = setupE2ESuite();
 
-  it("browser health returns healthy: true", async () => {
-    if (!e2e.canRun()) return;
+  it("browser health returns healthy: true", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
     const runtime = e2e.runtime();
     const health = await runtime.healthCheck();
 
@@ -19,8 +19,8 @@ describe("Health E2E", () => {
     expect(health.browser.pageResponsive).toBe(true);
   });
 
-  it("session health returns authenticated: true", async () => {
-    if (!e2e.canRun()) return;
+  it("session health returns authenticated: true", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
     const runtime = e2e.runtime();
     const health = await runtime.healthCheck();
 
@@ -32,8 +32,8 @@ describe("Health E2E", () => {
 describe("KeepAlive E2E", () => {
   const e2e = setupE2ESuite();
 
-  it("starts, emits health-event, and stops cleanly", async () => {
-    if (!e2e.canRun()) return;
+  it("starts, emits health-event, and stops cleanly", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
 
     const pool = new CDPConnectionPool({ idleTimeoutMs: 60_000 });
     const service = new SessionKeepAliveService(pool, {

@@ -6,7 +6,7 @@ import {
   getOptInLikePostUrl,
   isOptInEnabled
 } from "./helpers.js";
-import { setupE2ESuite } from "./setup.js";
+import { setupE2ESuite, skipIfE2EUnavailable } from "./setup.js";
 
 const likeConfirmPostUrl = getOptInLikePostUrl();
 const likeConfirmTest =
@@ -19,8 +19,8 @@ const likeConfirmTest =
 describe("Feed Like E2E (2PC like_post)", () => {
   const e2e = setupE2ESuite();
 
-  it("prepare returns valid preview with rate limit info", async () => {
-    if (!e2e.canRun()) return;
+  it("prepare returns valid preview with rate limit info", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
     const runtime = e2e.runtime();
     const post = await getFeedPost(runtime);
 
@@ -32,8 +32,8 @@ describe("Feed Like E2E (2PC like_post)", () => {
     expectRateLimitPreview(prepared.preview, "linkedin.feed.like_post");
   }, 60_000);
 
-  likeConfirmTest("likes a feed post via prepare → confirm", async () => {
-    if (!e2e.canRun()) return;
+  likeConfirmTest("likes a feed post via prepare → confirm", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
     const runtime = e2e.runtime();
     const postUrl = likeConfirmPostUrl!;
     const prepared = runtime.feed.prepareLikePost({

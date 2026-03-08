@@ -1,4 +1,5 @@
 import type { CoreRuntime } from "../../runtime.js";
+import { toLinkedInAssistantErrorPayload } from "../../errors.js";
 import { TEST_ECHO_ACTION_TYPE } from "../../twoPhaseCommit.js";
 import { runCli } from "../../../../cli/src/bin/linkedin.js";
 import { handleToolCall } from "../../../../mcp/src/bin/linkedin-mcp.js";
@@ -28,7 +29,7 @@ import {
   LINKEDIN_SESSION_OPEN_LOGIN_TOOL,
   LINKEDIN_SESSION_STATUS_TOOL
 } from "../../../../mcp/src/index.js";
-import { getCdpUrl } from "./setup.js";
+import { getCdpUrl, withAssistantHome, withE2EEnvironment } from "./setup.js";
 
 export interface CapturedCommandResult {
   stdout: string;
@@ -47,6 +48,10 @@ export interface PreparedActionResult {
   confirmToken: string;
   expiresAtMs?: number;
   preview: Record<string, unknown>;
+}
+
+interface CommandExecutionOptions {
+  assistantHome?: string;
 }
 
 const DEFAULT_PROFILE_NAME = process.env.LINKEDIN_E2E_PROFILE ?? "default";
@@ -186,7 +191,10 @@ export function getOptInCommentPostUrl(): string | undefined {
   return DEFAULT_COMMENT_POST_URL;
 }
 
-export async function runCliCommand(args: string[]): Promise<CapturedCommandResult> {
+export async function runCliCommand(
+  args: string[],
+  options: CommandExecutionOptions = {}
+): Promise<CapturedCommandResult> {
   const stdoutChunks: string[] = [];
   const stderrChunks: string[] = [];
   const originalStdoutWrite = process.stdout.write;
@@ -199,11 +207,25 @@ export async function runCliCommand(args: string[]): Promise<CapturedCommandResu
   process.exitCode = 0;
 
   let error: unknown;
+  const execute = async (): Promise<void> => {
+    await runCli(["node", "linkedin", "--cdp-url", getCdpUrl(), ...args]);
+  };
 
   try {
-    await runCli(["node", "linkedin", "--cdp-url", getCdpUrl(), ...args]);
+    if (options.assistantHome) {
+      await withAssistantHome(options.assistantHome, execute);
+    } else {
+      await withE2EEnvironment(execute);
+    }
   } catch (caught) {
     error = caught;
+    if ((process.exitCode ?? 0) === 0) {
+      process.exitCode = 1;
+    }
+
+    stderrChunks.push(
+      `${JSON.stringify(toLinkedInAssistantErrorPayload(caught), null, 2)}\n`
+    );
   } finally {
     process.stdout.write = originalStdoutWrite;
     process.stderr.write = originalStderrWrite;
@@ -230,12 +252,17 @@ export function getLastJsonObject(text: string): Record<string, unknown> {
 
 export async function callMcpTool(
   name: string,
-  args: Record<string, unknown> = {}
+  args: Record<string, unknown> = {},
+  options: CommandExecutionOptions = {}
 ): Promise<MappedMcpResult> {
-  const rawResult = await handleToolCall(name, {
-    cdpUrl: getCdpUrl(),
-    ...args
-  });
+  const execute = async () =>
+    handleToolCall(name, {
+      cdpUrl: getCdpUrl(),
+      ...args
+    });
+  const rawResult = options.assistantHome
+    ? await withAssistantHome(options.assistantHome, execute)
+    : await withE2EEnvironment(execute);
   const content = rawResult.content[0];
   if (!content) {
     throw new Error(`Tool ${name} returned no content.`);

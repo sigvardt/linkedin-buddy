@@ -5,7 +5,7 @@ import {
   getDefaultConnectionTarget,
   isOptInEnabled
 } from "./helpers.js";
-import { setupE2ESuite } from "./setup.js";
+import { setupE2ESuite, skipIfE2EUnavailable } from "./setup.js";
 
 const connectionConfirmMode = getConnectionConfirmMode();
 const connectionConfirmEnabled =
@@ -16,8 +16,8 @@ const connectionConfirmTest = connectionConfirmEnabled ? it : it.skip;
 describe("Connections Write E2E (2PC invitation flows)", () => {
   const e2e = setupE2ESuite();
 
-  it("prepare returns valid previews for invite, accept, and withdraw", async () => {
-    if (!e2e.canRun()) return;
+  it("prepare returns valid previews for invite, accept, and withdraw", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
     const runtime = e2e.runtime();
     const targetProfile = getDefaultConnectionTarget();
 
@@ -37,8 +37,8 @@ describe("Connections Write E2E (2PC invitation flows)", () => {
     }
   });
 
-  connectionConfirmTest("confirms the configured connection flow via prepare → confirm", async () => {
-    if (!e2e.canRun()) return;
+  connectionConfirmTest("confirms the configured connection flow via prepare → confirm", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
     const runtime = e2e.runtime();
     const targetProfile = getDefaultConnectionTarget();
 
