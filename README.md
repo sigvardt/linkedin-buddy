@@ -93,6 +93,16 @@ npm exec -w @linkedin-assistant/cli -- linkedin keepalive stop --profile default
 
 - Keepalive state/log files are stored under `~/.linkedin-assistant/linkedin-owa-agentools/keepalive/`.
 
+Delete local tool state:
+
+```bash
+npm exec -w @linkedin-assistant/cli -- linkedin data delete
+npm exec -w @linkedin-assistant/cli -- linkedin data delete --include-profile
+```
+
+- `linkedin data delete` always requires an interactive terminal confirmation.
+- `--include-profile` prompts a second time before removing local browser profile data.
+
 ### Selector audit
 
 Selector audit is a read-only diagnostic that checks the built-in selector
@@ -130,7 +140,7 @@ Representative human-readable output:
 Starting selector audit for profile default (2 pages).
 Checking page 1/2: feed (2 selector groups)...
 Finished page 1/2: feed — 1 passed, 1 failed, 1 fallback.
-Checking page 2/2: inbox (1 selector group)...
+Checking page 2/2: inbox (1 selector groups)...
 Finished page 2/2: inbox — 1 passed, 0 failed, 0 fallback.
 Selector audit finished. Report: /tmp/run_test/selector-audit/report.json
 
@@ -156,7 +166,7 @@ Failures
   with failures, fallbacks, warnings, and next steps.
 - Use `--json` for machine-readable output in CI, scripts, or agent workflows.
 - Use `--verbose` to expand the human-readable summary with selector-by-selector
-  details.
+  detail.
 - Use `--no-progress` to suppress live progress updates when you only want the
   final summary.
 - Reports are written under the run artifact directory as

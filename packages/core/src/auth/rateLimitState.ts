@@ -1,6 +1,7 @@
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { resolveConfigPaths } from "../config.js";
 
 export interface RateLimitState {
   rateLimitedUntil: string;
@@ -8,14 +9,43 @@ export interface RateLimitState {
   consecutiveRateLimits: number;
 }
 
-const DEFAULT_STATE_FILE_PATH = path.join(
+const LEGACY_STATE_FILE_PATH = path.join(
   os.homedir(),
   ".linkedin-assistant",
   "rate-limit-state.json"
 );
 
-function resolveStateFilePath(stateFilePath?: string): string {
-  return stateFilePath ?? DEFAULT_STATE_FILE_PATH;
+export function resolveRateLimitStateFilePath(stateFilePath?: string): string {
+  if (stateFilePath) {
+    return stateFilePath;
+  }
+
+  return path.join(resolveConfigPaths().baseDir, "rate-limit-state.json");
+}
+
+export function resolveLegacyRateLimitStateFilePath(): string {
+  return LEGACY_STATE_FILE_PATH;
+}
+
+function shouldIncludeLegacyStateFilePath(stateFilePath?: string): boolean {
+  return (
+    !stateFilePath &&
+    typeof process.env.LINKEDIN_ASSISTANT_HOME !== "string"
+  );
+}
+
+function resolveStateFilePaths(stateFilePath?: string): string[] {
+  const primaryStateFilePath = resolveRateLimitStateFilePath(stateFilePath);
+  if (!shouldIncludeLegacyStateFilePath(stateFilePath)) {
+    return [primaryStateFilePath];
+  }
+
+  const legacyStateFilePath = resolveLegacyRateLimitStateFilePath();
+  if (primaryStateFilePath === legacyStateFilePath) {
+    return [primaryStateFilePath];
+  }
+
+  return [primaryStateFilePath, legacyStateFilePath];
 }
 
 function isValidDateString(value: unknown): value is string {
@@ -40,34 +70,38 @@ function isValidRateLimitState(value: unknown): value is RateLimitState {
 export async function readRateLimitState(
   stateFilePath?: string
 ): Promise<RateLimitState | null> {
-  const resolvedStateFilePath = resolveStateFilePath(stateFilePath);
+  for (const resolvedStateFilePath of resolveStateFilePaths(stateFilePath)) {
+    try {
+      const rawState = await readFile(resolvedStateFilePath, "utf8");
+      const parsed = JSON.parse(rawState) as unknown;
+      if (isValidRateLimitState(parsed)) {
+        return parsed;
+      }
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "ENOENT"
+      ) {
+        continue;
+      }
 
-  try {
-    const rawState = await readFile(resolvedStateFilePath, "utf8");
-    const parsed = JSON.parse(rawState) as unknown;
-    return isValidRateLimitState(parsed) ? parsed : null;
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ) {
-      return null;
+      if (error instanceof SyntaxError) {
+        continue;
+      }
+
+      throw error;
     }
-
-    if (error instanceof SyntaxError) {
-      return null;
-    }
-
-    throw error;
   }
+
+  return null;
 }
 
 export async function writeRateLimitState(
   state: RateLimitState,
   stateFilePath?: string
 ): Promise<void> {
-  const resolvedStateFilePath = resolveStateFilePath(stateFilePath);
+  const resolvedStateFilePath = resolveRateLimitStateFilePath(stateFilePath);
   await mkdir(path.dirname(resolvedStateFilePath), { recursive: true });
   await writeFile(
     resolvedStateFilePath,
@@ -77,20 +111,20 @@ export async function writeRateLimitState(
 }
 
 export async function clearRateLimitState(stateFilePath?: string): Promise<void> {
-  const resolvedStateFilePath = resolveStateFilePath(stateFilePath);
+  for (const resolvedStateFilePath of resolveStateFilePaths(stateFilePath)) {
+    try {
+      await unlink(resolvedStateFilePath);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "ENOENT"
+      ) {
+        continue;
+      }
 
-  try {
-    await unlink(resolvedStateFilePath);
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ) {
-      return;
+      throw error;
     }
-
-    throw error;
   }
 }
 
