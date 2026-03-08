@@ -68,6 +68,11 @@ describe("runtime selector locale logging", () => {
               selector_locale_source: "option",
               resolved_selector_locale: "en",
               reason: "unsupported_locale",
+              message:
+                'Unsupported selector locale "fr-ca" from selectorLocale option.',
+              action_taken: 'Using English ("en") selector phrases for this run.',
+              guidance: expect.stringContaining("Supported locales: en, da."),
+              supported_selector_locales: ["en", "da"],
               normalized_selector_locale: "fr-ca",
               requested_selector_locale_length: 5
             })
@@ -131,6 +136,11 @@ describe("runtime selector locale logging", () => {
               selector_locale_source: "env",
               resolved_selector_locale: "en",
               reason: "unsupported_locale",
+              message:
+                'Unsupported selector locale "fr-ca" from LINKEDIN_ASSISTANT_SELECTOR_LOCALE.',
+              action_taken: 'Using English ("en") selector phrases for this run.',
+              guidance: expect.stringContaining("Supported locales: en, da."),
+              supported_selector_locales: ["en", "da"],
               normalized_selector_locale: "fr-ca",
               requested_selector_locale_length: 5
             })

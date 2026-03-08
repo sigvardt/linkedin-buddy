@@ -123,10 +123,11 @@ Available switches:
 - `--verbose`: add selector-by-selector detail to human output
 - `--no-progress`: suppress live progress lines in human output
 - `--cdp-url <url>`: attach to an existing authenticated browser session
-- `--selector-locale <locale>`: use locale-aware UI text fallbacks (`en`, `da`)
+- `--selector-locale <locale>`: prefer locale-aware UI text fallbacks (`en`, `da`); region tags like `da-DK` normalize to `da`
 
 You can also set `LINKEDIN_ASSISTANT_SELECTOR_LOCALE` to change the default
-selector locale. General tool state and artifacts still follow
+selector locale. Unsupported values fall back to `en` with a warning. General
+tool state and artifacts still follow
 `LINKEDIN_ASSISTANT_HOME`.
 
 ### Core API
