@@ -34,7 +34,6 @@ import {
   parseDraftQualityDataset,
   resolveFollowupSinceWindow,
   redactStructuredValue,
-  resolveConfigPaths,
   resolveKeepAliveDir,
   resolvePrivacyConfig,
   toLinkedInAssistantErrorPayload,
@@ -497,7 +496,7 @@ async function runDataDelete(input: {
   const requestedPlan = createLocalDataDeletionPlan({
     includeProfile: input.includeProfile
   });
-  const { profilesDir } = resolveConfigPaths();
+  const profilesDir = path.join(requestedPlan.baseDir, "profiles");
 
   console.log("This permanently deletes local LinkedIn Assistant data:");
   printDeletionTargets(requestedPlan.targets);
@@ -532,8 +531,11 @@ async function runDataDelete(input: {
     deleted: true,
     include_profile_requested: input.includeProfile,
     include_profile_deleted: includeProfile,
+    started_at: deletionResult.startedAt,
+    completed_at: deletionResult.completedAt,
     deleted_paths: deletionResult.deletedPaths,
-    missing_paths: deletionResult.missingPaths
+    missing_paths: deletionResult.missingPaths,
+    failed_paths: deletionResult.failedPaths
   });
 }
 

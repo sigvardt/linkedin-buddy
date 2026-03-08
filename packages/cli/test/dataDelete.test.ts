@@ -155,8 +155,15 @@ describe("linkedin data delete", () => {
     expect(JSON.parse(String(finalOutput))).toMatchObject({
       deleted: true,
       include_profile_requested: false,
-      include_profile_deleted: false
+      include_profile_deleted: false,
+      failed_paths: []
     });
+    expect(JSON.parse(String(finalOutput))).toEqual(
+      expect.objectContaining({
+        started_at: expect.any(String),
+        completed_at: expect.any(String)
+      })
+    );
   });
 
   it("deletes browser profiles only after the extra confirmation", async () => {
