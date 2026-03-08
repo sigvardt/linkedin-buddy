@@ -6,7 +6,11 @@ import {
 } from "playwright-core";
 import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
-import type { AssistantDatabase, SentInvitationStateRow } from "./db/database.js";
+import type {
+  AssistantDatabase,
+  PreparedActionRow,
+  SentInvitationStateRow
+} from "./db/database.js";
 import {
   LinkedInAssistantError,
   asLinkedInAssistantError
@@ -761,13 +765,10 @@ async function validateMessageSurfaceTarget(
 }
 
 function mapAcceptedConnection(
-  runtime: Pick<LinkedInFollowupsRuntime, "db">,
   state: SentInvitationStateRow,
-  nowMs: number
+  nowMs: number,
+  preparedAction?: Pick<PreparedActionRow, "status" | "expires_at">
 ): LinkedInAcceptedConnection {
-  const preparedAction = state.followup_prepared_action_id
-    ? runtime.db.getPreparedActionById(state.followup_prepared_action_id)
-    : undefined;
 
   return {
     profile_url_key: state.profile_url_key,
@@ -790,6 +791,35 @@ function mapAcceptedConnection(
     followup_confirmed_at_ms: state.followup_confirmed_at,
     followup_expires_at_ms: preparedAction?.expires_at ?? null
   };
+}
+
+function mapAcceptedConnections(
+  db: Pick<AssistantDatabase, "listPreparedActionsByIds">,
+  states: SentInvitationStateRow[],
+  nowMs: number
+): LinkedInAcceptedConnection[] {
+  const preparedActionIds = [...new Set(
+    states
+      .map((state) => state.followup_prepared_action_id)
+      .filter((preparedActionId): preparedActionId is string =>
+        typeof preparedActionId === "string" && preparedActionId.length > 0
+      )
+  )];
+  const preparedActionsById = new Map(
+    db
+      .listPreparedActionsByIds(preparedActionIds)
+      .map((preparedAction) => [preparedAction.id, preparedAction])
+  );
+
+  return states.map((state) =>
+    mapAcceptedConnection(
+      state,
+      nowMs,
+      state.followup_prepared_action_id
+        ? preparedActionsById.get(state.followup_prepared_action_id)
+        : undefined
+    )
+  );
 }
 
 export class FollowupAfterAcceptActionExecutor
@@ -1081,6 +1111,30 @@ export function createFollowupActionExecutors(): Record<
 export class LinkedInFollowupsService {
   constructor(private readonly runtime: LinkedInFollowupsRuntime) {}
 
+  private loadAcceptedConnections(input: {
+    profileName: string;
+    cutoffMs: number;
+    nowMs?: number;
+  }): {
+    acceptedStates: SentInvitationStateRow[];
+    acceptedConnections: LinkedInAcceptedConnection[];
+  } {
+    const acceptedStates = this.runtime.db.listAcceptedSentInvitations({
+      profileName: input.profileName,
+      sinceMs: input.cutoffMs
+    });
+    const acceptedConnections = mapAcceptedConnections(
+      this.runtime.db,
+      acceptedStates,
+      input.nowMs ?? Date.now()
+    );
+
+    return {
+      acceptedStates,
+      acceptedConnections
+    };
+  }
+
   async listAcceptedConnections(
     input: ListAcceptedConnectionsInput = {}
   ): Promise<LinkedInAcceptedConnection[]> {
@@ -1089,13 +1143,10 @@ export class LinkedInFollowupsService {
 
     await this.refreshAcceptanceState(profileName);
 
-    const nowMs = Date.now();
-    return this.runtime.db
-      .listAcceptedSentInvitations({
-        profileName,
-        sinceMs: cutoffMs
-      })
-      .map((state) => mapAcceptedConnection(this.runtime, state, nowMs));
+    return this.loadAcceptedConnections({
+      profileName,
+      cutoffMs
+    }).acceptedConnections;
   }
 
   async prepareFollowupsAfterAccept(
@@ -1106,14 +1157,10 @@ export class LinkedInFollowupsService {
 
     await this.refreshAcceptanceState(profileName);
 
-    const nowMs = Date.now();
-    const acceptedStates = this.runtime.db.listAcceptedSentInvitations({
+    const { acceptedStates, acceptedConnections } = this.loadAcceptedConnections({
       profileName,
-      sinceMs: cutoffMs
+      cutoffMs
     });
-    const acceptedConnections = acceptedStates.map((state) =>
-      mapAcceptedConnection(this.runtime, state, nowMs)
-    );
 
     const stateByKey = new Map(
       acceptedStates.map((state) => [state.profile_url_key, state])
@@ -1164,7 +1211,11 @@ export class LinkedInFollowupsService {
       return null;
     }
 
-    const connection = mapAcceptedConnection(this.runtime, state, Date.now());
+    const connection = mapAcceptedConnections(this.runtime.db, [state], Date.now())[0];
+    if (!connection) {
+      return null;
+    }
+
     if (!shouldPrepareAcceptedConnectionFollowup(connection.followup_status)) {
       return null;
     }

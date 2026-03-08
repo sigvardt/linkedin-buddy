@@ -245,6 +245,152 @@ describe("scheduler DB helpers", () => {
       db.close();
     }
   });
+
+  it("only lets the active lease owner finalize leased jobs", () => {
+    const db = new AssistantDatabase(":memory:");
+
+    try {
+      for (const id of [
+        "job_prepare",
+        "job_reschedule",
+        "job_fail",
+        "job_cancel"
+      ]) {
+        db.insertSchedulerJob({
+          id,
+          profileName: "default",
+          lane: "followup_preparation",
+          actionType: "scheduler.test",
+          targetJson: "{}",
+          dedupeKey: `followup_preparation:default:${id}`,
+          scheduledAtMs: FIXED_NOW,
+          maxAttempts: 5,
+          createdAtMs: FIXED_NOW,
+          updatedAtMs: FIXED_NOW
+        });
+      }
+
+      const firstClaimed = db.claimDueSchedulerJobs({
+        profileName: "default",
+        nowMs: FIXED_NOW,
+        limit: 4,
+        leaseOwner: "worker-1",
+        leaseTtlMs: 60_000
+      });
+      expect(firstClaimed).toHaveLength(4);
+
+      const reclaimAtMs = FIXED_NOW + 61_000;
+      const reclaimed = db.claimDueSchedulerJobs({
+        profileName: "default",
+        nowMs: reclaimAtMs,
+        limit: 4,
+        leaseOwner: "worker-2",
+        leaseTtlMs: 60_000
+      });
+      expect(reclaimed).toHaveLength(4);
+
+      expect(
+        db.markSchedulerJobPrepared({
+          id: "job_prepare",
+          nowMs: reclaimAtMs,
+          preparedActionId: "prepared_action",
+          leaseOwner: "worker-1"
+        })
+      ).toBe(false);
+      expect(
+        db.markSchedulerJobPrepared({
+          id: "job_prepare",
+          nowMs: reclaimAtMs,
+          preparedActionId: "prepared_action",
+          leaseOwner: "worker-2"
+        })
+      ).toBe(true);
+
+      expect(
+        db.rescheduleSchedulerJob({
+          id: "job_reschedule",
+          scheduledAtMs: reclaimAtMs + 60_000,
+          nowMs: reclaimAtMs,
+          leaseOwner: "worker-1",
+          errorMessage: "retry later"
+        })
+      ).toBe(false);
+      expect(
+        db.rescheduleSchedulerJob({
+          id: "job_reschedule",
+          scheduledAtMs: reclaimAtMs + 60_000,
+          nowMs: reclaimAtMs,
+          leaseOwner: "worker-2",
+          errorMessage: "retry later"
+        })
+      ).toBe(true);
+
+      expect(
+        db.failSchedulerJob({
+          id: "job_fail",
+          nowMs: reclaimAtMs,
+          leaseOwner: "worker-1",
+          errorMessage: "give up"
+        })
+      ).toBe(false);
+      expect(
+        db.failSchedulerJob({
+          id: "job_fail",
+          nowMs: reclaimAtMs,
+          leaseOwner: "worker-2",
+          errorMessage: "give up"
+        })
+      ).toBe(true);
+
+      expect(
+        db.cancelSchedulerJob({
+          id: "job_cancel",
+          nowMs: reclaimAtMs,
+          reason: "not needed",
+          leaseOwner: "worker-1"
+        })
+      ).toBe(false);
+      expect(
+        db.cancelSchedulerJob({
+          id: "job_cancel",
+          nowMs: reclaimAtMs,
+          reason: "not needed",
+          leaseOwner: "worker-2"
+        })
+      ).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("still cancels pending jobs without a lease owner", () => {
+    const db = new AssistantDatabase(":memory:");
+
+    try {
+      db.insertSchedulerJob({
+        id: "job_pending_cancel",
+        profileName: "default",
+        lane: "followup_preparation",
+        actionType: "scheduler.test",
+        targetJson: "{}",
+        dedupeKey: "followup_preparation:default:job_pending_cancel",
+        scheduledAtMs: FIXED_NOW,
+        maxAttempts: 5,
+        createdAtMs: FIXED_NOW,
+        updatedAtMs: FIXED_NOW
+      });
+
+      expect(
+        db.cancelSchedulerJob({
+          id: "job_pending_cancel",
+          nowMs: FIXED_NOW,
+          reason: "obsolete"
+        })
+      ).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
 });
 
 describe("LinkedInSchedulerService", () => {

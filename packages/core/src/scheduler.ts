@@ -346,6 +346,22 @@ function parseFollowupSchedulerTarget(job: SchedulerJobRow): {
   };
 }
 
+function getSchedulerJobLeaseOwner(job: SchedulerJobRow): string {
+  if (typeof job.lease_owner === "string" && job.lease_owner.length > 0) {
+    return job.lease_owner;
+  }
+
+  throw new LinkedInAssistantError(
+    "ACTION_PRECONDITION_FAILED",
+    `Scheduler job ${job.id} is missing an active lease owner.`,
+    {
+      job_id: job.id,
+      lane: job.lane,
+      status: job.status
+    }
+  );
+}
+
 function isProfileBusyError(error: unknown): boolean {
   return (
     error instanceof Error &&
@@ -543,6 +559,11 @@ export class LinkedInSchedulerService {
         left.first_seen_sent_at_ms - right.first_seen_sent_at_ms
       );
     });
+    const existingJobsByDedupeKey = new Map(
+      this.runtime.db
+        .listSchedulerJobs({ profileName: input.profileName })
+        .map((job) => [job.dedupe_key, job])
+    );
 
     let queuedJobs = 0;
     let updatedJobs = 0;
@@ -554,7 +575,7 @@ export class LinkedInSchedulerService {
         input.profileName,
         connection.profile_url_key
       );
-      const existing = this.runtime.db.getSchedulerJobByDedupeKey(dedupeKey);
+      const existing = existingJobsByDedupeKey.get(dedupeKey);
 
       if (!isFollowupPreparationCandidate(connection)) {
         if (existing?.status === "pending") {
@@ -581,18 +602,42 @@ export class LinkedInSchedulerService {
       });
 
       if (!existing) {
-        this.runtime.db.insertSchedulerJob({
+        const insertedJob: SchedulerJobRow = {
           id: createSchedulerJobId(),
-          profileName: input.profileName,
+          profile_name: input.profileName,
           lane: FOLLOWUP_PREPARATION_LANE,
-          actionType: FOLLOWUP_AFTER_ACCEPT_ACTION_TYPE,
-          targetJson,
-          dedupeKey,
-          scheduledAtMs,
-          maxAttempts: this.config.retry.maxAttempts,
-          createdAtMs: input.nowMs,
-          updatedAtMs: input.nowMs
+          action_type: FOLLOWUP_AFTER_ACCEPT_ACTION_TYPE,
+          target_json: targetJson,
+          dedupe_key: dedupeKey,
+          scheduled_at: scheduledAtMs,
+          status: "pending",
+          attempt_count: 0,
+          max_attempts: this.config.retry.maxAttempts,
+          lease_owner: null,
+          leased_at: null,
+          lease_expires_at: null,
+          prepared_action_id: null,
+          last_error_code: null,
+          last_error_message: null,
+          last_attempt_at: null,
+          completed_at: null,
+          created_at: input.nowMs,
+          updated_at: input.nowMs
+        };
+
+        this.runtime.db.insertSchedulerJob({
+          id: insertedJob.id,
+          profileName: insertedJob.profile_name,
+          lane: insertedJob.lane,
+          actionType: insertedJob.action_type,
+          targetJson: insertedJob.target_json,
+          dedupeKey: insertedJob.dedupe_key,
+          scheduledAtMs: insertedJob.scheduled_at,
+          maxAttempts: insertedJob.max_attempts,
+          createdAtMs: insertedJob.created_at,
+          updatedAtMs: insertedJob.updated_at
         });
+        existingJobsByDedupeKey.set(dedupeKey, insertedJob);
         queuedJobs += 1;
         continue;
       }
@@ -640,12 +685,25 @@ export class LinkedInSchedulerService {
     job: SchedulerJobRow,
     nowMs: number
   ): Promise<SchedulerTickJobResult> {
+    const leaseOwner = getSchedulerJobLeaseOwner(job);
+
     if (job.lane !== FOLLOWUP_PREPARATION_LANE) {
-      this.runtime.db.cancelSchedulerJob({
+      const cancelled = this.runtime.db.cancelSchedulerJob({
         id: job.id,
         nowMs,
-        reason: `Lane ${job.lane} is not executable in this scheduler build.`
+        reason: `Lane ${job.lane} is not executable in this scheduler build.`,
+        leaseOwner
       });
+
+      if (!cancelled) {
+        this.runtime.logger.log("info", "scheduler.job.superseded", {
+          job_id: job.id,
+          lane: job.lane,
+          lease_owner: leaseOwner,
+          outcome: "cancelled_unsupported_lane"
+        });
+      }
+
       return {
         jobId: job.id,
         lane: job.lane,
@@ -663,11 +721,22 @@ export class LinkedInSchedulerService {
       });
 
       if (!prepared) {
-        this.runtime.db.cancelSchedulerJob({
+        const cancelled = this.runtime.db.cancelSchedulerJob({
           id: job.id,
           nowMs,
-          reason: "Follow-up no longer needs preparation."
+          reason: "Follow-up no longer needs preparation.",
+          leaseOwner
         });
+
+        if (!cancelled) {
+          this.runtime.logger.log("info", "scheduler.job.superseded", {
+            job_id: job.id,
+            lane: job.lane,
+            lease_owner: leaseOwner,
+            outcome: "cancelled_no_longer_needed"
+          });
+        }
+
         this.runtime.logger.log("info", "scheduler.job.cancelled", {
           job_id: job.id,
           lane: job.lane,
@@ -682,11 +751,28 @@ export class LinkedInSchedulerService {
         };
       }
 
-      this.runtime.db.markSchedulerJobPrepared({
+      const markedPrepared = this.runtime.db.markSchedulerJobPrepared({
         id: job.id,
         nowMs,
-        preparedActionId: prepared.preparedActionId
+        preparedActionId: prepared.preparedActionId,
+        leaseOwner
       });
+
+      if (!markedPrepared) {
+        this.runtime.logger.log("info", "scheduler.job.superseded", {
+          job_id: job.id,
+          lane: job.lane,
+          lease_owner: leaseOwner,
+          prepared_action_id: prepared.preparedActionId,
+          outcome: "prepared"
+        });
+        return {
+          jobId: job.id,
+          lane: job.lane,
+          outcome: "cancelled"
+        };
+      }
+
       this.runtime.logger.log("info", "scheduler.job.prepared", {
         job_id: job.id,
         lane: job.lane,
@@ -710,13 +796,30 @@ export class LinkedInSchedulerService {
           this.config.businessHours
         );
 
-        this.runtime.db.rescheduleSchedulerJob({
+        const rescheduled = this.runtime.db.rescheduleSchedulerJob({
           id: job.id,
           scheduledAtMs,
           nowMs,
+          leaseOwner,
           errorCode: normalizedError.code,
           errorMessage: normalizedError.message
         });
+
+        if (!rescheduled) {
+          this.runtime.logger.log("info", "scheduler.job.superseded", {
+            job_id: job.id,
+            lane: job.lane,
+            lease_owner: leaseOwner,
+            error_code: normalizedError.code,
+            outcome: "rescheduled"
+          });
+          return {
+            jobId: job.id,
+            lane: job.lane,
+            outcome: "cancelled"
+          };
+        }
+
         this.runtime.logger.log("warn", "scheduler.job.rescheduled", {
           job_id: job.id,
           lane: job.lane,
@@ -735,12 +838,29 @@ export class LinkedInSchedulerService {
         };
       }
 
-      this.runtime.db.failSchedulerJob({
+      const failed = this.runtime.db.failSchedulerJob({
         id: job.id,
         nowMs,
+        leaseOwner,
         errorCode: normalizedError.code,
         errorMessage: normalizedError.message
       });
+
+      if (!failed) {
+        this.runtime.logger.log("info", "scheduler.job.superseded", {
+          job_id: job.id,
+          lane: job.lane,
+          lease_owner: leaseOwner,
+          error_code: normalizedError.code,
+          outcome: "failed"
+        });
+        return {
+          jobId: job.id,
+          lane: job.lane,
+          outcome: "cancelled"
+        };
+      }
+
       this.runtime.logger.log("error", "scheduler.job.failed", {
         job_id: job.id,
         lane: job.lane,

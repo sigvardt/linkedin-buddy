@@ -255,12 +255,14 @@ export interface CompleteSchedulerJobInput {
   id: string;
   nowMs: number;
   preparedActionId: string;
+  leaseOwner: string;
 }
 
 export interface RescheduleSchedulerJobInput {
   id: string;
   scheduledAtMs: number;
   nowMs: number;
+  leaseOwner: string;
   errorCode?: string | null;
   errorMessage: string;
 }
@@ -268,6 +270,7 @@ export interface RescheduleSchedulerJobInput {
 export interface FailSchedulerJobInput {
   id: string;
   nowMs: number;
+  leaseOwner: string;
   errorCode?: string | null;
   errorMessage: string;
 }
@@ -276,7 +279,66 @@ export interface CancelSchedulerJobInput {
   id: string;
   nowMs: number;
   reason: string;
+  leaseOwner?: string | null;
 }
+
+const PREPARED_ACTION_SELECT_COLUMNS = `
+  id,
+  action_type,
+  target_json,
+  sealed_target_json,
+  payload_json,
+  sealed_payload_json,
+  preview_json,
+  payload_hash,
+  preview_hash,
+  status,
+  confirm_token_hash,
+  expires_at,
+  created_at,
+  confirmed_at,
+  operator_note,
+  executed_at,
+  execution_result_json,
+  error_code,
+  error_message
+`;
+
+const SCHEDULER_JOB_SELECT_COLUMNS = `
+  id,
+  profile_name,
+  lane,
+  action_type,
+  target_json,
+  dedupe_key,
+  scheduled_at,
+  status,
+  attempt_count,
+  max_attempts,
+  lease_owner,
+  leased_at,
+  lease_expires_at,
+  prepared_action_id,
+  last_error_code,
+  last_error_message,
+  last_attempt_at,
+  completed_at,
+  created_at,
+  updated_at
+`;
+
+const SCHEDULER_JOB_ORDER_BY = `
+ORDER BY
+  CASE lane
+    WHEN 'inbox_triage' THEN 0
+    WHEN 'pending_invite_checks' THEN 1
+    WHEN 'followup_preparation' THEN 2
+    WHEN 'feed_engagement' THEN 3
+    ELSE 99
+  END ASC,
+  scheduled_at ASC,
+  created_at ASC
+`;
 
 export class AssistantDatabase {
   private readonly db: Database.Database;
@@ -367,30 +429,31 @@ VALUES (
       .prepare<unknown[], PreparedActionRow>(
         `
 SELECT
-  id,
-  action_type,
-  target_json,
-  sealed_target_json,
-  payload_json,
-  sealed_payload_json,
-  preview_json,
-  payload_hash,
-  preview_hash,
-  status,
-  confirm_token_hash,
-  expires_at,
-  created_at,
-  confirmed_at,
-  operator_note,
-  executed_at,
-  execution_result_json,
-  error_code,
-  error_message
+${PREPARED_ACTION_SELECT_COLUMNS}
 FROM prepared_action
 WHERE id = ?
 `
       )
       .get(id);
+  }
+
+  listPreparedActionsByIds(ids: string[]): PreparedActionRow[] {
+    if (ids.length === 0) {
+      return [];
+    }
+
+    const placeholders = ids.map(() => "?").join(", ");
+
+    return this.db
+      .prepare<unknown[], PreparedActionRow>(
+        `
+SELECT
+${PREPARED_ACTION_SELECT_COLUMNS}
+FROM prepared_action
+WHERE id IN (${placeholders})
+`
+      )
+      .all(...ids);
   }
 
   getPreparedActionByConfirmTokenHash(
@@ -400,25 +463,7 @@ WHERE id = ?
       .prepare<unknown[], PreparedActionRow>(
         `
 SELECT
-  id,
-  action_type,
-  target_json,
-  sealed_target_json,
-  payload_json,
-  sealed_payload_json,
-  preview_json,
-  payload_hash,
-  preview_hash,
-  status,
-  confirm_token_hash,
-  expires_at,
-  created_at,
-  confirmed_at,
-  operator_note,
-  executed_at,
-  execution_result_json,
-  error_code,
-  error_message
+${PREPARED_ACTION_SELECT_COLUMNS}
 FROM prepared_action
 WHERE confirm_token_hash = ?
 ORDER BY created_at DESC
@@ -895,26 +940,7 @@ VALUES (
       .prepare<unknown[], SchedulerJobRow>(
         `
 SELECT
-  id,
-  profile_name,
-  lane,
-  action_type,
-  target_json,
-  dedupe_key,
-  scheduled_at,
-  status,
-  attempt_count,
-  max_attempts,
-  lease_owner,
-  leased_at,
-  lease_expires_at,
-  prepared_action_id,
-  last_error_code,
-  last_error_message,
-  last_attempt_at,
-  completed_at,
-  created_at,
-  updated_at
+${SCHEDULER_JOB_SELECT_COLUMNS}
 FROM scheduler_job
 WHERE id = ?
 LIMIT 1
@@ -923,76 +949,15 @@ LIMIT 1
       .get(id);
   }
 
-  getSchedulerJobByDedupeKey(dedupeKey: string): SchedulerJobRow | undefined {
-    return this.db
-      .prepare<unknown[], SchedulerJobRow>(
-        `
-SELECT
-  id,
-  profile_name,
-  lane,
-  action_type,
-  target_json,
-  dedupe_key,
-  scheduled_at,
-  status,
-  attempt_count,
-  max_attempts,
-  lease_owner,
-  leased_at,
-  lease_expires_at,
-  prepared_action_id,
-  last_error_code,
-  last_error_message,
-  last_attempt_at,
-  completed_at,
-  created_at,
-  updated_at
-FROM scheduler_job
-WHERE dedupe_key = ?
-LIMIT 1
-`
-      )
-      .get(dedupeKey);
-  }
-
   listSchedulerJobs(input: { profileName: string }): SchedulerJobRow[] {
     return this.db
       .prepare<{ profileName: string }, SchedulerJobRow>(
         `
 SELECT
-  id,
-  profile_name,
-  lane,
-  action_type,
-  target_json,
-  dedupe_key,
-  scheduled_at,
-  status,
-  attempt_count,
-  max_attempts,
-  lease_owner,
-  leased_at,
-  lease_expires_at,
-  prepared_action_id,
-  last_error_code,
-  last_error_message,
-  last_attempt_at,
-  completed_at,
-  created_at,
-  updated_at
+${SCHEDULER_JOB_SELECT_COLUMNS}
 FROM scheduler_job
 WHERE profile_name = @profileName
-ORDER BY
-  CASE lane
-    WHEN 'inbox_triage' THEN 0
-    WHEN 'pending_invite_checks' THEN 1
-    WHEN 'followup_preparation' THEN 2
-    WHEN 'feed_engagement' THEN 3
-    ELSE 99
-  END ASC,
-  scheduled_at ASC,
-  created_at ASC
+${SCHEDULER_JOB_ORDER_BY}
 `
       )
       .all(input);
@@ -1057,26 +1022,7 @@ WHERE id = @id
           .prepare<ClaimDueSchedulerJobsInput, SchedulerJobRow>(
             `
 SELECT
-  id,
-  profile_name,
-  lane,
-  action_type,
-  target_json,
-  dedupe_key,
-  scheduled_at,
-  status,
-  attempt_count,
-  max_attempts,
-  lease_owner,
-  leased_at,
-  lease_expires_at,
-  prepared_action_id,
-  last_error_code,
-  last_error_message,
-  last_attempt_at,
-  completed_at,
-  created_at,
-  updated_at
+${SCHEDULER_JOB_SELECT_COLUMNS}
 FROM scheduler_job
 WHERE profile_name = @profileName
   AND scheduled_at <= @nowMs
@@ -1084,16 +1030,7 @@ WHERE profile_name = @profileName
     status = 'pending'
     OR (status = 'leased' AND lease_expires_at IS NOT NULL AND lease_expires_at < @nowMs)
   )
-ORDER BY
-  CASE lane
-    WHEN 'inbox_triage' THEN 0
-    WHEN 'pending_invite_checks' THEN 1
-    WHEN 'followup_preparation' THEN 2
-    WHEN 'feed_engagement' THEN 3
-    ELSE 99
-  END ASC,
-  scheduled_at ASC,
-  created_at ASC
+${SCHEDULER_JOB_ORDER_BY}
 LIMIT @limit
 `
           )
@@ -1165,6 +1102,7 @@ SET
   updated_at = @nowMs
 WHERE id = @id
   AND status = 'leased'
+  AND lease_owner = @leaseOwner
 `
       )
       .run(input);
@@ -1191,6 +1129,7 @@ SET
   updated_at = @nowMs
 WHERE id = @id
   AND status = 'leased'
+  AND lease_owner = @leaseOwner
 `
       )
       .run({
@@ -1219,6 +1158,7 @@ SET
   updated_at = @nowMs
 WHERE id = @id
   AND status = 'leased'
+  AND lease_owner = @leaseOwner
 `
       )
       .run({
@@ -1245,10 +1185,16 @@ SET
   completed_at = @nowMs,
   updated_at = @nowMs
 WHERE id = @id
-  AND (status = 'pending' OR status = 'leased')
+  AND (
+    (status = 'pending' AND @leaseOwner IS NULL)
+    OR (status = 'leased' AND lease_owner = @leaseOwner)
+  )
 `
       )
-      .run(input);
+      .run({
+        ...input,
+        leaseOwner: input.leaseOwner ?? null
+      });
 
     return result.changes === 1;
   }
