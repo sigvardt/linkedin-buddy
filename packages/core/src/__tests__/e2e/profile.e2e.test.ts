@@ -1,29 +1,12 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-  getRuntime,
-  checkCdpAvailable,
-  checkAuthenticated,
-  cleanupRuntime
-} from "./setup.js";
+import { describe, expect, it } from "vitest";
+import { setupE2ESuite } from "./setup.js";
 
 describe("Profile E2E", () => {
-  let cdpOk = false;
-  let authOk = false;
-
-  beforeAll(async () => {
-    cdpOk = await checkCdpAvailable();
-    if (cdpOk) {
-      authOk = await checkAuthenticated();
-    }
-  });
-
-  afterAll(() => {
-    cleanupRuntime();
-  });
+  const e2e = setupE2ESuite();
 
   it("view own profile (me) returns full_name, headline, profile_url", async () => {
-    if (!cdpOk || !authOk) return;
-    const runtime = getRuntime();
+    if (!e2e.canRun()) return;
+    const runtime = e2e.runtime();
     const profile = await runtime.profile.viewProfile({ target: "me" });
 
     expect(profile.full_name.length).toBeGreaterThan(0);
@@ -32,8 +15,8 @@ describe("Profile E2E", () => {
   });
 
   it("view target profile (realsimonmiller) returns structured data", async () => {
-    if (!cdpOk || !authOk) return;
-    const runtime = getRuntime();
+    if (!e2e.canRun()) return;
+    const runtime = e2e.runtime();
     const profile = await runtime.profile.viewProfile({ target: "realsimonmiller" });
 
     expect(typeof profile.full_name).toBe("string");

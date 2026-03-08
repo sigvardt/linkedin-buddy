@@ -1,40 +1,24 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
+  expectPreparedAction,
   getConnectionConfirmMode,
   getDefaultConnectionTarget,
-  getWriteConfirmGate
+  isOptInEnabled
 } from "./helpers.js";
-import {
-  checkAuthenticated,
-  checkCdpAvailable,
-  cleanupRuntime,
-  getRuntime
-} from "./setup.js";
+import { setupE2ESuite } from "./setup.js";
 
 const connectionConfirmMode = getConnectionConfirmMode();
 const connectionConfirmEnabled =
-  getWriteConfirmGate("LINKEDIN_E2E_ENABLE_CONNECTION_CONFIRM").enabled &&
+  isOptInEnabled("LINKEDIN_E2E_ENABLE_CONNECTION_CONFIRM") &&
   ["invite", "accept", "withdraw"].includes(connectionConfirmMode);
 const connectionConfirmTest = connectionConfirmEnabled ? it : it.skip;
 
 describe("Connections Write E2E (2PC invitation flows)", () => {
-  let cdpOk = false;
-  let authOk = false;
-
-  beforeAll(async () => {
-    cdpOk = await checkCdpAvailable();
-    if (cdpOk) {
-      authOk = await checkAuthenticated();
-    }
-  });
-
-  afterAll(() => {
-    cleanupRuntime();
-  });
+  const e2e = setupE2ESuite();
 
   it("prepare returns valid previews for invite, accept, and withdraw", async () => {
-    if (!cdpOk || !authOk) return;
-    const runtime = getRuntime();
+    if (!e2e.canRun()) return;
+    const runtime = e2e.runtime();
     const targetProfile = getDefaultConnectionTarget();
 
     const invite = runtime.connections.prepareSendInvitation({
@@ -49,16 +33,13 @@ describe("Connections Write E2E (2PC invitation flows)", () => {
     });
 
     for (const prepared of [invite, accept, withdraw]) {
-      expect(prepared.preparedActionId).toMatch(/^pa_/);
-      expect(prepared.confirmToken).toMatch(/^ct_/);
-      expect(prepared.preview).toHaveProperty("summary");
-      expect(prepared.preview).toHaveProperty("target");
+      expectPreparedAction(prepared);
     }
   });
 
   connectionConfirmTest("confirms the configured connection flow via prepare → confirm", async () => {
-    if (!cdpOk || !authOk) return;
-    const runtime = getRuntime();
+    if (!e2e.canRun()) return;
+    const runtime = e2e.runtime();
     const targetProfile = getDefaultConnectionTarget();
 
     const prepared =

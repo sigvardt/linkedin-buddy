@@ -1,29 +1,12 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-  getRuntime,
-  checkCdpAvailable,
-  checkAuthenticated,
-  cleanupRuntime
-} from "./setup.js";
+import { describe, expect, it } from "vitest";
+import { setupE2ESuite } from "./setup.js";
 
 describe("Search E2E", () => {
-  let cdpOk = false;
-  let authOk = false;
-
-  beforeAll(async () => {
-    cdpOk = await checkCdpAvailable();
-    if (cdpOk) {
-      authOk = await checkAuthenticated();
-    }
-  });
-
-  afterAll(() => {
-    cleanupRuntime();
-  });
+  const e2e = setupE2ESuite();
 
   it("search people Simon Miller returns results with name, headline", async () => {
-    if (!cdpOk || !authOk) return;
-    const runtime = getRuntime();
+    if (!e2e.canRun()) return;
+    const runtime = e2e.runtime();
     const result = await runtime.search.search({
       query: "Simon Miller",
       category: "people",
@@ -44,8 +27,8 @@ describe("Search E2E", () => {
   });
 
   it("search companies Power International returns results", async () => {
-    if (!cdpOk || !authOk) return;
-    const runtime = getRuntime();
+    if (!e2e.canRun()) return;
+    const runtime = e2e.runtime();
     const result = await runtime.search.search({
       query: "Power International",
       category: "companies",
@@ -65,8 +48,8 @@ describe("Search E2E", () => {
   });
 
   it("search jobs software engineer copenhagen returns results", async () => {
-    if (!cdpOk || !authOk) return;
-    const runtime = getRuntime();
+    if (!e2e.canRun()) return;
+    const runtime = e2e.runtime();
     const result = await runtime.search.search({
       query: "software engineer copenhagen",
       category: "jobs",

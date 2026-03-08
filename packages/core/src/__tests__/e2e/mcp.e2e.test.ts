@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   callMcpTool,
   getCliCoverageFixtures,
@@ -7,31 +7,17 @@ import {
   MCP_TOOL_NAMES,
   prepareEchoAction
 } from "./helpers.js";
-import {
-  cleanupRuntime,
-  getE2EAvailability,
-  getRuntime,
-  type E2EAvailability
-} from "./setup.js";
+import { setupE2ESuite } from "./setup.js";
 
 describe.sequential("MCP E2E", () => {
-  let availability: E2EAvailability;
-  let fixtures: Awaited<ReturnType<typeof getCliCoverageFixtures>> | undefined;
+  const e2e = setupE2ESuite({
+    fixtures: getCliCoverageFixtures,
+    timeoutMs: 180_000
+  });
   const profileName = getDefaultProfileName();
 
-  beforeAll(async () => {
-    availability = await getE2EAvailability();
-    if (availability.canRun) {
-      fixtures = await getCliCoverageFixtures(getRuntime());
-    }
-  }, 180_000);
-
-  afterAll(() => {
-    cleanupRuntime();
-  });
-
   it("covers session tools", async () => {
-    if (!availability.canRun || !fixtures) {
+    if (!e2e.canRun()) {
       return;
     }
 
@@ -75,9 +61,10 @@ describe.sequential("MCP E2E", () => {
   }, 120_000);
 
   it("covers inbox, connections, and followup tools", async () => {
-    if (!availability.canRun || !fixtures) {
+    if (!e2e.canRun()) {
       return;
     }
+    const fixtures = e2e.fixtures();
 
     const inboxList = await callMcpTool(MCP_TOOL_NAMES.inboxListThreads, {
       profileName,
@@ -165,9 +152,10 @@ describe.sequential("MCP E2E", () => {
   }, 180_000);
 
   it("covers feed, post, actions confirm, and notifications tools", async () => {
-    if (!availability.canRun || !fixtures) {
+    if (!e2e.canRun()) {
       return;
     }
+    const fixtures = e2e.fixtures();
 
     const feedList = await callMcpTool(MCP_TOOL_NAMES.feedList, {
       profileName,
@@ -227,7 +215,7 @@ describe.sequential("MCP E2E", () => {
       confirmToken: expect.stringMatching(/^ct_/)
     });
 
-    const runtime = getRuntime();
+    const runtime = e2e.runtime();
     const preparedConfirm = prepareEchoAction(runtime, {
       profileName,
       summary: "MCP actions.confirm echo"
@@ -259,9 +247,10 @@ describe.sequential("MCP E2E", () => {
   }, 180_000);
 
   it("covers profile, search, and jobs tools", async () => {
-    if (!availability.canRun || !fixtures) {
+    if (!e2e.canRun()) {
       return;
     }
+    const fixtures = e2e.fixtures();
 
     const profile = await callMcpTool(MCP_TOOL_NAMES.profileView, {
       profileName,

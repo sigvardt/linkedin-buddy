@@ -1,7 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { LinkedInAssistantError } from "../../errors.js";
 import { createCoreRuntime, type CoreRuntime } from "../../runtime.js";
 import {
@@ -9,12 +9,7 @@ import {
   type SelectorAuditPageDefinition
 } from "../../selectorAudit.js";
 import { getFeedPost } from "./helpers.js";
-import {
-  checkAuthenticated,
-  checkCdpAvailable,
-  cleanupRuntime,
-  getCdpUrl
-} from "./setup.js";
+import { getCdpUrl, setupE2ESuite } from "./setup.js";
 
 const LIKE_RATE_LIMIT_CONFIG = {
   counterKey: "linkedin.feed.like_post",
@@ -57,22 +52,10 @@ async function expectAssistantError(
 }
 
 describe("E2E error paths", () => {
-  let cdpOk = false;
-  let authOk = false;
-
-  beforeAll(async () => {
-    cdpOk = await checkCdpAvailable();
-    if (cdpOk) {
-      authOk = await checkAuthenticated();
-    }
-  });
-
-  afterAll(() => {
-    cleanupRuntime();
-  });
+  const e2e = setupE2ESuite();
 
   it("rejects expired confirmation tokens before execution", async () => {
-    if (!cdpOk || !authOk) return;
+    if (!e2e.canRun()) return;
 
     const isolated = await createIsolatedRuntime();
     try {
@@ -99,7 +82,7 @@ describe("E2E error paths", () => {
   }, 120_000);
 
   it("surfaces rate limit failures without performing the action", async () => {
-    if (!cdpOk || !authOk) return;
+    if (!e2e.canRun()) return;
 
     const isolated = await createIsolatedRuntime();
     try {
@@ -135,7 +118,7 @@ describe("E2E error paths", () => {
   }, 120_000);
 
   it("detects UI drift through selector audit failure artifacts", async () => {
-    if (!cdpOk || !authOk) return;
+    if (!e2e.canRun()) return;
 
     const isolated = await createIsolatedRuntime();
     try {

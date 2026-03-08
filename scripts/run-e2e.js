@@ -8,7 +8,6 @@ const DEFAULT_CDP_URL = "http://localhost:18800";
 const LINKEDIN_FEED_URL = "https://www.linkedin.com/feed/";
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const vitestEntrypoint = path.join(projectRoot, "node_modules", "vitest", "vitest.mjs");
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 
 function log(message) {
   process.stdout.write(`${message}\n`);
@@ -88,6 +87,18 @@ async function detectAuthenticatedSession(cdpUrl) {
   }
 }
 
+function waitForExit(child) {
+  return new Promise((resolve, reject) => {
+    child.on("exit", (exitCode, signal) => {
+      resolve({
+        exitCode: exitCode ?? 1,
+        signal: signal ?? null
+      });
+    });
+    child.on("error", reject);
+  });
+}
+
 async function main() {
   const cdpUrl = process.env.LINKEDIN_CDP_URL ?? DEFAULT_CDP_URL;
   const availability = await detectAuthenticatedSession(cdpUrl);
@@ -98,24 +109,6 @@ async function main() {
   }
 
   log(`[e2e] ${availability.reason}`);
-  log("[e2e] Building workspace before running E2E tests.");
-
-  const build = spawn(npmCommand, ["run", "build"], {
-    cwd: projectRoot,
-    stdio: "inherit",
-    env: process.env
-  });
-
-  const buildCode = await new Promise((resolve, reject) => {
-    build.on("exit", (code) => resolve(code ?? 1));
-    build.on("error", reject);
-  });
-
-  if (buildCode !== 0) {
-    log(`[e2e] Build failed with exit code ${buildCode}.`);
-    process.exit(Number(buildCode));
-  }
-
   log("[e2e] Running Vitest E2E suite.");
 
   const child = spawn(
@@ -132,18 +125,20 @@ async function main() {
     }
   );
 
-  child.on("exit", (code, signal) => {
-    if (signal) {
-      process.kill(process.pid, signal);
-      return;
-    }
-    process.exit(code ?? 1);
-  });
-
-  child.on("error", (error) => {
+  let result;
+  try {
+    result = await waitForExit(child);
+  } catch (error) {
     log(`[e2e] Failed to start Vitest: ${summarizeError(error)}`);
     process.exit(1);
-  });
+  }
+
+  if (result.signal) {
+    process.kill(process.pid, result.signal);
+    return;
+  }
+
+  process.exit(result.exitCode);
 }
 
 void main();

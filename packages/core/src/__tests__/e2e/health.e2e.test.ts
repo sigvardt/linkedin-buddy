@@ -1,11 +1,5 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-  getRuntime,
-  getCdpUrl,
-  checkCdpAvailable,
-  checkAuthenticated,
-  cleanupRuntime
-} from "./setup.js";
+import { describe, expect, it } from "vitest";
+import { getCdpUrl, setupE2ESuite } from "./setup.js";
 import { CDPConnectionPool } from "../../connectionPool.js";
 import {
   SessionKeepAliveService,
@@ -13,23 +7,11 @@ import {
 } from "../../keepAlive.js";
 
 describe("Health E2E", () => {
-  let cdpOk = false;
-  let authOk = false;
-
-  beforeAll(async () => {
-    cdpOk = await checkCdpAvailable();
-    if (cdpOk) {
-      authOk = await checkAuthenticated();
-    }
-  });
-
-  afterAll(() => {
-    cleanupRuntime();
-  });
+  const e2e = setupE2ESuite();
 
   it("browser health returns healthy: true", async () => {
-    if (!cdpOk || !authOk) return;
-    const runtime = getRuntime();
+    if (!e2e.canRun()) return;
+    const runtime = e2e.runtime();
     const health = await runtime.healthCheck();
 
     expect(health.browser.healthy).toBe(true);
@@ -38,8 +20,8 @@ describe("Health E2E", () => {
   });
 
   it("session health returns authenticated: true", async () => {
-    if (!cdpOk || !authOk) return;
-    const runtime = getRuntime();
+    if (!e2e.canRun()) return;
+    const runtime = e2e.runtime();
     const health = await runtime.healthCheck();
 
     expect(health.session.authenticated).toBe(true);
@@ -48,22 +30,10 @@ describe("Health E2E", () => {
 });
 
 describe("KeepAlive E2E", () => {
-  let cdpOk = false;
-  let authOk = false;
-
-  beforeAll(async () => {
-    cdpOk = await checkCdpAvailable();
-    if (cdpOk) {
-      authOk = await checkAuthenticated();
-    }
-  });
-
-  afterAll(() => {
-    cleanupRuntime();
-  });
+  const e2e = setupE2ESuite();
 
   it("starts, emits health-event, and stops cleanly", async () => {
-    if (!cdpOk || !authOk) return;
+    if (!e2e.canRun()) return;
 
     const pool = new CDPConnectionPool({ idleTimeoutMs: 60_000 });
     const service = new SessionKeepAliveService(pool, {
