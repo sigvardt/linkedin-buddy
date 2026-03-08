@@ -1,10 +1,11 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   LinkedInAssistantError,
   evaluateDraftQuality,
   parseDraftQualityCandidateSet,
   parseDraftQualityDataset,
+  type DraftQualityDataset,
   type DraftQualityJudge
 } from "../src/index.js";
 
@@ -346,6 +347,251 @@ describe("draft quality evaluator", () => {
     expect(result?.metrics.tone.passed).toBe(false);
     expect(result?.overall.passed).toBe(false);
     expect(result?.notes).toContain("Judge note");
+  });
+
+  it("falls back to deterministic scores when judge feedback is malformed and logs the failure", async () => {
+    const dataset = parseDraftQualityDataset(createInlineDataset());
+    const logger = { log: vi.fn() };
+    const judge: DraftQualityJudge = {
+      evaluate: async () =>
+        ({
+          relevance: {
+            passed: "definitely" as unknown as boolean
+          }
+        }) as unknown as Awaited<ReturnType<DraftQualityJudge["evaluate"]>>
+    };
+
+    const report = await evaluateDraftQuality({
+      dataset,
+      judge,
+      logger,
+      now: FIXED_DATE,
+      run_id: "run_bad_judge"
+    });
+
+    expect(report.summary.judge_failure_count).toBe(1);
+    expect(report.summary.warning_count).toBe(1);
+    expect(report.cases[0]?.metrics.relevance.mode).toBe("deterministic");
+    expect(report.cases[0]?.notes).toContain(
+      "Judge fallback: deterministic scores were kept."
+    );
+    expect(report.warnings[0]).toContain(
+      "Judge fallback for inline_case_001/manual_ok:"
+    );
+    expect(logger.log).toHaveBeenCalledWith(
+      "error",
+      "draft_quality.judge.failed",
+      expect.objectContaining({
+        case_id: "inline_case_001",
+        draft_id: "manual_ok"
+      })
+    );
+  });
+
+  it("times out hung judges per draft without aborting the whole batch", async () => {
+    const dataset = parseDraftQualityDataset(createInlineDataset());
+    const logger = { log: vi.fn() };
+    const judge: DraftQualityJudge = {
+      evaluate: async () =>
+        await new Promise<Awaited<ReturnType<DraftQualityJudge["evaluate"]>>>(() => undefined)
+    };
+
+    const report = await evaluateDraftQuality({
+      dataset,
+      judge,
+      logger,
+      limits: {
+        judge_timeout_ms: 5
+      },
+      now: FIXED_DATE,
+      run_id: "run_timeout_judge"
+    });
+
+    expect(report.summary.total_drafts).toBe(1);
+    expect(report.summary.judge_failure_count).toBe(1);
+    expect(report.warnings[0]).toContain("timed out after 5ms");
+    expect(logger.log).toHaveBeenCalledWith(
+      "warn",
+      "draft_quality.judge.timeout",
+      expect.objectContaining({
+        case_id: "inline_case_001",
+        draft_id: "manual_ok",
+        timeout_ms: 5
+      })
+    );
+  });
+
+  it("revalidates typed inputs and enforces evaluation resource limits", async () => {
+    const malformedDataset = {
+      schema_version: 1,
+      cases: []
+    } as unknown as DraftQualityDataset;
+
+    await expect(
+      evaluateDraftQuality({
+        dataset: malformedDataset,
+        now: FIXED_DATE,
+        run_id: "run_malformed_direct"
+      })
+    ).rejects.toThrowError(LinkedInAssistantError);
+
+    const dataset = parseDraftQualityDataset(createInlineDataset());
+    await expect(
+      evaluateDraftQuality({
+        dataset,
+        limits: {
+          max_draft_characters: 5
+        },
+        now: FIXED_DATE,
+        run_id: "run_limit_direct"
+      })
+    ).rejects.toThrowError(LinkedInAssistantError);
+  });
+
+  it("avoids false duplicate collisions when case and draft ids include double colons", async () => {
+    const dataset = parseDraftQualityDataset({
+      schemaVersion: 1,
+      cases: [
+        {
+          id: "a",
+          thread: {
+            participants: [
+              {
+                id: "assistant",
+                name: "You",
+                role: "assistant"
+              }
+            ],
+            messages: [
+              {
+                id: "m1",
+                author: "Jordan",
+                direction: "inbound",
+                text: "Hello"
+              }
+            ]
+          },
+          expectations: {
+            tone: {
+              required: [],
+              forbidden: []
+            },
+            length: {
+              minWords: 1,
+              maxWords: 10
+            },
+            requiredPoints: []
+          },
+          candidateDrafts: [
+            {
+              id: "b::c",
+              source: "manual",
+              text: "Hello there"
+            }
+          ]
+        },
+        {
+          id: "a::b",
+          thread: {
+            participants: [
+              {
+                id: "assistant",
+                name: "You",
+                role: "assistant"
+              }
+            ],
+            messages: [
+              {
+                id: "m2",
+                author: "Jordan",
+                direction: "inbound",
+                text: "Hi again"
+              }
+            ]
+          },
+          expectations: {
+            tone: {
+              required: [],
+              forbidden: []
+            },
+            length: {
+              minWords: 1,
+              maxWords: 10
+            },
+            requiredPoints: []
+          },
+          candidateDrafts: []
+        }
+      ]
+    });
+    const candidates = parseDraftQualityCandidateSet({
+      schemaVersion: 1,
+      drafts: [
+        {
+          caseId: "a::b",
+          id: "c",
+          source: "model",
+          text: "Hi there"
+        }
+      ]
+    });
+
+    const report = await evaluateDraftQuality({
+      dataset,
+      candidates,
+      now: FIXED_DATE,
+      run_id: "run_double_colon_ids"
+    });
+
+    expect(report.summary.total_drafts).toBe(2);
+    expect(report.cases).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ case_id: "a", draft_id: "b::c" }),
+        expect.objectContaining({ case_id: "a::b", draft_id: "c" })
+      ])
+    );
+  });
+
+  it("isolates concurrent runs from judge input mutation", async () => {
+    const dataset = parseDraftQualityDataset(createInlineDataset());
+    const judge: DraftQualityJudge = {
+      evaluate: async (input) => {
+        input.draft_case.id = "tampered_case";
+        input.draft.id = "tampered_draft";
+        input.deterministic.relevance.details.missing_point_ids.push("fake_point");
+        return {};
+      }
+    };
+
+    const [firstReport, secondReport] = await Promise.all([
+      evaluateDraftQuality({
+        dataset,
+        judge,
+        now: FIXED_DATE,
+        run_id: "run_concurrent_a"
+      }),
+      evaluateDraftQuality({
+        dataset,
+        judge,
+        now: FIXED_DATE,
+        run_id: "run_concurrent_b"
+      })
+    ]);
+
+    expect(firstReport.cases[0]).toMatchObject({
+      case_id: "inline_case_001",
+      draft_id: "manual_ok"
+    });
+    expect(secondReport.cases[0]).toMatchObject({
+      case_id: "inline_case_001",
+      draft_id: "manual_ok"
+    });
+    expect(firstReport.cases[0]?.metrics.relevance.details.missing_point_ids).not.toContain(
+      "fake_point"
+    );
+    expect(secondReport.cases[0]?.metrics.relevance.details.missing_point_ids).not.toContain(
+      "fake_point"
+    );
   });
 
   it("rejects unsupported tone labels and duplicate external draft identifiers", () => {

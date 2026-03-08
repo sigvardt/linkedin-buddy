@@ -11,6 +11,25 @@ export interface FormatDraftQualityReportOptions {
   verbose?: boolean;
 }
 
+const CONTROL_CHARACTER_PATTERN = new RegExp(
+  `[${String.fromCharCode(0)}-${String.fromCharCode(31)}${String.fromCharCode(127)}-${String.fromCharCode(159)}]+`,
+  "g"
+);
+const ANSI_ESCAPE_PATTERN = new RegExp(
+  `${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`,
+  "g"
+);
+
+function sanitizeConsoleText(value: string): string {
+  const sanitized = value
+    .replace(ANSI_ESCAPE_PATTERN, " ")
+    .replace(CONTROL_CHARACTER_PATTERN, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return sanitized.length > 0 ? sanitized : "[sanitized]";
+}
+
 function formatPercent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
 }
@@ -32,9 +51,20 @@ function appendSection(lines: string[], title: string, entries: string[]): void 
 function formatSourceCounts(report: DraftQualityReport): string | null {
   const entries = Object.entries(report.summary.source_counts)
     .filter(([, count]) => count > 0)
-    .map(([source, count]) => `${source}=${count}`);
+    .map(([source, count]) => `${sanitizeConsoleText(source)}=${count}`);
 
   return entries.length > 0 ? entries.join(" | ") : null;
+}
+
+function formatFailureCounts(report: DraftQualityReport): string {
+  return [
+    `relevance ${report.summary.failed_metric_counts.relevance}`,
+    `tone ${report.summary.failed_metric_counts.tone}`,
+    `length ${report.summary.failed_metric_counts.length}`,
+    `hard checks ${report.summary.hard_failure_count}`,
+    `judge fallbacks ${report.summary.judge_failure_count}`,
+    `warnings ${report.summary.warning_count}`
+  ].join(" | ");
 }
 
 function formatLengthExpectation(result: DraftQualityCaseResult): string {
@@ -51,22 +81,26 @@ function formatHardFailures(hardFailures: DraftQualityHardFailure[]): string | n
     return null;
   }
 
-  return hardFailures.map((failure) => failure.message).join(" | ");
+  return hardFailures.map((failure) => sanitizeConsoleText(failure.message)).join(" | ");
 }
 
 function formatFailureBlock(result: DraftQualityCaseResult): string[] {
-  const lines = [`- ${result.case_id}/${result.draft_id} (${result.draft_source})`];
-  const missingPoints = result.metrics.relevance.details.missing_point_ids;
-  const toneMissing = result.metrics.tone.details.missing;
-  const toneForbidden = result.metrics.tone.details.forbidden_triggered;
+  const lines = [
+    `- ${sanitizeConsoleText(result.case_id)}/${sanitizeConsoleText(result.draft_id)} (${sanitizeConsoleText(result.draft_source)})`
+  ];
+  const missingPoints = result.metrics.relevance.details.missing_point_ids.map(sanitizeConsoleText);
+  const toneMissing = result.metrics.tone.details.missing.map(sanitizeConsoleText);
+  const toneForbidden = result.metrics.tone.details.forbidden_triggered.map(sanitizeConsoleText);
   const hardFailures = formatHardFailures(result.overall.hard_failures);
 
   if (result.case_scenario) {
-    lines.push(`  Scenario: ${result.case_scenario}`);
+    lines.push(`  Scenario: ${sanitizeConsoleText(result.case_scenario)}`);
   }
 
   if (result.overall.failed_metrics.length > 0) {
-    lines.push(`  Overall: failed ${result.overall.failed_metrics.join(", ")}`);
+    lines.push(
+      `  Overall: failed ${result.overall.failed_metrics.map(sanitizeConsoleText).join(", ")}`
+    );
   }
 
   if (!result.metrics.relevance.passed) {
@@ -79,7 +113,7 @@ function formatFailureBlock(result: DraftQualityCaseResult): string[] {
 
   if (result.metrics.relevance.details.off_topic_signals.length > 0) {
     lines.push(
-      `  Relevance notes: ${result.metrics.relevance.details.off_topic_signals.join(" | ")}`
+      `  Relevance notes: ${result.metrics.relevance.details.off_topic_signals.map(sanitizeConsoleText).join(" | ")}`
     );
   }
 
@@ -103,7 +137,7 @@ function formatFailureBlock(result: DraftQualityCaseResult): string[] {
   }
 
   if (result.notes.length > 0) {
-    lines.push(`  Notes: ${result.notes.join(" | ")}`);
+    lines.push(`  Notes: ${result.notes.map(sanitizeConsoleText).join(" | ")}`);
   }
 
   return lines;
@@ -111,14 +145,16 @@ function formatFailureBlock(result: DraftQualityCaseResult): string[] {
 
 function formatDraftDetail(result: DraftQualityCaseResult): string[] {
   const lines = [
-    `- ${formatStatus(result.overall.passed)} ${result.case_id}/${result.draft_id} (${result.draft_source})`
+    `- ${formatStatus(result.overall.passed)} ${sanitizeConsoleText(result.case_id)}/${sanitizeConsoleText(result.draft_id)} (${sanitizeConsoleText(result.draft_source)})`
   ];
   const toneDetails = result.metrics.tone.details;
   const matchedTones =
-    toneDetails.matched.length > 0 ? toneDetails.matched.join(", ") : "none";
+    toneDetails.matched.length > 0
+      ? toneDetails.matched.map(sanitizeConsoleText).join(", ")
+      : "none";
   const optionalTones =
     toneDetails.optional_matched.length > 0
-      ? `; optional ${toneDetails.optional_matched.join(", ")}`
+      ? `; optional ${toneDetails.optional_matched.map(sanitizeConsoleText).join(", ")}`
       : "";
   const hardFailures = formatHardFailures(result.overall.hard_failures);
 
@@ -137,7 +173,7 @@ function formatDraftDetail(result: DraftQualityCaseResult): string[] {
   }
 
   if (result.notes.length > 0) {
-    lines.push(`  Notes: ${result.notes.join(" | ")}`);
+    lines.push(`  Notes: ${result.notes.map(sanitizeConsoleText).join(" | ")}`);
   }
 
   return lines;
@@ -160,12 +196,12 @@ export function formatDraftQualityReport(
 ): string {
   const lines = [`Draft Quality Evaluation: ${report.outcome.toUpperCase()}`];
 
-  lines.push(`Run: ${report.run_id}`);
+  lines.push(`Run: ${sanitizeConsoleText(report.run_id)}`);
   if (report.dataset_path) {
-    lines.push(`Dataset: ${report.dataset_path}`);
+    lines.push(`Dataset: ${sanitizeConsoleText(report.dataset_path)}`);
   }
   if (report.candidates_path) {
-    lines.push(`Candidates: ${report.candidates_path}`);
+    lines.push(`Candidates: ${sanitizeConsoleText(report.candidates_path)}`);
   }
 
   lines.push(
@@ -174,6 +210,7 @@ export function formatDraftQualityReport(
   lines.push(
     `Metric Averages: relevance ${formatPercent(report.summary.metric_averages.relevance)} | tone ${formatPercent(report.summary.metric_averages.tone)} | length ${formatPercent(report.summary.metric_averages.length)}`
   );
+  lines.push(`Failure Counts: ${formatFailureCounts(report)}`);
 
   const sources = formatSourceCounts(report);
   if (sources) {
@@ -183,7 +220,7 @@ export function formatDraftQualityReport(
   appendSection(
     lines,
     "Warnings",
-    report.warnings.map((warning) => `- ${warning}`)
+    report.warnings.map((warning) => `- ${sanitizeConsoleText(warning)}`)
   );
 
   appendSection(
@@ -211,23 +248,23 @@ function readString(payload: Record<string, unknown>, key: string): string | nul
 }
 
 export function formatDraftQualityError(error: LinkedInAssistantErrorPayload): string {
-  const lines = [`Draft quality evaluation failed: ${error.message}`];
+  const lines = [`Draft quality evaluation failed: ${sanitizeConsoleText(error.message)}`];
   const location = readString(error.details, "location") ?? readString(error.details, "path");
   const field = readString(error.details, "field");
   const caseId = readString(error.details, "case_id");
   const draftId = readString(error.details, "draft_id");
 
   if (location) {
-    lines.push(`Location: ${location}`);
+    lines.push(`Location: ${sanitizeConsoleText(location)}`);
   }
   if (field) {
-    lines.push(`Field: ${field}`);
+    lines.push(`Field: ${sanitizeConsoleText(field)}`);
   }
   if (caseId) {
-    lines.push(`Case: ${caseId}`);
+    lines.push(`Case: ${sanitizeConsoleText(caseId)}`);
   }
   if (draftId) {
-    lines.push(`Draft: ${draftId}`);
+    lines.push(`Draft: ${sanitizeConsoleText(draftId)}`);
   }
 
   return lines.join("\n");

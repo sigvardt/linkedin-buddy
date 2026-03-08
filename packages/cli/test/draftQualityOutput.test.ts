@@ -26,6 +26,14 @@ function createDraftQualityReportFixture(): DraftQualityReport {
         tone: 0.833,
         length: 1
       },
+      failed_metric_counts: {
+        relevance: 1,
+        tone: 1,
+        length: 0
+      },
+      hard_failure_count: 1,
+      judge_failure_count: 0,
+      warning_count: 1,
       source_counts: {
         manual: 1,
         model: 1,
@@ -208,6 +216,9 @@ describe("draft quality output helpers", () => {
     expect(output).toContain(
       "Metric Averages: relevance 75.0% | tone 83.3% | length 100.0%"
     );
+    expect(output).toContain(
+      "Failure Counts: relevance 1 | tone 1 | length 0 | hard checks 1 | judge fallbacks 0 | warnings 1"
+    );
     expect(output).toContain("Warnings");
     expect(output).toContain("Failures");
     expect(output).toContain("Hard checks: Draft used forbidden phrases: just circling back");
@@ -243,5 +254,20 @@ describe("draft quality output helpers", () => {
       "Draft quality evaluation failed: Draft-quality dataset must contain at least one case."
     );
     expect(output).toContain("Location: dataset.cases");
+  });
+
+  it("sanitizes terminal control characters in human-readable output", () => {
+    const report = createDraftQualityReportFixture();
+    report.run_id = "run\u001b[31mdanger";
+    report.warnings = ["Beware\nnext line\u001b[2J"];
+    report.cases[0]!.notes = ["Line one\nline two\u001b[33m"];
+
+    const output = formatDraftQualityReport(report, { verbose: true });
+
+    expect(output).not.toContain("\u001b");
+    expect(output).not.toContain("\x1b");
+    expect(output).toContain("Run: run danger");
+    expect(output).toContain("- Beware next line");
+    expect(output).toContain("Notes: Line one line two");
   });
 });
