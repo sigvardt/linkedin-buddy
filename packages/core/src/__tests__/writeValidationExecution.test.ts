@@ -310,6 +310,233 @@ describe("runLinkedInWriteValidation execution flow", () => {
     expect(bundle.runtime.close).toHaveBeenCalledTimes(1);
   });
 
+  it("stops early after a rate limit and marks remaining actions cancelled", async () => {
+    const baseDir = createTempBaseDir();
+    createRuntimeBundle(baseDir);
+
+    const rateLimitedScenario: WriteValidationScenarioDefinition = {
+      actionType: SEND_MESSAGE_ACTION_TYPE,
+      expectedOutcome: "The message is sent successfully.",
+      riskClass: "private",
+      summary: "Send a validation message.",
+      prepare: vi.fn(async () => {
+        throw new LinkedInAssistantError(
+          "RATE_LIMITED",
+          "LinkedIn asked us to slow down before sending the validation message."
+        );
+      }),
+      resolveAfterScreenshotUrl: vi.fn(() => null),
+      verify: vi.fn(async () => createVerificationResult())
+    };
+
+    const skippedScenario: WriteValidationScenarioDefinition = {
+      actionType: LIKE_POST_ACTION_TYPE,
+      expectedOutcome: "The approved reaction remains active on the target post.",
+      riskClass: "public",
+      summary: "React to the approved post.",
+      prepare: vi.fn(async () => {
+        throw new Error("remaining scenario should not start");
+      }),
+      resolveAfterScreenshotUrl: vi.fn(() => null),
+      verify: vi.fn(async () => createVerificationResult())
+    };
+
+    writeValidationExecutionMocks.scenarios.push(rateLimitedScenario, skippedScenario);
+
+    const report = await runLinkedInWriteValidation({
+      accountId: "secondary",
+      baseDir,
+      cooldownMs: 0,
+      interactive: true
+    });
+
+    expect(report.outcome).toBe("fail");
+    expect(report.fail_count).toBe(1);
+    expect(report.cancelled_count).toBe(1);
+    expect(report.actions).toEqual([
+      expect.objectContaining({
+        action_type: SEND_MESSAGE_ACTION_TYPE,
+        error_code: "RATE_LIMITED",
+        status: "fail"
+      }),
+      expect.objectContaining({
+        action_type: LIKE_POST_ACTION_TYPE,
+        error_code: "RATE_LIMITED",
+        status: "cancelled"
+      })
+    ]);
+    expect(skippedScenario.prepare).not.toHaveBeenCalled();
+    expect(report.recommended_actions).toContain(
+      'Wait for LinkedIn to lift rate limiting on session "secondary-session" before rerunning write validation.'
+    );
+  });
+
+  it("validates scenario config before creating the runtime", async () => {
+    const baseDir = createTempBaseDir();
+
+    const scenario: WriteValidationScenarioDefinition = {
+      actionType: SEND_MESSAGE_ACTION_TYPE,
+      expectedOutcome: "The outbound message is echoed in the approved thread.",
+      riskClass: "private",
+      summary: "Send a validation message in the approved thread.",
+      validateConfig: vi.fn(() => {
+        throw new LinkedInAssistantError(
+          "ACTION_PRECONDITION_FAILED",
+          'Write-validation account "secondary" is missing targets.send_message in config.json.'
+        );
+      }),
+      prepare: vi.fn(async () => {
+        throw new Error("prepare should not run");
+      }),
+      resolveAfterScreenshotUrl: vi.fn(() => null),
+      verify: vi.fn(async () => createVerificationResult())
+    };
+
+    writeValidationExecutionMocks.scenarios.push(scenario);
+
+    await expect(
+      runLinkedInWriteValidation({
+        accountId: "secondary",
+        baseDir,
+        cooldownMs: 0,
+        interactive: true
+      })
+    ).rejects.toThrow('Write-validation account "secondary" is missing targets.send_message in config.json.');
+
+    expect(writeValidationExecutionMocks.createWriteValidationRuntime).not.toHaveBeenCalled();
+    expect(scenario.prepare).not.toHaveBeenCalled();
+  });
+
+  it("continues when screenshot capture fails and records warnings", async () => {
+    const baseDir = createTempBaseDir();
+    const bundle = createRuntimeBundle(baseDir);
+
+    bundle.profileManager.capturePageScreenshot
+      .mockRejectedValueOnce(
+        new LinkedInAssistantError("TIMEOUT", "before screenshot timed out")
+      )
+      .mockRejectedValueOnce(
+        new LinkedInAssistantError("TIMEOUT", "before screenshot timed out")
+      )
+      .mockResolvedValueOnce("send_message-after.png");
+
+    const scenario: WriteValidationScenarioDefinition = {
+      actionType: SEND_MESSAGE_ACTION_TYPE,
+      expectedOutcome: "The outbound message is echoed in the approved thread.",
+      riskClass: "private",
+      summary: "Send a validation message in the approved thread.",
+      prepare: vi.fn(async () => ({
+        beforeScreenshotUrl: "https://www.linkedin.com/messaging/thread/abc123/",
+        cleanupGuidance: [],
+        prepared: createPreparedActionResult({
+          preview: {
+            outbound: {
+              text: "Quick validation ping"
+            },
+            target: {
+              thread: "abc123"
+            }
+          }
+        }),
+        verificationContext: {}
+      })),
+      resolveAfterScreenshotUrl: vi.fn(() => "https://www.linkedin.com/messaging/thread/abc123/"),
+      verify: vi.fn(async () => createVerificationResult())
+    };
+
+    writeValidationExecutionMocks.scenarios.push(scenario);
+    bundle.runtime.twoPhaseCommit.confirmByToken.mockResolvedValue(
+      createConfirmResult({
+        result: {
+          sent: true
+        }
+      })
+    );
+
+    const report = await runLinkedInWriteValidation({
+      accountId: "secondary",
+      baseDir,
+      cooldownMs: 0,
+      interactive: true
+    });
+
+    expect(report.outcome).toBe("pass");
+    expect(report.actions).toEqual([
+      expect.objectContaining({
+        action_type: SEND_MESSAGE_ACTION_TYPE,
+        after_screenshot_paths: ["send_message-after.png"],
+        before_screenshot_paths: [],
+        status: "pass",
+        warnings: expect.arrayContaining([
+          "Retried 1 time before capturing the pre-action screenshot still failed.",
+          "before screenshot timed out"
+        ])
+      })
+    ]);
+    expect(bundle.runtime.twoPhaseCommit.confirmByToken).toHaveBeenCalledTimes(1);
+    expect(scenario.verify).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks concurrent runs for the same account", async () => {
+    const baseDir = createTempBaseDir();
+    createRuntimeBundle(baseDir);
+
+    let promptEnteredResolve: (() => void) | undefined;
+    let releaseFirstRunResolve: ((value: boolean) => void) | undefined;
+    const promptEntered = new Promise<void>((resolve) => {
+      promptEnteredResolve = resolve;
+    });
+    const releaseFirstRun = new Promise<boolean>((resolve) => {
+      releaseFirstRunResolve = resolve;
+    });
+
+    const scenario: WriteValidationScenarioDefinition = {
+      actionType: SEND_MESSAGE_ACTION_TYPE,
+      expectedOutcome: "The outbound message is echoed in the approved thread.",
+      riskClass: "private",
+      summary: "Send a validation message in the approved thread.",
+      prepare: vi.fn(async () => ({
+        beforeScreenshotUrl: "https://www.linkedin.com/messaging/thread/abc123/",
+        cleanupGuidance: [],
+        prepared: createPreparedActionResult(),
+        verificationContext: {}
+      })),
+      resolveAfterScreenshotUrl: vi.fn(() => null),
+      verify: vi.fn(async () => createVerificationResult())
+    };
+
+    writeValidationExecutionMocks.scenarios.push(scenario);
+
+    const firstRun = runLinkedInWriteValidation({
+      accountId: "secondary",
+      baseDir,
+      cooldownMs: 0,
+      interactive: true,
+      onBeforeAction: async () => {
+        promptEnteredResolve?.();
+        return releaseFirstRun;
+      }
+    });
+
+    await promptEntered;
+
+    await expect(
+      runLinkedInWriteValidation({
+        accountId: "secondary",
+        baseDir,
+        cooldownMs: 0,
+        interactive: true
+      })
+    ).rejects.toThrow('Write validation is already running for account "secondary"');
+
+    releaseFirstRunResolve?.(false);
+    await expect(firstRun).resolves.toMatchObject({
+      cancelled_count: 1,
+      outcome: "cancelled"
+    });
+    expect(writeValidationExecutionMocks.createWriteValidationRuntime).toHaveBeenCalledTimes(1);
+  });
+
   it("records cancelled actions when the operator declines execution", async () => {
     const baseDir = createTempBaseDir();
     const bundle = createRuntimeBundle(baseDir);

@@ -130,6 +130,24 @@ describe("write validation output", () => {
     `);
   });
 
+  it("renders failure stages and warnings when present", () => {
+    const report = createReportFixture("fail");
+    report.actions[0] = {
+      ...report.actions[0],
+      failure_stage: "verify",
+      warnings: [
+        "Recovered after 1 transient retry while verifying the LinkedIn outcome."
+      ]
+    };
+
+    const output = formatWriteValidationReport(report);
+
+    expect(output).toContain("stage: verify");
+    expect(output).toContain(
+      "warning: Recovered after 1 transient retry while verifying the LinkedIn outcome."
+    );
+  });
+
   it("formats validation errors with details and help guidance", () => {
     const error: LinkedInAssistantErrorPayload = {
       code: "ACTION_PRECONDITION_FAILED",

@@ -261,12 +261,51 @@ function normalizeAccountId(value: string, label: string): string {
   return assertLocalIdentifier(value, label);
 }
 
+function isLinkedInHost(hostname: string): boolean {
+  const normalizedHost = hostname.trim().toLowerCase();
+  return normalizedHost === "linkedin.com" || normalizedHost.endsWith(".linkedin.com");
+}
+
 function normalizeThreadTarget(value: unknown, label: string): string {
   const normalized = assertNonEmptyString(value, label);
+
   if (normalized.startsWith("/messaging/thread/")) {
     return `https://www.linkedin.com${normalized}`;
   }
-  return normalized;
+
+  if (!/^https?:\/\//iu.test(normalized)) {
+    return `https://www.linkedin.com/messaging/thread/${encodeURIComponent(normalized)}/`;
+  }
+
+  let parsedUrl: URL;
+
+  try {
+    parsedUrl = new URL(normalized);
+  } catch (error) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `${label} must be a valid LinkedIn messaging thread URL or thread id.`,
+      {
+        label,
+        provided_value: value,
+        message: error instanceof Error ? error.message : String(error)
+      },
+      error instanceof Error ? { cause: error } : undefined
+    );
+  }
+
+  if (!isLinkedInHost(parsedUrl.hostname) || !parsedUrl.pathname.startsWith("/messaging/thread/")) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `${label} must be a LinkedIn messaging thread URL or thread id.`,
+      {
+        label,
+        provided_value: value
+      }
+    );
+  }
+
+  return `${parsedUrl.origin}${parsedUrl.pathname}${parsedUrl.search}`.replace(/\/$/u, "/");
 }
 
 function normalizePostUrl(value: unknown, label: string): string {
@@ -277,8 +316,23 @@ function normalizePostUrl(value: unknown, label: string): string {
 
   try {
     const parsed = new URL(normalized);
+    if (!isLinkedInHost(parsed.hostname)) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        `${label} must be a valid LinkedIn post URL.`,
+        {
+          label,
+          provided_value: value
+        }
+      );
+    }
+
     return parsed.toString();
   } catch (error) {
+    if (error instanceof LinkedInAssistantError) {
+      throw error;
+    }
+
     throw new LinkedInAssistantError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a valid LinkedIn post URL.`,

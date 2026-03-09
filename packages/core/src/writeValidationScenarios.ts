@@ -136,6 +136,12 @@ export const WRITE_VALIDATION_SCENARIOS = [
     expectedOutcome:
       "A new post is published successfully and visible in the feed.",
     riskClass: "public",
+    validateConfig(account) {
+      void normalizeLinkedInPostVisibility(
+        account.targets["post.create"]?.visibility,
+        "connections"
+      );
+    },
     async prepare(runtime, account) {
       const visibility = normalizeLinkedInPostVisibility(
         account.targets["post.create"]?.visibility,
@@ -214,6 +220,12 @@ export const WRITE_VALIDATION_SCENARIOS = [
     expectedOutcome:
       "The approved profile shows a pending invitation or sent-invitation confirmation.",
     riskClass: "network",
+    validateConfig(account) {
+      void getRequiredTarget<{
+        note?: string;
+        targetProfile: string;
+      }>(account.targets, "connections.send_invitation", account.id);
+    },
     async prepare(runtime, account) {
       const target = getRequiredTarget<{
         note?: string;
@@ -289,6 +301,13 @@ export const WRITE_VALIDATION_SCENARIOS = [
     expectedOutcome:
       "The outbound message is echoed in the approved conversation thread.",
     riskClass: "private",
+    validateConfig(account) {
+      const target = getRequiredTarget<{
+        participantPattern?: string;
+        thread: string;
+      }>(account.targets, "send_message", account.id);
+      void resolveThreadUrl(target.thread);
+    },
     async prepare(runtime, account) {
       const target = getRequiredTarget<{
         participantPattern?: string;
@@ -362,6 +381,11 @@ export const WRITE_VALIDATION_SCENARIOS = [
     expectedOutcome:
       "The follow-up send succeeds and local follow-up state records the confirmation.",
     riskClass: "network",
+    validateConfig(account) {
+      void getRequiredTarget<{
+        profileUrlKey: string;
+      }>(account.targets, "network.followup_after_accept", account.id);
+    },
     async prepare(runtime, account) {
       const target = getRequiredTarget<{
         profileUrlKey: string;
@@ -451,6 +475,13 @@ export const WRITE_VALIDATION_SCENARIOS = [
       "React to the approved post and verify the reaction is registered.",
     expectedOutcome: "The approved reaction is active on the approved post.",
     riskClass: "public",
+    validateConfig(account) {
+      const target = getRequiredTarget<{
+        postUrl: string;
+        reaction?: LinkedInFeedReaction;
+      }>(account.targets, "feed.like_post", account.id);
+      void normalizeLinkedInFeedReaction(target.reaction, "like");
+    },
     async prepare(runtime, account) {
       const target = getRequiredTarget<{
         postUrl: string;

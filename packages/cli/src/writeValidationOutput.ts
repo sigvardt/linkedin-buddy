@@ -152,8 +152,16 @@ function formatActionDetails(action: WriteValidationActionResult): string[] {
     );
   }
 
+  if (action.failure_stage) {
+    detailLines.push(`  stage: ${sanitizeConsoleText(action.failure_stage)}`);
+  }
+
   if (action.error_message) {
     detailLines.push(`  error: ${sanitizeConsoleText(action.error_message)}`);
+  }
+
+  for (const warning of action.warnings ?? []) {
+    detailLines.push(`  warning: ${sanitizeConsoleText(warning)}`);
   }
 
   const beforePaths = formatArtifactPathList("before", action.before_screenshot_paths);
