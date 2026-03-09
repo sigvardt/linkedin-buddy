@@ -51,7 +51,10 @@ import {
   type WriteValidationVerificationResult
 } from "./writeValidationShared.js";
 
+/** Public action metadata for the fixed Tier 3 scenario suite. */
 export { LINKEDIN_WRITE_VALIDATION_ACTIONS } from "./writeValidationScenarios.js";
+
+/** Public report and API types for custom Tier 3 harness integrations. */
 export type {
   LinkedInWriteValidationActionType,
   LinkedInWriteValidationActionDefinition,
@@ -497,6 +500,7 @@ function assertInteractiveWriteValidation(input: { interactive?: boolean }): voi
   }
 }
 
+/** Validates and normalizes core write-validation options before execution starts. */
 export function validateWriteValidationOptions(
   options: RunLinkedInWriteValidationOptions
 ): ValidatedWriteValidationOptions {
@@ -1698,6 +1702,12 @@ async function cleanupWriteValidationResources(input: {
   }
 }
 
+/**
+ * Runs the full Tier 3 write-validation harness against one registered account.
+ *
+ * The harness performs real LinkedIn actions, writes JSON and HTML reports,
+ * updates the rolling latest snapshot, and returns the structured run report.
+ */
 export async function runLinkedInWriteValidation(
   options: RunLinkedInWriteValidationOptions
 ): Promise<WriteValidationReport> {
@@ -1917,6 +1927,7 @@ export async function runLinkedInWriteValidation(
   }
 }
 
+/** Returns the public action metadata list without exposing the scenario implementations. */
 export function getWriteValidationActionDefinitions(): readonly LinkedInWriteValidationActionDefinition[] {
   return LINKEDIN_WRITE_VALIDATION_ACTIONS;
 }

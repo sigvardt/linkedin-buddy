@@ -128,6 +128,7 @@ function extractRecentMessageText(messages: readonly { text: string }[]): string
   return lastMessage ? normalizeText(lastMessage.text) : null;
 }
 
+/** Fixed write-validation scenarios executed by the Tier 3 harness in order. */
 export const WRITE_VALIDATION_SCENARIOS = [
   {
     actionType: CREATE_POST_ACTION_TYPE,
@@ -532,6 +533,7 @@ export const WRITE_VALIDATION_SCENARIOS = [
   }
 ] satisfies readonly WriteValidationScenarioDefinition[];
 
+/** Public metadata projection derived from the full scenario implementations. */
 export const LINKEDIN_WRITE_VALIDATION_ACTIONS: readonly LinkedInWriteValidationActionDefinition[] =
   WRITE_VALIDATION_SCENARIOS.map(
     ({ actionType, expectedOutcome, riskClass, summary }) => ({

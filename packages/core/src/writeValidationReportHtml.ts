@@ -197,6 +197,7 @@ function renderActionCard(
   ].join("");
 }
 
+/** Renders a standalone HTML review report for one completed write-validation run. */
 export function renderWriteValidationReportHtml(report: WriteValidationReport): string {
   const runDir = resolveRunDir(report);
   const htmlReportPath = report.html_report_path ?? path.join(path.dirname(report.report_path), "report.html");

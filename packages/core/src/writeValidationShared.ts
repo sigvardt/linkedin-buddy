@@ -17,20 +17,41 @@ import type {
 } from "./twoPhaseCommit.js";
 import type { WriteValidationAccount } from "./writeValidationAccounts.js";
 
+/** Canonical action key used for validated outbound inbox replies. */
 export const SEND_MESSAGE_ACTION_TYPE = "send_message";
+
+/** Operator-facing warning emitted before the harness performs real LinkedIn writes. */
 export const WRITE_VALIDATION_WARNING =
   "This will perform REAL actions on LinkedIn.";
+
+/** Run-relative artifact directory used for Tier 3 reports, screenshots, and report assets. */
 export const WRITE_VALIDATION_REPORT_DIR = "live-write-validation";
+
+/** Stable filename used for the account-level rolling latest snapshot. */
 export const WRITE_VALIDATION_LATEST_REPORT_NAME = "latest-report.json";
+
+/** Default safety pause inserted between consecutive write-validation actions. */
 export const DEFAULT_WRITE_VALIDATION_COOLDOWN_MS = 10_000;
+
+/** Default navigation and selector timeout for stored-session write validation. */
 export const DEFAULT_WRITE_VALIDATION_TIMEOUT_MS = 30_000;
+
+/** Default retry count for recoverable write-validation stage failures. */
 export const DEFAULT_WRITE_VALIDATION_MAX_RETRIES = 1;
+
+/** Initial exponential-backoff delay for recoverable write-validation retries. */
 export const DEFAULT_WRITE_VALIDATION_RETRY_BASE_DELAY_MS = 1_000;
+
+/** Upper bound for exponential-backoff delay during write-validation retries. */
 export const DEFAULT_WRITE_VALIDATION_RETRY_MAX_DELAY_MS = 5_000;
+
+/** Feed URL used as the authenticated landing page and default screenshot baseline. */
 export const WRITE_VALIDATION_FEED_URL = "https://www.linkedin.com/feed/";
 
+/** Visibility bucket used to communicate the operator risk of a write action. */
 export type WriteValidationRiskClass = "private" | "network" | "public";
 
+/** Union of every action type supported by the Tier 3 write-validation harness. */
 export type LinkedInWriteValidationActionType =
   | typeof CREATE_POST_ACTION_TYPE
   | typeof SEND_INVITATION_ACTION_TYPE
@@ -38,8 +59,13 @@ export type LinkedInWriteValidationActionType =
   | typeof FOLLOWUP_AFTER_ACCEPT_ACTION_TYPE
   | typeof LIKE_POST_ACTION_TYPE;
 
+/** Per-action status recorded in the final write-validation report. */
 export type WriteValidationResultStatus = "pass" | "fail" | "cancelled";
+
+/** Overall run outcome derived from the set of per-action statuses. */
 export type WriteValidationOutcome = WriteValidationResultStatus;
+
+/** Lifecycle stage used for progress events, retries, and failure attribution. */
 export type WriteValidationActionStage =
   | "prepare"
   | "prompt"
@@ -48,6 +74,7 @@ export type WriteValidationActionStage =
   | "after_screenshot"
   | "verify";
 
+/** Public metadata advertised for one supported write-validation scenario. */
 export interface LinkedInWriteValidationActionDefinition {
   actionType: LinkedInWriteValidationActionType;
   expectedOutcome: string;
@@ -55,6 +82,7 @@ export interface LinkedInWriteValidationActionDefinition {
   summary: string;
 }
 
+/** Preview payload shown to the operator before confirming a real action. */
 export interface WriteValidationActionPreview {
   action_type: LinkedInWriteValidationActionType;
   expected_outcome: string;
@@ -64,6 +92,7 @@ export interface WriteValidationActionPreview {
   target: Record<string, unknown>;
 }
 
+/** Verification result returned after a scenario confirms the prepared action. */
 export interface WriteValidationVerificationResult {
   details: Record<string, unknown>;
   message: string;
@@ -72,6 +101,7 @@ export interface WriteValidationVerificationResult {
   verified: boolean;
 }
 
+/** Persisted report row describing one action attempt in a write-validation run. */
 export interface WriteValidationActionResult {
   action_type: LinkedInWriteValidationActionType;
   after_screenshot_paths: string[];
@@ -103,6 +133,7 @@ export interface WriteValidationActionResult {
   warnings?: string[];
 }
 
+/** Top-level report contract written to JSON, surfaced in the CLI, and rendered to HTML. */
 export interface WriteValidationReport {
   account: {
     designation: WriteValidationAccount["designation"];
@@ -131,6 +162,7 @@ export interface WriteValidationReport {
   warning: string;
 }
 
+/** Core API options for running the Tier 3 write-validation harness. */
 export interface RunLinkedInWriteValidationOptions {
   accountId: string;
   baseDir?: string;
@@ -146,6 +178,7 @@ export interface RunLinkedInWriteValidationOptions {
   timeoutMs?: number;
 }
 
+/** Data a scenario prepare step must return for confirmation, screenshots, and verification. */
 export interface ScenarioPrepareResult {
   beforeScreenshotUrl?: string;
   cleanupGuidance: string[];
@@ -153,6 +186,7 @@ export interface ScenarioPrepareResult {
   verificationContext: Record<string, unknown>;
 }
 
+/** Full contract implemented by each real-action scenario in the fixed Tier 3 suite. */
 export interface WriteValidationScenarioDefinition
   extends LinkedInWriteValidationActionDefinition {
   prepare: (
@@ -173,22 +207,27 @@ export interface WriteValidationScenarioDefinition
   ) => Promise<WriteValidationVerificationResult>;
 }
 
+/** Returns whether a value is a plain object rather than `null` or an array. */
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** Trims text and collapses internal whitespace for stable comparisons and output. */
 export function normalizeText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/gu, " ").trim();
 }
 
+/** Removes blank strings and duplicates while preserving the first-seen order. */
 export function dedupeStrings(values: readonly string[]): string[] {
   return [...new Set(values.filter((value) => value.trim().length > 0))];
 }
 
+/** Returns whether an artifact path points at a captured PNG screenshot. */
 export function isScreenshotPath(value: string): boolean {
   return /\.png$/iu.test(value.trim());
 }
 
+/** Extracts artifact paths from a prepared-action preview payload when available. */
 export function readPreviewArtifacts(preview: Record<string, unknown>): string[] {
   const artifacts = preview.artifacts;
   if (!Array.isArray(artifacts)) {
@@ -207,6 +246,7 @@ export function readPreviewArtifacts(preview: Record<string, unknown>): string[]
     .filter((artifactPath): artifactPath is string => typeof artifactPath === "string");
 }
 
+/** Normalizes a prepared action into the public preview payload shown to operators. */
 export function buildPreview(
   scenario: WriteValidationScenarioDefinition,
   prepared: PreparedActionResult
@@ -226,6 +266,7 @@ export function buildPreview(
   };
 }
 
+/** Maps a verification result to the final status stored for an action. */
 export function determineActionStatus(
   verification: WriteValidationVerificationResult
 ): WriteValidationResultStatus {
@@ -236,6 +277,7 @@ export function determineActionStatus(
   return "pass";
 }
 
+/** Tallies pass, fail, and cancelled counts across a set of action results. */
 export function countActionStatuses(
   actions: readonly WriteValidationActionResult[]
 ): {
@@ -263,6 +305,7 @@ export function countActionStatuses(
   );
 }
 
+/** Resolves the run outcome, with `fail` taking precedence over `cancelled` and `pass`. */
 export function determineOutcome(
   actions: readonly WriteValidationActionResult[]
 ): WriteValidationOutcome {
@@ -277,6 +320,7 @@ export function determineOutcome(
   return "pass";
 }
 
+/** Builds the one-line human-readable summary used by Tier 3 reports and CLI output. */
 export function buildWriteValidationSummary(
   report: Pick<
     WriteValidationReport,
@@ -293,6 +337,7 @@ export function buildWriteValidationSummary(
   return `${parts.join(" ")} Overall outcome: ${report.outcome}.`;
 }
 
+/** Derives follow-up guidance from report paths, cleanup steps, and common failure modes. */
 export function buildRecommendedActions(
   report: Pick<WriteValidationReport, "actions" | "report_path" | "audit_log_path" | "account">
 ): string[] {
@@ -338,11 +383,13 @@ export function buildRecommendedActions(
   return dedupeStrings(actions);
 }
 
+/** Writes pretty JSON with a trailing newline, creating parent directories as needed. */
 export async function writeJsonFile(filePath: string, value: unknown): Promise<void> {
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
+/** Projects an internal account record into the report-safe account payload. */
 export function buildWriteValidationReportAccount(
   account: WriteValidationAccount
 ): WriteValidationReport["account"] {

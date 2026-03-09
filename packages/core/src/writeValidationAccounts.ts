@@ -18,37 +18,45 @@ import {
 
 const LINKEDIN_ASSISTANT_CONFIG_FILENAME = "config.json";
 
+/** Allowed account designations for write-validation registry entries. */
 export const WRITE_VALIDATION_ACCOUNT_DESIGNATIONS = [
   "primary",
   "secondary"
 ] as const;
 
+/** Designation assigned to a write-validation account in persisted config. */
 export type WriteValidationAccountDesignation =
   (typeof WRITE_VALIDATION_ACCOUNT_DESIGNATIONS)[number];
 
+/** Approved target configuration for the `send_message` scenario. */
 export interface WriteValidationMessageTargetConfig {
   thread: string;
   participantPattern?: string;
 }
 
+/** Approved target configuration for the `connections.send_invitation` scenario. */
 export interface WriteValidationConnectionTargetConfig {
   note?: string;
   targetProfile: string;
 }
 
+/** Approved target configuration for the `network.followup_after_accept` scenario. */
 export interface WriteValidationFollowupTargetConfig {
   profileUrlKey: string;
 }
 
+/** Approved target configuration for the `feed.like_post` scenario. */
 export interface WriteValidationReactionTargetConfig {
   postUrl: string;
   reaction?: LinkedInFeedReaction;
 }
 
+/** Approved target configuration for the `post.create` scenario. */
 export interface WriteValidationPostTargetConfig {
   visibility?: LinkedInPostVisibility;
 }
 
+/** Per-scenario approved targets persisted for one write-validation account. */
 export interface WriteValidationAccountTargets {
   "connections.send_invitation"?: WriteValidationConnectionTargetConfig;
   "feed.like_post"?: WriteValidationReactionTargetConfig;
@@ -57,6 +65,7 @@ export interface WriteValidationAccountTargets {
   send_message?: WriteValidationMessageTargetConfig;
 }
 
+/** Resolved write-validation account record used by the Tier 3 harness. */
 export interface WriteValidationAccount {
   id: string;
   designation: WriteValidationAccountDesignation;
@@ -66,11 +75,13 @@ export interface WriteValidationAccount {
   targets: WriteValidationAccountTargets;
 }
 
+/** Loaded registry plus the config path it came from. */
 export interface WriteValidationAccountRegistry {
   accounts: Record<string, WriteValidationAccount>;
   configPath: string;
 }
 
+/** Input contract for creating or replacing a persisted write-validation account. */
 export interface UpsertWriteValidationAccountInput {
   accountId: string;
   baseDir?: string;
@@ -548,6 +559,7 @@ function serializeAccount(account: WriteValidationAccount): JsonRecord {
   };
 }
 
+/** Loads and normalizes the write-validation account registry from config.json. */
 export function loadWriteValidationAccounts(
   baseDir?: string
 ): WriteValidationAccountRegistry {
@@ -590,6 +602,7 @@ export function loadWriteValidationAccounts(
   };
 }
 
+/** Resolves one account by id or throws a structured error when it is missing. */
 export function resolveWriteValidationAccount(
   accountId: string,
   baseDir?: string
@@ -612,6 +625,7 @@ export function resolveWriteValidationAccount(
   );
 }
 
+/** Persists a write-validation account entry and returns the refreshed registry view. */
 export async function upsertWriteValidationAccount(
   input: UpsertWriteValidationAccountInput
 ): Promise<WriteValidationAccountRegistry> {
