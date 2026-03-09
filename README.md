@@ -249,39 +249,65 @@ Failures
 
 ### Live read-only validation
 
-Live read-only validation is a human-triggered smoke test for the production
+Live read-only validation is the Tier 2 smoke test for the production
 LinkedIn UI. It uses an encrypted stored browser session, verifies only
 read-only surfaces, blocks non-GET traffic during the run, and records a local
 report with selector matches, failures, timings, and regressions versus the
 previous run.
 
-See `docs/live-validation.md` for the full workflow.
+Examples below use the `linkedin` binary; `owa` is an equivalent alias.
+See `docs/live-validation.md` for the operator guide and
+`docs/live-validation-architecture.md` for the pipeline internals.
 
 ```bash
-# Capture an encrypted stored session from a manual login
-npm exec -w @linkedin-assistant/cli -- owa auth:session --session smoke
+# Capture or refresh an encrypted stored session from a manual login
+npm exec -w @linkedin-assistant/cli -- linkedin auth session --session smoke
 
-# Run the read-only smoke test interactively
-npm exec -w @linkedin-assistant/cli -- owa test:live --read-only --session smoke
+# Run the smoke test interactively with per-step prompts
+npm exec -w @linkedin-assistant/cli -- linkedin test live --read-only --session smoke
 
-# Skip per-step confirmations but keep every guardrail enabled
-npm exec -w @linkedin-assistant/cli -- owa test:live --read-only --session smoke --yes --json
+# Keep the human-readable summary and progress output, but skip prompts
+npm exec -w @linkedin-assistant/cli -- linkedin test live --read-only --session smoke --yes
+
+# Emit structured JSON for CI or scripts
+npm exec -w @linkedin-assistant/cli -- linkedin test live --read-only --session smoke --yes --json
+
+# Inspect one operation from the JSON output
+npm exec -w @linkedin-assistant/cli -- linkedin test live --read-only --session smoke --yes --json | jq '.operations[] | select(.operation == "notifications")'
 ```
 
-- `owa auth:session` opens a dedicated browser window, waits for a manual
+- `linkedin auth session` opens a dedicated browser window, waits for a manual
   LinkedIn login, and stores Playwright session state encrypted at rest under
   the tool-owned profile directory.
-- `owa test:live --read-only` validates the feed, profile, notifications,
+- `linkedin test live --read-only` validates the feed, profile, notifications,
   messaging, and connections surfaces only.
-- Interactive mode pauses before every step; `--yes` keeps the run read-only
-  and only skips the confirmation prompts.
+- `--session <name>` selects the encrypted stored session created by
+  `linkedin auth session`.
+- Interactive TTYs default to a human-readable report plus per-step progress;
+  non-interactive terminals default to JSON. `--json` forces machine-readable
+  output, while `--no-progress` hides progress lines in human mode.
+- There is no separate `--verbose` flag for this command; human mode already
+  prints the most detailed built-in view.
+- `--yes` skips per-step confirmation prompts only; it does not relax any
+  read-only guardrails.
 - The live validator enforces a minimum 5-second gap between steps and a
   maximum of 20 steps per session.
+- The CLI always runs the fixed five-step suite in order: `feed`, `profile`,
+  `notifications`, `inbox`, and `connections`. To focus on one step, filter
+  the JSON report or call the Core API from a custom harness.
 - Any session expiry, challenge, captcha, or unexpected redirect stops the run.
-- The validator writes a run-scoped JSON report and updates a stable
-  `latest-report.json` snapshot used for regression diffing on the next run.
+- Reports live under `LINKEDIN_ASSISTANT_HOME`, including the run-scoped
+  `artifacts/<run-id>/live-readonly/report.json`, the corresponding
+  `artifacts/<run-id>/events.jsonl`, and the rolling
+  `artifacts/live-readonly/latest-report.json` snapshot used for regression
+  diffing.
 - If the stored session is missing or expired in an interactive terminal, the
-  CLI prompts to refresh it via `owa auth:session` and retries once.
+  CLI prompts to refresh it via `linkedin auth session` and retries once.
+- Exit codes: `0` when all steps pass, `1` when one or more steps fail
+  (including partial reports after a later blocking failure), and `2` when the
+  run cannot complete because of preflight, session, or runtime errors.
+- Set `PLAYWRIGHT_EXECUTABLE_PATH` if Playwright cannot find Chromium on the
+  current machine.
 
 ### Draft quality evaluation
 

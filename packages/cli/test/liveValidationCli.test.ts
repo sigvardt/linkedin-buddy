@@ -417,7 +417,7 @@ describe("linkedin live validation CLI", () => {
     expect(liveValidationCliMocks.runReadOnlyLinkedInLiveValidation).toHaveBeenCalledTimes(2);
   });
 
-  it("documents live validation help with progress controls and exit codes", async () => {
+  it("documents live validation help with workflow, configuration, and examples", async () => {
     const readHelpOutput = async (argv: string[]): Promise<string> => {
       const stdoutChunks: string[] = [];
       const stdoutWriteSpy = vi
@@ -469,7 +469,13 @@ describe("linkedin live validation CLI", () => {
     expect(liveHelp).toContain(
       "interactive terminals default to a human-readable summary with per-step progress"
     );
+    expect(liveHelp).toContain("-s, --session <session>");
+    expect(liveHelp).toMatch(/Stored session name captured by linkedin auth\s+session/);
+    expect(liveHelp).toContain("LINKEDIN_ASSISTANT_HOME");
+    expect(liveHelp).toContain("PLAYWRIGHT_EXECUTABLE_PATH");
+    expect(liveHelp).toContain("linkedin auth session --session smoke");
     expect(liveHelp).toContain("linkedin test live --read-only");
+    expect(liveHelp).toContain("docs/live-validation.md");
     expect(aliasHelp).toContain("--no-progress");
     expect(authHelp).toContain("linkedin auth session");
     expect(authHelp).toContain("linkedin auth:session");
