@@ -3,6 +3,7 @@ import {
   ReadOnlyOperationRateLimiter,
   computeReadOnlyValidationDiff,
   isAllowedLinkedInReadOnlyRequest,
+  runReadOnlyLinkedInLiveValidation,
   type ReadOnlyValidationOperationResult,
   type ReadOnlyValidationReport
 } from "../liveValidation.js";
@@ -12,6 +13,7 @@ function createOperationResult(
   selectorResults: ReadOnlyValidationOperationResult["selector_results"]
 ): ReadOnlyValidationOperationResult {
   return {
+    attempt_count: 1,
     completed_at: "2026-03-09T10:00:05.000Z",
     failed_count: selectorResults.filter((result) => result.status === "fail").length,
     final_url: `https://www.linkedin.com/${operation}/`,
@@ -65,6 +67,35 @@ describe("read-only live validation helpers", () => {
         "GET"
       )
     ).toBe(false);
+    expect(
+      isAllowedLinkedInReadOnlyRequest(
+        "wss://evil.example/socket",
+        "GET"
+      )
+    ).toBe(false);
+    expect(
+      isAllowedLinkedInReadOnlyRequest(
+        "data:text/html,<html></html>",
+        "GET"
+      )
+    ).toBe(false);
+  });
+
+  it("rejects non-integer core options before loading any stored session", async () => {
+    await expect(
+      runReadOnlyLinkedInLiveValidation({ timeoutMs: 0.5 })
+    ).rejects.toThrow("timeoutMs must be a positive integer.");
+    await expect(
+      runReadOnlyLinkedInLiveValidation({ maxRetries: -1 })
+    ).rejects.toThrow("maxRetries must be a non-negative integer.");
+    await expect(
+      runReadOnlyLinkedInLiveValidation({
+        retryBaseDelayMs: 2_000,
+        retryMaxDelayMs: 1_000
+      })
+    ).rejects.toThrow(
+      "retryMaxDelayMs must be greater than or equal to retryBaseDelayMs."
+    );
   });
 
   it("counts every selector result as unchanged when no previous report exists", () => {
