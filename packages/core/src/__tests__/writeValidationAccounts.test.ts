@@ -106,4 +106,86 @@ describe("write-validation account registry", () => {
       `writeValidation.accounts in ${configPath} must be a JSON object.`
     );
   });
+
+  it("rejects malformed config files with the config path in the error", () => {
+    const baseDir = createTempBaseDir();
+    const configPath = path.join(baseDir, "config.json");
+
+    writeFileSync(configPath, "{ not-valid-json\n", "utf8");
+
+    expect(() => loadWriteValidationAccounts(baseDir)).toThrow(
+      `Failed to parse LinkedIn assistant config file at ${configPath}.`
+    );
+  });
+
+  it("lists updated accounts after overwrite and blocks accidental replacement", async () => {
+    const baseDir = createTempBaseDir();
+
+    await upsertWriteValidationAccount({
+      accountId: "secondary",
+      baseDir,
+      designation: "secondary",
+      label: "Secondary One"
+    });
+
+    await expect(
+      upsertWriteValidationAccount({
+        accountId: "secondary",
+        baseDir,
+        designation: "secondary",
+        label: "Secondary Two"
+      })
+    ).rejects.toThrow(
+      'Write-validation account "secondary" already exists. Rerun with overwrite enabled to replace it.'
+    );
+
+    const registry = await upsertWriteValidationAccount({
+      accountId: "secondary",
+      baseDir,
+      designation: "secondary",
+      label: "Secondary Two",
+      overwrite: true,
+      profileName: "secondary-two",
+      sessionName: "secondary-two"
+    });
+
+    expect(Object.keys(registry.accounts)).toEqual(["secondary"]);
+    expect(registry.accounts.secondary).toMatchObject({
+      label: "Secondary Two",
+      profileName: "secondary-two",
+      sessionName: "secondary-two"
+    });
+  });
+
+  it("rejects invalid saved account targets when loading the registry", () => {
+    const baseDir = createTempBaseDir();
+    const configPath = path.join(baseDir, "config.json");
+
+    writeFileSync(
+      configPath,
+      `${JSON.stringify(
+        {
+          writeValidation: {
+            accounts: {
+              secondary: {
+                designation: "secondary",
+                targets: {
+                  send_message: {
+                    thread: ""
+                  }
+                }
+              }
+            }
+          }
+        },
+        null,
+        2
+      )}\n`,
+      "utf8"
+    );
+
+    expect(() => loadWriteValidationAccounts(baseDir)).toThrow(
+      "writeValidation.accounts.secondary.targets.send_message.thread must not be empty."
+    );
+  });
 });

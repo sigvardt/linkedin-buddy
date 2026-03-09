@@ -13,6 +13,9 @@ function createReportFixture(
   outcome: WriteValidationReport["outcome"] = "pass"
 ): WriteValidationReport {
   const status = outcome === "cancelled" ? "cancelled" : outcome;
+  const passCount = status === "pass" ? 1 : 0;
+  const failCount = status === "fail" ? 1 : 0;
+  const cancelledCount = status === "cancelled" ? 1 : 0;
 
   return {
     account: {
@@ -78,18 +81,18 @@ function createReportFixture(
       }
     ],
     audit_log_path: "/tmp/events.jsonl",
-    cancelled_count: status === "cancelled" ? 1 : 0,
+    cancelled_count: cancelledCount,
     checked_at: "2026-03-09T10:00:06.000Z",
     cooldown_ms: 10_000,
-    fail_count: status === "fail" ? 1 : 0,
+    fail_count: failCount,
     latest_report_path: "/tmp/latest-report.json",
     outcome,
-    pass_count: status === "pass" ? 1 : 0,
+    pass_count: passCount,
     recommended_actions: ["Review /tmp/report.json"],
     report_path: "/tmp/report.json",
     run_id: "run_write_validation_test",
     summary:
-      "Checked 1 write-validation actions. 1 passed. 0 failed. 0 cancelled. Overall outcome: pass.",
+      `Checked 1 write-validation actions. ${passCount} passed. ${failCount} failed. ${cancelledCount} cancelled. Overall outcome: ${outcome}.`,
     warning: "This will perform REAL actions on LinkedIn."
   };
 }
@@ -103,6 +106,28 @@ describe("write validation output", () => {
     expect(output).toContain("send_message");
     expect(output).toContain("error: The approved thread could not be verified.");
     expect(output).toContain("Recommendations");
+  });
+
+  it("matches the full human-readable write-validation report snapshot", () => {
+    expect(formatWriteValidationReport(createReportFixture("fail"))).toMatchInlineSnapshot(`
+      "Write Validation FAIL
+      - Account: secondary (secondary)
+      - Warning: This will perform REAL actions on LinkedIn.
+      - Summary: Checked 1 write-validation actions. 0 passed. 1 failed. 0 cancelled. Overall outcome: fail.
+      - Audit log: /tmp/events.jsonl
+      - Report: /tmp/report.json
+
+      Actions
+      - FAIL send_message | unverified | state=n/a | 1 artifact | ACTION_PRECONDITION_FAILED
+        target: {"thread_id":"abc123"}
+        outbound: {"text":"Quick validation ping • 2026-03-09T10:00:00.000Z"}
+        expected: The outbound message is echoed in the approved conversation thread.
+        error: The approved thread could not be verified.
+        before: live-write-validation/send-message-before.png
+
+      Recommendations
+      - Review /tmp/report.json"
+    `);
   });
 
   it("formats validation errors with details and help guidance", () => {
@@ -123,6 +148,35 @@ describe("write validation output", () => {
     );
     expect(output).toContain("account: secondary");
     expect(output).toContain("linkedin test live --help");
+  });
+
+  it("matches the human-readable error snapshot", () => {
+    const error: LinkedInAssistantErrorPayload = {
+      code: "ACTION_PRECONDITION_FAILED",
+      details: {
+        account: "secondary",
+        prompt: "yes",
+        reason: "operator-declined"
+      },
+      message: 'Write validation requires typing "yes" for every action.'
+    };
+
+    expect(
+      formatWriteValidationError(error, {
+        helpCommand: "linkedin test live --help"
+      })
+    ).toMatchInlineSnapshot(`
+      "Write validation failed [ACTION_PRECONDITION_FAILED]
+      Write validation requires typing "yes" for every action.
+
+      Details
+      - account: secondary
+      - prompt: yes
+      - reason: operator-declined
+
+      Help
+      - Re-run linkedin test live --help for usage and safety guidance."
+    `);
   });
 
   it("resolves json mode for explicit json and non-tty stdout", () => {

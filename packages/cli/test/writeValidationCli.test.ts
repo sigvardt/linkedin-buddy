@@ -1,6 +1,7 @@
 import { stdin, stdout } from "node:process";
 import { stripVTControlCharacters } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { LinkedInAssistantError } from "@linkedin-assistant/core";
 
 const writeValidationCliMocks = vi.hoisted(() => ({
   answers: [] as string[],
@@ -201,6 +202,75 @@ describe("write validation CLI", () => {
     });
   });
 
+  it("passes approved target flags through the visible accounts add command", async () => {
+    writeValidationCliMocks.upsertWriteValidationAccount.mockResolvedValue({
+      accounts: {
+        secondary: {
+          designation: "secondary",
+          id: "secondary",
+          label: "Secondary",
+          profileName: "secondary-profile",
+          sessionName: "secondary-session",
+          targets: {}
+        }
+      },
+      configPath: "/tmp/config.json"
+    });
+
+    await runCli([
+      "node",
+      "linkedin",
+      "accounts",
+      "add",
+      "secondary",
+      "--designation",
+      "secondary",
+      "--message-thread",
+      "/messaging/thread/abc123/",
+      "--message-participant-pattern",
+      "Simon Miller",
+      "--invite-profile",
+      "realsimonmiller",
+      "--invite-note",
+      "Quick hello",
+      "--followup-profile",
+      "realsimonmiller",
+      "--reaction-post",
+      "/feed/update/urn:li:activity:123/",
+      "--reaction",
+      "celebrate",
+      "--post-visibility",
+      "connections"
+    ]);
+
+    expect(writeValidationCliMocks.upsertWriteValidationAccount).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: "secondary",
+        designation: "secondary",
+        targets: {
+          "connections.send_invitation": {
+            note: "Quick hello",
+            targetProfile: "realsimonmiller"
+          },
+          "feed.like_post": {
+            postUrl: "/feed/update/urn:li:activity:123/",
+            reaction: "celebrate"
+          },
+          "network.followup_after_accept": {
+            profileUrlKey: "realsimonmiller"
+          },
+          "post.create": {
+            visibility: "connections"
+          },
+          send_message: {
+            participantPattern: "Simon Miller",
+            thread: "/messaging/thread/abc123/"
+          }
+        }
+      })
+    );
+  });
+
   it("rejects --yes for write validation", async () => {
     await runCli([
       "node",
@@ -233,6 +303,23 @@ describe("write validation CLI", () => {
     expect(stderrOutput).toContain('Write validation requires "--account <id>".');
   });
 
+  it("rejects combining --read-only with write validation", async () => {
+    await runCli([
+      "node",
+      "linkedin",
+      "test:live",
+      "--write-validation",
+      "--read-only",
+      "--account",
+      "secondary"
+    ]);
+
+    const stderrOutput = stripVTControlCharacters(stderrChunks.join(""));
+
+    expect(process.exitCode).toBe(2);
+    expect(stderrOutput).toContain('Choose either "--read-only" or "--write-validation", not both.');
+  });
+
   it("rejects session overrides for write validation", async () => {
     await runCli([
       "node",
@@ -251,6 +338,26 @@ describe("write validation CLI", () => {
     expect(stderrOutput).toContain(
       'Write validation resolves stored sessions through the account registry. Remove "--session" and rerun.'
     );
+  });
+
+  it("rejects cdp-url overrides for write validation", async () => {
+    await expect(
+      runCli([
+        "node",
+        "linkedin",
+        "--cdp-url",
+        "http://127.0.0.1:18800",
+        "test",
+        "live",
+        "--write-validation",
+        "--account",
+        "secondary",
+        "--json"
+      ])
+    ).rejects.toThrow("do not support --cdp-url");
+
+    expect(process.exitCode).toBe(2);
+    expect(writeValidationCliMocks.runLinkedInWriteValidation).not.toHaveBeenCalled();
   });
 
   it("prompts per action and runs the write-validation harness", async () => {
@@ -306,5 +413,134 @@ describe("write validation CLI", () => {
     expect(stdoutChunks.join("")).toContain("Action: send_message");
     expect(stdoutChunks.join("")).toContain("Execute this action?");
     expect(String(consoleLogSpy.mock.calls.at(-1)?.[0] ?? "")).toContain("Write Validation");
+  });
+
+  it("writes prompts to stderr and emits JSON when --json is selected", async () => {
+    writeValidationCliMocks.answers = ["yes"];
+    writeValidationCliMocks.runLinkedInWriteValidation.mockImplementation(
+      async (input: {
+        onBeforeAction?: (preview: {
+          action_type: string;
+          expected_outcome: string;
+          outbound: Record<string, unknown>;
+          risk_class: string;
+          summary: string;
+          target: Record<string, unknown>;
+        }) => Promise<boolean>;
+      }) => {
+        const confirmed = await input.onBeforeAction?.({
+          action_type: "send_message",
+          expected_outcome:
+            "The outbound message is echoed in the approved conversation thread.",
+          outbound: {
+            text: "Quick validation ping • 2026-03-09T10:00:00.000Z"
+          },
+          risk_class: "private",
+          summary:
+            "Send a message in the approved thread and verify the outbound message appears.",
+          target: {
+            thread_id: "abc123"
+          }
+        });
+
+        expect(confirmed).toBe(true);
+        return createWriteValidationReport("pass");
+      }
+    );
+
+    await runCli([
+      "node",
+      "linkedin",
+      "test:live",
+      "--write-validation",
+      "--account",
+      "secondary",
+      "--json"
+    ]);
+
+    expect(stderrChunks.join(" ")).toContain("Action: send_message");
+    expect(stderrChunks.join(" ")).toContain("Execute this action?");
+    expect(stdoutChunks).toEqual([]);
+    expect(
+      JSON.parse(String(consoleLogSpy.mock.calls.at(-1)?.[0] ?? "")) as {
+        outcome: string;
+      }
+    ).toMatchObject({
+      outcome: "pass"
+    });
+  });
+
+  it("sets exit code 1 for failing reports in json mode", async () => {
+    writeValidationCliMocks.runLinkedInWriteValidation.mockResolvedValue(
+      createWriteValidationReport("fail")
+    );
+
+    await runCli([
+      "node",
+      "linkedin",
+      "test:live",
+      "--write-validation",
+      "--account",
+      "secondary",
+      "--json"
+    ]);
+
+    expect(process.exitCode).toBe(1);
+    expect(
+      JSON.parse(String(consoleLogSpy.mock.calls.at(-1)?.[0] ?? "")) as {
+        outcome: string;
+      }
+    ).toMatchObject({
+      outcome: "fail"
+    });
+  });
+
+  it("prints a human-readable validation error on harness failures", async () => {
+    writeValidationCliMocks.runLinkedInWriteValidation.mockRejectedValue(
+      new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        "Write validation refused to send to an unapproved recipient.",
+        {
+          account: "secondary",
+          action_type: "send_message"
+        }
+      )
+    );
+
+    await runCli([
+      "node",
+      "linkedin",
+      "test:live",
+      "--write-validation",
+      "--account",
+      "secondary"
+    ]);
+
+    const stderrOutput = stripVTControlCharacters(stderrChunks.join(""));
+
+    expect(process.exitCode).toBe(2);
+    expect(stderrOutput).toContain("Write validation failed [ACTION_PRECONDITION_FAILED]");
+    expect(stderrOutput).toContain("unapproved recipient");
+    expect(stderrOutput).toContain("action_type: send_message");
+  });
+
+  it("rethrows harness failures in json mode after setting the error exit code", async () => {
+    writeValidationCliMocks.runLinkedInWriteValidation.mockRejectedValue(
+      new Error("Stored session expired.")
+    );
+
+    await expect(
+      runCli([
+        "node",
+        "linkedin",
+        "test:live",
+        "--write-validation",
+        "--account",
+        "secondary",
+        "--json"
+      ])
+    ).rejects.toThrow("Stored session expired.");
+
+    expect(process.exitCode).toBe(2);
   });
 });
