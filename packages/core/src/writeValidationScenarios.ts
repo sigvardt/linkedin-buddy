@@ -431,7 +431,7 @@ export const WRITE_VALIDATION_SCENARIOS = [
 
       return {
         verified: confirmed.result.sent === true,
-        state_synced: stateRow?.followup_confirmed_at !== null,
+        state_synced: stateRow?.followup_confirmed_at != null,
         source: "followups.confirm_result",
         message:
           confirmed.result.sent === true

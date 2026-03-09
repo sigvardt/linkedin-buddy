@@ -262,38 +262,49 @@ export async function createWriteValidationRuntime(input: {
         }
       : {}
   );
-  const store = new LinkedInSessionStore(input.baseDir);
-  const loadedSession = await store.load(input.account.sessionName);
-  const profileManager = new StoredSessionProfileManager(
-    runtime.paths,
-    loadedSession.storageState,
-    input.timeoutMs,
-    runtime
-  );
-  const inspection = await profileManager.inspectSession();
-
-  if (!inspection.authenticated) {
-    throw new LinkedInAssistantError(
-      inspection.currentUrl.includes("/checkpoint")
-        ? "CAPTCHA_OR_CHALLENGE"
-        : "AUTH_REQUIRED",
-      inspection.reason,
-      {
-        checked_at: inspection.checkedAt,
-        current_url: inspection.currentUrl,
-        session_name: input.account.sessionName
-      }
+  try {
+    const store = new LinkedInSessionStore(input.baseDir);
+    const loadedSession = await store.load(input.account.sessionName);
+    const profileManager = new StoredSessionProfileManager(
+      runtime.paths,
+      loadedSession.storageState,
+      input.timeoutMs,
+      runtime
     );
+
+    try {
+      const inspection = await profileManager.inspectSession();
+
+      if (!inspection.authenticated) {
+        throw new LinkedInAssistantError(
+          inspection.currentUrl.includes("/checkpoint")
+            ? "CAPTCHA_OR_CHALLENGE"
+            : "AUTH_REQUIRED",
+          inspection.reason,
+          {
+            checked_at: inspection.checkedAt,
+            current_url: inspection.currentUrl,
+            session_name: input.account.sessionName
+          }
+        );
+      }
+
+      runtime.profileManager = profileManager;
+      runtime.auth = new StoredSessionAuthService(
+        profileManager,
+        toSessionStatus(inspection)
+      );
+
+      return {
+        runtime,
+        profileManager
+      };
+    } catch (error) {
+      await profileManager.dispose().catch(() => undefined);
+      throw error;
+    }
+  } catch (error) {
+    runtime.close();
+    throw error;
   }
-
-  runtime.profileManager = profileManager;
-  runtime.auth = new StoredSessionAuthService(
-    profileManager,
-    toSessionStatus(inspection)
-  );
-
-  return {
-    runtime,
-    profileManager
-  };
 }
