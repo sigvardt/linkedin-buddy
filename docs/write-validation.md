@@ -223,6 +223,10 @@ npm exec -w @linkedin-assistant/cli -- linkedin accounts add secondary \
 
 The harness sends one validation reply into the approved thread and verifies that
 the newest message text matches the sent payload.
+Reply composition uses the same human-like typing simulation as
+`HumanizedPage.type()`, including typed pauses and rare typo/correction loops.
+If the harness degrades to direct input because of a safety timeout or a very
+large payload, verification still checks the final message text.
 
 ### `connections.send_invitation`
 
@@ -250,6 +254,8 @@ npm exec -w @linkedin-assistant/cli -- linkedin accounts add secondary \
 
 The harness prepares the approved accepted-connection follow-up, confirms it,
 and checks the local follow-up state for confirmation.
+When the follow-up body is entered during confirm, it uses the same human-like
+typing simulation layer as other composer-based actions.
 
 ### `feed.like_post`
 
@@ -277,6 +283,8 @@ npm exec -w @linkedin-assistant/cli -- linkedin accounts add secondary \
 
 The harness creates a new post, re-reads the published post from LinkedIn, and
 checks that the validation text appears in the post content.
+Post composition also uses the human-like typing simulation layer, with the same
+direct-input fallback behavior for very long text or typing safety timeouts.
 
 ## Common workflows
 
@@ -296,6 +304,11 @@ Starting write validation for account secondary (5 actions, cooldown 10s, timeou
 Running 3/5: send_message — Send a message in the approved thread and verify the outbound message appears.
 Write validation finished — 5 passed, 0 failed, 0 cancelled. Report: /tmp/live-write-validation/report.json
 ```
+
+Composer-based actions (`send_message`, `network.followup_after_accept`, and
+`post.create`) emit structured `humanize.typing.*` diagnostics while entering
+text so you can see whether a run stayed fully simulated or degraded to direct
+input.
 
 ### Run one action from the fixed suite
 

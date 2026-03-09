@@ -1320,7 +1320,8 @@ describe("ActivityPollerService", () => {
       expect(firstTick.profileName).toBe("default");
       expect(firstTick.workerId).toBe(`activity-poller:${process.pid}`);
       expect(firstTick.emittedEvents).toBe(2);
-      expect(firstTick.enqueuedDeliveries + secondTick.deliveredAttempts).toBe(1);
+      expect(firstTick.enqueuedDeliveries).toBe(1);
+      expect(firstTick.deliveredAttempts + secondTick.deliveredAttempts).toBe(1);
       expect(server.requests).toHaveLength(1);
 
       const events = services.watches.listEvents({ limit: 10 });

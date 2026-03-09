@@ -48,7 +48,14 @@ const GRAPHEME_SEGMENTER =
     ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
     : null;
 
+/**
+ * Keyboard-hand metadata attached to nearby-key typo candidates.
+ */
 export type KeyboardHand = "left" | "right";
+
+/**
+ * Finger metadata for a normalized QWERTY key.
+ */
 export type KeyboardFinger =
   | "left-pinky"
   | "left-ring"
@@ -59,68 +66,125 @@ export type KeyboardFinger =
   | "right-ring"
   | "right-pinky";
 
+/**
+ * Inclusive millisecond range sampled for pause-like typing behavior.
+ */
 export interface DelayRange {
+  /** Minimum sampled delay in milliseconds. */
   minMs: number;
+  /** Maximum sampled delay in milliseconds. */
   maxMs: number;
 }
 
+/**
+ * Built-in typing presets shipped with the simulation layer.
+ */
 export type TypingProfileName = "casual" | "careful" | "fast";
 
+/**
+ * Tunable typing profile used to simulate realistic text entry.
+ */
 export interface TypingProfile {
+  /** Probability in `[0, 1]` of typing a nearby-key typo before correcting it. */
   typoRate: number;
+  /** Probability in `[0, 1]` of briefly overshooting a correction by one backspace. */
   doubleBackspaceRate: number;
+  /** Probability in `[0, 1]` of missing `Shift` on the first attempt for uppercase letters. */
   shiftMissRate: number;
+  /** Baseline delay before each typed character. */
   baseCharDelayMs: number;
+  /** Additional random jitter added to each per-character delay. */
   charDelayJitterMs: number;
+  /** Multiplier applied to characters in the middle of a word. */
   midWordMultiplier: number;
+  /** Multiplier applied to characters at the start or end of a word. */
   wordBoundaryMultiplier: number;
+  /** Multiplier applied to whitespace characters. */
   whitespaceMultiplier: number;
+  /** Multiplier applied to punctuation and other non-word characters. */
   punctuationMultiplier: number;
+  /** Multiplier applied to short common “burst” words such as `the` or `and`. */
   burstWordMultiplier: number;
+  /** Multiplier applied to repeated characters such as the second `l` in `hello`. */
   repeatedCharacterMultiplier: number;
+  /** Probability in `[0, 1]` of a short thinking pause before a new word. */
   thinkingPauseChance: number;
+  /** Delay range used for short thinking pauses. */
   thinkingPauseRange: DelayRange;
+  /** Probability in `[0, 1]` of a longer pause near sentence restarts. */
   longPauseChance: number;
+  /** Delay range used for longer reflective pauses. */
   longPauseRange: DelayRange;
+  /** Delay range between a typo and the corrective backspace. */
   correctionPauseRange: DelayRange;
+  /** Delay range between correcting a typo and resuming forward typing. */
   correctionResumeRange: DelayRange;
+  /** Delay range between pressing `Shift` and the uppercase character key. */
   shiftLeadRange: DelayRange;
 }
 
+/**
+ * Default configuration for `humanize()` and `HumanizedPage`.
+ *
+ * Typing profile resolution order is:
+ * 1. the named preset from `typingProfile`
+ * 2. constructor-level `typingDelay` / `typingJitter` overrides
+ * 3. constructor-level `typingProfileOverrides`
+ * 4. per-call `HumanizedTypingOptions.profileOverrides`
+ */
 export interface HumanizeOptions {
-  /** Base delay between actions in ms (default: 800) */
+  /** Base delay between non-typing actions in milliseconds. Defaults to `800`. */
   baseDelay?: number;
-  /** Maximum jitter added to delays in ms (default: 1500) */
+  /** Maximum random jitter added to non-typing delays. Defaults to `1500`. */
   jitterRange?: number;
-  /** Whether running in fast/development mode (shorter delays) */
+  /** Whether to shorten default delays for faster development and validation flows. */
   fast?: boolean;
-  /** Legacy base per-character typing delay override in ms */
+  /** Legacy override for `baseCharDelayMs` applied after the chosen preset. */
   typingDelay?: number;
-  /** Legacy typing jitter override per character in ms */
+  /** Legacy override for `charDelayJitterMs` applied after the chosen preset. */
   typingJitter?: number;
-  /** Default typing profile used by HumanizedPage.type() */
+  /** Default typing preset used when `HumanizedPage.type()` does not pass `profile`. */
   typingProfile?: TypingProfileName;
-  /** Default per-profile overrides applied by HumanizedPage.type() */
+  /** Default partial override merged into the resolved typing profile. */
   typingProfileOverrides?: Partial<TypingProfile>;
 }
 
+/**
+ * Per-call overrides for `HumanizedPage.type()`.
+ */
 export interface HumanizedTypingOptions {
+  /** Typing preset to use for this call instead of the constructor default. */
   profile?: TypingProfileName;
+  /** Additional one-off overrides merged after the resolved preset and constructor defaults. */
   profileOverrides?: Partial<TypingProfile>;
-  /** Optional user-facing field label used in diagnostics and progress output. */
+  /** Optional field label used in diagnostics and progress output. */
   fieldLabel?: string;
 }
 
+/**
+ * Weighted nearby-key typo candidate for a single normalized character.
+ */
 export interface AdjacentTypoCandidate {
+  /** Candidate character that could be mistyped. */
   key: string;
+  /** Relative sampling weight for this candidate. */
   weight: number;
+  /** Keyboard hand usually responsible for this candidate key. */
   hand: KeyboardHand;
+  /** Keyboard finger usually responsible for this candidate key. */
   finger: KeyboardFinger;
 }
 
+/**
+ * Severity labels used by the humanize logger interface.
+ */
 export type HumanizeLogLevel = "debug" | "info" | "warn" | "error";
 
+/**
+ * Structured logger interface for `humanize.*` lifecycle events.
+ */
 export interface HumanizeLogger {
+  /** Emit one humanize event. */
   log(level: HumanizeLogLevel, event: string, payload?: Record<string, unknown>): void;
 }
 
@@ -209,6 +273,13 @@ const KEY_FINGER_BY_CHARACTER = {
   m: "right-index"
 } as const satisfies Record<string, KeyboardFinger>;
 
+/**
+ * Built-in typing presets for common operator workflows.
+ *
+ * - `careful` is the default and favors accuracy over speed.
+ * - `casual` adds more pauses, jitter, and typo/correction loops.
+ * - `fast` reduces delays for short flows and local validation.
+ */
 export const TYPING_PROFILES = {
   casual: {
     typoRate: 0.04,
@@ -501,10 +572,16 @@ function getPageLogger(page: Page): LoggerLike | null {
   return logger as unknown as LoggerLike;
 }
 
+/**
+ * Attach a structured logger that receives `humanize.*` lifecycle events for `page`.
+ */
 export function attachHumanizeLogger(page: Page, logger: HumanizeLogger): void {
   HUMANIZE_LOGGER_BY_PAGE.set(page as object, logger);
 }
 
+/**
+ * Remove a previously attached humanize logger from `page`.
+ */
 export function detachHumanizeLogger(page: Page): void {
   HUMANIZE_LOGGER_BY_PAGE.delete(page as object);
   Reflect.deleteProperty(page as object, HUMANIZE_LOGGER_KEY);
@@ -849,6 +926,9 @@ function buildTypingEventPayload(input: {
 const KEYBOARD_GEOMETRY = createKeyboardGeometry();
 const KEYBOARD_KEYS = Object.values(KEYBOARD_GEOMETRY);
 
+/**
+ * Read-only map of normalized QWERTY keys to their nearby neighbors.
+ */
 export const QWERTY_KEY_ADJACENCY_MAP = createQwertyAdjacencyMap();
 
 const WEIGHTED_QWERTY_KEY_ADJACENCY_MAP = createWeightedQwertyAdjacencyMap();
@@ -976,6 +1056,11 @@ function applyCharacterCase(candidate: string, intendedCharacter: string): strin
   return isUppercaseLetter(intendedCharacter) ? candidate.toUpperCase() : candidate;
 }
 
+/**
+ * Return weighted nearby-key typo candidates for one grapheme.
+ *
+ * Unsupported characters, whitespace, and multi-grapheme input return an empty array.
+ */
 export function getAdjacentTypoCandidates(character: string): readonly AdjacentTypoCandidate[] {
   assertString(character, "character", { allowEmpty: true });
   const characters = splitTypingCharacters(character);
@@ -991,6 +1076,11 @@ export function getAdjacentTypoCandidates(character: string): readonly AdjacentT
   return WEIGHTED_QWERTY_KEY_ADJACENCY_MAP[normalizedCharacter] ?? [];
 }
 
+/**
+ * Pick one nearby-key typo candidate for `character`.
+ *
+ * Pass `randomValue` to make selection deterministic in tests.
+ */
 export function pickAdjacentTypoCharacter(
   character: string,
   randomValue = Math.random()
@@ -1019,10 +1109,19 @@ export function pickAdjacentTypoCharacter(
   return applyCharacterCase(candidates[candidates.length - 1]!.key, character);
 }
 
+/**
+ * Wrap a Playwright `Page` with human-like navigation, mouse, and typing helpers.
+ *
+ * `type()` simulates word-boundary pacing, pauses, typos, and corrections, then
+ * falls back to direct input when safety limits are reached.
+ */
 export class HumanizedPage {
   private readonly page: Page;
   private readonly options: ResolvedHumanizeOptions;
 
+  /**
+   * Create a wrapper with reusable delay and typing defaults.
+   */
   constructor(page: Page, options?: HumanizeOptions) {
     assertPageLike(page);
     validateHumanizeOptionsValue(options);
@@ -1040,12 +1139,16 @@ export class HumanizedPage {
     };
   }
 
-  /** Get the underlying Playwright Page */
+  /**
+   * Underlying Playwright page.
+   */
   get raw(): Page {
     return this.page;
   }
 
-  /** Random delay with jitter */
+  /**
+   * Wait for the configured base delay plus random jitter.
+   */
   async delay(baseMs?: number): Promise<void> {
     if (baseMs !== undefined) {
       assertNonNegativeFiniteNumber(baseMs, "baseMs", {
@@ -1058,7 +1161,9 @@ export class HumanizedPage {
     await this.waitForDelay(base + jitter, "humanize.delay");
   }
 
-  /** Navigate to URL with human-like pre/post delays */
+  /**
+   * Navigate to `url` with short pre/post pauses.
+   */
   async navigate(
     url: string,
     options?: { waitUntil?: "domcontentloaded" | "networkidle" | "load" }
@@ -1081,7 +1186,9 @@ export class HumanizedPage {
     await this.delay(600);
   }
 
-  /** Scroll element into view with smooth scrolling */
+  /**
+   * Scroll the first matching element into view, then pause briefly.
+   */
   async scrollIntoView(selector: string): Promise<void> {
     this.validateSelector(selector);
     const element = this.page.locator(selector).first();
@@ -1089,7 +1196,9 @@ export class HumanizedPage {
     await this.delay(200);
   }
 
-  /** Smooth scroll down by a random amount */
+  /**
+   * Smooth-scroll the page downward by an explicit or random amount.
+   */
   async scrollDown(pixels?: number): Promise<void> {
     if (pixels !== undefined) {
       assertNonNegativeFiniteNumber(pixels, "pixels", { max: MAX_SCROLL_DISTANCE_PX });
@@ -1102,7 +1211,9 @@ export class HumanizedPage {
     await this.delay(400);
   }
 
-  /** Move mouse toward a position with slight randomness, then pause */
+  /**
+   * Move the pointer near a coordinate with slight randomness, then pause.
+   */
   async moveMouseNear(x: number, y: number): Promise<void> {
     assertNumberInRange(x, "x", -MAX_MOUSE_COORDINATE_ABS, MAX_MOUSE_COORDINATE_ABS);
     assertNumberInRange(y, "y", -MAX_MOUSE_COORDINATE_ABS, MAX_MOUSE_COORDINATE_ABS);
@@ -1115,7 +1226,9 @@ export class HumanizedPage {
     await this.delay(150);
   }
 
-  /** Click a selector with human-like behavior: scroll into view, brief pause, click */
+  /**
+   * Click the first matching element after scrolling it into view and settling the pointer.
+   */
   async click(selector: string): Promise<void> {
     this.validateSelector(selector);
     const element = this.page.locator(selector).first();
@@ -1138,7 +1251,13 @@ export class HumanizedPage {
     await this.delay(300);
   }
 
-  /** Type text with human-like cadence, typos, and corrections. */
+  /**
+   * Type `text` into the first matching element with human-like cadence.
+   *
+   * The simulation applies profile-based delays, pause patterns, and occasional
+   * typo/correction loops. Very long input or timeout/failure cases degrade to
+   * direct input after emitting `humanize.typing.*` diagnostics.
+   */
   async type(
     selector: string,
     text: string,
@@ -1323,13 +1442,17 @@ export class HumanizedPage {
     }
   }
 
-  /** Wait for load with human-like additional delay after DOM is ready */
+  /**
+   * Wait for `domcontentloaded`, then add a short post-load pause.
+   */
   async waitForPageLoad(): Promise<void> {
     await this.page.waitForLoadState("domcontentloaded");
     await this.delay(400);
   }
 
-  /** Randomly idle — used between major operations */
+  /**
+   * Idle for a short random duration between higher-level operations.
+   */
   async idle(): Promise<void> {
     const idleTime = this.options.fast
       ? 200 + Math.random() * 300
@@ -1765,7 +1888,15 @@ export class HumanizedPage {
   }
 }
 
-/** Create a HumanizedPage wrapper */
+/**
+ * Create a `HumanizedPage` wrapper around a Playwright page.
+ *
+ * @example
+ * const hp = humanize(page, { typingProfile: "careful" });
+ * await hp.type('[role="textbox"]', "Thanks for the update.", {
+ *   fieldLabel: "message composer"
+ * });
+ */
 export function humanize(page: Page, options?: HumanizeOptions): HumanizedPage {
   return new HumanizedPage(page, options);
 }
