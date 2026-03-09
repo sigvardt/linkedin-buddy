@@ -31,6 +31,7 @@ import {
 
 const MAX_ACTIVITY_LIMIT = 50;
 
+/** Stored activity watch metadata and recent poll state for one target. */
 export interface ActivityWatch {
   id: string;
   profileName: string;
@@ -50,6 +51,7 @@ export interface ActivityWatch {
   updatedAtMs: number;
 }
 
+/** Persisted webhook subscription metadata attached to one activity watch. */
 export interface WebhookSubscription {
   id: string;
   watchId: string;
@@ -64,10 +66,12 @@ export interface WebhookSubscription {
   updatedAtMs: number;
 }
 
+/** Webhook subscription details returned immediately after creation. */
 export interface CreatedWebhookSubscription extends WebhookSubscription {
   signingSecret: string;
 }
 
+/** Stored activity event payload produced by a successful watch poll. */
 export interface ActivityEventRecord {
   id: string;
   watchId: string;
@@ -80,6 +84,7 @@ export interface ActivityEventRecord {
   createdAtMs: number;
 }
 
+/** Persisted webhook delivery attempt and retry metadata. */
 export interface WebhookDeliveryAttemptRecord {
   id: string;
   watchId: string;
@@ -101,6 +106,7 @@ export interface WebhookDeliveryAttemptRecord {
   updatedAtMs: number;
 }
 
+/** Input accepted when creating a durable activity watch. */
 export interface CreateActivityWatchInput {
   profileName?: string;
   kind: ActivityWatchKind;
@@ -109,6 +115,7 @@ export interface CreateActivityWatchInput {
   cron?: string;
 }
 
+/** Input accepted when attaching a webhook subscription to a watch. */
 export interface CreateWebhookSubscriptionInput {
   watchId: string;
   deliveryUrl: string;
@@ -117,6 +124,7 @@ export interface CreateWebhookSubscriptionInput {
   maxAttempts?: number;
 }
 
+/** Runtime dependencies required by the activity watch service. */
 export interface ActivityWatchesRuntime {
   db: AssistantDatabase;
   logger: JsonEventLogger;
@@ -157,7 +165,10 @@ function readText(value: unknown, label: string, required = false): string {
 
   throw new LinkedInAssistantError(
     "ACTION_PRECONDITION_FAILED",
-    `${label} is required.`
+    `${label} is required.`,
+    {
+      field: label
+    }
   );
 }
 
@@ -174,7 +185,13 @@ function readPositiveInteger(
   if (typeof value !== "number" || !Number.isFinite(value)) {
     throw new LinkedInAssistantError(
       "ACTION_PRECONDITION_FAILED",
-      `${label} must be a positive integer.`
+      `${label} must be a positive integer.`,
+      {
+        field: label,
+        maximum: max,
+        minimum: 1,
+        value
+      }
     );
   }
 
@@ -182,7 +199,13 @@ function readPositiveInteger(
   if (normalized <= 0 || normalized > max) {
     throw new LinkedInAssistantError(
       "ACTION_PRECONDITION_FAILED",
-      `${label} must be between 1 and ${max}.`
+      `${label} must be between 1 and ${max}.`,
+      {
+        field: label,
+        maximum: max,
+        minimum: 1,
+        value: normalized
+      }
     );
   }
 
@@ -198,14 +221,25 @@ function readHttpUrl(value: string, label: string): string {
     throw new LinkedInAssistantError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a valid URL.`,
-      { cause_name: error instanceof Error ? error.name : undefined }
+      {
+        cause_name: error instanceof Error ? error.name : undefined,
+        example: "https://example.com/hooks/linkedin",
+        field: label,
+        value
+      }
     );
   }
 
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new LinkedInAssistantError(
       "ACTION_PRECONDITION_FAILED",
-      `${label} must use http or https.`
+      `${label} must use http or https.`,
+      {
+        example: "https://example.com/hooks/linkedin",
+        field: label,
+        supported_protocols: ["http", "https"],
+        value
+      }
     );
   }
 
@@ -351,6 +385,7 @@ function parseCronField(
   return values;
 }
 
+/** Parses a 5-field cron expression into normalized matching sets. */
 export function parseCronExpression(expression: string): ParsedCronExpression {
   const parts = expression
     .trim()
@@ -387,6 +422,7 @@ function matchesCron(date: Date, parsed: ParsedCronExpression): boolean {
   );
 }
 
+/** Finds the next time a parsed cron expression would become due. */
 export function getNextCronOccurrenceMs(
   expression: string,
   afterMs: number
@@ -564,7 +600,10 @@ function ensureWatchExists(
 
   throw new LinkedInAssistantError(
     "TARGET_NOT_FOUND",
-    `Activity watch ${watchId} was not found.`
+    `Activity watch ${watchId} was not found.`,
+    {
+      watch_id: watchId
+    }
   );
 }
 
@@ -579,7 +618,10 @@ function ensureWebhookSubscriptionExists(
 
   throw new LinkedInAssistantError(
     "TARGET_NOT_FOUND",
-    `Webhook subscription ${subscriptionId} was not found.`
+    `Webhook subscription ${subscriptionId} was not found.`,
+    {
+      subscription_id: subscriptionId
+    }
   );
 }
 
@@ -618,18 +660,26 @@ function resolveEffectiveMinPollIntervalMs(
   );
 }
 
+/** Manages durable activity watches, webhook subscriptions, and history views. */
 export class ActivityWatchesService {
   private readonly config: ActivityWebhookConfig;
 
+  /** Creates a new activity watch service with resolved activity config. */
   constructor(private readonly runtime: ActivityWatchesRuntime) {
     this.config = runtime.activityConfig ?? resolveActivityWebhookConfig();
   }
 
+  /** Creates and stores a new activity watch. */
   createWatch(input: CreateActivityWatchInput): ActivityWatch {
     if (!ACTIVITY_WATCH_KINDS.includes(input.kind)) {
       throw new LinkedInAssistantError(
         "ACTION_PRECONDITION_FAILED",
-        `kind must be one of: ${ACTIVITY_WATCH_KINDS.join(", ")}.`
+        `kind must be one of: ${ACTIVITY_WATCH_KINDS.join(", ")}.`,
+        {
+          field: "kind",
+          provided_kind: input.kind,
+          supported_kinds: ACTIVITY_WATCH_KINDS
+        }
       );
     }
 
@@ -661,7 +711,12 @@ export class ActivityWatchesService {
     ) {
       throw new LinkedInAssistantError(
         "ACTION_PRECONDITION_FAILED",
-        `intervalSeconds must be at least ${Math.ceil(effectiveMinPollIntervalMs / 1_000)} for ${input.kind}.`
+        `intervalSeconds must be at least ${Math.ceil(effectiveMinPollIntervalMs / 1_000)} for ${input.kind}.`,
+        {
+          field: "intervalSeconds",
+          kind: input.kind,
+          minimum_seconds: Math.ceil(effectiveMinPollIntervalMs / 1_000)
+        }
       );
     }
 
@@ -689,6 +744,7 @@ export class ActivityWatchesService {
     return toActivityWatch(ensureWatchExists(this.runtime.db, id));
   }
 
+  /** Lists watches filtered by profile and status. */
   listWatches(input: {
     profileName?: string;
     status?: ActivityWatchStatus;
@@ -696,23 +752,38 @@ export class ActivityWatchesService {
     return this.runtime.db.listActivityWatches(input).map(toActivityWatch);
   }
 
+  /** Loads one activity watch by id or throws when it does not exist. */
   getWatchById(id: string): ActivityWatch {
     return toActivityWatch(ensureWatchExists(this.runtime.db, id));
   }
 
+  /** Pauses an existing activity watch. */
   pauseWatch(id: string): ActivityWatch {
     return this.setWatchStatus(id, "paused");
   }
 
+  /** Resumes an existing activity watch and makes it due immediately. */
   resumeWatch(id: string): ActivityWatch {
     return this.setWatchStatus(id, "active", Date.now());
   }
 
+  /** Deletes an activity watch and any related webhook subscriptions. */
   removeWatch(id: string): boolean {
-    ensureWatchExists(this.runtime.db, id);
-    return this.runtime.db.deleteActivityWatch(id);
+    const watch = ensureWatchExists(this.runtime.db, id);
+    const removed = this.runtime.db.deleteActivityWatch(id);
+
+    if (removed) {
+      this.runtime.logger.log("info", "activity.watch.removed", {
+        kind: watch.kind,
+        profile_name: watch.profile_name,
+        watch_id: watch.id
+      });
+    }
+
+    return removed;
   }
 
+  /** Creates a webhook subscription for an existing activity watch. */
   createWebhookSubscription(
     input: CreateWebhookSubscriptionInput
   ): CreatedWebhookSubscription {
@@ -757,6 +828,7 @@ export class ActivityWatchesService {
     };
   }
 
+  /** Lists webhook subscriptions filtered by watch, profile, and status. */
   listWebhookSubscriptions(input: {
     watchId?: string;
     profileName?: string;
@@ -767,25 +839,39 @@ export class ActivityWatchesService {
       .map(toWebhookSubscription);
   }
 
+  /** Loads one webhook subscription by id or throws when it does not exist. */
   getWebhookSubscriptionById(id: string): WebhookSubscription {
     return toWebhookSubscription(
       ensureWebhookSubscriptionExists(this.runtime.db, id)
     );
   }
 
+  /** Pauses a webhook subscription without deleting delivery history. */
   pauseWebhookSubscription(id: string): WebhookSubscription {
     return this.setWebhookSubscriptionStatus(id, "paused");
   }
 
+  /** Resumes a paused webhook subscription. */
   resumeWebhookSubscription(id: string): WebhookSubscription {
     return this.setWebhookSubscriptionStatus(id, "active");
   }
 
+  /** Deletes a webhook subscription while preserving historical deliveries. */
   removeWebhookSubscription(id: string): boolean {
-    ensureWebhookSubscriptionExists(this.runtime.db, id);
-    return this.runtime.db.deleteWebhookSubscription(id);
+    const subscription = ensureWebhookSubscriptionExists(this.runtime.db, id);
+    const removed = this.runtime.db.deleteWebhookSubscription(id);
+
+    if (removed) {
+      this.runtime.logger.log("info", "activity.webhook.removed", {
+        watch_id: subscription.watch_id,
+        webhook_subscription_id: subscription.id
+      });
+    }
+
+    return removed;
   }
 
+  /** Lists stored activity events for one profile or watch. */
   listEvents(input: {
     profileName?: string;
     watchId?: string;
@@ -794,6 +880,7 @@ export class ActivityWatchesService {
     return this.runtime.db.listActivityEvents(input).map(toActivityEventRecord);
   }
 
+  /** Lists stored webhook delivery attempts and retry state. */
   listDeliveries(input: {
     profileName?: string;
     watchId?: string;
@@ -821,6 +908,18 @@ export class ActivityWatchesService {
       ...(nextPollAtMs !== undefined ? { nextPollAtMs } : {}),
       updatedAtMs: Date.now()
     });
+
+    this.runtime.logger.log("info", "activity.watch.status.updated", {
+      from_status: existingWatch.status,
+      kind: existingWatch.kind,
+      profile_name: existingWatch.profile_name,
+      to_status: status,
+      watch_id: existingWatch.id,
+      ...(nextPollAtMs !== undefined
+        ? { next_poll_at: new Date(nextPollAtMs).toISOString() }
+        : {})
+    });
+
     return this.getWatchById(id);
   }
 
@@ -828,12 +927,20 @@ export class ActivityWatchesService {
     id: string,
     status: WebhookSubscriptionStatus
   ): WebhookSubscription {
-    ensureWebhookSubscriptionExists(this.runtime.db, id);
+    const existingSubscription = ensureWebhookSubscriptionExists(this.runtime.db, id);
     this.runtime.db.updateWebhookSubscriptionStatus({
       id,
       status,
       updatedAtMs: Date.now()
     });
+
+    this.runtime.logger.log("info", "activity.webhook.status.updated", {
+      from_status: existingSubscription.status,
+      to_status: status,
+      watch_id: existingSubscription.watch_id,
+      webhook_subscription_id: existingSubscription.id
+    });
+
     return this.getWebhookSubscriptionById(id);
   }
 

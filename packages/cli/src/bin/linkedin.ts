@@ -142,6 +142,41 @@ import {
   type SchedulerStopReport
 } from "../schedulerOutput.js";
 import {
+  formatActivityDeliveryListReport,
+  formatActivityError,
+  formatActivityEventListReport,
+  formatActivityRunOnceReport,
+  formatActivityStartReport,
+  formatActivityStatusReport,
+  formatActivityStopReport,
+  formatActivityWatchAddReport,
+  formatActivityWatchListReport,
+  formatActivityWatchMutationReport,
+  formatActivityWatchRemovalReport,
+  formatActivityWebhookAddReport,
+  formatActivityWebhookListReport,
+  formatActivityWebhookMutationReport,
+  formatActivityWebhookRemovalReport,
+  resolveActivityOutputMode,
+  type ActivityDaemonState,
+  type ActivityDaemonStateSummary,
+  type ActivityDeliveryListReport,
+  type ActivityEventListReport,
+  type ActivityOutputMode,
+  type ActivityRunOnceReport,
+  type ActivityStartReport,
+  type ActivityStatusReport,
+  type ActivityStopReport,
+  type ActivityWatchAddReport,
+  type ActivityWatchListReport,
+  type ActivityWatchMutationReport,
+  type ActivityWatchRemovalReport,
+  type ActivityWebhookAddReport,
+  type ActivityWebhookListReport,
+  type ActivityWebhookMutationReport,
+  type ActivityWebhookRemovalReport
+} from "../activityOutput.js";
+import {
   formatKeepAliveError,
   formatKeepAliveStartReport,
   formatKeepAliveStatusReport,
@@ -2090,7 +2125,7 @@ function writeKeepAliveProgressNotice(
 }
 
 function warnAboutExternalCdpDaemonSession(): void {
-  writeCliWarning("--cdp-url attaches keepalive to an existing browser session.");
+  writeCliWarning("--cdp-url attaches this daemon to an existing browser session.");
   writeCliNotice("The daemon will share cookies and session state with that browser until you stop it.");
   writeCliNotice("For an isolated tool-owned profile, omit --cdp-url.");
 }
@@ -3328,40 +3363,6 @@ async function runSchedulerDaemon(
   }
 }
 
-type ActivityDaemonStateSummary = Pick<
-  ActivityPollTickResult,
-  | "claimedWatches"
-  | "polledWatches"
-  | "failedWatches"
-  | "emittedEvents"
-  | "enqueuedDeliveries"
-  | "claimedDeliveries"
-  | "deliveredAttempts"
-  | "retriedDeliveries"
-  | "failedDeliveries"
-  | "deadLetterDeliveries"
-  | "disabledSubscriptions"
->;
-
-interface ActivityDaemonState {
-  pid: number;
-  profileName: string;
-  startedAt: string;
-  updatedAt: string;
-  status: "starting" | "running" | "idle" | "degraded" | "stopped";
-  daemonPollIntervalMs: number;
-  maxWatchesPerTick: number;
-  maxDeliveriesPerTick: number;
-  consecutiveFailures: number;
-  maxConsecutiveFailures: number;
-  lastTickAt?: string;
-  lastSuccessfulTickAt?: string;
-  lastSummary?: ActivityDaemonStateSummary;
-  lastError?: string;
-  cdpUrl?: string;
-  stoppedAt?: string;
-}
-
 interface ActivityFiles {
   dir: string;
   pidPath: string;
@@ -3370,6 +3371,82 @@ interface ActivityFiles {
 }
 
 const ACTIVITY_DAEMON_MAX_CONSECUTIVE_FAILURES = 5;
+const DIAGNOSTIC_URL_PATTERN = /\b(?:https?|wss?):\/\/[^\s"'<>]+/giu;
+
+function normalizeDiagnosticKey(key: string | undefined): string {
+  return (key ?? "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/-/g, "_")
+    .toLowerCase();
+}
+
+function sanitizeDiagnosticUrl(value: string): string {
+  try {
+    const parsed = new URL(value);
+    parsed.username = "";
+    parsed.password = "";
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return value;
+  }
+}
+
+function sanitizeDiagnosticText(value: string): string {
+  return value.replace(DIAGNOSTIC_URL_PATTERN, (candidate) => {
+    const trimmed = candidate.replace(/[),.;]+$/u, "");
+    const trailing = candidate.slice(trimmed.length);
+    return `${sanitizeDiagnosticUrl(trimmed)}${trailing}`;
+  });
+}
+
+function sanitizeActivityPersistenceValue(
+  value: unknown,
+  key?: string
+): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => sanitizeActivityPersistenceValue(entry));
+  }
+
+  if (typeof value === "object" && value !== null) {
+    const output: Record<string, unknown> = {};
+    for (const [entryKey, entryValue] of Object.entries(value)) {
+      output[entryKey] = sanitizeActivityPersistenceValue(entryValue, entryKey);
+    }
+    return output;
+  }
+
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  const normalizedKey = normalizeDiagnosticKey(key);
+  const sanitizedText = sanitizeDiagnosticText(value);
+
+  if (
+    normalizedKey === "cdp_url" ||
+    normalizedKey === "cdpurl" ||
+    normalizedKey === "error" ||
+    normalizedKey === "last_error" ||
+    normalizedKey.endsWith("_message")
+  ) {
+    return sanitizedText;
+  }
+
+  return sanitizedText;
+}
+
+function sanitizeActivityPersistenceRecord<T extends object>(
+  value: T,
+  surface: "log" | "storage"
+): T {
+  return redactStructuredValue(
+    sanitizeActivityPersistenceValue(value) as T,
+    cliPrivacyConfig,
+    surface
+  );
+}
 
 function asCliObject(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -3537,7 +3614,10 @@ async function writeActivityState(
 ): Promise<void> {
   const files = getActivityFiles(profileName);
   await ensureActivityDir(files);
-  await writeJsonFile(files.statePath, state);
+  await writeJsonFile(
+    files.statePath,
+    sanitizeActivityPersistenceRecord(state, "storage")
+  );
 }
 
 async function appendActivityEvent(
@@ -3546,7 +3626,11 @@ async function appendActivityEvent(
 ): Promise<void> {
   const files = getActivityFiles(profileName);
   await ensureActivityDir(files);
-  await appendFile(files.logPath, `${JSON.stringify(event)}\n`, "utf8");
+  await appendFile(
+    files.logPath,
+    `${JSON.stringify(sanitizeActivityPersistenceRecord(event, "log"))}\n`,
+    "utf8"
+  );
 }
 
 function summarizeActivityTick(
@@ -3567,8 +3651,9 @@ function summarizeActivityTick(
   };
 }
 
-function resolveActivityStatusConfig(): Partial<
-  Record<"activity_config" | "activity_config_error", unknown>
+function resolveActivityStatusConfig(): Pick<
+  ActivityStatusReport,
+  "activity_config" | "activity_config_error"
 > {
   try {
     return {
@@ -3581,19 +3666,58 @@ function resolveActivityStatusConfig(): Partial<
   }
 }
 
+function emitActivityReport<Report extends object>(
+  report: Report,
+  outputMode: ActivityOutputMode,
+  formatter: (report: Report) => string
+): void {
+  if (outputMode === "json") {
+    printJson(report);
+    return;
+  }
+
+  console.log(
+    formatter(redactStructuredValue(report, cliPrivacyConfig, "cli") as Report)
+  );
+}
+
+async function runActivityCliAction(
+  input: { json?: boolean },
+  action: (outputMode: ActivityOutputMode) => Promise<void>
+): Promise<void> {
+  const outputMode = resolveActivityOutputMode(input, Boolean(stdout.isTTY));
+
+  try {
+    await action(outputMode);
+  } catch (error) {
+    if (outputMode === "json") {
+      throw error;
+    }
+
+    process.stderr.write(
+      `${formatActivityError(
+        toLinkedInAssistantErrorPayload(error, cliPrivacyConfig)
+      )}\n`
+    );
+    process.exitCode = 1;
+  }
+}
+
 async function runActivityWatchAdd(input: {
   profileName: string;
   kind: ActivityWatchKind;
   target?: Record<string, unknown>;
   intervalSeconds?: number;
   cron?: string;
-}, cdpUrl?: string): Promise<void> {
+}, outputMode: ActivityOutputMode, cdpUrl?: string): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.activity.watch.add.start", {
-      profileName: input.profileName,
-      kind: input.kind
+      kind: input.kind,
+      output_mode: outputMode,
+      profile_name: input.profileName,
+      schedule_kind: input.cron ? "cron" : "interval"
     });
 
     const watch = runtime.activityWatches.createWatch({
@@ -3607,16 +3731,17 @@ async function runActivityWatchAdd(input: {
     });
 
     runtime.logger.log("info", "cli.activity.watch.add.done", {
-      profileName: input.profileName,
-      watchId: watch.id,
-      kind: watch.kind
+      kind: watch.kind,
+      profile_name: input.profileName,
+      watch_id: watch.id
     });
 
-    printJson({
+    const report: ActivityWatchAddReport = {
       run_id: runtime.runId,
       profile_name: input.profileName,
       watch
-    });
+    };
+    emitActivityReport(report, outputMode, formatActivityWatchAddReport);
   } finally {
     runtime.close();
   }
@@ -3625,64 +3750,125 @@ async function runActivityWatchAdd(input: {
 async function runActivityWatchList(input: {
   profileName: string;
   status?: ActivityWatchStatus;
-}, cdpUrl?: string): Promise<void> {
+}, outputMode: ActivityOutputMode, cdpUrl?: string): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
+    runtime.logger.log("info", "cli.activity.watch.list.start", {
+      profile_name: input.profileName,
+      ...(input.status ? { status: input.status } : {})
+    });
+
     const watches = runtime.activityWatches.listWatches({
       profileName: input.profileName,
       ...(input.status ? { status: input.status } : {})
     });
 
-    printJson({
+    runtime.logger.log("info", "cli.activity.watch.list.done", {
+      count: watches.length,
+      profile_name: input.profileName,
+      ...(input.status ? { status: input.status } : {})
+    });
+
+    const report: ActivityWatchListReport = {
       run_id: runtime.runId,
       profile_name: input.profileName,
       count: watches.length,
       watches
-    });
+    };
+    emitActivityReport(report, outputMode, formatActivityWatchListReport);
   } finally {
     runtime.close();
   }
 }
 
-async function runActivityWatchPause(id: string, cdpUrl?: string): Promise<void> {
+async function runActivityWatchPause(
+  id: string,
+  outputMode: ActivityOutputMode,
+  cdpUrl?: string
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
+    runtime.logger.log("info", "cli.activity.watch.pause.start", {
+      watch_id: id
+    });
+
     const watch = runtime.activityWatches.pauseWatch(id);
-    printJson({
+
+    runtime.logger.log("info", "cli.activity.watch.pause.done", {
+      profile_name: watch.profileName,
+      watch_id: watch.id
+    });
+
+    const report: ActivityWatchMutationReport = {
       run_id: runtime.runId,
       watch
-    });
+    };
+    emitActivityReport(report, outputMode, (value) =>
+      formatActivityWatchMutationReport(value, "paused")
+    );
   } finally {
     runtime.close();
   }
 }
 
-async function runActivityWatchResume(id: string, cdpUrl?: string): Promise<void> {
+async function runActivityWatchResume(
+  id: string,
+  outputMode: ActivityOutputMode,
+  cdpUrl?: string
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
+    runtime.logger.log("info", "cli.activity.watch.resume.start", {
+      watch_id: id
+    });
+
     const watch = runtime.activityWatches.resumeWatch(id);
-    printJson({
+
+    runtime.logger.log("info", "cli.activity.watch.resume.done", {
+      profile_name: watch.profileName,
+      watch_id: watch.id
+    });
+
+    const report: ActivityWatchMutationReport = {
       run_id: runtime.runId,
       watch
-    });
+    };
+    emitActivityReport(report, outputMode, (value) =>
+      formatActivityWatchMutationReport(value, "resumed")
+    );
   } finally {
     runtime.close();
   }
 }
 
-async function runActivityWatchRemove(id: string, cdpUrl?: string): Promise<void> {
+async function runActivityWatchRemove(
+  id: string,
+  outputMode: ActivityOutputMode,
+  cdpUrl?: string
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
+    runtime.logger.log("info", "cli.activity.watch.remove.start", {
+      watch_id: id
+    });
+
     const removed = runtime.activityWatches.removeWatch(id);
-    printJson({
+
+    runtime.logger.log("info", "cli.activity.watch.remove.done", {
+      removed,
+      watch_id: id
+    });
+
+    const report: ActivityWatchRemovalReport = {
       run_id: runtime.runId,
       watch_id: id,
       removed
-    });
+    };
+    emitActivityReport(report, outputMode, formatActivityWatchRemovalReport);
   } finally {
     runtime.close();
   }
@@ -3694,10 +3880,16 @@ async function runActivityWebhookAdd(input: {
   eventTypes?: ActivityEventType[];
   signingSecret?: string;
   maxAttempts?: number;
-}, cdpUrl?: string): Promise<void> {
+}, outputMode: ActivityOutputMode, cdpUrl?: string): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
+    runtime.logger.log("info", "cli.activity.webhook.add.start", {
+      delivery_url: input.deliveryUrl,
+      output_mode: outputMode,
+      watch_id: input.watchId
+    });
+
     const subscription = runtime.activityWatches.createWebhookSubscription({
       watchId: input.watchId,
       deliveryUrl: input.deliveryUrl,
@@ -3708,10 +3900,16 @@ async function runActivityWebhookAdd(input: {
         : {})
     });
 
-    printJson({
+    runtime.logger.log("info", "cli.activity.webhook.add.done", {
+      webhook_subscription_id: subscription.id,
+      watch_id: subscription.watchId
+    });
+
+    const report: ActivityWebhookAddReport = {
       run_id: runtime.runId,
       subscription
-    });
+    };
+    emitActivityReport(report, outputMode, formatActivityWebhookAddReport);
   } finally {
     runtime.close();
   }
@@ -3721,22 +3919,36 @@ async function runActivityWebhookList(input: {
   profileName: string;
   watchId?: string;
   status?: WebhookSubscriptionStatus;
-}, cdpUrl?: string): Promise<void> {
+}, outputMode: ActivityOutputMode, cdpUrl?: string): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
+    runtime.logger.log("info", "cli.activity.webhook.list.start", {
+      profile_name: input.profileName,
+      ...(input.status ? { status: input.status } : {}),
+      ...(input.watchId ? { watch_id: input.watchId } : {})
+    });
+
     const subscriptions = runtime.activityWatches.listWebhookSubscriptions({
       profileName: input.profileName,
       ...(input.watchId ? { watchId: input.watchId } : {}),
       ...(input.status ? { status: input.status } : {})
     });
 
-    printJson({
+    runtime.logger.log("info", "cli.activity.webhook.list.done", {
+      count: subscriptions.length,
+      profile_name: input.profileName,
+      ...(input.status ? { status: input.status } : {}),
+      ...(input.watchId ? { watch_id: input.watchId } : {})
+    });
+
+    const report: ActivityWebhookListReport = {
       run_id: runtime.runId,
       profile_name: input.profileName,
       count: subscriptions.length,
       subscriptions
-    });
+    };
+    emitActivityReport(report, outputMode, formatActivityWebhookListReport);
   } finally {
     runtime.close();
   }
@@ -3744,16 +3956,30 @@ async function runActivityWebhookList(input: {
 
 async function runActivityWebhookPause(
   id: string,
+  outputMode: ActivityOutputMode,
   cdpUrl?: string
 ): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
+    runtime.logger.log("info", "cli.activity.webhook.pause.start", {
+      webhook_subscription_id: id
+    });
+
     const subscription = runtime.activityWatches.pauseWebhookSubscription(id);
-    printJson({
+
+    runtime.logger.log("info", "cli.activity.webhook.pause.done", {
+      webhook_subscription_id: subscription.id,
+      watch_id: subscription.watchId
+    });
+
+    const report: ActivityWebhookMutationReport = {
       run_id: runtime.runId,
       subscription
-    });
+    };
+    emitActivityReport(report, outputMode, (value) =>
+      formatActivityWebhookMutationReport(value, "paused")
+    );
   } finally {
     runtime.close();
   }
@@ -3761,16 +3987,30 @@ async function runActivityWebhookPause(
 
 async function runActivityWebhookResume(
   id: string,
+  outputMode: ActivityOutputMode,
   cdpUrl?: string
 ): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
+    runtime.logger.log("info", "cli.activity.webhook.resume.start", {
+      webhook_subscription_id: id
+    });
+
     const subscription = runtime.activityWatches.resumeWebhookSubscription(id);
-    printJson({
+
+    runtime.logger.log("info", "cli.activity.webhook.resume.done", {
+      webhook_subscription_id: subscription.id,
+      watch_id: subscription.watchId
+    });
+
+    const report: ActivityWebhookMutationReport = {
       run_id: runtime.runId,
       subscription
-    });
+    };
+    emitActivityReport(report, outputMode, (value) =>
+      formatActivityWebhookMutationReport(value, "resumed")
+    );
   } finally {
     runtime.close();
   }
@@ -3778,17 +4018,29 @@ async function runActivityWebhookResume(
 
 async function runActivityWebhookRemove(
   id: string,
+  outputMode: ActivityOutputMode,
   cdpUrl?: string
 ): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
+    runtime.logger.log("info", "cli.activity.webhook.remove.start", {
+      webhook_subscription_id: id
+    });
+
     const removed = runtime.activityWatches.removeWebhookSubscription(id);
-    printJson({
+
+    runtime.logger.log("info", "cli.activity.webhook.remove.done", {
+      removed,
+      webhook_subscription_id: id
+    });
+
+    const report: ActivityWebhookRemovalReport = {
       run_id: runtime.runId,
       subscription_id: id,
       removed
-    });
+    };
+    emitActivityReport(report, outputMode, formatActivityWebhookRemovalReport);
   } finally {
     runtime.close();
   }
@@ -3798,22 +4050,35 @@ async function runActivityEventsList(input: {
   profileName: string;
   watchId?: string;
   limit: number;
-}, cdpUrl?: string): Promise<void> {
+}, outputMode: ActivityOutputMode, cdpUrl?: string): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
+    runtime.logger.log("info", "cli.activity.events.list.start", {
+      limit: input.limit,
+      profile_name: input.profileName,
+      ...(input.watchId ? { watch_id: input.watchId } : {})
+    });
+
     const events = runtime.activityWatches.listEvents({
       profileName: input.profileName,
       ...(input.watchId ? { watchId: input.watchId } : {}),
       limit: input.limit
     });
 
-    printJson({
+    runtime.logger.log("info", "cli.activity.events.list.done", {
+      count: events.length,
+      profile_name: input.profileName,
+      ...(input.watchId ? { watch_id: input.watchId } : {})
+    });
+
+    const report: ActivityEventListReport = {
       run_id: runtime.runId,
       profile_name: input.profileName,
       count: events.length,
       events
-    });
+    };
+    emitActivityReport(report, outputMode, formatActivityEventListReport);
   } finally {
     runtime.close();
   }
@@ -3825,10 +4090,18 @@ async function runActivityDeliveriesList(input: {
   subscriptionId?: string;
   status?: WebhookDeliveryAttemptStatus;
   limit: number;
-}, cdpUrl?: string): Promise<void> {
+}, outputMode: ActivityOutputMode, cdpUrl?: string): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
+    runtime.logger.log("info", "cli.activity.deliveries.list.start", {
+      limit: input.limit,
+      profile_name: input.profileName,
+      ...(input.status ? { status: input.status } : {}),
+      ...(input.subscriptionId ? { subscription_id: input.subscriptionId } : {}),
+      ...(input.watchId ? { watch_id: input.watchId } : {})
+    });
+
     const deliveries = runtime.activityWatches.listDeliveries({
       profileName: input.profileName,
       ...(input.watchId ? { watchId: input.watchId } : {}),
@@ -3837,12 +4110,21 @@ async function runActivityDeliveriesList(input: {
       limit: input.limit
     });
 
-    printJson({
+    runtime.logger.log("info", "cli.activity.deliveries.list.done", {
+      count: deliveries.length,
+      profile_name: input.profileName,
+      ...(input.status ? { status: input.status } : {}),
+      ...(input.subscriptionId ? { subscription_id: input.subscriptionId } : {}),
+      ...(input.watchId ? { watch_id: input.watchId } : {})
+    });
+
+    const report: ActivityDeliveryListReport = {
       run_id: runtime.runId,
       profile_name: input.profileName,
       count: deliveries.length,
       deliveries
-    });
+    };
+    emitActivityReport(report, outputMode, formatActivityDeliveryListReport);
   } finally {
     runtime.close();
   }
@@ -3850,6 +4132,7 @@ async function runActivityDeliveriesList(input: {
 
 async function runActivityRunOnce(
   profileName: string,
+  outputMode: ActivityOutputMode,
   cdpUrl?: string
 ): Promise<void> {
   const normalizedProfileName = coerceProfileName(profileName);
@@ -3857,6 +4140,17 @@ async function runActivityRunOnce(
   const activityConfig = resolveActivityWebhookConfig();
 
   try {
+    runtime.logger.log("info", "cli.activity.run_once.start", {
+      profile_name: normalizedProfileName,
+      worker_id: `cli:${runtime.runId}`
+    });
+
+    if (outputMode === "human") {
+      writeCliNotice(
+        `Running one activity polling tick for profile "${normalizedProfileName}".`
+      );
+    }
+
     const result = await runtime.activityPoller.runTick({
       profileName: normalizedProfileName,
       workerId: `cli:${runtime.runId}`
@@ -3870,12 +4164,21 @@ async function runActivityRunOnce(
       process.exitCode = 1;
     }
 
-    printJson({
+    runtime.logger.log("info", "cli.activity.run_once.done", {
+      dead_letter_deliveries: result.deadLetterDeliveries,
+      failed_deliveries: result.failedDeliveries,
+      failed_watches: result.failedWatches,
+      profile_name: normalizedProfileName,
+      worker_id: result.workerId
+    });
+
+    const report: ActivityRunOnceReport = {
       run_id: runtime.runId,
       profile_name: normalizedProfileName,
       activity_config: activityConfig,
       ...result
-    });
+    };
+    emitActivityReport(report, outputMode, formatActivityRunOnceReport);
   } finally {
     runtime.close();
   }
@@ -3883,13 +4186,14 @@ async function runActivityRunOnce(
 
 async function runActivityStart(
   profileName: string,
+  outputMode: ActivityOutputMode,
   cdpUrl?: string
 ): Promise<void> {
   const normalizedProfileName = coerceProfileName(profileName);
   const files = getActivityFiles(normalizedProfileName);
   const existingPid = await readActivityPid(normalizedProfileName);
   if (existingPid && isProcessRunning(existingPid)) {
-    printJson({
+    const report: ActivityStartReport = {
       started: false,
       reason: "Activity daemon is already running for this profile.",
       profile_name: normalizedProfileName,
@@ -3898,7 +4202,8 @@ async function runActivityStart(
       state_path: files.statePath,
       log_path: files.logPath,
       ...resolveActivityStatusConfig()
-    });
+    };
+    emitActivityReport(report, outputMode, formatActivityStartReport);
     return;
   }
 
@@ -3906,7 +4211,16 @@ async function runActivityStart(
     await removeActivityPid(normalizedProfileName);
   }
 
+  if (cdpUrl) {
+    warnAboutExternalCdpDaemonSession();
+  }
   maybeWarnAboutSelectorLocaleConfig(cliSelectorLocale);
+
+  if (outputMode === "human") {
+    writeCliNotice(
+      `Starting the activity daemon for profile "${normalizedProfileName}".`
+    );
+  }
 
   const activityConfig = resolveActivityWebhookConfig();
   const cliEntrypoint = resolveKeepAliveCliEntrypoint();
@@ -3958,17 +4272,21 @@ async function runActivityStart(
   await writeActivityPid(normalizedProfileName, daemon.pid);
   await writeActivityState(normalizedProfileName, initialState);
 
-  printJson({
+  const report: ActivityStartReport = {
     started: true,
     profile_name: normalizedProfileName,
     pid: daemon.pid,
     state_path: files.statePath,
     log_path: files.logPath,
     activity_config: activityConfig
-  });
+  };
+  emitActivityReport(report, outputMode, formatActivityStartReport);
 }
 
-async function runActivityStatus(profileName: string): Promise<void> {
+async function runActivityStatus(
+  profileName: string,
+  outputMode: ActivityOutputMode
+): Promise<void> {
   const normalizedProfileName = coerceProfileName(profileName);
   const pid = await readActivityPid(normalizedProfileName);
   const state = await readActivityState(normalizedProfileName);
@@ -3992,7 +4310,7 @@ async function runActivityStatus(profileName: string): Promise<void> {
       limit: 5
     });
 
-    printJson({
+    const report: ActivityStatusReport = {
       profile_name: normalizedProfileName,
       running,
       pid: typeof pid === "number" ? pid : null,
@@ -4009,26 +4327,36 @@ async function runActivityStatus(profileName: string): Promise<void> {
       recent_event_count: recentEvents.length,
       recent_delivery_count: recentDeliveries.length,
       ...resolveActivityStatusConfig()
-    });
+    };
+
+    if (report.activity_config_error) {
+      process.exitCode = 1;
+    }
+
+    emitActivityReport(report, outputMode, formatActivityStatusReport);
   } finally {
     db.close();
   }
 }
 
-async function runActivityStop(profileName: string): Promise<void> {
+async function runActivityStop(
+  profileName: string,
+  outputMode: ActivityOutputMode
+): Promise<void> {
   const normalizedProfileName = coerceProfileName(profileName);
   const files = getActivityFiles(normalizedProfileName);
   const pid = await readActivityPid(normalizedProfileName);
   const previousState = await readActivityState(normalizedProfileName);
 
   if (!pid) {
-    printJson({
+    const report: ActivityStopReport = {
       stopped: false,
       profile_name: normalizedProfileName,
       reason: "No activity daemon is currently running for this profile.",
       state_path: files.statePath,
       log_path: files.logPath
-    });
+    };
+    emitActivityReport(report, outputMode, formatActivityStopReport);
     return;
   }
 
@@ -4044,15 +4372,22 @@ async function runActivityStop(profileName: string): Promise<void> {
         lastError: "Recovered from stale pid file."
       });
     }
-    printJson({
+    const report: ActivityStopReport = {
       stopped: true,
       profile_name: normalizedProfileName,
       pid,
       reason: "Removed a stale activity PID file for this profile.",
       state_path: files.statePath,
       log_path: files.logPath
-    });
+    };
+    emitActivityReport(report, outputMode, formatActivityStopReport);
     return;
+  }
+
+  if (outputMode === "human") {
+    writeCliNotice(
+      `Stopping the activity daemon for profile "${normalizedProfileName}".`
+    );
   }
 
   try {
@@ -4095,7 +4430,7 @@ async function runActivityStop(profileName: string): Promise<void> {
     });
   }
 
-  printJson({
+  const report: ActivityStopReport = {
     stopped: true,
     profile_name: normalizedProfileName,
     pid,
@@ -4105,7 +4440,8 @@ async function runActivityStop(profileName: string): Promise<void> {
       : "Activity daemon exited cleanly.",
     state_path: files.statePath,
     log_path: files.logPath
-  });
+  };
+  emitActivityReport(report, outputMode, formatActivityStopReport);
 }
 
 async function runActivityDaemon(
@@ -6125,16 +6461,20 @@ export function createCliProgram(): Command {
   const activityCommand = program
     .command("activity")
     .description(
-      "Manage poll-based LinkedIn activity watches, webhook subscriptions, and the local activity daemon"
+      "Use human-readable activity summaries by default in interactive terminals. Manage poll-based LinkedIn activity watches, webhook subscriptions, and the local activity daemon."
     )
     .addHelpText(
-      "afterAll",
+      "after",
       [
+        "",
+        "Interactive terminals default to human-readable activity summaries.",
+        "Use --json for automation, piping, or to inspect the full structured activity payload.",
+        "Use `linkedin activity run-once` when you want an immediate poll without keeping the daemon running.",
         "",
         "Examples:",
         "  linkedin activity watch add --profile default --kind notifications --interval-seconds 600",
         "  linkedin activity webhook add --watch <watch-id> --url https://example.com/hooks/linkedin",
-        "  linkedin activity run-once --profile default",
+        "  linkedin activity run-once --profile default --json",
         "  linkedin activity start --profile default",
         "  linkedin activity status --profile default",
         "  linkedin activity stop --profile default"
@@ -6154,33 +6494,38 @@ export function createCliProgram(): Command {
     .option("--cron <expression>", "Cron schedule expression")
     .option("--target <json>", "Watch target as JSON object text")
     .option("--target-file <path>", "Read watch target from a JSON file")
+    .option("--json", "Print the structured activity payload", false)
     .action(
       async (options: {
         kind: string;
+        json: boolean;
         profile: string;
         intervalSeconds?: string;
         cron?: string;
         target?: string;
         targetFile?: string;
       }) => {
-        const target = await readActivityTargetInput(options);
-        await runActivityWatchAdd(
-          {
-            profileName: options.profile,
-            kind: coerceActivityWatchKind(options.kind),
-            ...(typeof options.intervalSeconds === "string"
-              ? {
-                  intervalSeconds: coercePositiveInt(
-                    options.intervalSeconds,
-                    "interval-seconds"
-                  )
-                }
-              : {}),
-            ...(options.cron ? { cron: options.cron } : {}),
-            ...(target ? { target } : {})
-          },
-          readCdpUrl()
-        );
+        await runActivityCliAction(options, async (outputMode) => {
+          const target = await readActivityTargetInput(options);
+          await runActivityWatchAdd(
+            {
+              profileName: options.profile,
+              kind: coerceActivityWatchKind(options.kind),
+              ...(typeof options.intervalSeconds === "string"
+                ? {
+                    intervalSeconds: coercePositiveInt(
+                      options.intervalSeconds,
+                      "interval-seconds"
+                    )
+                  }
+                : {}),
+              ...(options.cron ? { cron: options.cron } : {}),
+              ...(target ? { target } : {})
+            },
+            outputMode,
+            readCdpUrl()
+          );
+        });
       }
     );
 
@@ -6192,40 +6537,53 @@ export function createCliProgram(): Command {
       "--status <status>",
       `Filter by status: ${ACTIVITY_WATCH_STATUSES.join(", ")}`
     )
-    .action(async (options: { profile: string; status?: string }) => {
-      await runActivityWatchList(
-        {
-          profileName: options.profile,
-          ...(options.status
-            ? { status: coerceActivityWatchStatusValue(options.status) }
-            : {})
-        },
-        readCdpUrl()
-      );
+    .option("--json", "Print the structured activity payload", false)
+    .action(async (options: { profile: string; status?: string; json: boolean }) => {
+      await runActivityCliAction(options, async (outputMode) => {
+        await runActivityWatchList(
+          {
+            profileName: options.profile,
+            ...(options.status
+              ? { status: coerceActivityWatchStatusValue(options.status) }
+              : {})
+          },
+          outputMode,
+          readCdpUrl()
+        );
+      });
     });
 
   activityWatchCommand
     .command("pause")
     .description("Pause an activity watch")
     .argument("<watchId>", "Activity watch id")
-    .action(async (watchId: string) => {
-      await runActivityWatchPause(watchId, readCdpUrl());
+    .option("--json", "Print the structured activity payload", false)
+    .action(async (watchId: string, options: { json: boolean }) => {
+      await runActivityCliAction(options, async (outputMode) => {
+        await runActivityWatchPause(watchId, outputMode, readCdpUrl());
+      });
     });
 
   activityWatchCommand
     .command("resume")
     .description("Resume an activity watch and make it due immediately")
     .argument("<watchId>", "Activity watch id")
-    .action(async (watchId: string) => {
-      await runActivityWatchResume(watchId, readCdpUrl());
+    .option("--json", "Print the structured activity payload", false)
+    .action(async (watchId: string, options: { json: boolean }) => {
+      await runActivityCliAction(options, async (outputMode) => {
+        await runActivityWatchResume(watchId, outputMode, readCdpUrl());
+      });
     });
 
   activityWatchCommand
     .command("remove")
     .description("Remove an activity watch")
     .argument("<watchId>", "Activity watch id")
-    .action(async (watchId: string) => {
-      await runActivityWatchRemove(watchId, readCdpUrl());
+    .option("--json", "Print the structured activity payload", false)
+    .action(async (watchId: string, options: { json: boolean }) => {
+      await runActivityCliAction(options, async (outputMode) => {
+        await runActivityWatchRemove(watchId, outputMode, readCdpUrl());
+      });
     });
 
   const activityWebhookCommand = activityCommand
@@ -6240,28 +6598,38 @@ export function createCliProgram(): Command {
     .option("-e, --event <eventType...>", `Event filters: ${ACTIVITY_EVENT_TYPES.join(", ")}`)
     .option("--secret <secret>", "Webhook signing secret")
     .option("--max-attempts <count>", "Maximum delivery attempts")
+    .option("--json", "Print the structured activity payload", false)
     .action(
       async (options: {
         watch: string;
         url: string;
         event?: string[];
+        json: boolean;
         secret?: string;
         maxAttempts?: string;
       }) => {
-        await runActivityWebhookAdd(
-          {
-            watchId: options.watch,
-            deliveryUrl: options.url,
-            ...(options.event
-              ? { eventTypes: coerceActivityEventTypes(options.event) }
-              : {}),
-            ...(options.secret ? { signingSecret: options.secret } : {}),
-            ...(typeof options.maxAttempts === "string"
-              ? { maxAttempts: coercePositiveInt(options.maxAttempts, "max-attempts") }
-              : {})
-          },
-          readCdpUrl()
-        );
+        await runActivityCliAction(options, async (outputMode) => {
+          await runActivityWebhookAdd(
+            {
+              watchId: options.watch,
+              deliveryUrl: options.url,
+              ...(options.event
+                ? { eventTypes: coerceActivityEventTypes(options.event) }
+                : {}),
+              ...(options.secret ? { signingSecret: options.secret } : {}),
+              ...(typeof options.maxAttempts === "string"
+                ? {
+                    maxAttempts: coercePositiveInt(
+                      options.maxAttempts,
+                      "max-attempts"
+                    )
+                  }
+                : {})
+            },
+            outputMode,
+            readCdpUrl()
+          );
+        });
       }
     );
 
@@ -6274,18 +6642,22 @@ export function createCliProgram(): Command {
       "--status <status>",
       `Filter by status: ${WEBHOOK_SUBSCRIPTION_STATUSES.join(", ")}`
     )
+    .option("--json", "Print the structured activity payload", false)
     .action(
-      async (options: { profile: string; watch?: string; status?: string }) => {
-        await runActivityWebhookList(
-          {
-            profileName: options.profile,
-            ...(options.watch ? { watchId: options.watch } : {}),
-            ...(options.status
-              ? { status: coerceWebhookSubscriptionStatusValue(options.status) }
-              : {})
-          },
-          readCdpUrl()
-        );
+      async (options: { profile: string; watch?: string; status?: string; json: boolean }) => {
+        await runActivityCliAction(options, async (outputMode) => {
+          await runActivityWebhookList(
+            {
+              profileName: options.profile,
+              ...(options.watch ? { watchId: options.watch } : {}),
+              ...(options.status
+                ? { status: coerceWebhookSubscriptionStatusValue(options.status) }
+                : {})
+            },
+            outputMode,
+            readCdpUrl()
+          );
+        });
       }
     );
 
@@ -6293,24 +6665,33 @@ export function createCliProgram(): Command {
     .command("pause")
     .description("Pause a webhook subscription")
     .argument("<subscriptionId>", "Webhook subscription id")
-    .action(async (subscriptionId: string) => {
-      await runActivityWebhookPause(subscriptionId, readCdpUrl());
+    .option("--json", "Print the structured activity payload", false)
+    .action(async (subscriptionId: string, options: { json: boolean }) => {
+      await runActivityCliAction(options, async (outputMode) => {
+        await runActivityWebhookPause(subscriptionId, outputMode, readCdpUrl());
+      });
     });
 
   activityWebhookCommand
     .command("resume")
     .description("Resume a webhook subscription")
     .argument("<subscriptionId>", "Webhook subscription id")
-    .action(async (subscriptionId: string) => {
-      await runActivityWebhookResume(subscriptionId, readCdpUrl());
+    .option("--json", "Print the structured activity payload", false)
+    .action(async (subscriptionId: string, options: { json: boolean }) => {
+      await runActivityCliAction(options, async (outputMode) => {
+        await runActivityWebhookResume(subscriptionId, outputMode, readCdpUrl());
+      });
     });
 
   activityWebhookCommand
     .command("remove")
     .description("Remove a webhook subscription")
     .argument("<subscriptionId>", "Webhook subscription id")
-    .action(async (subscriptionId: string) => {
-      await runActivityWebhookRemove(subscriptionId, readCdpUrl());
+    .option("--json", "Print the structured activity payload", false)
+    .action(async (subscriptionId: string, options: { json: boolean }) => {
+      await runActivityCliAction(options, async (outputMode) => {
+        await runActivityWebhookRemove(subscriptionId, outputMode, readCdpUrl());
+      });
     });
 
   activityCommand
@@ -6319,15 +6700,19 @@ export function createCliProgram(): Command {
     .option("-p, --profile <profile>", "Profile name", "default")
     .option("--watch <watchId>", "Filter by watch id")
     .option("-l, --limit <limit>", "Maximum events to return", "20")
-    .action(async (options: { profile: string; watch?: string; limit: string }) => {
-      await runActivityEventsList(
-        {
-          profileName: options.profile,
-          ...(options.watch ? { watchId: options.watch } : {}),
-          limit: coercePositiveInt(options.limit, "limit")
-        },
-        readCdpUrl()
-      );
+    .option("--json", "Print the structured activity payload", false)
+    .action(async (options: { profile: string; watch?: string; limit: string; json: boolean }) => {
+      await runActivityCliAction(options, async (outputMode) => {
+        await runActivityEventsList(
+          {
+            profileName: options.profile,
+            ...(options.watch ? { watchId: options.watch } : {}),
+            limit: coercePositiveInt(options.limit, "limit")
+          },
+          outputMode,
+          readCdpUrl()
+        );
+      });
     });
 
   activityCommand
@@ -6341,6 +6726,7 @@ export function createCliProgram(): Command {
       `Filter by status: ${WEBHOOK_DELIVERY_ATTEMPT_STATUSES.join(", ")}`
     )
     .option("-l, --limit <limit>", "Maximum deliveries to return", "20")
+    .option("--json", "Print the structured activity payload", false)
     .action(
       async (options: {
         profile: string;
@@ -6348,19 +6734,23 @@ export function createCliProgram(): Command {
         subscription?: string;
         status?: string;
         limit: string;
+        json: boolean;
       }) => {
-        await runActivityDeliveriesList(
-          {
-            profileName: options.profile,
-            ...(options.watch ? { watchId: options.watch } : {}),
-            ...(options.subscription ? { subscriptionId: options.subscription } : {}),
-            ...(options.status
-              ? { status: coerceWebhookDeliveryStatusValue(options.status) }
-              : {}),
-            limit: coercePositiveInt(options.limit, "limit")
-          },
-          readCdpUrl()
-        );
+        await runActivityCliAction(options, async (outputMode) => {
+          await runActivityDeliveriesList(
+            {
+              profileName: options.profile,
+              ...(options.watch ? { watchId: options.watch } : {}),
+              ...(options.subscription ? { subscriptionId: options.subscription } : {}),
+              ...(options.status
+                ? { status: coerceWebhookDeliveryStatusValue(options.status) }
+                : {}),
+              limit: coercePositiveInt(options.limit, "limit")
+            },
+            outputMode,
+            readCdpUrl()
+          );
+        });
       }
     );
 
@@ -6368,24 +6758,33 @@ export function createCliProgram(): Command {
     .command("start")
     .description("Start the local activity polling daemon for a profile")
     .option("-p, --profile <profile>", "Profile name", "default")
-    .action(async (options: { profile: string }) => {
-      await runActivityStart(options.profile, readCdpUrl());
+    .option("--json", "Print the structured activity payload", false)
+    .action(async (options: { profile: string; json: boolean }) => {
+      await runActivityCliAction(options, async (outputMode) => {
+        await runActivityStart(options.profile, outputMode, readCdpUrl());
+      });
     });
 
   activityCommand
     .command("status")
     .description("Show local activity daemon state and persistent queue counts")
     .option("-p, --profile <profile>", "Profile name", "default")
-    .action(async (options: { profile: string }) => {
-      await runActivityStatus(options.profile);
+    .option("--json", "Print the structured activity payload", false)
+    .action(async (options: { profile: string; json: boolean }) => {
+      await runActivityCliAction(options, async (outputMode) => {
+        await runActivityStatus(options.profile, outputMode);
+      });
     });
 
   activityCommand
     .command("stop")
     .description("Stop the local activity polling daemon")
     .option("-p, --profile <profile>", "Profile name", "default")
-    .action(async (options: { profile: string }) => {
-      await runActivityStop(options.profile);
+    .option("--json", "Print the structured activity payload", false)
+    .action(async (options: { profile: string; json: boolean }) => {
+      await runActivityCliAction(options, async (outputMode) => {
+        await runActivityStop(options.profile, outputMode);
+      });
     });
 
   activityCommand
@@ -6393,8 +6792,11 @@ export function createCliProgram(): Command {
     .alias("tick")
     .description("Run one activity polling tick immediately")
     .option("-p, --profile <profile>", "Profile name", "default")
-    .action(async (options: { profile: string }) => {
-      await runActivityRunOnce(options.profile, readCdpUrl());
+    .option("--json", "Print the structured activity payload", false)
+    .action(async (options: { profile: string; json: boolean }) => {
+      await runActivityCliAction(options, async (outputMode) => {
+        await runActivityRunOnce(options.profile, outputMode, readCdpUrl());
+      });
     });
 
   activityCommand

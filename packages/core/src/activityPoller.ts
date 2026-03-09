@@ -47,6 +47,7 @@ import {
 
 const ACTIVITY_EVENT_VERSION = "2026-03-activity-v1";
 
+/** Service dependencies required to poll watches and deliver webhook events. */
 export interface ActivityPollerRuntime {
   activityConfig?: ActivityWebhookConfig;
   activityWatches: ActivityWatchesService;
@@ -60,6 +61,7 @@ export interface ActivityPollerRuntime {
   profile: LinkedInProfileService;
 }
 
+/** Per-watch outcome recorded during one polling tick. */
 export interface ActivityWatchTickResult {
   watchId: string;
   kind: ActivityWatchKind;
@@ -69,6 +71,7 @@ export interface ActivityWatchTickResult {
   errorMessage?: string;
 }
 
+/** Per-delivery outcome recorded during one polling tick. */
 export interface ActivityDeliveryTickResult {
   deliveryId: string;
   subscriptionId: string;
@@ -78,6 +81,7 @@ export interface ActivityDeliveryTickResult {
   errorMessage?: string;
 }
 
+/** Aggregate activity polling and delivery outcome for one profile tick. */
 export interface ActivityPollTickResult {
   profileName: string;
   workerId: string;
@@ -456,13 +460,16 @@ function hasFeedEngagementChanged(
   );
 }
 
+/** Polls due activity watches, emits events, and processes webhook deliveries. */
 export class ActivityPollerService {
   private readonly config: ActivityWebhookConfig;
 
+  /** Creates a new activity poller bound to the provided runtime graph. */
   constructor(private readonly runtime: ActivityPollerRuntime) {
     this.config = runtime.activityConfig ?? resolveActivityWebhookConfig();
   }
 
+  /** Runs one polling tick for the selected profile and returns a structured summary. */
   async runTick(input: {
     profileName?: string;
     workerId?: string;
@@ -472,6 +479,11 @@ export class ActivityPollerService {
     const emptyResult = this.buildEmptyTickResult(profileName, workerId);
 
     if (!this.config.enabled) {
+      this.runtime.logger.log("info", "activity.tick.skipped", {
+        profile_name: profileName,
+        reason: "disabled",
+        worker_id: workerId
+      });
       return emptyResult;
     }
 
@@ -643,7 +655,7 @@ export class ActivityPollerService {
         }
       }
 
-      return {
+      const result = {
         profileName,
         workerId,
         claimedWatches: claimedWatches.length,
@@ -660,6 +672,22 @@ export class ActivityPollerService {
         watchResults,
         deliveryResults
       };
+
+      this.runtime.logger.log("info", "activity.tick.completed", {
+        claimed_deliveries: result.claimedDeliveries,
+        claimed_watches: result.claimedWatches,
+        dead_letter_deliveries: result.deadLetterDeliveries,
+        delivered_attempts: result.deliveredAttempts,
+        disabled_subscriptions: result.disabledSubscriptions,
+        emitted_events: result.emittedEvents,
+        failed_deliveries: result.failedDeliveries,
+        failed_watches: result.failedWatches,
+        profile_name: profileName,
+        retried_deliveries: result.retriedDeliveries,
+        worker_id: workerId
+      });
+
+      return result;
     } finally {
       ACTIVE_ACTIVITY_TICKS.delete(tickKey);
     }
