@@ -244,7 +244,8 @@ export function createCoreRuntime(
     auth: new LinkedInAuthService(
       profileManager,
       options.cdpUrl,
-      selectorLocale
+      selectorLocale,
+      logger
     ),
     profile: undefined as unknown as LinkedInProfileService,
     search: undefined as unknown as LinkedInSearchService,

@@ -7,6 +7,7 @@ const ADJACENCY_VERTICAL_THRESHOLD = 1.05;
 const DIRECT_INPUT_TIMEOUT_MS = 10_000;
 const FAST_TYPING_TIMEOUT_MS = 20_000;
 const HUMANIZE_LOGGER_KEY = "__linkedinAssistantLogger";
+const HUMANIZE_LOGGER_BY_PAGE = new WeakMap<object, LoggerLike>();
 const MAX_HUMANIZED_DELAY_MS = 10_000;
 const MAX_HUMANIZED_MULTIPLIER = 10;
 const MAX_MOUSE_COORDINATE_ABS = 100_000;
@@ -106,6 +107,8 @@ export interface HumanizeOptions {
 export interface HumanizedTypingOptions {
   profile?: TypingProfileName;
   profileOverrides?: Partial<TypingProfile>;
+  /** Optional user-facing field label used in diagnostics and progress output. */
+  fieldLabel?: string;
 }
 
 export interface AdjacentTypoCandidate {
@@ -115,7 +118,11 @@ export interface AdjacentTypoCandidate {
   finger: KeyboardFinger;
 }
 
-type HumanizeLogLevel = "debug" | "info" | "warn" | "error";
+export type HumanizeLogLevel = "debug" | "info" | "warn" | "error";
+
+export interface HumanizeLogger {
+  log(level: HumanizeLogLevel, event: string, payload?: Record<string, unknown>): void;
+}
 
 interface ResolvedHumanizeOptions {
   baseDelay: number;
@@ -146,9 +153,7 @@ interface TypingContext {
   isWordStart: boolean;
 }
 
-interface LoggerLike {
-  log(level: HumanizeLogLevel, event: string, payload?: Record<string, unknown>): void;
-}
+type LoggerLike = HumanizeLogger;
 
 interface TypingSimulationState {
   consumedDelayMs: number;
@@ -268,9 +273,205 @@ export const TYPING_PROFILES = {
 } satisfies Record<TypingProfileName, TypingProfile>;
 
 const TYPING_PROFILE_NAMES = Object.keys(TYPING_PROFILES) as TypingProfileName[];
+const DELAY_RANGE_KEYS = ["minMs", "maxMs"] as const;
+const HUMANIZE_OPTION_KEYS = [
+  "baseDelay",
+  "fast",
+  "jitterRange",
+  "typingDelay",
+  "typingJitter",
+  "typingProfile",
+  "typingProfileOverrides"
+] as const;
+const HUMANIZED_TYPING_OPTION_KEYS = [
+  "fieldLabel",
+  "profile",
+  "profileOverrides"
+] as const;
+const TYPING_PROFILE_OVERRIDE_KEYS = [
+  "baseCharDelayMs",
+  "burstWordMultiplier",
+  "charDelayJitterMs",
+  "correctionPauseRange",
+  "correctionResumeRange",
+  "doubleBackspaceRate",
+  "longPauseChance",
+  "longPauseRange",
+  "midWordMultiplier",
+  "punctuationMultiplier",
+  "repeatedCharacterMultiplier",
+  "shiftLeadRange",
+  "shiftMissRate",
+  "thinkingPauseChance",
+  "thinkingPauseRange",
+  "typoRate",
+  "whitespaceMultiplier",
+  "wordBoundaryMultiplier"
+] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function computeLevenshteinDistance(left: string, right: string): number {
+  if (left === right) {
+    return 0;
+  }
+
+  if (left.length === 0) {
+    return right.length;
+  }
+
+  if (right.length === 0) {
+    return left.length;
+  }
+
+  const previous = Array.from({ length: right.length + 1 }, (_unused, index) => index);
+  const current = new Array<number>(right.length + 1).fill(0);
+
+  for (let leftIndex = 0; leftIndex < left.length; leftIndex += 1) {
+    current[0] = leftIndex + 1;
+    const leftCharacter = left[leftIndex] ?? "";
+
+    for (let rightIndex = 0; rightIndex < right.length; rightIndex += 1) {
+      const rightCharacter = right[rightIndex] ?? "";
+      const substitutionCost = leftCharacter === rightCharacter ? 0 : 1;
+      current[rightIndex + 1] = Math.min(
+        (current[rightIndex] ?? 0) + 1,
+        (previous[rightIndex + 1] ?? 0) + 1,
+        (previous[rightIndex] ?? 0) + substitutionCost
+      );
+    }
+
+    for (let index = 0; index < current.length; index += 1) {
+      previous[index] = current[index] ?? 0;
+    }
+  }
+
+  return previous[right.length] ?? right.length;
+}
+
+function findSuggestedKey(
+  unexpectedKey: string,
+  allowedKeys: readonly string[]
+): string | null {
+  const normalizedUnexpectedKey = unexpectedKey.trim().toLowerCase();
+  if (normalizedUnexpectedKey.length === 0) {
+    return null;
+  }
+
+  let bestMatch: string | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  let bestPrefixMatch: { key: string; prefixLength: number; distance: number } | null = null;
+
+  for (const allowedKey of allowedKeys) {
+    const normalizedAllowedKey = allowedKey.toLowerCase();
+    if (normalizedAllowedKey === normalizedUnexpectedKey) {
+      return allowedKey;
+    }
+
+    if (
+      normalizedAllowedKey.startsWith(normalizedUnexpectedKey) ||
+      normalizedUnexpectedKey.startsWith(normalizedAllowedKey)
+    ) {
+      return allowedKey;
+    }
+
+    const maxPrefixLength = Math.min(
+      normalizedUnexpectedKey.length,
+      normalizedAllowedKey.length
+    );
+    let commonPrefixLength = 0;
+    while (
+      commonPrefixLength < maxPrefixLength &&
+      normalizedUnexpectedKey[commonPrefixLength] === normalizedAllowedKey[commonPrefixLength]
+    ) {
+      commonPrefixLength += 1;
+    }
+
+    const distance = computeLevenshteinDistance(
+      normalizedUnexpectedKey,
+      normalizedAllowedKey
+    );
+    if (
+      commonPrefixLength >= 4 &&
+      (bestPrefixMatch === null ||
+        commonPrefixLength > bestPrefixMatch.prefixLength ||
+        (commonPrefixLength === bestPrefixMatch.prefixLength &&
+          distance < bestPrefixMatch.distance))
+    ) {
+      bestPrefixMatch = {
+        key: allowedKey,
+        prefixLength: commonPrefixLength,
+        distance
+      };
+    }
+
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestMatch = allowedKey;
+    }
+  }
+
+  if (bestPrefixMatch) {
+    return bestPrefixMatch.key;
+  }
+
+  const maxDistance = normalizedUnexpectedKey.length <= 6 ? 2 : 3;
+  return bestDistance <= maxDistance ? bestMatch : null;
+}
+
+function assertNoUnexpectedKeys(
+  value: Record<string, unknown>,
+  name: string,
+  allowedKeys: readonly string[]
+): void {
+  const unexpectedKeys = Object.keys(value).filter((key) => !allowedKeys.includes(key));
+  if (unexpectedKeys.length === 0) {
+    return;
+  }
+
+  const [unexpectedKey = ""] = unexpectedKeys;
+  const suggestion = findSuggestedKey(unexpectedKey, allowedKeys);
+  throw new TypeError(
+    suggestion
+      ? `${name} has unsupported key "${unexpectedKey}". Did you mean "${suggestion}"? Supported keys: ${allowedKeys.join(", ")}.`
+      : `${name} has unsupported key "${unexpectedKey}". Supported keys: ${allowedKeys.join(", ")}.`
+  );
+}
+
+function normalizeFieldLabel(value: string | undefined): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? null : trimmed;
+}
+
+function describeTypingFallbackReason(reason: string): string {
+  switch (reason) {
+    case "text_too_long":
+      return `Simulated typing is capped at ${MAX_SIMULATED_TYPING_GRAPHEMES} graphemes per field.`;
+    case "timeout":
+      return "Simulated typing exceeded the per-field safety budget.";
+    case "simulation_failed":
+      return "LinkedIn or Playwright interrupted simulated keystrokes.";
+    default:
+      return "Simulated typing could not continue.";
+  }
+}
+
+function suggestTypingFallbackAction(reason: string): string {
+  switch (reason) {
+    case "text_too_long":
+      return "Use shorter inputs to keep full keystroke simulation, or allow the direct-input fallback for long text.";
+    case "timeout":
+    case "simulation_failed":
+      return "Retry once. If it repeats, inspect the input selector or recent LinkedIn UI changes around that field.";
+    default:
+      return "Retry once and inspect the target field if the problem persists.";
+  }
 }
 
 function summarizeError(error: unknown): Record<string, unknown> {
@@ -287,12 +488,26 @@ function summarizeError(error: unknown): Record<string, unknown> {
 }
 
 function getPageLogger(page: Page): LoggerLike | null {
+  const weakMapLogger = HUMANIZE_LOGGER_BY_PAGE.get(page as object);
+  if (weakMapLogger) {
+    return weakMapLogger;
+  }
+
   const logger = Reflect.get(page as object, HUMANIZE_LOGGER_KEY);
   if (!isRecord(logger) || typeof logger.log !== "function") {
     return null;
   }
 
   return logger as unknown as LoggerLike;
+}
+
+export function attachHumanizeLogger(page: Page, logger: HumanizeLogger): void {
+  HUMANIZE_LOGGER_BY_PAGE.set(page as object, logger);
+}
+
+export function detachHumanizeLogger(page: Page): void {
+  HUMANIZE_LOGGER_BY_PAGE.delete(page as object);
+  Reflect.deleteProperty(page as object, HUMANIZE_LOGGER_KEY);
 }
 
 function logHumanizeEvent(
@@ -391,6 +606,8 @@ function validateDelayRangeValue(value: unknown, name: string): void {
     throw new TypeError(`${name} must be an object with minMs and maxMs.`);
   }
 
+  assertNoUnexpectedKeys(value, name, DELAY_RANGE_KEYS);
+
   const minMs = value.minMs;
   const maxMs = value.maxMs;
   assertNonNegativeFiniteNumber(minMs, `${name}.minMs`, { max: MAX_HUMANIZED_DELAY_MS });
@@ -412,6 +629,8 @@ function validateTypingProfileOverrides(
   if (!isRecord(value)) {
     throw new TypeError(`${name} must be an object.`);
   }
+
+  assertNoUnexpectedKeys(value, name, TYPING_PROFILE_OVERRIDE_KEYS);
 
   const chanceKeys = [
     "doubleBackspaceRate",
@@ -478,6 +697,8 @@ function validateHumanizeOptionsValue(options: unknown): asserts options is Huma
     throw new TypeError("options must be an object.");
   }
 
+  assertNoUnexpectedKeys(options, "options", HUMANIZE_OPTION_KEYS);
+
   if (options.baseDelay !== undefined) {
     assertNonNegativeFiniteNumber(options.baseDelay, "options.baseDelay", {
       max: MAX_HUMANIZED_DELAY_MS
@@ -512,7 +733,7 @@ function validateHumanizeOptionsValue(options: unknown): asserts options is Huma
       !TYPING_PROFILE_NAMES.includes(options.typingProfile as TypingProfileName))
   ) {
     throw new RangeError(
-      `options.typingProfile must be one of: ${TYPING_PROFILE_NAMES.join(", ")}.`
+      `options.typingProfile must be one of: ${TYPING_PROFILE_NAMES.join(", ")}. Omit it to use the default "careful" profile, or use "fast" for shorter waits in tests.`
     );
   }
 
@@ -533,11 +754,17 @@ function validateHumanizedTypingOptionsValue(
     throw new TypeError("typing options must be an object.");
   }
 
+  assertNoUnexpectedKeys(options, "typing options", HUMANIZED_TYPING_OPTION_KEYS);
+
+  if (options.fieldLabel !== undefined) {
+    assertString(options.fieldLabel, "typing options.fieldLabel", { maxLength: 80 });
+  }
+
   if (options.profile !== undefined &&
     (typeof options.profile !== "string" ||
       !TYPING_PROFILE_NAMES.includes(options.profile as TypingProfileName))) {
     throw new RangeError(
-      `typing options.profile must be one of: ${TYPING_PROFILE_NAMES.join(", ")}.`
+      `typing options.profile must be one of: ${TYPING_PROFILE_NAMES.join(", ")}. Omit it to inherit the page default typing profile.`
     );
   }
 
@@ -601,6 +828,21 @@ function buildTypingLogPayload(text: string, characters: readonly string[]): Rec
     containsUnicode: containsUnicodeCharacters(text),
     graphemeCount: characters.length,
     textLength: text.length
+  };
+}
+
+function buildTypingEventPayload(input: {
+  text: string;
+  characters: readonly string[];
+  fieldLabel?: string | null | undefined;
+  profileName?: TypingProfileName | undefined;
+  extra?: Record<string, unknown>;
+}): Record<string, unknown> {
+  return {
+    ...buildTypingLogPayload(input.text, input.characters),
+    ...(input.fieldLabel ? { field_label: input.fieldLabel } : {}),
+    ...(input.profileName ? { typing_profile: input.profileName } : {}),
+    ...input.extra
   };
 }
 
@@ -909,12 +1151,25 @@ export class HumanizedPage {
     const characters = splitTypingCharacters(text);
     if (characters.length > MAX_TEXT_GRAPHEMES) {
       throw new RangeError(
-        `text must be at most ${MAX_TEXT_GRAPHEMES} Unicode graphemes long.`
+        `text must be at most ${MAX_TEXT_GRAPHEMES} Unicode graphemes long. Split very large text into smaller chunks or bypass humanized typing for bulk input.`
       );
     }
 
     const element = this.page.locator(selector).first();
+    const fieldLabel = normalizeFieldLabel(options?.fieldLabel);
+    const profileName = options?.profile ?? this.options.typingProfile;
     const profile = this.resolveTypingProfile(options);
+    logHumanizeEvent(
+      this.page,
+      "info",
+      "humanize.typing.start",
+      buildTypingEventPayload({
+        text,
+        characters,
+        fieldLabel,
+        profileName
+      })
+    );
 
     try {
       await element.scrollIntoViewIfNeeded();
@@ -923,23 +1178,53 @@ export class HumanizedPage {
       await this.delay(150);
 
       if (characters.length === 0) {
+        logHumanizeEvent(
+          this.page,
+          "info",
+          "humanize.typing.done",
+          buildTypingEventPayload({
+            text,
+            characters,
+            fieldLabel,
+            profileName,
+            extra: { mode: "simulated" }
+          })
+        );
         await this.delay(200);
         return;
       }
 
       if (characters.length > MAX_SIMULATED_TYPING_GRAPHEMES) {
-        const degraded = await this.tryDirectInput(
+        const fallbackMethod = await this.tryDirectInput(
           element,
           text,
           characters,
-          "text_too_long"
+          "text_too_long",
+          fieldLabel,
+          profileName
         );
-        if (!degraded) {
+        if (fallbackMethod === null) {
           throw new HumanizeTypingTimeoutError(
-            "Typing simulation exceeded the maximum safe text length and direct input fallback failed."
+            "Typing simulation exceeded the maximum safe text length and the direct-input fallback also failed. Retry once or bypass humanized typing for bulk input."
           );
         }
 
+        logHumanizeEvent(
+          this.page,
+          "info",
+          "humanize.typing.done",
+          buildTypingEventPayload({
+            text,
+            characters,
+            fieldLabel,
+            profileName,
+            extra: {
+              fallback_method: fallbackMethod,
+              fallback_reason: "text_too_long",
+              mode: "direct_input"
+            }
+          })
+        );
         await this.delay(200);
         return;
       }
@@ -989,16 +1274,47 @@ export class HumanizedPage {
         await this.clearTypingSimulationState(state);
       }
 
+      logHumanizeEvent(
+        this.page,
+        "info",
+        "humanize.typing.done",
+        buildTypingEventPayload({
+          text,
+          characters,
+          fieldLabel,
+          profileName,
+          extra: { mode: "simulated" }
+        })
+      );
       await this.delay(200);
     } catch (error) {
-      const degraded = await this.tryDirectInput(
+      const fallbackMethod = await this.tryDirectInput(
         element,
         text,
         characters,
         error instanceof HumanizeTypingTimeoutError ? "timeout" : "simulation_failed",
+        fieldLabel,
+        profileName,
         error
       );
-      if (degraded) {
+      if (fallbackMethod !== null) {
+        logHumanizeEvent(
+          this.page,
+          "info",
+          "humanize.typing.done",
+          buildTypingEventPayload({
+            text,
+            characters,
+            fieldLabel,
+            profileName,
+            extra: {
+              fallback_method: fallbackMethod,
+              fallback_reason:
+                error instanceof HumanizeTypingTimeoutError ? "timeout" : "simulation_failed",
+              mode: "direct_input"
+            }
+          })
+        );
         await this.delay(200);
         return;
       }
@@ -1153,13 +1469,22 @@ export class HumanizedPage {
     text: string,
     characters: readonly string[],
     reason: string,
+    fieldLabel?: string | null,
+    profileName?: TypingProfileName,
     error?: unknown
-  ): Promise<boolean> {
-    const payload = {
-      ...buildTypingLogPayload(text, characters),
-      ...(error === undefined ? {} : { error: summarizeError(error) }),
-      reason
-    };
+  ): Promise<string | null> {
+    const payload = buildTypingEventPayload({
+      text,
+      characters,
+      fieldLabel,
+      profileName,
+      extra: {
+        diagnostic: describeTypingFallbackReason(reason),
+        ...(error === undefined ? {} : { error: summarizeError(error) }),
+        reason,
+        suggested_action: suggestTypingFallbackAction(reason)
+      }
+    });
 
     try {
       const method = await this.applyDirectInput(element, text);
@@ -1167,13 +1492,13 @@ export class HumanizedPage {
         ...payload,
         method
       });
-      return true;
+      return method;
     } catch (fallbackError) {
       logHumanizeEvent(this.page, "error", "humanize.typing.fallback_failed", {
         ...payload,
         fallbackError: summarizeError(fallbackError)
       });
-      return false;
+      return null;
     }
   }
 

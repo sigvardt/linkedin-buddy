@@ -78,6 +78,8 @@ import {
   type ActivityWatchKind,
   type ActivityWatchStatus,
   type DraftQualityReport,
+  type JsonEventLogger,
+  type JsonLogEntry,
   type LinkedInFixtureManifest,
   type LinkedInFixturePageEntry,
   type LinkedInFixtureRoute,
@@ -110,6 +112,7 @@ import {
   resolveReadOnlyValidationOutputMode,
   type ReadOnlyValidationOutputMode
 } from "../liveValidationOutput.js";
+import { HeadlessLoginProgressReporter } from "../headlessLoginOutput.js";
 import {
   formatSelectorAuditError,
   formatSelectorAuditReport,
@@ -957,6 +960,21 @@ function createDraftQualityProgressLogger(
     log(_level, event, payload = {}) {
       onLog({ event, payload });
     }
+  };
+}
+
+function attachHeadlessLoginLogObserver(
+  logger: Pick<JsonEventLogger, "log">,
+  onLog: (entry: JsonLogEntry) => void
+): void {
+  const originalLog = logger.log.bind(logger) as (
+    ...args: Parameters<JsonEventLogger["log"]>
+  ) => ReturnType<JsonEventLogger["log"]>;
+
+  logger.log = (...args: Parameters<JsonEventLogger["log"]>) => {
+    const entry = originalLog(...args);
+    onLog(entry);
+    return entry;
   };
 }
 
@@ -3992,6 +4010,16 @@ async function runHeadlessLogin(input: {
   timeoutMinutes: number;
 }, cdpUrl?: string): Promise<void> {
   const runtime = createRuntime(cdpUrl);
+  const progressEnabled = Boolean(process.stderr.isTTY);
+  const progressReporter = new HeadlessLoginProgressReporter({
+    enabled: progressEnabled
+  });
+
+  if (progressEnabled) {
+    attachHeadlessLoginLogObserver(runtime.logger, (entry) => {
+      progressReporter.handleLog(entry);
+    });
+  }
 
   try {
     runtime.logger.log("info", "cli.login.headless.start", {
