@@ -219,6 +219,40 @@ describe("write validation CLI", () => {
     expect(stderrOutput).toContain('Remove "--yes" and rerun');
   });
 
+  it("requires an account id for write validation", async () => {
+    await runCli([
+      "node",
+      "linkedin",
+      "test:live",
+      "--write-validation"
+    ]);
+
+    const stderrOutput = stripVTControlCharacters(stderrChunks.join(""));
+
+    expect(process.exitCode).toBe(2);
+    expect(stderrOutput).toContain('Write validation requires "--account <id>".');
+  });
+
+  it("rejects session overrides for write validation", async () => {
+    await runCli([
+      "node",
+      "linkedin",
+      "test:live",
+      "--write-validation",
+      "--account",
+      "secondary",
+      "--session",
+      "custom-session"
+    ]);
+
+    const stderrOutput = stripVTControlCharacters(stderrChunks.join(""));
+
+    expect(process.exitCode).toBe(2);
+    expect(stderrOutput).toContain(
+      'Write validation resolves stored sessions through the account registry. Remove "--session" and rerun.'
+    );
+  });
+
   it("prompts per action and runs the write-validation harness", async () => {
     writeValidationCliMocks.answers = ["yes"];
     writeValidationCliMocks.runLinkedInWriteValidation.mockImplementation(

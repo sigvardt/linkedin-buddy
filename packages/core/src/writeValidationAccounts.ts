@@ -88,6 +88,34 @@ function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function assertJsonRecord(
+  value: unknown,
+  message: string,
+  details?: JsonRecord
+): JsonRecord {
+  if (isRecord(value)) {
+    return value;
+  }
+
+  throw new LinkedInAssistantError(
+    "ACTION_PRECONDITION_FAILED",
+    message,
+    details
+  );
+}
+
+function parseOptionalTarget<T>(
+  value: unknown,
+  label: string,
+  parse: (target: JsonRecord) => T
+): T | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  return parse(assertJsonRecord(value, `${label} must be a JSON object.`));
+}
+
 function assertNonEmptyString(value: unknown, label: string): string {
   if (typeof value !== "string") {
     throw new LinkedInAssistantError(
@@ -201,6 +229,34 @@ function readConfigShape(baseDir?: string): { config: JsonRecord; configPath: st
   };
 }
 
+function readOptionalConfigObject(
+  value: unknown,
+  objectPath: string,
+  configPath: string
+): JsonRecord | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  return assertJsonRecord(
+    value,
+    `${objectPath} in ${configPath} must be a JSON object.`,
+    {
+      config_path: configPath,
+      provided_value: value
+    }
+  );
+}
+
+function cloneConfigObject(
+  value: unknown,
+  objectPath: string,
+  configPath: string
+): JsonRecord {
+  const configObject = readOptionalConfigObject(value, objectPath, configPath);
+  return configObject ? { ...configObject } : {};
+}
+
 function normalizeAccountId(value: string, label: string): string {
   return assertLocalIdentifier(value, label);
 }
@@ -240,128 +296,91 @@ function parseMessageTarget(
   value: unknown,
   label: string
 ): WriteValidationMessageTargetConfig | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (!isRecord(value)) {
-    throw new LinkedInAssistantError(
-      "ACTION_PRECONDITION_FAILED",
-      `${label} must be a JSON object.`
+  return parseOptionalTarget(value, label, (target) => {
+    const participantPattern = assertOptionalString(
+      target.participantPattern,
+      `${label}.participantPattern`
     );
-  }
 
-  const participantPattern = assertOptionalString(
-    value.participantPattern,
-    `${label}.participantPattern`
-  );
-
-  return {
-    thread: normalizeThreadTarget(value.thread, `${label}.thread`),
-    ...(participantPattern ? { participantPattern } : {})
-  };
+    return {
+      thread: normalizeThreadTarget(target.thread, `${label}.thread`),
+      ...(participantPattern ? { participantPattern } : {})
+    };
+  });
 }
 
 function parseConnectionTarget(
   value: unknown,
   label: string
 ): WriteValidationConnectionTargetConfig | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
+  return parseOptionalTarget(value, label, (target) => {
+    const note = assertOptionalString(target.note, `${label}.note`);
 
-  if (!isRecord(value)) {
-    throw new LinkedInAssistantError(
-      "ACTION_PRECONDITION_FAILED",
-      `${label} must be a JSON object.`
-    );
-  }
-
-  const note = assertOptionalString(value.note, `${label}.note`);
-
-  return {
-    targetProfile: resolveProfileUrl(
-      assertNonEmptyString(value.targetProfile, `${label}.targetProfile`)
-    ),
-    ...(note ? { note } : {})
-  };
+    return {
+      targetProfile: resolveProfileUrl(
+        assertNonEmptyString(target.targetProfile, `${label}.targetProfile`)
+      ),
+      ...(note ? { note } : {})
+    };
+  });
 }
 
 function parseFollowupTarget(
   value: unknown,
   label: string
 ): WriteValidationFollowupTargetConfig | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (!isRecord(value)) {
-    throw new LinkedInAssistantError(
-      "ACTION_PRECONDITION_FAILED",
-      `${label} must be a JSON object.`
+  return parseOptionalTarget(value, label, (target) => {
+    const profileUrlKey = normalizeLinkedInProfileUrl(
+      resolveProfileUrl(
+        assertNonEmptyString(target.profileUrlKey, `${label}.profileUrlKey`)
+      )
     );
-  }
 
-  const profileUrlKey = normalizeLinkedInProfileUrl(
-    resolveProfileUrl(assertNonEmptyString(value.profileUrlKey, `${label}.profileUrlKey`))
-  );
-
-  return {
-    profileUrlKey
-  };
+    return {
+      profileUrlKey
+    };
+  });
 }
 
 function parseReactionTarget(
   value: unknown,
   label: string
 ): WriteValidationReactionTargetConfig | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
+  return parseOptionalTarget(value, label, (target) => {
+    const reaction = assertOptionalString(target.reaction, `${label}.reaction`);
 
-  if (!isRecord(value)) {
-    throw new LinkedInAssistantError(
-      "ACTION_PRECONDITION_FAILED",
-      `${label} must be a JSON object.`
-    );
-  }
-
-  const reaction = assertOptionalString(value.reaction, `${label}.reaction`);
-
-  return {
-    postUrl: normalizePostUrl(value.postUrl, `${label}.postUrl`),
-    ...(reaction
-      ? {
-          reaction: normalizeLinkedInFeedReaction(reaction)
-        }
-      : {})
-  };
+    return {
+      postUrl: normalizePostUrl(target.postUrl, `${label}.postUrl`),
+      ...(reaction
+        ? {
+            reaction: normalizeLinkedInFeedReaction(reaction)
+          }
+        : {})
+    };
+  });
 }
 
 function parsePostTarget(
   value: unknown,
   label: string
 ): WriteValidationPostTargetConfig | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (!isRecord(value)) {
-    throw new LinkedInAssistantError(
-      "ACTION_PRECONDITION_FAILED",
-      `${label} must be a JSON object.`
+  return parseOptionalTarget(value, label, (target) => {
+    const visibility = assertOptionalString(
+      target.visibility,
+      `${label}.visibility`
     );
-  }
 
-  const visibility = assertOptionalString(value.visibility, `${label}.visibility`);
-
-  return {
-    ...(visibility
-      ? {
-          visibility: normalizeLinkedInPostVisibility(visibility, "connections")
-        }
-      : {})
-  };
+    return {
+      ...(visibility
+        ? {
+            visibility: normalizeLinkedInPostVisibility(
+              visibility,
+              "connections"
+            )
+          }
+        : {})
+    };
+  });
 }
 
 function parseTargets(
@@ -418,35 +437,37 @@ function parseAccount(
   value: unknown,
   configPath: string
 ): WriteValidationAccount {
-  if (!isRecord(value)) {
-    throw new LinkedInAssistantError(
-      "ACTION_PRECONDITION_FAILED",
-      `writeValidation.accounts.${accountId} in ${configPath} must be a JSON object.`,
-      {
-        config_path: configPath,
-        account_id: accountId
-      }
-    );
-  }
+  const account = assertJsonRecord(
+    value,
+    `writeValidation.accounts.${accountId} in ${configPath} must be a JSON object.`,
+    {
+      config_path: configPath,
+      account_id: accountId
+    }
+  );
 
   const normalizedAccountId = normalizeAccountId(
     accountId,
     `writeValidation.accounts.${accountId}`
   );
   const designation = parseAccountDesignation(
-    value.designation,
+    account.designation,
     `writeValidation.accounts.${accountId}.designation`
   );
   const label = assertNonEmptyString(
-    value.label ?? normalizedAccountId,
+    account.label ?? normalizedAccountId,
     `writeValidation.accounts.${accountId}.label`
   );
   const profileName = normalizeAccountId(
-    typeof value.profileName === "string" ? value.profileName : normalizedAccountId,
+    typeof account.profileName === "string"
+      ? account.profileName
+      : normalizedAccountId,
     `writeValidation.accounts.${accountId}.profileName`
   );
   const sessionName = normalizeAccountId(
-    typeof value.sessionName === "string" ? value.sessionName : normalizedAccountId,
+    typeof account.sessionName === "string"
+      ? account.sessionName
+      : normalizedAccountId,
     `writeValidation.accounts.${accountId}.sessionName`
   );
 
@@ -457,7 +478,7 @@ function parseAccount(
     profileName,
     sessionName,
     targets: parseTargets(
-      value.targets,
+      account.targets,
       `writeValidation.accounts.${accountId}.targets`
     )
   };
@@ -477,43 +498,29 @@ export function loadWriteValidationAccounts(
   baseDir?: string
 ): WriteValidationAccountRegistry {
   const { config, configPath } = readConfigShape(baseDir);
-  const writeValidation = config.writeValidation;
+  const writeValidation = readOptionalConfigObject(
+    config.writeValidation,
+    "writeValidation",
+    configPath
+  );
 
-  if (writeValidation === undefined) {
+  if (!writeValidation) {
     return {
       accounts: {},
       configPath
     };
   }
 
-  if (!isRecord(writeValidation)) {
-    throw new LinkedInAssistantError(
-      "ACTION_PRECONDITION_FAILED",
-      `writeValidation in ${configPath} must be a JSON object.`,
-      {
-        config_path: configPath,
-        provided_value: writeValidation
-      }
-    );
-  }
-
-  const accountsShape = writeValidation.accounts;
-  if (accountsShape === undefined) {
+  const accountsShape = readOptionalConfigObject(
+    writeValidation.accounts,
+    "writeValidation.accounts",
+    configPath
+  );
+  if (!accountsShape) {
     return {
       accounts: {},
       configPath
     };
-  }
-
-  if (!isRecord(accountsShape)) {
-    throw new LinkedInAssistantError(
-      "ACTION_PRECONDITION_FAILED",
-      `writeValidation.accounts in ${configPath} must be a JSON object.`,
-      {
-        config_path: configPath,
-        provided_value: accountsShape
-      }
-    );
   }
 
   const accounts = Object.fromEntries(
@@ -559,36 +566,16 @@ export async function upsertWriteValidationAccount(
   ensureConfigPaths(paths);
 
   const { config, configPath } = readConfigShape(input.baseDir);
-  const existingWriteValidation = config.writeValidation;
-  const writeValidation = existingWriteValidation
-    ? isRecord(existingWriteValidation)
-      ? { ...existingWriteValidation }
-      : (() => {
-          throw new LinkedInAssistantError(
-            "ACTION_PRECONDITION_FAILED",
-            `writeValidation in ${configPath} must be a JSON object.`,
-            {
-              config_path: configPath,
-              provided_value: existingWriteValidation
-            }
-          );
-        })()
-    : {};
-  const existingAccounts = writeValidation.accounts;
-  const accounts = existingAccounts
-    ? isRecord(existingAccounts)
-      ? { ...existingAccounts }
-      : (() => {
-          throw new LinkedInAssistantError(
-            "ACTION_PRECONDITION_FAILED",
-            `writeValidation.accounts in ${configPath} must be a JSON object.`,
-            {
-              config_path: configPath,
-              provided_value: existingAccounts
-            }
-          );
-        })()
-    : {};
+  const writeValidation = cloneConfigObject(
+    config.writeValidation,
+    "writeValidation",
+    configPath
+  );
+  const accounts = cloneConfigObject(
+    writeValidation.accounts,
+    "writeValidation.accounts",
+    configPath
+  );
 
   if (accounts[normalizedAccountId] !== undefined && !input.overwrite) {
     throw new LinkedInAssistantError(

@@ -408,6 +408,60 @@ async function withOptionalTimeout<T>(
   });
 }
 
+async function withCommandExecutionEnvironment<T>(
+  options: CommandExecutionOptions,
+  execute: (cdpUrl: string | undefined) => Promise<T>
+): Promise<T> {
+  const run = () => execute(getCdpUrl());
+
+  if (options.assistantHome) {
+    return withAssistantHome(options.assistantHome, run);
+  }
+
+  return withE2EEnvironment(run);
+}
+
+async function retryTransientExecution<T>(input: {
+  execute: () => Promise<T>;
+  getRetryError?: (result: T) => unknown;
+  maxAttempts: number;
+  retryDelayMs: number;
+}): Promise<T> {
+  let lastError: unknown;
+  let lastResult: T | undefined;
+
+  for (let attempt = 1; attempt <= input.maxAttempts; attempt += 1) {
+    try {
+      const result = await input.execute();
+      lastResult = result;
+      const retryError = input.getRetryError?.(result);
+
+      if (
+        retryError === undefined ||
+        !shouldRetryTransientError(retryError) ||
+        attempt >= input.maxAttempts
+      ) {
+        return result;
+      }
+
+      lastError = retryError;
+    } catch (error) {
+      lastError = error;
+      if (!shouldRetryTransientError(error) || attempt >= input.maxAttempts) {
+        throw error;
+      }
+    }
+
+    await sleep(input.retryDelayMs);
+  }
+
+  if (lastResult !== undefined) {
+    return lastResult;
+  }
+
+  throw lastError ?? new Error("Command did not produce a result.");
+}
+
 async function captureCommandExecution(
   execute: () => Promise<void>
 ): Promise<CapturedCommandResult> {
@@ -567,50 +621,27 @@ export async function runCliCommandWith(
   const maxAttempts = resolveMaxAttempts(options.maxAttempts);
   const retryDelayMs = resolveRetryDelayMs(options.retryDelayMs);
   const timeoutMs = getTimeoutMs(options.timeoutMs);
-  let lastResult: CapturedCommandResult | undefined;
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const execute = async (): Promise<void> => {
-      const cdpUrl = getCdpUrl();
-      await runner([
-        "node",
-        "linkedin",
-        ...(cdpUrl ? ["--cdp-url", cdpUrl] : []),
-        ...args
-      ]);
-    };
-
-    const wrappedExecution = async (): Promise<void> => {
-      if (options.assistantHome) {
-        await withAssistantHome(options.assistantHome, execute);
-        return;
-      }
-
-      await withE2EEnvironment(execute);
-    };
-
-    const result = await captureCommandExecution(() =>
-      withOptionalTimeout(
-        wrappedExecution(),
-        `CLI command ${args.join(" ")}`,
-        timeoutMs
-      )
-    );
-    lastResult = result;
-
-    if (!result.error || !shouldRetryTransientError(result.error) || attempt >= maxAttempts) {
-      return result;
-    }
-
-    await sleep(retryDelayMs);
-  }
-
-  return lastResult ?? {
-    stdout: "",
-    stderr: "",
-    exitCode: 1,
-    error: new Error("CLI command did not produce a result.")
-  };
+  return retryTransientExecution({
+    maxAttempts,
+    retryDelayMs,
+    execute: () =>
+      captureCommandExecution(() =>
+        withOptionalTimeout(
+          withCommandExecutionEnvironment(options, async (cdpUrl) => {
+            await runner([
+              "node",
+              "linkedin",
+              ...(cdpUrl ? ["--cdp-url", cdpUrl] : []),
+              ...args
+            ]);
+          }),
+          `CLI command ${args.join(" ")}`,
+          timeoutMs
+        )
+      ),
+    getRetryError: (result) => result.error
+  });
 }
 
 /** Invokes the real CLI entrypoint used by the contract suites. */
@@ -644,43 +675,24 @@ export async function callMcpToolWith(
   const maxAttempts = resolveMaxAttempts(options.maxAttempts);
   const retryDelayMs = resolveRetryDelayMs(options.retryDelayMs);
   const timeoutMs = getTimeoutMs(options.timeoutMs);
-  let lastError: unknown;
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const execute = async (): Promise<unknown> => {
-      const cdpUrl = getCdpUrl();
-      return caller(name, {
-        ...args,
-        ...(cdpUrl ? { cdpUrl } : {})
-      });
-    };
-
-    const wrappedExecution = async (): Promise<unknown> => {
-      if (options.assistantHome) {
-        return await withAssistantHome(options.assistantHome, execute);
-      }
-
-      return await withE2EEnvironment(execute);
-    };
-
-    try {
-      const rawResult = await withOptionalTimeout(
-        wrappedExecution(),
+  const rawResult = await retryTransientExecution({
+    maxAttempts,
+    retryDelayMs,
+    execute: () =>
+      withOptionalTimeout(
+        withCommandExecutionEnvironment(options, (cdpUrl) => {
+          return caller(name, {
+            ...args,
+            ...(cdpUrl ? { cdpUrl } : {})
+          });
+        }),
         `MCP tool ${name}`,
         timeoutMs
-      );
-      return mapMcpToolResult(name, rawResult);
-    } catch (error) {
-      lastError = error;
-      if (!shouldRetryTransientError(error) || attempt >= maxAttempts) {
-        throw error;
-      }
+      )
+  });
 
-      await sleep(retryDelayMs);
-    }
-  }
-
-  throw lastError;
+  return mapMcpToolResult(name, rawResult);
 }
 
 /** Invokes the real MCP tool handler used by the contract suites. */
