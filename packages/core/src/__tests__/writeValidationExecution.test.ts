@@ -172,6 +172,7 @@ afterEach(() => {
 });
 
 beforeEach(() => {
+  delete process.env.CI;
   vi.clearAllMocks();
   writeValidationExecutionMocks.scenarios.length = 0;
   writeValidationExecutionMocks.resolveWriteValidationAccount.mockReturnValue(createAccount());
