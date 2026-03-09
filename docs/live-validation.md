@@ -11,6 +11,8 @@ The feature is also exported from `@linkedin-assistant/core` through
 
 For pipeline internals, see `docs/live-validation-architecture.md`.
 
+Tier 3 real-action validation is documented separately in `docs/write-validation.md`.
+
 ## Quick start
 
 Capture an encrypted stored session from a manual LinkedIn login:
