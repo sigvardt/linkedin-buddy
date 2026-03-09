@@ -62,10 +62,14 @@ function createActivityConfig(
     enabled: true,
     daemonPollIntervalMs: 60_000,
     maxWatchesPerTick: 10,
+    maxConcurrentWatches: 20,
     watchLeaseTtlMs: 60_000,
+    minPollIntervalMs: 60_000,
     maxDeliveriesPerTick: 25,
+    maxEventQueueDepth: 250,
     deliveryLeaseTtlMs: 60_000,
     deliveryTimeoutMs: 5_000,
+    clockSkewAllowanceMs: 5_000,
     ...overrides,
     retry
   };
@@ -1222,6 +1226,283 @@ describe("ActivityPollerService", () => {
       consecutiveFailures: 1,
       lastErrorCode: "RATE_LIMITED",
       lastErrorMessage: "Too many requests"
+    });
+    expect(services.logger.log).toHaveBeenCalledWith(
+      "warn",
+      "activity.watch.poll.failed",
+      expect.objectContaining({
+        backoff_ms: 1_000,
+        consecutive_failures: 1,
+        correlation_id: expect.any(String),
+        error_code: "RATE_LIMITED",
+        error_message: "Too many requests",
+        kind: "notifications",
+        next_poll_at: expect.any(String),
+        profile_name: "default",
+        watch_id: watch.id,
+        worker_id: "failure-worker"
+      })
+    );
+  });
+
+  it("skips overlapping ticks for the same profile with structured logging", async () => {
+    const services = createActivityServices();
+    const watch = services.watches.createWatch({
+      kind: "notifications"
+    });
+    let releasePoll: ((value: LinkedInNotification[]) => void) | undefined;
+
+    services.mocks.notifications.listNotifications.mockImplementationOnce(
+      () =>
+        new Promise<LinkedInNotification[]>((resolve) => {
+          releasePoll = resolve;
+        })
+    );
+
+    const firstTickPromise = services.poller.runTick({
+      workerId: "tick-worker-a"
+    });
+    await Promise.resolve();
+
+    const secondTick = await services.poller.runTick({
+      workerId: "tick-worker-b"
+    });
+
+    expect(secondTick).toMatchObject({
+      claimedWatches: 0,
+      polledWatches: 0,
+      failedWatches: 0,
+      emittedEvents: 0,
+      enqueuedDeliveries: 0,
+      claimedDeliveries: 0,
+      deliveredAttempts: 0,
+      retriedDeliveries: 0,
+      failedDeliveries: 0,
+      deadLetterDeliveries: 0,
+      disabledSubscriptions: 0
+    });
+    expect(services.mocks.notifications.listNotifications).toHaveBeenCalledTimes(1);
+    expect(services.logger.log).toHaveBeenCalledWith(
+      "info",
+      "activity.tick.skipped",
+      expect.objectContaining({
+        profile_name: "default",
+        reason: "concurrent_tick",
+        worker_id: "tick-worker-b"
+      })
+    );
+
+    releasePoll?.([]);
+    const firstTick = await firstTickPromise;
+    expect(firstTick.polledWatches).toBe(1);
+    expect(services.watches.getWatchById(watch.id).status).toBe("active");
+  });
+
+  it("does not persist staged inbox changes when a thread fetch fails mid-poll", async () => {
+    const services = createActivityServices({
+      state: {
+        threadDetails: [
+          createThreadDetail("thread-1", [createMessage("Alice", "Baseline message")])
+        ],
+        threads: [createThreadSummary("thread-1")]
+      }
+    });
+    const watch = services.watches.createWatch({
+      kind: "inbox_threads"
+    });
+    services.watches.createWebhookSubscription({
+      watchId: watch.id,
+      deliveryUrl: "https://example.com/hooks/inbox"
+    });
+
+    await services.poller.runTick({
+      workerId: "inbox-worker"
+    });
+
+    services.state.threads = [createThreadSummary("thread-1"), createThreadSummary("thread-2")];
+    services.state.threadDetails = [
+      createThreadDetail("thread-1", [createMessage("Alice", "Baseline message")]),
+      createThreadDetail("thread-2", [createMessage("Bob", "New message")])
+    ];
+    makeWatchesDue(services.watches, [watch.id]);
+    services.mocks.inbox.getThread.mockRejectedValueOnce(
+      new LinkedInAssistantError("NETWORK_ERROR", "Thread detail fetch failed")
+    );
+
+    const beforeStates = services.db.listActivityEntityStates({
+      watchId: watch.id
+    });
+    const result = await services.poller.runTick({
+      workerId: "inbox-worker"
+    });
+    const afterStates = services.db.listActivityEntityStates({
+      watchId: watch.id
+    });
+
+    expect(result.failedWatches).toBe(1);
+    expect(result.emittedEvents).toBe(0);
+    expect(result.enqueuedDeliveries).toBe(0);
+    expect(services.watches.listEvents({ watchId: watch.id, limit: 10 })).toHaveLength(0);
+    expect(afterStates).toHaveLength(beforeStates.length);
+    expect(afterStates.some((state) => state.entity_key === "thread:thread-2")).toBe(false);
+    expect(
+      afterStates.some((state) => state.entity_key.startsWith("message:thread-2:"))
+    ).toBe(false);
+  });
+
+  it("buffers overflow deliveries locally and promotes them on later ticks", async () => {
+    const server = await startWebhookServer();
+
+    try {
+      const services = createActivityServices({
+        activityConfigOverrides: {
+          maxDeliveriesPerTick: 1,
+          maxEventQueueDepth: 1
+        }
+      });
+      const watch = services.watches.createWatch({
+        kind: "notifications"
+      });
+      services.watches.createWebhookSubscription({
+        watchId: watch.id,
+        deliveryUrl: server.url
+      });
+      services.watches.createWebhookSubscription({
+        watchId: watch.id,
+        deliveryUrl: server.url
+      });
+
+      await services.poller.runTick({
+        workerId: "buffer-worker"
+      });
+
+      services.state.notifications = [createNotification("notif-buffered")];
+      makeWatchesDue(services.watches, [watch.id]);
+
+      const queuedTick = await services.poller.runTick({
+        workerId: "buffer-worker"
+      });
+      expect(queuedTick).toMatchObject({
+        emittedEvents: 1,
+        enqueuedDeliveries: 1
+      });
+      expect(
+        services
+          .watches.listDeliveries({
+            watchId: watch.id,
+            limit: 10
+          })
+          .map((delivery) => delivery.status)
+          .sort()
+      ).toEqual(["deferred", "pending"]);
+      expect(services.logger.log).toHaveBeenCalledWith(
+        "warn",
+        "activity.delivery.deferred",
+        expect.objectContaining({
+          correlation_id: expect.any(String),
+          deferred_deliveries: 1,
+          max_event_queue_depth: 1,
+          profile_name: "default",
+          watch_id: watch.id
+        })
+      );
+
+      const promotedTick = await services.poller.runTick({
+        workerId: "buffer-worker"
+      });
+      expect(promotedTick.deliveredAttempts).toBe(1);
+      expect(services.logger.log).toHaveBeenCalledWith(
+        "info",
+        "activity.delivery.promoted",
+        expect.objectContaining({
+          profile_name: "default",
+          promoted_deliveries: 1,
+          worker_id: "buffer-worker"
+        })
+      );
+      expect(services.logger.log).toHaveBeenCalledWith(
+        "warn",
+        "activity.watch.poll.backpressure",
+        expect.objectContaining({
+          max_event_queue_depth: 1,
+          profile_name: "default",
+          queued_deliveries: 1,
+          worker_id: "buffer-worker"
+        })
+      );
+
+      const drainedTick = await services.poller.runTick({
+        workerId: "buffer-worker"
+      });
+      expect(drainedTick.deliveredAttempts).toBe(1);
+      expect(server.requests).toHaveLength(2);
+      expect(
+        services.watches.listDeliveries({
+          watchId: watch.id,
+          status: "delivered",
+          limit: 10
+        })
+      ).toHaveLength(2);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("waits out clock-skew allowance before reclaiming an expired watch lease", () => {
+    const fixedNow = new Date(2026, 2, 9, 10, 0, 0, 0);
+    vi.useFakeTimers();
+    vi.setSystemTime(fixedNow);
+
+    const services = createActivityServices({
+      activityConfigOverrides: {
+        clockSkewAllowanceMs: 5_000,
+        watchLeaseTtlMs: 10_000
+      }
+    });
+    const watch = services.watches.createWatch({
+      kind: "notifications"
+    });
+
+    expect(
+      services.db.claimDueActivityWatches({
+        profileName: "default",
+        nowMs: Date.now(),
+        limit: 1,
+        leaseOwner: "watch-worker-a",
+        leaseTtlMs: 10_000,
+        clockSkewAllowanceMs: 5_000
+      })
+    ).toHaveLength(1);
+
+    vi.setSystemTime(fixedNow.getTime() + 14_000);
+    expect(
+      services.db.claimDueActivityWatches({
+        profileName: "default",
+        nowMs: Date.now(),
+        limit: 1,
+        leaseOwner: "watch-worker-b",
+        leaseTtlMs: 10_000,
+        clockSkewAllowanceMs: 5_000
+      })
+    ).toHaveLength(0);
+
+    vi.setSystemTime(fixedNow.getTime() + 15_001);
+    const reclaimed = services.db.claimDueActivityWatches({
+      profileName: "default",
+      nowMs: Date.now(),
+      limit: 1,
+      leaseOwner: "watch-worker-b",
+      leaseTtlMs: 10_000,
+      clockSkewAllowanceMs: 5_000
+    });
+
+    expect(reclaimed).toHaveLength(1);
+    expect(reclaimed[0]).toMatchObject({
+      id: watch.id,
+      lease_owner: "watch-worker-b"
+    });
+    expect(services.db.getActivityWatchById(watch.id)).toMatchObject({
+      lease_owner: "watch-worker-b"
     });
   });
 

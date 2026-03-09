@@ -28,6 +28,7 @@ export type WebhookSubscriptionStatus =
   (typeof WEBHOOK_SUBSCRIPTION_STATUSES)[number];
 
 export const WEBHOOK_DELIVERY_ATTEMPT_STATUSES = [
+  "deferred",
   "pending",
   "delivered",
   "leased",

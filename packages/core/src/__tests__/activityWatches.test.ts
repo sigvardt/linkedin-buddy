@@ -27,10 +27,14 @@ function createActivityConfig(
     enabled: true,
     daemonPollIntervalMs: 60_000,
     maxWatchesPerTick: 10,
+    maxConcurrentWatches: 20,
     watchLeaseTtlMs: 60_000,
+    minPollIntervalMs: 60_000,
     maxDeliveriesPerTick: 25,
+    maxEventQueueDepth: 250,
     deliveryLeaseTtlMs: 60_000,
     deliveryTimeoutMs: 5_000,
+    clockSkewAllowanceMs: 5_000,
     ...overrides,
     retry
   };
@@ -549,6 +553,83 @@ describe("ActivityWatchesService", () => {
 
     expect(service.removeWebhookSubscription(createdSubscription.id)).toBe(true);
     expect(service.removeWatch(watch.id)).toBe(true);
+  });
+
+  it("rejects interval schedules below the effective minimum poll interval", () => {
+    const service = new ActivityWatchesService(
+      createRuntime(
+        createActivityConfig({
+          minPollIntervalMs: 15 * 60 * 1_000
+        })
+      )
+    );
+
+    const builtInMinimumError = captureLinkedInError(() =>
+      service.createWatch({
+        kind: "notifications",
+        intervalSeconds: 60
+      })
+    );
+    expect(builtInMinimumError.message).toBe(
+      "intervalSeconds must be at least 900 for notifications."
+    );
+
+    const configuredMinimumError = captureLinkedInError(() =>
+      service.createWatch({
+        kind: "connections",
+        intervalSeconds: 600
+      })
+    );
+    expect(configuredMinimumError.message).toBe(
+      "intervalSeconds must be at least 900 for connections."
+    );
+  });
+
+  it("enforces the active watch limit on create and resume", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(FIXED_NOW);
+
+    const runtime = createRuntime(
+      createActivityConfig({
+        maxConcurrentWatches: 1
+      })
+    );
+    const service = new ActivityWatchesService(runtime);
+    const activeWatch = service.createWatch({
+      kind: "notifications"
+    });
+
+    const createError = captureLinkedInError(() =>
+      service.createWatch({
+        kind: "connections"
+      })
+    );
+    expect(createError.message).toContain("Active watch limit reached for profile default");
+
+    runtime.db.insertActivityWatch({
+      id: "watch_paused_limit",
+      profileName: "default",
+      kind: "connections",
+      targetJson: JSON.stringify({
+        limit: 40
+      }),
+      scheduleKind: "interval",
+      pollIntervalMs: 10 * 60 * 1_000,
+      cronExpression: null,
+      status: "paused",
+      nextPollAtMs: FIXED_NOW.getTime(),
+      createdAtMs: FIXED_NOW.getTime(),
+      updatedAtMs: FIXED_NOW.getTime()
+    });
+
+    const resumeError = captureLinkedInError(() => service.resumeWatch("watch_paused_limit"));
+    expect(resumeError.message).toContain("Active watch limit reached for profile default");
+
+    service.pauseWatch(activeWatch.id);
+    expect(service.resumeWatch("watch_paused_limit")).toMatchObject({
+      id: "watch_paused_limit",
+      status: "active"
+    });
   });
 
   it("falls back to resolved activity config when no runtime override is provided", () => {

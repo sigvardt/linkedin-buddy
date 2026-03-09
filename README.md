@@ -52,7 +52,11 @@ Activity webhook / polling configuration:
 - `LINKEDIN_ASSISTANT_ACTIVITY_ENABLED=true|false` toggles local activity polling and webhook delivery work (defaults to `true`)
 - `LINKEDIN_ASSISTANT_ACTIVITY_DAEMON_POLL_INTERVAL_SECONDS=300` controls daemon wake-up cadence
 - `LINKEDIN_ASSISTANT_ACTIVITY_MAX_WATCHES_PER_TICK=10` bounds LinkedIn polling work per tick
+- `LINKEDIN_ASSISTANT_ACTIVITY_MAX_CONCURRENT_WATCHES=20` caps active watches per profile
+- `LINKEDIN_ASSISTANT_ACTIVITY_MIN_POLL_INTERVAL_SECONDS=60` sets the minimum interval schedule accepted for activity watches
 - `LINKEDIN_ASSISTANT_ACTIVITY_MAX_DELIVERIES_PER_TICK=50` bounds webhook delivery work per tick
+- `LINKEDIN_ASSISTANT_ACTIVITY_MAX_EVENT_QUEUE_DEPTH=250` bounds locally buffered pending/deferred webhook deliveries
+- `LINKEDIN_ASSISTANT_ACTIVITY_WATCH_LEASE_SECONDS=120`, `LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_LEASE_SECONDS=120`, and `LINKEDIN_ASSISTANT_ACTIVITY_CLOCK_SKEW_SECONDS=5` control lease recovery under clock skew
 - `LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_TIMEOUT_SECONDS=15` caps one webhook POST attempt
 - `LINKEDIN_ASSISTANT_ACTIVITY_MAX_DELIVERY_ATTEMPTS=5` sets the retry ceiling per subscription delivery
 - See `docs/activity-webhooks.md` for quickstart steps, webhook headers, CLI usage, and every activity env var

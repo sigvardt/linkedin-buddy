@@ -19,6 +19,7 @@ import {
   ACTIVITY_EVENT_TYPES,
   ACTIVITY_WATCH_DEFAULT_POLL_INTERVAL_MS,
   ACTIVITY_WATCH_EVENT_TYPES,
+  ACTIVITY_WATCH_MIN_POLL_INTERVAL_MS,
   ACTIVITY_WATCH_KINDS,
   type ActivityEventType,
   type ActivityScheduleKind,
@@ -607,6 +608,16 @@ function resolveEventTypesForWatch(
   return [...new Set(eventTypes)];
 }
 
+function resolveEffectiveMinPollIntervalMs(
+  kind: ActivityWatchKind,
+  config: ActivityWebhookConfig
+): number {
+  return Math.max(
+    ACTIVITY_WATCH_MIN_POLL_INTERVAL_MS[kind],
+    config.minPollIntervalMs
+  );
+}
+
 export class ActivityWatchesService {
   private readonly config: ActivityWebhookConfig;
 
@@ -624,6 +635,7 @@ export class ActivityWatchesService {
 
     const nowMs = Date.now();
     const profileName = input.profileName ?? "default";
+    this.ensureActiveWatchCapacity(profileName);
     const target = normalizeTarget(input.kind, input.target);
     const scheduleInput: {
       kind: ActivityWatchKind;
@@ -637,6 +649,21 @@ export class ActivityWatchesService {
       ...(typeof input.cron === "string" ? { cron: input.cron } : {})
     };
     const schedule = resolveSchedule(scheduleInput);
+    const effectiveMinPollIntervalMs = resolveEffectiveMinPollIntervalMs(
+      input.kind,
+      this.config
+    );
+
+    if (
+      schedule.scheduleKind === "interval" &&
+      schedule.pollIntervalMs !== null &&
+      schedule.pollIntervalMs < effectiveMinPollIntervalMs
+    ) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        `intervalSeconds must be at least ${Math.ceil(effectiveMinPollIntervalMs / 1_000)} for ${input.kind}.`
+      );
+    }
 
     const id = createId("watch");
     this.runtime.db.insertActivityWatch({
@@ -784,7 +811,10 @@ export class ActivityWatchesService {
     status: ActivityWatchStatus,
     nextPollAtMs?: number
   ): ActivityWatch {
-    ensureWatchExists(this.runtime.db, id);
+    const existingWatch = ensureWatchExists(this.runtime.db, id);
+    if (status === "active" && existingWatch.status !== "active") {
+      this.ensureActiveWatchCapacity(existingWatch.profile_name, id);
+    }
     this.runtime.db.updateActivityWatchStatus({
       id,
       status,
@@ -805,5 +835,29 @@ export class ActivityWatchesService {
       updatedAtMs: Date.now()
     });
     return this.getWebhookSubscriptionById(id);
+  }
+
+  private ensureActiveWatchCapacity(
+    profileName: string,
+    currentWatchId?: string
+  ): void {
+    const activeWatchCount = this.runtime.db
+      .listActivityWatches({
+        profileName,
+        status: "active"
+      })
+      .filter((watch) => watch.id !== currentWatchId).length;
+
+    if (activeWatchCount >= this.config.maxConcurrentWatches) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        `Active watch limit reached for profile ${profileName}. Reduce active watches or raise LINKEDIN_ASSISTANT_ACTIVITY_MAX_CONCURRENT_WATCHES.`,
+        {
+          profile_name: profileName,
+          active_watch_count: activeWatchCount,
+          max_concurrent_watches: this.config.maxConcurrentWatches
+        }
+      );
+    }
   }
 }
