@@ -26,11 +26,15 @@ import {
   clearRateLimitState,
   createLocalDataDeletionPlan,
   createEmptyFixtureManifest,
+  buildFixtureRouteKey,
   evaluateDraftQuality,
   getLinkedInSelectorLocaleConfigWarning,
   isInRateLimitCooldown,
+  isLinkedInFixtureReplayUrl,
   LINKEDIN_REPLAY_PAGE_TYPES,
+  FIXTURE_REPLAY_ENV_KEYS,
   LINKEDIN_FEED_REACTION_TYPES,
+  LINKEDIN_FIXTURE_MANIFEST_FORMAT_VERSION,
   LINKEDIN_POST_VISIBILITY_TYPES,
   LINKEDIN_SELECTOR_LOCALES,
   LinkedInAssistantError,
@@ -41,6 +45,7 @@ import {
   deleteLocalData,
   loadLinkedInFixtureSet,
   normalizeLinkedInFeedReaction,
+  normalizeFixtureRouteHeaders,
   normalizeLinkedInPostVisibility,
   parseDraftQualityCandidateSet,
   parseDraftQualityDataset,
@@ -243,12 +248,6 @@ const DEFAULT_FIXTURE_VIEWPORT = {
 const FIXTURE_ROUTE_FILE_NAME = "routes.json";
 const FIXTURE_RESPONSE_DIR_NAME = "responses";
 const FIXTURE_PAGES_DIR_NAME = "pages";
-const FIXTURE_REPLAY_ENV_KEYS = [
-  "LINKEDIN_E2E_REPLAY",
-  "LINKEDIN_E2E_FIXTURE_SERVER_URL",
-  "LINKEDIN_E2E_FIXTURE_SET",
-  "LINKEDIN_E2E_FIXTURE_MANIFEST"
-] as const;
 const FIXTURE_CAPTURE_URLS: Record<LinkedInReplayPageType, string> = {
   composer: "https://www.linkedin.com/feed/",
   connections: "https://www.linkedin.com/mynetwork/invite-connect/connections/",
@@ -305,24 +304,6 @@ function uniqueFixtureReplayPageTypes(
   return Array.from(new Set(pageTypes));
 }
 
-function normalizeFixtureRouteHeaders(
-  headers: Record<string, string>
-): Record<string, string> {
-  const normalized: Record<string, string> = {};
-  for (const [key, value] of Object.entries(headers)) {
-    normalized[key.toLowerCase()] = value;
-  }
-
-  delete normalized["content-length"];
-  delete normalized["content-encoding"];
-  delete normalized["transfer-encoding"];
-  return normalized;
-}
-
-function createFixtureRouteKey(route: Pick<LinkedInFixtureRoute, "method" | "url">): string {
-  return `${route.method.toUpperCase()} ${route.url}`;
-}
-
 function sanitizeFixtureFileStem(value: string): string {
   return value.replace(/[^a-z0-9._-]+/giu, "-").replace(/-{2,}/gu, "-");
 }
@@ -363,17 +344,6 @@ function guessFixtureResponseExtension(
   }
 }
 
-function shouldCaptureFixtureResponse(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    return (
-      parsed.protocol === "http:" || parsed.protocol === "https:"
-    ) && (parsed.hostname.endsWith("linkedin.com") || parsed.hostname.endsWith("licdn.com"));
-  } catch {
-    return false;
-  }
-}
-
 async function loadFixtureManifestOrCreate(
   manifestPath: string
 ): Promise<LinkedInFixtureManifest> {
@@ -386,14 +356,9 @@ async function loadFixtureManifestOrCreate(
 
 async function loadExistingFixtureRoutes(
   manifestPath: string,
-  setName: string
+  setName: string,
+  setSummary: LinkedInFixtureSetSummary | undefined
 ): Promise<LinkedInFixtureRoute[]> {
-  if (!existsSync(manifestPath)) {
-    return [];
-  }
-
-  const manifest = await readLinkedInFixtureManifest(manifestPath);
-  const setSummary = manifest.sets[setName];
   if (!setSummary) {
     return [];
   }
@@ -416,14 +381,14 @@ function mergeFixtureRoutes(
 ): LinkedInFixtureRoute[] {
   const merged = new Map<string, LinkedInFixtureRoute>();
   for (const route of existingRoutes) {
-    merged.set(createFixtureRouteKey(route), route);
+    merged.set(buildFixtureRouteKey(route), route);
   }
   for (const route of nextRoutes) {
-    merged.set(createFixtureRouteKey(route), route);
+    merged.set(buildFixtureRouteKey(route), route);
   }
 
   return Array.from(merged.values()).sort((left, right) =>
-    createFixtureRouteKey(left).localeCompare(createFixtureRouteKey(right))
+    buildFixtureRouteKey(left).localeCompare(buildFixtureRouteKey(right))
   );
 }
 
@@ -463,7 +428,7 @@ async function captureFixtureResponse(
   index: number
 ): Promise<LinkedInFixtureRoute | null> {
   const url = response.url();
-  if (!shouldCaptureFixtureResponse(url)) {
+  if (!isLinkedInFixtureReplayUrl(url)) {
     return null;
   }
 
@@ -534,12 +499,19 @@ async function runFixturesRecord(input: FixtureRecordInput): Promise<void> {
   const manifestPath = resolveFixtureManifestPath(input.manifestPath);
   const manifest = await loadFixtureManifestOrCreate(manifestPath);
   const setName = input.setName;
-  const setRootDir = path.resolve(path.dirname(manifestPath), setName);
+  const previousSetSummary = manifest.sets[setName];
+  const setRootDir = path.resolve(
+    path.dirname(manifestPath),
+    previousSetSummary?.rootDir ?? setName
+  );
   const pagesDir = path.join(setRootDir, FIXTURE_PAGES_DIR_NAME);
   const harRelativePath = input.har ? "session.har" : undefined;
   const harAbsolutePath = harRelativePath ? path.join(setRootDir, harRelativePath) : undefined;
-  const previousSetSummary = manifest.sets[setName];
-  const existingRoutes = await loadExistingFixtureRoutes(manifestPath, setName);
+  const existingRoutes = await loadExistingFixtureRoutes(
+    manifestPath,
+    setName,
+    previousSetSummary
+  );
   const capturedRoutes = new Map<string, LinkedInFixtureRoute>();
   const captureJobs: Array<Promise<void>> = [];
   const pageEntries: Partial<Record<LinkedInReplayPageType, LinkedInFixturePageEntry>> = {
@@ -578,70 +550,70 @@ async function runFixturesRecord(input: FixtureRecordInput): Promise<void> {
       },
       async (context) => {
         let responseIndex = existingRoutes.length;
-      context.on("response", (response) => {
-        const captureJob = captureFixtureResponse(response, setRootDir, responseIndex + 1)
-          .then((capturedRoute) => {
-            responseIndex += 1;
-            if (!capturedRoute) {
-              return;
+        context.on("response", (response) => {
+          responseIndex += 1;
+          const captureJob = captureFixtureResponse(response, setRootDir, responseIndex)
+            .then((capturedRoute) => {
+              if (!capturedRoute) {
+                return;
+              }
+
+              capturedRoutes.set(buildFixtureRouteKey(capturedRoute), capturedRoute);
+            })
+            .catch(() => undefined);
+          captureJobs.push(captureJob);
+        });
+
+        const page = context.pages()[0] ?? (await context.newPage());
+        const prompt = createInterface({
+          input: stdin,
+          output: stdout
+        });
+
+        try {
+          for (const pageType of input.pageTypes) {
+            const suggestedUrl = FIXTURE_CAPTURE_URLS[pageType];
+            if (suggestedUrl) {
+              await page.goto(suggestedUrl, { waitUntil: "domcontentloaded" }).catch(() => undefined);
             }
 
-            capturedRoutes.set(createFixtureRouteKey(capturedRoute), capturedRoute);
-          })
-          .catch(() => undefined);
-        captureJobs.push(captureJob);
-      });
+            writeCliNotice(
+              `Navigate the browser to the LinkedIn ${pageType} page you want to capture.`
+            );
+            await prompt.question(
+              `Press Enter to capture ${pageType} (current page: ${page.url() || suggestedUrl}). `
+            );
 
-      const page = context.pages()[0] ?? (await context.newPage());
-      const prompt = createInterface({
-        input: stdin,
-        output: stdout
-      });
+            const htmlRelativePath = path.join(FIXTURE_PAGES_DIR_NAME, `${pageType}.html`);
+            const htmlAbsolutePath = path.join(setRootDir, htmlRelativePath);
+            await writeFile(htmlAbsolutePath, `${await page.content()}\n`, "utf8");
 
-      try {
-        for (const pageType of input.pageTypes) {
-          const suggestedUrl = FIXTURE_CAPTURE_URLS[pageType];
-          if (suggestedUrl) {
-            await page.goto(suggestedUrl, { waitUntil: "domcontentloaded" }).catch(() => undefined);
+            const currentUrl = page.url();
+            const pageTitle = await page.title().catch(() => undefined);
+            const pageLocale = await page.evaluate(() => navigator.language).catch(() => undefined);
+            const viewport = page.viewportSize();
+            captureLocale = typeof pageLocale === "string" && pageLocale.trim().length > 0
+              ? pageLocale.trim()
+              : captureLocale;
+            if (viewport) {
+              captureViewport = viewport;
+            }
+
+            pageEntries[pageType] = {
+              pageType,
+              url: currentUrl || suggestedUrl,
+              htmlPath: htmlRelativePath,
+              recordedAt: new Date().toISOString(),
+              ...(typeof pageTitle === "string" && pageTitle.trim().length > 0
+                ? { title: pageTitle.trim() }
+                : {})
+            };
           }
 
-          writeCliNotice(
-            `Navigate the browser to the LinkedIn ${pageType} page you want to capture.`
-          );
-          await prompt.question(
-            `Press Enter to capture ${pageType} (current page: ${page.url() || suggestedUrl}). `
-          );
-
-          const htmlRelativePath = path.join(FIXTURE_PAGES_DIR_NAME, `${pageType}.html`);
-          const htmlAbsolutePath = path.join(setRootDir, htmlRelativePath);
-          await writeFile(htmlAbsolutePath, `${await page.content()}\n`, "utf8");
-
-          const currentUrl = page.url();
-          const pageTitle = await page.title().catch(() => undefined);
-          const pageLocale = await page.evaluate(() => navigator.language).catch(() => undefined);
-          const viewport = page.viewportSize();
-          captureLocale = typeof pageLocale === "string" && pageLocale.trim().length > 0
-            ? pageLocale.trim()
-            : captureLocale;
-          if (viewport) {
-            captureViewport = viewport;
-          }
-
-          pageEntries[pageType] = {
-            pageType,
-            url: currentUrl || suggestedUrl,
-            htmlPath: htmlRelativePath,
-            recordedAt: new Date().toISOString(),
-            ...(typeof pageTitle === "string" && pageTitle.trim().length > 0
-              ? { title: pageTitle.trim() }
-              : {})
-          };
+          await page.waitForTimeout(750);
+        } finally {
+          prompt.close();
         }
-
-        await page.waitForTimeout(750);
-      } finally {
-        prompt.close();
-      }
       }
     );
   });
@@ -653,7 +625,7 @@ async function runFixturesRecord(input: FixtureRecordInput): Promise<void> {
     path.join(setRootDir, FIXTURE_ROUTE_FILE_NAME),
     `${JSON.stringify(
       {
-        format: 1,
+        format: LINKEDIN_FIXTURE_MANIFEST_FORMAT_VERSION,
         setName,
         routes: mergedRoutes
       },
