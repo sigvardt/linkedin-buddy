@@ -170,6 +170,7 @@ npm exec -w @linkedin-assistant/cli -- linkedin keepalive stop --profile default
 ```
 
 - Keepalive state/log files are stored under `~/.linkedin-assistant/linkedin-owa-agentools/keepalive/`.
+- See `docs/session-keepalive-hardening-architecture.md` for the hardening design and rollout plan.
 
 Scheduled follow-up daemon:
 
