@@ -7,17 +7,21 @@ import {
   type WriteValidationResultStatus
 } from "@linkedin-assistant/core";
 
+/** Output modes supported by the Tier 3 CLI formatter. */
 export type WriteValidationOutputMode = "human" | "json";
 
+/** Options for rendering the human-readable write-validation report. */
 export interface FormatWriteValidationReportOptions {
   color?: boolean;
 }
 
+/** Options for rendering human-readable write-validation errors. */
 export interface FormatWriteValidationErrorOptions {
   color?: boolean;
   helpCommand?: string;
 }
 
+/** Options for the stderr progress reporter that mirrors structured run events. */
 export interface WriteValidationProgressReporterOptions {
   enabled?: boolean;
   writeLine?: (line: string) => void;
@@ -498,6 +502,7 @@ function formatProgressIndex(actionType: string): string {
     : `?/${TOTAL_WRITE_VALIDATION_ACTIONS}`;
 }
 
+/** Turns structured write-validation log events into concise operator progress lines. */
 export class WriteValidationProgressReporter {
   private readonly enabled: boolean;
   private readonly writeLine: (line: string) => void;
@@ -662,6 +667,7 @@ export class WriteValidationProgressReporter {
   }
 }
 
+/** Resolves whether Tier 3 should emit human text or JSON for the current stdout target. */
 export function resolveWriteValidationOutputMode(
   input: { json?: boolean },
   stdoutIsTty: boolean
@@ -673,6 +679,7 @@ export function resolveWriteValidationOutputMode(
   return "human";
 }
 
+/** Formats the final Tier 3 report for human-readable CLI output. */
 export function formatWriteValidationReport(
   report: WriteValidationReport,
   options: FormatWriteValidationReportOptions = {}
@@ -709,6 +716,7 @@ export function formatWriteValidationReport(
   return lines.join("\n");
 }
 
+/** Formats a structured write-validation failure into human-readable CLI guidance. */
 export function formatWriteValidationError(
   error: LinkedInAssistantErrorPayload,
   options: FormatWriteValidationErrorOptions = {}

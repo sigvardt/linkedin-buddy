@@ -236,6 +236,7 @@ function toSessionStatus(inspection: LinkedInSessionInspection): SessionStatus {
   };
 }
 
+/** Screenshot and cleanup surface required by the Tier 3 execution pipeline. */
 export interface WriteValidationProfileManager {
   capturePageScreenshot(input: {
     actionType: LinkedInWriteValidationActionType;
@@ -245,11 +246,18 @@ export interface WriteValidationProfileManager {
   dispose(): Promise<void>;
 }
 
+/** Runtime resources created for one write-validation run and disposed during cleanup. */
 export interface WriteValidationRuntimeHandle {
   profileManager: WriteValidationProfileManager;
   runtime: CoreRuntime;
 }
 
+/**
+ * Creates the stored-session runtime used by Tier 3 write validation.
+ *
+ * The returned handle owns both the core runtime and the profile manager and
+ * must be cleaned up by the caller when the run completes.
+ */
 export async function createWriteValidationRuntime(input: {
   account: WriteValidationAccount;
   baseDir?: string;

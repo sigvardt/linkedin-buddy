@@ -78,6 +78,46 @@ Post safety lint configuration:
   - `LINKEDIN_ASSISTANT_POST_SAFETY_VALIDATE_LINK_PREVIEWS`
   - `LINKEDIN_ASSISTANT_POST_SAFETY_LINK_TIMEOUT_MS`
 
+Live write-validation account registry:
+
+- Optional config file: `~/.linkedin-assistant/linkedin-owa-agentools/config.json`
+- JSON shape:
+
+```json
+{
+  "writeValidation": {
+    "accounts": {
+      "secondary": {
+        "designation": "secondary",
+        "profileName": "secondary",
+        "sessionName": "secondary-session",
+        "targets": {
+          "send_message": {
+            "thread": "https://www.linkedin.com/messaging/thread/abc123/"
+          },
+          "connections.send_invitation": {
+            "targetProfile": "https://www.linkedin.com/in/test-target/"
+          },
+          "network.followup_after_accept": {
+            "profileUrlKey": "https://www.linkedin.com/in/test-target/"
+          },
+          "feed.like_post": {
+            "postUrl": "https://www.linkedin.com/feed/update/urn:li:activity:123/",
+            "reaction": "like"
+          },
+          "post.create": {
+            "visibility": "connections"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+- Use `linkedin accounts add` or `linkedin accounts:add` to create and update
+  these entries instead of editing JSON manually when possible.
+
 ## Selector Locale Support
 
 Locale-aware selectors let the runtime prefer localized LinkedIn UI phrases
@@ -314,7 +354,8 @@ npm exec -w @linkedin-assistant/cli -- linkedin test live --read-only --session 
 Live write validation is the Tier 3 human-in-the-loop harness for confirming
 that real LinkedIn write operations still work against an approved secondary
 account. It uses the same stored-session capture flow as Tier 2, but it never
-runs unattended and never targets a primary account.
+runs unattended, never targets a primary account, and always requires typed
+confirmation before each write.
 
 Examples below use the `linkedin` binary; `owa` is an equivalent alias.
 See `docs/write-validation.md` for the full operator guide.
@@ -324,15 +365,20 @@ See `docs/write-validation.md` for the full operator guide.
 npm exec -w @linkedin-assistant/cli -- linkedin auth session --session secondary-session
 
 # Register the secondary account and approved write-validation targets
-npm exec -w @linkedin-assistant/cli -- linkedin accounts add secondary --designation secondary --session secondary-session --profile secondary --message-thread /messaging/thread/abc123/ --invite-profile https://www.linkedin.com/in/test-target/ --followup-profile https://www.linkedin.com/in/test-target/ --reaction-post https://www.linkedin.com/feed/update/urn:li:activity:123/
+npm exec -w @linkedin-assistant/cli -- linkedin accounts add secondary --designation secondary --session secondary-session --profile secondary --message-thread /messaging/thread/abc123/ --message-participant-pattern "Simon Miller" --invite-profile https://www.linkedin.com/in/test-target/ --invite-note "Quick validation hello" --followup-profile https://www.linkedin.com/in/test-target/ --reaction-post https://www.linkedin.com/feed/update/urn:li:activity:123/ --reaction like --post-visibility connections
 
 # Run the real-action harness
 npm exec -w @linkedin-assistant/cli -- linkedin test live --write-validation --account secondary
+
+# Emit the final structured report as JSON while prompts stay interactive
+npm exec -w @linkedin-assistant/cli -- linkedin test live --write-validation --account secondary --json | jq '.actions[] | {action_type, status}'
 ```
 
 - The CLI prints `This will perform REAL actions on LinkedIn` at startup.
 - Every action is previewed individually and requires typing `yes` to proceed.
 - `--yes` is rejected for this workflow; there is no batch mode.
+- There is no Tier 3 `--dry-run`; rehearse safely with
+  `linkedin test live --read-only --session secondary-session --yes` first.
 - The harness runs the fixed five-action suite: `post.create`,
   `connections.send_invitation`, `send_message`,
   `network.followup_after_accept`, and `feed.like_post`.
@@ -341,10 +387,24 @@ npm exec -w @linkedin-assistant/cli -- linkedin test live --write-validation --a
   `linkedin accounts:add` to manage them.
 - The selected account must be marked `secondary`; accounts marked `primary`
   are hard-blocked.
-- The default cooldown is 10 seconds between real actions; override it with
-  `--cooldown-seconds <n>`.
+- `linkedin accounts add` also supports `--force`, `--invite-note`,
+  `--message-participant-pattern`, `--reaction`, and `--post-visibility`.
+- `--reaction` accepts `like`, `celebrate`, `support`, `love`, `insightful`,
+  or `funny`; `--post-visibility` accepts `public` or `connections`
+  (default `connections`).
+- Tier 3 run-time flags are `--account <id>`, `--cooldown-seconds <n>`,
+  `--timeout-seconds <n>`, `--json`, and `--no-progress`.
 - Reports include per-action verification, audit-log paths, cleanup guidance,
-  and before/after screenshot paths.
+  before/after screenshot paths, and a standalone HTML review artifact.
+- Blocking auth, challenge, or rate-limit failures stop the run early and the
+  remaining actions are marked `cancelled` in the partial report.
+- Exit codes: `0` when every action passes, `1` when one or more actions fail
+  or are cancelled, and `2` when preflight, session, or runtime errors prevent
+  the run from completing.
+- If the stored session is stale, refresh it with
+  `linkedin auth session --session secondary-session` and rerun.
+- Tier 3 is CLI-only; it is intentionally not exposed as an MCP tool because it
+  requires typed confirmations and a visible browser window.
 
 ### Draft quality evaluation
 
@@ -410,6 +470,10 @@ npm exec -w @linkedin-assistant/cli -- linkedin actions confirm --profile defaul
 - Use `--yes` to skip prompt in automation/non-interactive runs.
 
 ## MCP Usage
+
+Tier 3 live write validation is intentionally **not** exposed as an MCP tool.
+Use the CLI for that workflow so the operator can review each preview, type
+`yes`, and watch the visible browser window.
 
 Start MCP server:
 
