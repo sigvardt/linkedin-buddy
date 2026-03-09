@@ -6,7 +6,11 @@ import {
   runLinkedInWriteValidation,
   validateWriteValidationOptions
 } from "../writeValidation.js";
-import { upsertWriteValidationAccount } from "../writeValidationAccounts.js";
+import {
+  loadWriteValidationAccounts,
+  resolveWriteValidationAccount,
+  upsertWriteValidationAccount
+} from "../writeValidationAccounts.js";
 
 const tempDirs: string[] = [];
 
@@ -68,5 +72,72 @@ describe("write validation helpers", () => {
     ).rejects.toThrow(
       'Write validation can run only against a registered secondary account.'
     );
+  });
+
+  it("returns an empty registry when no accounts are configured", () => {
+    const baseDir = createTempBaseDir();
+
+    expect(loadWriteValidationAccounts(baseDir)).toEqual({
+      accounts: {},
+      configPath: expect.stringContaining("config.json")
+    });
+  });
+
+  it("normalizes stored account defaults and targets", async () => {
+    const baseDir = createTempBaseDir();
+
+    await upsertWriteValidationAccount({
+      accountId: "secondary-account",
+      baseDir,
+      designation: "secondary",
+      targets: {
+        "connections.send_invitation": {
+          note: "  Hello there  ",
+          targetProfile: "test-user"
+        },
+        "feed.like_post": {
+          postUrl: "/feed/update/urn:li:activity:123/",
+          reaction: "like"
+        },
+        "network.followup_after_accept": {
+          profileUrlKey: "test-user"
+        },
+        "post.create": {
+          visibility: "connections"
+        },
+        send_message: {
+          participantPattern: "  Test User  ",
+          thread: "/messaging/thread/abc123/"
+        }
+      }
+    });
+
+    expect(resolveWriteValidationAccount("secondary-account", baseDir)).toEqual({
+      designation: "secondary",
+      id: "secondary-account",
+      label: "secondary-account",
+      profileName: "secondary-account",
+      sessionName: "secondary-account",
+      targets: {
+        "connections.send_invitation": {
+          note: "Hello there",
+          targetProfile: "https://www.linkedin.com/in/test-user/"
+        },
+        "feed.like_post": {
+          postUrl: "https://www.linkedin.com/feed/update/urn:li:activity:123/",
+          reaction: "like"
+        },
+        "network.followup_after_accept": {
+          profileUrlKey: "https://www.linkedin.com/in/test-user/"
+        },
+        "post.create": {
+          visibility: "connections"
+        },
+        send_message: {
+          participantPattern: "Test User",
+          thread: "https://www.linkedin.com/messaging/thread/abc123/"
+        }
+      }
+    });
   });
 });

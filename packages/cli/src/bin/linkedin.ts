@@ -4393,28 +4393,7 @@ export function createCliProgram(): Command {
           writeValidation: boolean;
           yes: boolean;
         }) => {
-          if (options.writeValidation && options.readOnly) {
-            throw new LinkedInAssistantError(
-              "ACTION_PRECONDITION_FAILED",
-              'Choose either "--read-only" or "--write-validation", not both.'
-            );
-          }
-
           if (options.writeValidation) {
-            if (!options.account) {
-              throw new LinkedInAssistantError(
-                "ACTION_PRECONDITION_FAILED",
-                'Write validation requires "--account <id>".'
-              );
-            }
-
-            if (options.session !== "default") {
-              throw new LinkedInAssistantError(
-                "ACTION_PRECONDITION_FAILED",
-                'Write validation resolves stored sessions through the account registry. Remove "--session" and rerun.'
-              );
-            }
-
             await runLiveWriteValidation(
               {
                 accountId: options.account,
@@ -4423,6 +4402,8 @@ export function createCliProgram(): Command {
                   "cooldown-seconds"
                 ),
                 json: options.json,
+                readOnly: options.readOnly,
+                session: options.session,
                 timeoutSeconds: coercePositiveInt(
                   options.timeoutSeconds,
                   "timeout-seconds"
@@ -5556,12 +5537,14 @@ function buildWriteValidationAccountTargets(input: {
   reactionPost: string | undefined;
 }): WriteValidationAccountTargets {
   const targets: WriteValidationAccountTargets = {};
+  const messageParticipantPattern = input.messageParticipantPattern?.trim();
+  const inviteNote = input.inviteNote?.trim();
 
   if (input.messageThread) {
     targets.send_message = {
       thread: input.messageThread,
-      ...(input.messageParticipantPattern
-        ? { participantPattern: input.messageParticipantPattern.trim() }
+      ...(messageParticipantPattern
+        ? { participantPattern: messageParticipantPattern }
         : {})
     };
   }
@@ -5569,8 +5552,8 @@ function buildWriteValidationAccountTargets(input: {
   if (input.inviteProfile) {
     targets["connections.send_invitation"] = {
       targetProfile: input.inviteProfile,
-      ...(input.inviteNote && input.inviteNote.trim().length > 0
-        ? { note: input.inviteNote.trim() }
+      ...(inviteNote
+        ? { note: inviteNote }
         : {})
     };
   }
@@ -5597,6 +5580,35 @@ function buildWriteValidationAccountTargets(input: {
   }
 
   return targets;
+}
+
+function resolveLiveWriteValidationAccountId(input: {
+  account?: string | undefined;
+  readOnly: boolean;
+  session: string;
+}): string {
+  if (input.readOnly) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      'Choose either "--read-only" or "--write-validation", not both.'
+    );
+  }
+
+  if (!input.account) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      'Write validation requires "--account <id>".'
+    );
+  }
+
+  if (input.session !== "default") {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      'Write validation resolves stored sessions through the account registry. Remove "--session" and rerun.'
+    );
+  }
+
+  return input.account;
 }
 
 function formatWriteValidationPrompt(
@@ -5666,10 +5678,27 @@ function emitWriteValidationFailure(
   );
 }
 
+function assertWriteValidationExecutionPreconditions(
+  input: { yes: boolean },
+  cdpUrl?: string
+): void {
+  assertNoExternalSessionOverrideForStoredSession(cdpUrl);
+  assertInteractiveTerminal("run write validation");
+
+  if (input.yes) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      'Write validation requires typing "yes" for every action. Remove "--yes" and rerun.'
+    );
+  }
+}
+
 async function runLiveWriteValidation(input: {
-  accountId: string;
+  accountId?: string | undefined;
   cooldownSeconds: number;
   json: boolean;
+  readOnly: boolean;
+  session: string;
   timeoutSeconds: number;
   yes: boolean;
 }, cdpUrl?: string): Promise<void> {
@@ -5680,23 +5709,21 @@ async function runLiveWriteValidation(input: {
   const promptOutput = outputMode === "json" ? process.stderr : stdout;
 
   try {
-    assertNoExternalSessionOverrideForStoredSession(cdpUrl);
-    assertInteractiveTerminal("run write validation");
+    const accountId = resolveLiveWriteValidationAccountId({
+      account: input.accountId,
+      readOnly: input.readOnly,
+      session: input.session
+    });
 
-    if (input.yes) {
-      throw new LinkedInAssistantError(
-        "ACTION_PRECONDITION_FAILED",
-        'Write validation requires typing "yes" for every action. Remove "--yes" and rerun.'
-      );
-    }
+    assertWriteValidationExecutionPreconditions(input, cdpUrl);
 
     writeCliWarning(`${WRITE_VALIDATION_WARNING}.`);
     writeCliNotice(
-      `Running write validation against account "${input.accountId}". See ${WRITE_VALIDATION_DOC_PATH} for account setup and approved targets.`
+      `Running write validation against account "${accountId}". See ${WRITE_VALIDATION_DOC_PATH} for account setup and approved targets.`
     );
 
     const report = await runLinkedInWriteValidation({
-      accountId: coerceProfileName(input.accountId, "account"),
+      accountId: coerceProfileName(accountId, "account"),
       cooldownMs: input.cooldownSeconds * 1_000,
       interactive: Boolean(stdin.isTTY && stdout.isTTY),
       onBeforeAction: createWriteValidationPrompter(promptOutput),

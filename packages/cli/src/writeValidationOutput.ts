@@ -16,7 +16,7 @@ export interface FormatWriteValidationErrorOptions {
   helpCommand?: string;
 }
 
-type TerminalStyle = "bold" | "cyan" | "dim" | "green" | "red" | "yellow";
+type TerminalStyle = "bold" | "cyan" | "green" | "red" | "yellow";
 
 const CONTROL_CHARACTER_PATTERN = new RegExp(
   `[${String.fromCharCode(0)}-${String.fromCharCode(31)}${String.fromCharCode(127)}-${String.fromCharCode(159)}]+`,
@@ -29,7 +29,6 @@ const ANSI_ESCAPE_PATTERN = new RegExp(
 const TERMINAL_STYLE_CODES: Record<TerminalStyle, string> = {
   bold: "\u001B[1m",
   cyan: "\u001B[36m",
-  dim: "\u001B[2m",
   green: "\u001B[32m",
   red: "\u001B[31m",
   yellow: "\u001B[33m"
@@ -112,16 +111,30 @@ function formatActionSummary(
   color: boolean
 ): string {
   const verification = action.verification?.verified === true ? "verified" : "unverified";
-  const sync =
-    action.state_synced === null
-      ? "state=n/a"
-      : action.state_synced
-        ? "state=ok"
-        : "state=failed";
+  const sync = formatStateSyncLabel(action.state_synced);
   const artifactCount = action.artifact_paths.length;
   const errorSuffix = action.error_code ? ` | ${sanitizeConsoleText(action.error_code)}` : "";
 
   return `- ${formatActionStatusLabel(action.status, color)} ${sanitizeConsoleText(action.action_type)} | ${verification} | ${sync} | ${artifactCount} artifact${artifactCount === 1 ? "" : "s"}${errorSuffix}`;
+}
+
+function formatStateSyncLabel(stateSynced: boolean | null): string {
+  if (stateSynced === null) {
+    return "state=n/a";
+  }
+
+  return stateSynced ? "state=ok" : "state=failed";
+}
+
+function formatArtifactPathList(
+  label: string,
+  artifactPaths: readonly string[]
+): string | null {
+  if (artifactPaths.length === 0) {
+    return null;
+  }
+
+  return `  ${label}: ${artifactPaths.map(sanitizeConsoleText).join(", ")}`;
 }
 
 function formatActionDetails(action: WriteValidationActionResult): string[] {
@@ -143,16 +156,14 @@ function formatActionDetails(action: WriteValidationActionResult): string[] {
     detailLines.push(`  error: ${sanitizeConsoleText(action.error_message)}`);
   }
 
-  if (action.before_screenshot_paths.length > 0) {
-    detailLines.push(
-      `  before: ${action.before_screenshot_paths.map(sanitizeConsoleText).join(", ")}`
-    );
+  const beforePaths = formatArtifactPathList("before", action.before_screenshot_paths);
+  if (beforePaths) {
+    detailLines.push(beforePaths);
   }
 
-  if (action.after_screenshot_paths.length > 0) {
-    detailLines.push(
-      `  after: ${action.after_screenshot_paths.map(sanitizeConsoleText).join(", ")}`
-    );
+  const afterPaths = formatArtifactPathList("after", action.after_screenshot_paths);
+  if (afterPaths) {
+    detailLines.push(afterPaths);
   }
 
   return detailLines;
