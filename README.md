@@ -247,6 +247,42 @@ Failures
 - Set `LINKEDIN_ASSISTANT_SELECTOR_LOCALE` to change the default selector
   locale for the current shell.
 
+### Live read-only validation
+
+Live read-only validation is a human-triggered smoke test for the production
+LinkedIn UI. It uses an encrypted stored browser session, verifies only
+read-only surfaces, blocks non-GET traffic during the run, and records a local
+report with selector matches, failures, timings, and regressions versus the
+previous run.
+
+See `docs/live-validation.md` for the full workflow.
+
+```bash
+# Capture an encrypted stored session from a manual login
+npm exec -w @linkedin-assistant/cli -- owa auth:session --session smoke
+
+# Run the read-only smoke test interactively
+npm exec -w @linkedin-assistant/cli -- owa test:live --read-only --session smoke
+
+# Skip per-step confirmations but keep every guardrail enabled
+npm exec -w @linkedin-assistant/cli -- owa test:live --read-only --session smoke --yes --json
+```
+
+- `owa auth:session` opens a dedicated browser window, waits for a manual
+  LinkedIn login, and stores Playwright session state encrypted at rest under
+  the tool-owned profile directory.
+- `owa test:live --read-only` validates the feed, profile, notifications,
+  messaging, and connections surfaces only.
+- Interactive mode pauses before every step; `--yes` keeps the run read-only
+  and only skips the confirmation prompts.
+- The live validator enforces a minimum 5-second gap between steps and a
+  maximum of 20 steps per session.
+- Any session expiry, challenge, captcha, or unexpected redirect stops the run.
+- The validator writes a run-scoped JSON report and updates a stable
+  `latest-report.json` snapshot used for regression diffing on the next run.
+- If the stored session is missing or expired in an interactive terminal, the
+  CLI prompts to refresh it via `owa auth:session` and retries once.
+
 ### Draft quality evaluation
 
 Draft quality evaluation is a read-only, offline harness for scoring reply

@@ -42,6 +42,7 @@ import {
   DEFAULT_FIXTURE_STALENESS_DAYS,
   createCoreRuntime,
   checkLinkedInFixtureStaleness,
+  captureLinkedInSession,
   deleteLocalData,
   loadLinkedInFixtureSet,
   normalizeLinkedInFeedReaction,
@@ -60,6 +61,7 @@ import {
   resolveLegacyRateLimitStateFilePath,
   resolvePrivacyConfig,
   resolveSchedulerConfig,
+  runReadOnlyLinkedInLiveValidation,
   toLinkedInAssistantErrorPayload,
   writeLinkedInFixtureManifest,
   type DraftQualityReport,
@@ -81,6 +83,11 @@ import {
   formatDraftQualityReport,
   resolveDraftQualityOutputMode
 } from "../draftQualityOutput.js";
+import {
+  formatReadOnlyValidationError,
+  formatReadOnlyValidationReport,
+  resolveReadOnlyValidationOutputMode
+} from "../liveValidationOutput.js";
 import {
   formatSelectorAuditError,
   formatSelectorAuditReport,
@@ -1582,6 +1589,199 @@ async function runStatus(profileName: string, cdpUrl?: string): Promise<void> {
     printJson({ run_id: runtime.runId, ...status });
   } finally {
     runtime.close();
+  }
+}
+
+function assertNoExternalSessionOverrideForStoredSession(cdpUrl?: string): void {
+  if (!cdpUrl) {
+    return;
+  }
+
+  throw new LinkedInAssistantError(
+    "ACTION_PRECONDITION_FAILED",
+    "Stored-session auth and read-only live validation do not support --cdp-url. Omit --cdp-url to use the encrypted stored session flow."
+  );
+}
+
+async function captureStoredSession(input: {
+  sessionName: string;
+  timeoutMinutes: number;
+}): Promise<Awaited<ReturnType<typeof captureLinkedInSession>>> {
+  writeCliNotice(
+    `Opening a dedicated Chromium window to capture session "${input.sessionName}".`
+  );
+  writeCliNotice(
+    "Sign in manually. The browser closes automatically after the authenticated session is stored."
+  );
+
+  return captureLinkedInSession({
+    sessionName: input.sessionName,
+    timeoutMs: input.timeoutMinutes * 60_000
+  });
+}
+
+async function runAuthSessionCapture(input: {
+  sessionName: string;
+  timeoutMinutes: number;
+}, cdpUrl?: string): Promise<void> {
+  assertNoExternalSessionOverrideForStoredSession(cdpUrl);
+  assertInteractiveTerminal("capture a stored LinkedIn session");
+
+  const result = await captureStoredSession(input);
+  printJson({
+    authenticated: result.authenticated,
+    captured_at: result.capturedAt,
+    checked_at: result.checkedAt,
+    current_url: result.currentUrl,
+    li_at_expires_at: result.liAtCookieExpiresAt,
+    session_file: result.filePath,
+    session_name: result.sessionName
+  });
+}
+
+function isStoredSessionRefreshError(error: unknown): boolean {
+  return (
+    error instanceof LinkedInAssistantError &&
+    (error.code === "AUTH_REQUIRED" || error.code === "CAPTCHA_OR_CHALLENGE")
+  );
+}
+
+async function maybeRefreshStoredSession(
+  input: {
+    sessionName: string;
+    timeoutMinutes: number;
+    yes: boolean;
+  },
+  error: unknown
+): Promise<boolean> {
+  if (input.yes || !stdin.isTTY || !stdout.isTTY || !isStoredSessionRefreshError(error)) {
+    return false;
+  }
+
+  const errorPayload = toLinkedInAssistantErrorPayload(error, cliPrivacyConfig);
+  process.stderr.write(`${formatReadOnlyValidationError(errorPayload)}\n`);
+  const confirmed = await promptYesNo(
+    `Capture a fresh stored session named "${input.sessionName}" now?`
+  );
+  if (!confirmed) {
+    return false;
+  }
+
+  await captureStoredSession({
+    sessionName: input.sessionName,
+    timeoutMinutes: input.timeoutMinutes
+  });
+  return true;
+}
+
+async function runLiveReadOnlyValidation(input: {
+  json: boolean;
+  readOnly: boolean;
+  sessionName: string;
+  timeoutSeconds: number;
+  yes: boolean;
+}, cdpUrl?: string): Promise<void> {
+  assertNoExternalSessionOverrideForStoredSession(cdpUrl);
+
+  if (!input.readOnly) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      'Live validation is currently restricted to read-only mode. Rerun the command with "--read-only".'
+    );
+  }
+
+  if (!input.yes) {
+    assertInteractiveTerminal("run interactive live validation without --yes");
+  }
+
+  const outputMode = resolveReadOnlyValidationOutputMode(
+    { json: input.json },
+    Boolean(stdout.isTTY)
+  );
+  const runValidation = async () => {
+    const onBeforeOperation = input.yes
+      ? undefined
+      : async (operation: Parameters<
+          NonNullable<
+            NonNullable<
+              Parameters<typeof runReadOnlyLinkedInLiveValidation>[0]
+            >["onBeforeOperation"]
+          >
+        >[0]) => {
+          console.log(`Read-only step: ${operation.summary}`);
+          const confirmed = await promptYesNo("Continue with this step?");
+          if (!confirmed) {
+            throw new LinkedInAssistantError(
+              "ACTION_PRECONDITION_FAILED",
+              "Read-only live validation was cancelled by the operator.",
+              {
+                operation: operation.id,
+                session_name: input.sessionName
+              }
+            );
+          }
+        };
+
+    return runReadOnlyLinkedInLiveValidation({
+      sessionName: input.sessionName,
+      ...(onBeforeOperation ? { onBeforeOperation } : {}),
+      timeoutMs: input.timeoutSeconds * 1_000
+    });
+  };
+
+  try {
+    const report = await runValidation();
+
+    if (outputMode === "json") {
+      printJson(report);
+    } else {
+      const redactedReport = redactStructuredValue(
+        report,
+        cliPrivacyConfig,
+        "cli"
+      ) as typeof report;
+      console.log(formatReadOnlyValidationReport(redactedReport));
+    }
+
+    if (report.outcome === "fail") {
+      process.exitCode = 1;
+    }
+  } catch (error) {
+    const refreshed = await maybeRefreshStoredSession(
+      {
+        sessionName: input.sessionName,
+        timeoutMinutes: Math.max(1, Math.ceil(input.timeoutSeconds / 60)),
+        yes: input.yes
+      },
+      error
+    );
+
+    if (refreshed) {
+      const report = await runValidation();
+      if (outputMode === "json") {
+        printJson(report);
+      } else {
+        const redactedReport = redactStructuredValue(
+          report,
+          cliPrivacyConfig,
+          "cli"
+        ) as typeof report;
+        console.log(formatReadOnlyValidationReport(redactedReport));
+      }
+
+      if (report.outcome === "fail") {
+        process.exitCode = 1;
+      }
+      return;
+    }
+
+    if (outputMode === "json") {
+      throw error;
+    }
+
+    const errorPayload = toLinkedInAssistantErrorPayload(error, cliPrivacyConfig);
+    process.stderr.write(`${formatReadOnlyValidationError(errorPayload)}\n`);
+    process.exitCode = 1;
   }
 }
 
@@ -3807,6 +4007,115 @@ export function createCliProgram(): Command {
     .action(async (options: { clear: boolean }) => {
       await runRateLimitStatus(options.clear);
     });
+
+  const authCommand = program
+    .command("auth")
+    .description("Capture and manage stored encrypted LinkedIn sessions");
+
+  const configureAuthSessionCommand = (command: Command): void => {
+    command
+      .description("Capture an encrypted LinkedIn session from a manual browser login")
+      .option("-s, --session <session>", "Stored session name", "default")
+      .option(
+        "-t, --timeout-minutes <minutes>",
+        "How long to wait for the manual login to finish",
+        "10"
+      )
+      .addHelpText(
+        "after",
+        [
+          "",
+          "Safety:",
+          "  - opens a dedicated browser window for manual login only",
+          "  - stores Playwright session state encrypted at rest",
+          "  - never prints cookies or storage contents",
+          "",
+          "Examples:",
+          "  owa auth:session",
+          "  owa auth:session --session smoke --timeout-minutes 15"
+        ].join("\n")
+      )
+      .action(
+        async (options: { session: string; timeoutMinutes: string }) => {
+          await runAuthSessionCapture(
+            {
+              sessionName: coerceProfileName(options.session, "session"),
+              timeoutMinutes: coercePositiveInt(
+                options.timeoutMinutes,
+                "timeout-minutes"
+              )
+            },
+            readCdpUrl()
+          );
+        }
+      );
+  };
+
+  configureAuthSessionCommand(authCommand.command("session"));
+  configureAuthSessionCommand(program.command("auth:session", { hidden: true }));
+
+  const testCommand = program
+    .command("test")
+    .description("Run LinkedIn live validation workflows");
+
+  const configureLiveValidationCommand = (command: Command): void => {
+    command
+      .description("Run read-only live validation against LinkedIn using a stored session")
+      .option(
+        "--read-only",
+        "Confirm that the live validation should run in strictly read-only mode",
+        false
+      )
+      .option("-s, --session <session>", "Stored session name", "default")
+      .option(
+        "--timeout-seconds <seconds>",
+        "Maximum time allowed per validation step",
+        "30"
+      )
+      .option("-y, --yes", "Skip per-step confirmation prompts", false)
+      .option("--json", "Print the structured report JSON", false)
+      .addHelpText(
+        "after",
+        [
+          "",
+          "Safety guardrails:",
+          "  - requires --read-only",
+          "  - blocks non-GET requests and non-LinkedIn domains",
+          "  - prompts before every step unless --yes is set",
+          "  - stops when the stored session expires or a challenge appears",
+          "",
+          "Examples:",
+          "  owa test:live --read-only",
+          "  owa test:live --read-only --yes --session smoke --json"
+        ].join("\n")
+      )
+      .action(
+        async (options: {
+          json: boolean;
+          readOnly: boolean;
+          session: string;
+          timeoutSeconds: string;
+          yes: boolean;
+        }) => {
+          await runLiveReadOnlyValidation(
+            {
+              json: options.json,
+              readOnly: options.readOnly,
+              sessionName: coerceProfileName(options.session, "session"),
+              timeoutSeconds: coercePositiveInt(
+                options.timeoutSeconds,
+                "timeout-seconds"
+              ),
+              yes: options.yes
+            },
+            readCdpUrl()
+          );
+        }
+      );
+  };
+
+  configureLiveValidationCommand(testCommand.command("live"));
+  configureLiveValidationCommand(program.command("test:live", { hidden: true }));
 
   const dataCommand = program
     .command("data")
