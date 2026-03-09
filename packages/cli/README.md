@@ -2,6 +2,31 @@
 
 Operator CLI for LinkedIn Assistant.
 
+## Activity webhooks
+
+The CLI owns the poll-based LinkedIn activity daemon, human-readable activity
+summaries, and watch / webhook management commands.
+
+Common commands:
+
+```bash
+npm exec -w @linkedin-assistant/cli -- linkedin activity watch add --profile default --kind notifications --interval-seconds 600
+npm exec -w @linkedin-assistant/cli -- linkedin activity webhook add --watch <watch-id> --url https://example.com/hooks/linkedin
+npm exec -w @linkedin-assistant/cli -- linkedin activity run-once --profile default
+npm exec -w @linkedin-assistant/cli -- linkedin activity status --profile default
+```
+
+Useful reminders:
+
+- interactive terminals default to human-readable output; add `--json` for
+  automation
+- `run-once` has a `tick` alias
+- event history lives under `linkedin activity events`
+- delivery history lives under `linkedin activity deliveries`
+
+See `../../docs/activity-webhooks.md` for the full operator guide and
+`../../docs/activity-webhooks-architecture.md` for the underlying design.
+
 ## Tier 3 write validation
 
 Use the CLI for the Tier 3 live write-validation harness:
