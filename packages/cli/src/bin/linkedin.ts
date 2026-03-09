@@ -1716,14 +1716,49 @@ function emitReadOnlyValidationResult(
   }
 }
 
+function emitReadOnlyValidationFailure(
+  error: unknown,
+  outputMode: ReadOnlyValidationOutputMode
+): void {
+  if (outputMode === "json") {
+    throw error;
+  }
+
+  const errorPayload = toLinkedInAssistantErrorPayload(error, cliPrivacyConfig);
+  process.stderr.write(`${formatReadOnlyValidationError(errorPayload)}\n`);
+  process.exitCode = 1;
+}
+
+function validateReadOnlyValidationCliInput(input: {
+  retryBaseDelayMs: number;
+  retryMaxDelayMs: number;
+}): void {
+  if (input.retryMaxDelayMs < input.retryBaseDelayMs) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      "retry-max-delay-ms must be greater than or equal to retry-base-delay-ms.",
+      {
+        retry_base_delay_ms: input.retryBaseDelayMs,
+        retry_max_delay_ms: input.retryMaxDelayMs
+      }
+    );
+  }
+}
+
 async function runLiveReadOnlyValidation(input: {
   json: boolean;
+  maxRequests: number;
+  maxRetries: number;
+  minIntervalMs: number;
   readOnly: boolean;
+  retryBaseDelayMs: number;
+  retryMaxDelayMs: number;
   sessionName: string;
   timeoutSeconds: number;
   yes: boolean;
 }, cdpUrl?: string): Promise<void> {
   assertNoExternalSessionOverrideForStoredSession(cdpUrl);
+  validateReadOnlyValidationCliInput(input);
 
   if (!input.readOnly) {
     throw new LinkedInAssistantError(
@@ -1746,8 +1781,13 @@ async function runLiveReadOnlyValidation(input: {
       : createReadOnlyValidationPrompter(input.sessionName);
 
     return runReadOnlyLinkedInLiveValidation({
+      maxRequests: input.maxRequests,
+      maxRetries: input.maxRetries,
+      minIntervalMs: input.minIntervalMs,
       sessionName: input.sessionName,
       ...(onBeforeOperation ? { onBeforeOperation } : {}),
+      retryBaseDelayMs: input.retryBaseDelayMs,
+      retryMaxDelayMs: input.retryMaxDelayMs,
       timeoutMs: input.timeoutSeconds * 1_000
     });
   };
@@ -1766,18 +1806,16 @@ async function runLiveReadOnlyValidation(input: {
     );
 
     if (refreshed) {
-      const report = await runValidation();
-      emitReadOnlyValidationResult(report, outputMode);
+      try {
+        const report = await runValidation();
+        emitReadOnlyValidationResult(report, outputMode);
+      } catch (retryError) {
+        emitReadOnlyValidationFailure(retryError, outputMode);
+      }
       return;
     }
 
-    if (outputMode === "json") {
-      throw error;
-    }
-
-    const errorPayload = toLinkedInAssistantErrorPayload(error, cliPrivacyConfig);
-    process.stderr.write(`${formatReadOnlyValidationError(errorPayload)}\n`);
-    process.exitCode = 1;
+    emitReadOnlyValidationFailure(error, outputMode);
   }
 }
 
@@ -4068,6 +4106,31 @@ export function createCliProgram(): Command {
         "Maximum time allowed per validation step",
         "30"
       )
+      .option(
+        "--max-requests <count>",
+        "Maximum live page requests allowed before the run stops",
+        "20"
+      )
+      .option(
+        "--min-interval-ms <ms>",
+        "Minimum delay between live page requests in milliseconds",
+        "5000"
+      )
+      .option(
+        "--max-retries <count>",
+        "Retry transient timeout or network failures this many times per step",
+        "2"
+      )
+      .option(
+        "--retry-base-delay-ms <ms>",
+        "Initial exponential backoff delay for transient retries",
+        "1000"
+      )
+      .option(
+        "--retry-max-delay-ms <ms>",
+        "Maximum exponential backoff delay for transient retries",
+        "10000"
+      )
       .option("-y, --yes", "Skip per-step confirmation prompts", false)
       .option("--json", "Print the structured report JSON", false)
       .addHelpText(
@@ -4077,18 +4140,24 @@ export function createCliProgram(): Command {
           "Safety guardrails:",
           "  - requires --read-only",
           "  - blocks non-GET requests and non-LinkedIn domains",
+          "  - retries transient timeouts and network failures with exponential backoff",
           "  - prompts before every step unless --yes is set",
-          "  - stops when the stored session expires or a challenge appears",
+          "  - returns partial results if a later step hits a blocking failure",
           "",
           "Examples:",
           "  owa test:live --read-only",
-          "  owa test:live --read-only --yes --session smoke --json"
+          "  owa test:live --read-only --yes --session smoke --max-retries 3 --json"
         ].join("\n")
       )
       .action(
         async (options: {
           json: boolean;
+          maxRequests: string;
+          maxRetries: string;
+          minIntervalMs: string;
           readOnly: boolean;
+          retryBaseDelayMs: string;
+          retryMaxDelayMs: string;
           session: string;
           timeoutSeconds: string;
           yes: boolean;
@@ -4096,7 +4165,21 @@ export function createCliProgram(): Command {
           await runLiveReadOnlyValidation(
             {
               json: options.json,
+              maxRequests: coercePositiveInt(options.maxRequests, "max-requests"),
+              maxRetries: coerceNonNegativeInt(options.maxRetries, "max-retries"),
+              minIntervalMs: coercePositiveInt(
+                options.minIntervalMs,
+                "min-interval-ms"
+              ),
               readOnly: options.readOnly,
+              retryBaseDelayMs: coercePositiveInt(
+                options.retryBaseDelayMs,
+                "retry-base-delay-ms"
+              ),
+              retryMaxDelayMs: coercePositiveInt(
+                options.retryMaxDelayMs,
+                "retry-max-delay-ms"
+              ),
               sessionName: coerceProfileName(options.session, "session"),
               timeoutSeconds: coercePositiveInt(
                 options.timeoutSeconds,

@@ -15,8 +15,18 @@ interface BrowserRequestDefinition {
   url: string;
 }
 
+interface GotoFailureDefinition {
+  kind: "network" | "timeout";
+  message?: string;
+  remaining: number;
+}
+
 interface BrowserMockState {
+  browserCloseCount: number;
+  contextCloseCount: number;
   extraRequestsByUrl: Map<string, BrowserRequestDefinition[]>;
+  failNewContext: boolean;
+  gotoFailuresByUrl: Map<string, GotoFailureDefinition>;
   networkIdleTimeoutUrls: Set<string>;
   redirects: Map<string, string>;
   replayBaseUrl: string;
@@ -45,7 +55,11 @@ interface CreatedReplayFixtureSet {
 }
 
 const browserMockState = vi.hoisted<BrowserMockState>(() => ({
+  browserCloseCount: 0,
+  contextCloseCount: 0,
   extraRequestsByUrl: new Map<string, BrowserRequestDefinition[]>(),
+  failNewContext: false,
+  gotoFailuresByUrl: new Map<string, GotoFailureDefinition>(),
   networkIdleTimeoutUrls: new Set<string>(),
   redirects: new Map<string, string>(),
   replayBaseUrl: ""
@@ -102,6 +116,23 @@ vi.mock("playwright-core", () => {
 
     async goto(url: string): Promise<void> {
       await this.contextInstance.dispatchRequests(url);
+
+      const gotoFailure = browserMockState.gotoFailuresByUrl.get(url);
+      if (gotoFailure && gotoFailure.remaining > 0) {
+        gotoFailure.remaining -= 1;
+        if (gotoFailure.remaining === 0) {
+          browserMockState.gotoFailuresByUrl.delete(url);
+        } else {
+          browserMockState.gotoFailuresByUrl.set(url, gotoFailure);
+        }
+        this.currentUrl = url;
+        if (gotoFailure.kind === "timeout") {
+          throw new TimeoutError(
+            gotoFailure.message ?? `Timed out loading ${url}`
+          );
+        }
+        throw new Error(gotoFailure.message ?? `net::ERR_CONNECTION_RESET while loading ${url}`);
+      }
 
       const finalUrl = browserMockState.redirects.get(url) ?? url;
       this.currentUrl = finalUrl;
@@ -214,6 +245,7 @@ vi.mock("playwright-core", () => {
     ) {}
 
     async close(): Promise<void> {
+      browserMockState.contextCloseCount += 1;
       return undefined;
     }
 
@@ -267,6 +299,7 @@ vi.mock("playwright-core", () => {
 
   class FakeBrowser {
     async close(): Promise<void> {
+      browserMockState.browserCloseCount += 1;
       return undefined;
     }
 
@@ -275,6 +308,10 @@ vi.mock("playwright-core", () => {
         cookies?: readonly Record<string, unknown>[];
       };
     }): Promise<FakeContext> {
+      if (browserMockState.failNewContext) {
+        throw new Error("Failed to create browser context.");
+      }
+
       return new FakeContext(options.storageState);
     }
   }
@@ -466,6 +503,95 @@ async function seedStoredSession(
   });
 }
 
+async function createHappyPathFixtureSet(
+  tempDir: string,
+  setName: string = "smoke"
+): Promise<CreatedReplayFixtureSet> {
+  return createReplayFixtureSet(tempDir, {
+    setName,
+    pages: [
+      {
+        bodyPath: "pages/feed.html",
+        html: [
+          "<html><body>",
+          visible("main [data-urn]"),
+          visible("header nav"),
+          "<header><nav></nav></header>",
+          '<main role="main"><div data-urn="urn:li:activity:1"></div></main>',
+          "</body></html>"
+        ].join(""),
+        pageType: "feed",
+        title: "Feed",
+        url: FEED_URL
+      },
+      {
+        bodyPath: "pages/profile.html",
+        html: [
+          "<html><body>",
+          visible("main h1"),
+          visible("main"),
+          "<main><h1>Jane Doe</h1></main>",
+          "</body></html>"
+        ].join(""),
+        pageType: "profile",
+        title: "Profile",
+        url: PROFILE_URL
+      },
+      {
+        bodyPath: "pages/notifications.html",
+        html: [
+          "<html><body>",
+          visible("main"),
+          visible("a[href*='/notifications/']"),
+          '<main><a href="/notifications/item">Notification</a></main>',
+          "</body></html>"
+        ].join(""),
+        pageType: "notifications",
+        title: "Notifications",
+        url: NOTIFICATIONS_URL
+      },
+      {
+        bodyPath: "pages/messaging.html",
+        html: [
+          "<html><body>",
+          visible(".msg-conversations-container__conversations-list"),
+          visible("a[href*='/messaging/thread/']"),
+          `<main><div class="msg-conversations-container__conversations-list"></div><a href="${MESSAGING_THREAD_URL}">Thread</a></main>`,
+          "</body></html>"
+        ].join(""),
+        pageType: "messaging",
+        title: "Messaging",
+        url: MESSAGING_URL
+      },
+      {
+        bodyPath: "pages/connections.html",
+        html: [
+          "<html><body>",
+          visible("main ul[role='list']"),
+          visible("main a[href*='/in/']"),
+          '<main><ul role="list"><li><a href="/in/jane-doe/">Jane Doe</a></li></ul></main>',
+          "</body></html>"
+        ].join(""),
+        pageType: "connections",
+        title: "Connections",
+        url: CONNECTIONS_URL
+      }
+    ],
+    extraRoutes: [
+      {
+        bodyPath: "pages/thread.html",
+        html: [
+          "<html><body>",
+          visible("li.msg-s-message-list__event"),
+          '<main><ul><li class="msg-s-message-list__event">Hi</li></ul></main>',
+          "</body></html>"
+        ].join(""),
+        url: MESSAGING_THREAD_URL
+      }
+    ]
+  });
+}
+
 function findOperation(
   report: ReadOnlyValidationReport,
   operationId: ReadOnlyValidationOperationResult["operation"]
@@ -488,7 +614,11 @@ describe("linkedin live validation CLI integration", () => {
   let stderrWriteSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
+    browserMockState.browserCloseCount = 0;
+    browserMockState.contextCloseCount = 0;
     browserMockState.extraRequestsByUrl.clear();
+    browserMockState.failNewContext = false;
+    browserMockState.gotoFailuresByUrl.clear();
     browserMockState.networkIdleTimeoutUrls.clear();
     browserMockState.redirects.clear();
     browserMockState.replayBaseUrl = "";
@@ -797,6 +927,167 @@ describe("linkedin live validation CLI integration", () => {
     } finally {
       setTimeoutSpy.mockRestore();
     }
+  });
+
+  it("retries transient network failures and records the recovered attempt count", async () => {
+    setInteractiveMode(false, false);
+
+    const realSetTimeout = globalThis.setTimeout;
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation(
+      ((handler: Parameters<typeof setTimeout>[0], _delay?: number, ...args: unknown[]) => {
+        return realSetTimeout(handler as never, 0, ...args);
+      }) as unknown as typeof setTimeout
+    );
+
+    const assistantHome = await mkdtemp(
+      path.join(os.tmpdir(), "linkedin-live-validation-retry-")
+    );
+    tempDirs.push(assistantHome);
+
+    const { manifestPath, setName } = await createHappyPathFixtureSet(
+      assistantHome,
+      "retry"
+    );
+
+    enableReplay(manifestPath, setName);
+    const replayServer = await core.ensureSharedFixtureReplayServer();
+    if (!replayServer) {
+      throw new Error("Expected the shared fixture replay server to start.");
+    }
+    browserMockState.replayBaseUrl = replayServer.baseUrl;
+    browserMockState.gotoFailuresByUrl.set(NOTIFICATIONS_URL, {
+      kind: "network",
+      message: `net::ERR_CONNECTION_RESET while loading ${NOTIFICATIONS_URL}`,
+      remaining: 1
+    });
+
+    await seedStoredSession(assistantHome, "smoke");
+
+    try {
+      await runCli([
+        "node",
+        "linkedin",
+        "test:live",
+        "--read-only",
+        "--yes",
+        "--json",
+        "--session",
+        "smoke"
+      ]);
+
+      const report = JSON.parse(
+        String(consoleLogSpy.mock.calls.at(-1)?.[0] ?? "")
+      ) as ReadOnlyValidationReport;
+
+      expect(process.exitCode).toBeUndefined();
+      expect(report.outcome).toBe("pass");
+      expect(report.request_limits.used_requests).toBe(6);
+      expect(findOperation(report, "notifications")).toMatchObject({
+        attempt_count: 2,
+        status: "pass",
+        warnings: ["Recovered after 1 transient retry."]
+      });
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
+  });
+
+  it("returns a partial report when a later step hits the request cap", async () => {
+    setInteractiveMode(false, false);
+
+    const realSetTimeout = globalThis.setTimeout;
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation(
+      ((handler: Parameters<typeof setTimeout>[0], _delay?: number, ...args: unknown[]) => {
+        return realSetTimeout(handler as never, 0, ...args);
+      }) as unknown as typeof setTimeout
+    );
+
+    const assistantHome = await mkdtemp(
+      path.join(os.tmpdir(), "linkedin-live-validation-rate-limit-")
+    );
+    tempDirs.push(assistantHome);
+
+    const { manifestPath, setName } = await createHappyPathFixtureSet(
+      assistantHome,
+      "rate-limit"
+    );
+
+    enableReplay(manifestPath, setName);
+    const replayServer = await core.ensureSharedFixtureReplayServer();
+    if (!replayServer) {
+      throw new Error("Expected the shared fixture replay server to start.");
+    }
+    browserMockState.replayBaseUrl = replayServer.baseUrl;
+
+    await seedStoredSession(assistantHome, "smoke");
+
+    try {
+      await runCli([
+        "node",
+        "linkedin",
+        "test:live",
+        "--read-only",
+        "--yes",
+        "--json",
+        "--session",
+        "smoke",
+        "--max-requests",
+        "2",
+        "--min-interval-ms",
+        "1"
+      ]);
+
+      const report = JSON.parse(
+        String(consoleLogSpy.mock.calls.at(-1)?.[0] ?? "")
+      ) as ReadOnlyValidationReport;
+
+      expect(process.exitCode).toBe(1);
+      expect(report.summary).toContain("Validation stopped early");
+      expect(report.operation_count).toBe(3);
+      expect(report.request_limits).toMatchObject({
+        max_requests: 2,
+        max_requests_reached: true,
+        used_requests: 2
+      });
+      expect(findOperation(report, "notifications")).toMatchObject({
+        attempt_count: 1,
+        error_code: "RATE_LIMITED",
+        status: "fail"
+      });
+      expect(browserMockState.browserCloseCount).toBe(1);
+      expect(browserMockState.contextCloseCount).toBe(1);
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
+  });
+
+  it("closes the launched browser when context creation fails", async () => {
+    setInteractiveMode(false, false);
+
+    const assistantHome = await mkdtemp(
+      path.join(os.tmpdir(), "linkedin-live-validation-context-")
+    );
+    tempDirs.push(assistantHome);
+
+    await seedStoredSession(assistantHome, "smoke");
+    process.env.LINKEDIN_ASSISTANT_HOME = assistantHome;
+    browserMockState.failNewContext = true;
+
+    await expect(
+      runCli([
+        "node",
+        "linkedin",
+        "test:live",
+        "--read-only",
+        "--yes",
+        "--json",
+        "--session",
+        "smoke"
+      ])
+    ).rejects.toThrow("Failed to create browser context.");
+
+    expect(browserMockState.browserCloseCount).toBe(1);
+    expect(browserMockState.contextCloseCount).toBe(0);
   });
 
   it("formats auth failures cleanly when the stored session is missing or expired", async () => {

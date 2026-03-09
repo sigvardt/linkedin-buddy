@@ -93,11 +93,12 @@ function createReportFixture(): ReadOnlyValidationReport {
       unchanged_count: 3
     },
     events_path: "/tmp/live-readonly/events.jsonl",
-    fail_count: 1,
+    fail_count: 2,
     latest_report_path: "/tmp/live-readonly/latest-report.json",
-    operation_count: 2,
+    operation_count: 3,
     operations: [
       {
+        attempt_count: 1,
         completed_at: "2026-03-09T10:00:05.000Z",
         failed_count: 0,
         final_url: "https://www.linkedin.com/feed/",
@@ -129,6 +130,7 @@ function createReportFixture(): ReadOnlyValidationReport {
         warnings: []
       },
       {
+        attempt_count: 2,
         completed_at: "2026-03-09T10:00:12.000Z",
         failed_count: 1,
         final_url: "https://www.linkedin.com/notifications/",
@@ -158,7 +160,50 @@ function createReportFixture(): ReadOnlyValidationReport {
         status: "fail",
         summary: "Open notifications and verify the notifications surface.",
         url: "https://www.linkedin.com/notifications/",
-        warnings: ["Notifications loaded with a slower-than-usual response."]
+        warnings: [
+          "Recovered after 1 transient retry.",
+          "Notifications loaded with a slower-than-usual response."
+        ]
+      },
+      {
+        attempt_count: 3,
+        completed_at: "2026-03-09T10:00:20.000Z",
+        error_code: "TIMEOUT",
+        error_message:
+          "Timed out after 30000ms while running connections. LinkedIn may be slow or the page may be incomplete; rerun the live validation or increase the timeout.",
+        failed_count: 2,
+        final_url:
+          "https://www.linkedin.com/mynetwork/invite-connect/connections/",
+        matched_count: 0,
+        operation: "connections",
+        page_load_ms: 900,
+        selector_results: [
+          {
+            description: "Connections list or container",
+            error:
+              "Timed out after 30000ms while running connections. LinkedIn may be slow or the page may be incomplete; rerun the live validation or increase the timeout.",
+            matched_candidate_key: null,
+            matched_candidate_rank: null,
+            matched_selector: null,
+            selector_key: "connections_surface",
+            status: "fail"
+          },
+          {
+            description: "Connection profile entry",
+            error:
+              "Timed out after 30000ms while running connections. LinkedIn may be slow or the page may be incomplete; rerun the live validation or increase the timeout.",
+            matched_candidate_key: null,
+            matched_candidate_rank: null,
+            matched_selector: null,
+            selector_key: "connection_entry",
+            status: "fail"
+          }
+        ],
+        started_at: "2026-03-09T10:00:13.000Z",
+        status: "fail",
+        summary: "Open connections and verify the connections list surface.",
+        url: "https://www.linkedin.com/mynetwork/invite-connect/connections/",
+        warnings: ["Retried 2 times before the page still failed."]
       }
     ],
     outcome: "fail",
@@ -173,7 +218,7 @@ function createReportFixture(): ReadOnlyValidationReport {
       max_requests: 20,
       max_requests_reached: false,
       min_interval_ms: 5000,
-      used_requests: 2
+      used_requests: 5
     },
     run_id: "run_live_validation_output_test",
     session: {
@@ -183,7 +228,7 @@ function createReportFixture(): ReadOnlyValidationReport {
       session_name: "smoke"
     },
     summary:
-      "Checked 2 read-only LinkedIn operations. 1 passed. 1 failed. 2 selector regressions detected versus the previous run."
+      "Checked 3 read-only LinkedIn operations. 1 passed. 2 failed. 2 selector regressions detected versus the previous run."
   };
 }
 
@@ -199,11 +244,18 @@ describe("live validation output helpers", () => {
 
     expect(output).toContain("Live Validation: FAIL");
     expect(output).toContain(
-      "Summary: Checked 2 read-only LinkedIn operations. 1 passed. 1 failed. 2 selector regressions detected versus the previous run."
+      "Summary: Checked 3 read-only LinkedIn operations. 1 passed. 2 failed. 2 selector regressions detected versus the previous run."
     );
     expect(output).toContain("Operations");
     expect(output).toContain("- PASS feed: 2 matched, 0 failed, 1200ms");
-    expect(output).toContain("- FAIL notifications: 1 matched, 1 failed, 1600ms | 1 warning");
+    expect(output).toContain(
+      "- FAIL notifications: 1 matched, 1 failed, 1600ms | 2 warnings | 2 attempts"
+    );
+    expect(output).toContain(
+      "- FAIL connections: 0 matched, 2 failed, 900ms | 1 warning | 3 attempts | TIMEOUT"
+    );
+    expect(output).toContain("Operation Errors");
+    expect(output).toContain("- connections [TIMEOUT] — Timed out after 30000ms while running connections.");
     expect(output).toContain("Failures");
     expect(output).toContain(
       "- notifications/notification_surface — No selector candidate matched notification_surface."
@@ -227,14 +279,18 @@ describe("live validation output helpers", () => {
   it("matches the full human-readable report snapshot", () => {
     expect(formatReadOnlyValidationReport(createReportFixture())).toMatchInlineSnapshot(`
       "Live Validation: FAIL
-      Summary: Checked 2 read-only LinkedIn operations. 1 passed. 1 failed. 2 selector regressions detected versus the previous run.
+      Summary: Checked 3 read-only LinkedIn operations. 1 passed. 2 failed. 2 selector regressions detected versus the previous run.
       Session: smoke (captured 2026-03-09T09:00:00.000Z)
       Report JSON: /tmp/live-readonly/report.json
       Events: /tmp/live-readonly/events.jsonl
 
       Operations
       - PASS feed: 2 matched, 0 failed, 1200ms
-      - FAIL notifications: 1 matched, 1 failed, 1600ms | 1 warning
+      - FAIL notifications: 1 matched, 1 failed, 1600ms | 2 warnings | 2 attempts
+      - FAIL connections: 0 matched, 2 failed, 900ms | 1 warning | 3 attempts | TIMEOUT
+
+      Operation Errors
+      - connections [TIMEOUT] — Timed out after 30000ms while running connections. LinkedIn may be slow or the page may be incomplete; rerun the live validation or increase the timeout.
 
       Failures
       - notifications/notification_surface — No selector candidate matched notification_surface.

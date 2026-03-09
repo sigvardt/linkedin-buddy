@@ -68,6 +68,7 @@ function createValidationReport(
     operation_count: 1,
     operations: [
       {
+        attempt_count: 1,
         completed_at: "2026-03-09T10:00:05.000Z",
         failed_count: outcome === "fail" ? 1 : 0,
         final_url: "https://www.linkedin.com/feed/",
@@ -215,6 +216,42 @@ describe("linkedin live validation CLI", () => {
     });
   });
 
+  it("passes retry and pacing overrides through to core live validation", async () => {
+    setInteractiveMode(false, false);
+    liveValidationCliMocks.runReadOnlyLinkedInLiveValidation.mockResolvedValue(
+      createValidationReport("pass")
+    );
+
+    await runCli([
+      "node",
+      "linkedin",
+      "test:live",
+      "--read-only",
+      "--yes",
+      "--json",
+      "--max-requests",
+      "25",
+      "--min-interval-ms",
+      "2500",
+      "--max-retries",
+      "3",
+      "--retry-base-delay-ms",
+      "200",
+      "--retry-max-delay-ms",
+      "400"
+    ]);
+
+    expect(liveValidationCliMocks.runReadOnlyLinkedInLiveValidation).toHaveBeenCalledWith({
+      maxRequests: 25,
+      maxRetries: 3,
+      minIntervalMs: 2500,
+      retryBaseDelayMs: 200,
+      retryMaxDelayMs: 400,
+      sessionName: "default",
+      timeoutMs: 30_000
+    });
+  });
+
   it("prints a human-readable error and exits when the live validation is rate limited", async () => {
     liveValidationCliMocks.runReadOnlyLinkedInLiveValidation.mockRejectedValue(
       new LinkedInAssistantError(
@@ -241,6 +278,24 @@ describe("linkedin live validation CLI", () => {
     expect(liveValidationCliMocks.runReadOnlyLinkedInLiveValidation).toHaveBeenCalledTimes(1);
     expect(stderrChunks.join("")).toContain("Live validation failed [RATE_LIMITED]");
     expect(stderrChunks.join("")).toContain("per-session request cap");
+  });
+
+  it("rejects retry windows where the max delay is smaller than the base delay", async () => {
+    await expect(
+      runCli([
+        "node",
+        "linkedin",
+        "test:live",
+        "--read-only",
+        "--yes",
+        "--retry-base-delay-ms",
+        "2000",
+        "--retry-max-delay-ms",
+        "1000"
+      ])
+    ).rejects.toThrow("retry-max-delay-ms");
+
+    expect(liveValidationCliMocks.runReadOnlyLinkedInLiveValidation).not.toHaveBeenCalled();
   });
 
   it("rejects cdp-url overrides for the visible test live command", async () => {
@@ -302,5 +357,52 @@ describe("linkedin live validation CLI", () => {
         session_name: "smoke"
       }
     });
+  });
+
+  it("formats a second failure cleanly after refreshing the stored session", async () => {
+    liveValidationCliMocks.answers = ["yes"];
+    liveValidationCliMocks.captureLinkedInSession.mockResolvedValue({
+      authenticated: true,
+      capturedAt: "2026-03-09T09:30:00.000Z",
+      checkedAt: "2026-03-09T09:31:00.000Z",
+      currentUrl: "https://www.linkedin.com/feed/",
+      filePath: "/tmp/stored-session.enc.json",
+      liAtCookieExpiresAt: "2026-04-01T00:00:00.000Z",
+      sessionName: "smoke"
+    });
+    liveValidationCliMocks.runReadOnlyLinkedInLiveValidation
+      .mockRejectedValueOnce(
+        new LinkedInAssistantError(
+          "AUTH_REQUIRED",
+          "Stored session is expired.",
+          { session_name: "smoke" }
+        )
+      )
+      .mockRejectedValueOnce(
+        new LinkedInAssistantError(
+          "RATE_LIMITED",
+          "Read-only live validation reached the per-session request cap (20) before inbox.",
+          {
+            max_requests: 20,
+            operation: "inbox",
+            used_requests: 20
+          }
+        )
+      );
+
+    await runCli([
+      "node",
+      "linkedin",
+      "test:live",
+      "--read-only",
+      "--session",
+      "smoke"
+    ]);
+
+    expect(process.exitCode).toBe(1);
+    expect(stderrChunks.join(""))
+      .toContain("Live validation failed [RATE_LIMITED]");
+    expect(liveValidationCliMocks.captureLinkedInSession).toHaveBeenCalledTimes(1);
+    expect(liveValidationCliMocks.runReadOnlyLinkedInLiveValidation).toHaveBeenCalledTimes(2);
   });
 });

@@ -33,7 +33,11 @@ function formatOperationSummary(operation: ReadOnlyValidationOperationResult): s
   const warningSuffix = operation.warnings.length > 0
     ? ` | ${operation.warnings.length} warning${operation.warnings.length === 1 ? "" : "s"}`
     : "";
-  return `- ${formatStatusLabel(operation.status)} ${operation.operation}: ${operation.matched_count} matched, ${operation.failed_count} failed, ${operation.page_load_ms}ms${warningSuffix}`;
+  const retrySuffix = operation.attempt_count > 1
+    ? ` | ${operation.attempt_count} attempts`
+    : "";
+  const errorSuffix = operation.error_code ? ` | ${operation.error_code}` : "";
+  return `- ${formatStatusLabel(operation.status)} ${operation.operation}: ${operation.matched_count} matched, ${operation.failed_count} failed, ${operation.page_load_ms}ms${warningSuffix}${retrySuffix}${errorSuffix}`;
 }
 
 function formatDiffEntry(entry: ReadOnlyValidationDiffEntry): string {
@@ -55,11 +59,27 @@ function formatFailedSelectorBlocks(
   operations: ReadOnlyValidationReport["operations"]
 ): string[] {
   return operations.flatMap((operation) => {
+    if (operation.error_code) {
+      return [];
+    }
+
     return operation.selector_results
       .filter((selectorResult) => selectorResult.status === "fail")
       .map((selectorResult) => {
         return `- ${operation.operation}/${selectorResult.selector_key} — ${selectorResult.error ?? "No selector candidate matched."}`;
       });
+  });
+}
+
+function formatOperationErrors(
+  operations: ReadOnlyValidationReport["operations"]
+): string[] {
+  return operations.flatMap((operation) => {
+    if (!operation.error_code || !operation.error_message) {
+      return [];
+    }
+
+    return [`- ${operation.operation} [${operation.error_code}] — ${operation.error_message}`];
   });
 }
 
@@ -87,6 +107,7 @@ export function formatReadOnlyValidationReport(
     report.operations.map((operation) => formatOperationSummary(operation))
   );
 
+  appendSection(lines, "Operation Errors", formatOperationErrors(report.operations));
   appendSection(lines, "Failures", formatFailedSelectorBlocks(report.operations));
   appendSection(
     lines,
