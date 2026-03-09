@@ -309,6 +309,43 @@ npm exec -w @linkedin-assistant/cli -- linkedin test live --read-only --session 
 - Set `PLAYWRIGHT_EXECUTABLE_PATH` if Playwright cannot find Chromium on the
   current machine.
 
+### Live write validation
+
+Live write validation is the Tier 3 human-in-the-loop harness for confirming
+that real LinkedIn write operations still work against an approved secondary
+account. It uses the same stored-session capture flow as Tier 2, but it never
+runs unattended and never targets a primary account.
+
+Examples below use the `linkedin` binary; `owa` is an equivalent alias.
+See `docs/write-validation.md` for the full operator guide.
+
+```bash
+# Capture a stored session for the dedicated secondary account
+npm exec -w @linkedin-assistant/cli -- linkedin auth session --session secondary-session
+
+# Register the secondary account and approved write-validation targets
+npm exec -w @linkedin-assistant/cli -- linkedin accounts add secondary --designation secondary --session secondary-session --profile secondary --message-thread /messaging/thread/abc123/ --invite-profile https://www.linkedin.com/in/test-target/ --followup-profile https://www.linkedin.com/in/test-target/ --reaction-post https://www.linkedin.com/feed/update/urn:li:activity:123/
+
+# Run the real-action harness
+npm exec -w @linkedin-assistant/cli -- linkedin test live --write-validation --account secondary
+```
+
+- The CLI prints `This will perform REAL actions on LinkedIn` at startup.
+- Every action is previewed individually and requires typing `yes` to proceed.
+- `--yes` is rejected for this workflow; there is no batch mode.
+- The harness runs the fixed five-action suite: `post.create`,
+  `connections.send_invitation`, `send_message`,
+  `network.followup_after_accept`, and `feed.like_post`.
+- Registered accounts live in `LINKEDIN_ASSISTANT_HOME/config.json` under
+  `writeValidation.accounts`; use `linkedin accounts add` or
+  `linkedin accounts:add` to manage them.
+- The selected account must be marked `secondary`; accounts marked `primary`
+  are hard-blocked.
+- The default cooldown is 10 seconds between real actions; override it with
+  `--cooldown-seconds <n>`.
+- Reports include per-action verification, audit-log paths, cleanup guidance,
+  and before/after screenshot paths.
+
 ### Draft quality evaluation
 
 Draft quality evaluation is a read-only, offline harness for scoring reply

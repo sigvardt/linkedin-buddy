@@ -61,7 +61,9 @@ import {
   resolveLegacyRateLimitStateFilePath,
   resolvePrivacyConfig,
   resolveSchedulerConfig,
+  runLinkedInWriteValidation,
   runReadOnlyLinkedInLiveValidation,
+  upsertWriteValidationAccount,
   toLinkedInAssistantErrorPayload,
   writeLinkedInFixtureManifest,
   type DraftQualityReport,
@@ -77,7 +79,10 @@ import {
   type SchedulerJobRow,
   type SchedulerTickResult,
   type SearchCategory,
-  type SelectorAuditReport
+  type SelectorAuditReport,
+  type WriteValidationAccountTargets,
+  type WriteValidationActionPreview,
+  type WriteValidationReport
 } from "@linkedin-assistant/core";
 import {
   DraftQualityProgressReporter,
@@ -98,6 +103,12 @@ import {
   resolveSelectorAuditOutputMode,
   SelectorAuditProgressReporter
 } from "../selectorAuditOutput.js";
+import {
+  formatWriteValidationError,
+  formatWriteValidationReport,
+  resolveWriteValidationOutputMode,
+  type WriteValidationOutputMode
+} from "../writeValidationOutput.js";
 import {
   formatSchedulerError,
   formatSchedulerRunOnceReport,
@@ -122,6 +133,8 @@ const MAX_JSON_INPUT_BYTES = 10 * 1024 * 1024;
 const LIVE_VALIDATION_HELP_COMMAND = "linkedin test live --help";
 const LIVE_VALIDATION_FAIL_EXIT_CODE = 1;
 const LIVE_VALIDATION_ERROR_EXIT_CODE = 2;
+const WRITE_VALIDATION_DOC_PATH = "docs/write-validation.md";
+const WRITE_VALIDATION_WARNING = "This will perform REAL actions on LinkedIn";
 let cliSelectorLocale: string | undefined;
 
 function writeCliWarning(message: string): void {
@@ -4144,17 +4157,132 @@ export function createCliProgram(): Command {
   configureAuthSessionCommand(authCommand.command("session"));
   configureAuthSessionCommand(program.command("auth:session", { hidden: true }));
 
+  const accountsCommand = program
+    .command("accounts")
+    .description("Register write-validation accounts and approved targets");
+
+  const configureAccountsAddCommand = (command: Command): void => {
+    command
+      .argument("<account>", "Account id")
+      .description("Register or update a write-validation account")
+      .requiredOption(
+        "--designation <designation>",
+        "Whether the account is primary or secondary"
+      )
+      .option("--label <label>", "Human-friendly account label")
+      .option("--profile <profile>", "Profile name used for local DB state")
+      .option(
+        "--session <session>",
+        "Stored session name captured with linkedin auth session"
+      )
+      .option(
+        "--message-thread <thread>",
+        "Approved thread id or URL for send_message"
+      )
+      .option(
+        "--message-participant-pattern <pattern>",
+        "Optional regex used to double-check the approved thread participant"
+      )
+      .option(
+        "--invite-profile <profile>",
+        "Approved profile URL or slug for connections.send_invitation"
+      )
+      .option("--invite-note <note>", "Optional note for the approved invitation target")
+      .option(
+        "--followup-profile <profile>",
+        "Accepted connection profile URL or slug for network.followup_after_accept"
+      )
+      .option("--reaction-post <post>", "Approved post URL for feed.like_post")
+      .option(
+        "--reaction <reaction>",
+        `Reaction to use for feed.like_post (${LINKEDIN_FEED_REACTION_TYPES.join(", ")})`
+      )
+      .option(
+        "--post-visibility <visibility>",
+        `Visibility for post.create (${LINKEDIN_POST_VISIBILITY_TYPES.join(", ")})`
+      )
+      .option("--force", "Overwrite an existing account with the same id", false)
+      .addHelpText(
+        "after",
+        [
+          "",
+          "Examples:",
+          "  owa accounts add secondary --designation secondary --session secondary-session --profile secondary",
+          "  owa accounts:add secondary --designation secondary --session secondary-session --message-thread /messaging/thread/abc/ --invite-profile https://www.linkedin.com/in/test-user/",
+          "",
+          "Notes:",
+          "  - write validation refuses to run against accounts marked primary",
+          "  - approved targets are stored in config.json under writeValidation.accounts",
+          "  - you can rerun with --force to replace an existing account definition"
+        ].join("\n")
+      )
+      .action(
+        async (
+          accountId: string,
+          options: {
+            designation: string;
+            followupProfile?: string;
+            force: boolean;
+            inviteNote?: string;
+            inviteProfile?: string;
+            label?: string;
+            messageParticipantPattern?: string;
+            messageThread?: string;
+            postVisibility?: string;
+            profile?: string;
+            reaction?: string;
+            reactionPost?: string;
+            session?: string;
+          }
+        ) => {
+          await runAccountsAdd({
+            accountId,
+            designation: options.designation,
+            followupProfile: options.followupProfile,
+            force: options.force,
+            inviteNote: options.inviteNote,
+            inviteProfile: options.inviteProfile,
+            label: options.label,
+            messageParticipantPattern: options.messageParticipantPattern,
+            messageThread: options.messageThread,
+            postVisibility: options.postVisibility,
+            profileName: options.profile,
+            reaction: options.reaction,
+            reactionPost: options.reactionPost,
+            sessionName: options.session
+          });
+        }
+      );
+  };
+
+  configureAccountsAddCommand(accountsCommand.command("add"));
+  configureAccountsAddCommand(program.command("accounts:add", { hidden: true }));
+
   const testCommand = program
     .command("test")
     .description("Run LinkedIn live validation workflows");
 
   const configureLiveValidationCommand = (command: Command): void => {
     command
-      .description("Run read-only live validation against LinkedIn using a stored session")
+      .description("Run live validation against LinkedIn using stored sessions")
       .option(
         "--read-only",
         "Confirm that the live validation should run in strictly read-only mode",
         false
+      )
+      .option(
+        "--write-validation",
+        "Run the Tier 3 real-action validation harness against a registered secondary account",
+        false
+      )
+      .option(
+        "--account <account>",
+        "Registered write-validation account id (required with --write-validation)"
+      )
+      .option(
+        "--cooldown-seconds <seconds>",
+        "Cooldown between write-validation actions in seconds",
+        "10"
       )
       .option(
         "-s, --session <session>",
@@ -4244,11 +4372,14 @@ export function createCliProgram(): Command {
           "",
           "Docs:",
           "  - docs/live-validation.md",
-          "  - docs/live-validation-architecture.md"
+          "  - docs/live-validation-architecture.md",
+          `  - ${WRITE_VALIDATION_DOC_PATH}`
         ].join("\n")
       )
       .action(
         async (options: {
+          account?: string;
+          cooldownSeconds: string;
           json: boolean;
           maxRequests: string;
           maxRetries: string;
@@ -4259,8 +4390,50 @@ export function createCliProgram(): Command {
           retryMaxDelayMs: string;
           session: string;
           timeoutSeconds: string;
+          writeValidation: boolean;
           yes: boolean;
         }) => {
+          if (options.writeValidation && options.readOnly) {
+            throw new LinkedInAssistantError(
+              "ACTION_PRECONDITION_FAILED",
+              'Choose either "--read-only" or "--write-validation", not both.'
+            );
+          }
+
+          if (options.writeValidation) {
+            if (!options.account) {
+              throw new LinkedInAssistantError(
+                "ACTION_PRECONDITION_FAILED",
+                'Write validation requires "--account <id>".'
+              );
+            }
+
+            if (options.session !== "default") {
+              throw new LinkedInAssistantError(
+                "ACTION_PRECONDITION_FAILED",
+                'Write validation resolves stored sessions through the account registry. Remove "--session" and rerun.'
+              );
+            }
+
+            await runLiveWriteValidation(
+              {
+                accountId: options.account,
+                cooldownSeconds: coerceNonNegativeInt(
+                  options.cooldownSeconds,
+                  "cooldown-seconds"
+                ),
+                json: options.json,
+                timeoutSeconds: coercePositiveInt(
+                  options.timeoutSeconds,
+                  "timeout-seconds"
+                ),
+                yes: options.yes
+              },
+              readCdpUrl()
+            );
+            return;
+          }
+
           await runLiveReadOnlyValidation(
             {
               json: options.json,
@@ -5355,5 +5528,230 @@ if (isDirectExecution(import.meta.url)) {
     const payload = toLinkedInAssistantErrorPayload(error, cliPrivacyConfig);
     console.error(JSON.stringify(payload, null, 2));
     process.exit(process.exitCode ?? 1);
+  });
+}
+
+function coerceWriteValidationDesignation(
+  value: string
+): "primary" | "secondary" {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "primary" || normalized === "secondary") {
+    return normalized;
+  }
+
+  throw new LinkedInAssistantError(
+    "ACTION_PRECONDITION_FAILED",
+    'designation must be either "primary" or "secondary".'
+  );
+}
+
+function buildWriteValidationAccountTargets(input: {
+  followupProfile: string | undefined;
+  inviteNote: string | undefined;
+  inviteProfile: string | undefined;
+  messageParticipantPattern: string | undefined;
+  messageThread: string | undefined;
+  postVisibility: string | undefined;
+  reaction: string | undefined;
+  reactionPost: string | undefined;
+}): WriteValidationAccountTargets {
+  const targets: WriteValidationAccountTargets = {};
+
+  if (input.messageThread) {
+    targets.send_message = {
+      thread: input.messageThread,
+      ...(input.messageParticipantPattern
+        ? { participantPattern: input.messageParticipantPattern.trim() }
+        : {})
+    };
+  }
+
+  if (input.inviteProfile) {
+    targets["connections.send_invitation"] = {
+      targetProfile: input.inviteProfile,
+      ...(input.inviteNote && input.inviteNote.trim().length > 0
+        ? { note: input.inviteNote.trim() }
+        : {})
+    };
+  }
+
+  if (input.followupProfile) {
+    targets["network.followup_after_accept"] = {
+      profileUrlKey: input.followupProfile
+    };
+  }
+
+  if (input.reactionPost) {
+    targets["feed.like_post"] = {
+      postUrl: input.reactionPost,
+      ...(input.reaction
+        ? { reaction: normalizeLinkedInFeedReaction(input.reaction) }
+        : {})
+    };
+  }
+
+  if (input.postVisibility) {
+    targets["post.create"] = {
+      visibility: normalizeLinkedInPostVisibility(input.postVisibility, "connections")
+    };
+  }
+
+  return targets;
+}
+
+function formatWriteValidationPrompt(
+  preview: WriteValidationActionPreview
+): string[] {
+  return [
+    `Action: ${preview.action_type}`,
+    `Risk: ${preview.risk_class}`,
+    `Target: ${JSON.stringify(preview.target)}`,
+    `Payload: ${JSON.stringify(preview.outbound)}`,
+    `Expected: ${preview.expected_outcome}`
+  ];
+}
+
+function createWriteValidationPrompter(
+  output: typeof stdout | typeof process.stderr
+): (preview: WriteValidationActionPreview) => Promise<boolean> {
+  return async (preview) => {
+    for (const line of formatWriteValidationPrompt(preview)) {
+      output.write(`${line}\n`);
+    }
+
+    return promptYesNo("Execute this action?", output);
+  };
+}
+
+function emitWriteValidationResult(
+  report: WriteValidationReport,
+  outputMode: WriteValidationOutputMode
+): void {
+  if (outputMode === "json") {
+    printJson(report);
+  } else {
+    const redactedReport = redactStructuredValue(
+      report,
+      cliPrivacyConfig,
+      "cli"
+    ) as WriteValidationReport;
+    console.log(
+      formatWriteValidationReport(redactedReport, {
+        color: shouldUseAnsiColor(stdout)
+      })
+    );
+  }
+
+  if (report.outcome !== "pass") {
+    process.exitCode = LIVE_VALIDATION_FAIL_EXIT_CODE;
+  }
+}
+
+function emitWriteValidationFailure(
+  error: unknown,
+  outputMode: WriteValidationOutputMode
+): void {
+  process.exitCode = LIVE_VALIDATION_ERROR_EXIT_CODE;
+
+  if (outputMode === "json") {
+    throw error;
+  }
+
+  const errorPayload = toLinkedInAssistantErrorPayload(error, cliPrivacyConfig);
+  process.stderr.write(
+    `${formatWriteValidationError(errorPayload, {
+      color: shouldUseAnsiColor(process.stderr),
+      helpCommand: LIVE_VALIDATION_HELP_COMMAND
+    })}\n`
+  );
+}
+
+async function runLiveWriteValidation(input: {
+  accountId: string;
+  cooldownSeconds: number;
+  json: boolean;
+  timeoutSeconds: number;
+  yes: boolean;
+}, cdpUrl?: string): Promise<void> {
+  const outputMode = resolveWriteValidationOutputMode(
+    { json: input.json },
+    Boolean(stdout.isTTY)
+  );
+  const promptOutput = outputMode === "json" ? process.stderr : stdout;
+
+  try {
+    assertNoExternalSessionOverrideForStoredSession(cdpUrl);
+    assertInteractiveTerminal("run write validation");
+
+    if (input.yes) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        'Write validation requires typing "yes" for every action. Remove "--yes" and rerun.'
+      );
+    }
+
+    writeCliWarning(`${WRITE_VALIDATION_WARNING}.`);
+    writeCliNotice(
+      `Running write validation against account "${input.accountId}". See ${WRITE_VALIDATION_DOC_PATH} for account setup and approved targets.`
+    );
+
+    const report = await runLinkedInWriteValidation({
+      accountId: coerceProfileName(input.accountId, "account"),
+      cooldownMs: input.cooldownSeconds * 1_000,
+      interactive: Boolean(stdin.isTTY && stdout.isTTY),
+      onBeforeAction: createWriteValidationPrompter(promptOutput),
+      timeoutMs: input.timeoutSeconds * 1_000
+    });
+
+    emitWriteValidationResult(report, outputMode);
+  } catch (error) {
+    emitWriteValidationFailure(error, outputMode);
+  }
+}
+
+async function runAccountsAdd(input: {
+  accountId: string;
+  designation: string;
+  followupProfile: string | undefined;
+  force: boolean;
+  inviteNote: string | undefined;
+  inviteProfile: string | undefined;
+  label: string | undefined;
+  messageParticipantPattern: string | undefined;
+  messageThread: string | undefined;
+  postVisibility: string | undefined;
+  profileName: string | undefined;
+  reaction: string | undefined;
+  reactionPost: string | undefined;
+  sessionName: string | undefined;
+}): Promise<void> {
+  const accountId = coerceProfileName(input.accountId, "account");
+  const registry = await upsertWriteValidationAccount({
+    accountId,
+    designation: coerceWriteValidationDesignation(input.designation),
+    ...(input.label ? { label: input.label.trim() } : {}),
+    overwrite: input.force,
+    ...(input.profileName
+      ? { profileName: coerceProfileName(input.profileName, "profile") }
+      : {}),
+    ...(input.sessionName
+      ? { sessionName: coerceProfileName(input.sessionName, "session") }
+      : {}),
+    targets: buildWriteValidationAccountTargets({
+      followupProfile: input.followupProfile,
+      inviteNote: input.inviteNote,
+      inviteProfile: input.inviteProfile,
+      messageParticipantPattern: input.messageParticipantPattern,
+      messageThread: input.messageThread,
+      postVisibility: input.postVisibility,
+      reaction: input.reaction,
+      reactionPost: input.reactionPost
+    })
+  });
+
+  printJson({
+    account: registry.accounts[accountId],
+    config_path: registry.configPath,
+    saved: true
   });
 }
