@@ -23,6 +23,9 @@ export const WRITE_VALIDATION_REPORT_DIR = "live-write-validation";
 export const WRITE_VALIDATION_LATEST_REPORT_NAME = "latest-report.json";
 export const DEFAULT_WRITE_VALIDATION_COOLDOWN_MS = 10_000;
 export const DEFAULT_WRITE_VALIDATION_TIMEOUT_MS = 30_000;
+export const DEFAULT_WRITE_VALIDATION_MAX_RETRIES = 1;
+export const DEFAULT_WRITE_VALIDATION_RETRY_BASE_DELAY_MS = 1_000;
+export const DEFAULT_WRITE_VALIDATION_RETRY_MAX_DELAY_MS = 5_000;
 export const WRITE_VALIDATION_FEED_URL = "https://www.linkedin.com/feed/";
 
 export type WriteValidationRiskClass = "private" | "network" | "public";
@@ -36,6 +39,13 @@ export type LinkedInWriteValidationActionType =
 
 export type WriteValidationResultStatus = "pass" | "fail" | "cancelled";
 export type WriteValidationOutcome = WriteValidationResultStatus;
+export type WriteValidationActionStage =
+  | "prepare"
+  | "prompt"
+  | "before_screenshot"
+  | "confirm"
+  | "after_screenshot"
+  | "verify";
 
 export interface LinkedInWriteValidationActionDefinition {
   actionType: LinkedInWriteValidationActionType;
@@ -70,8 +80,10 @@ export interface WriteValidationActionResult {
   completed_at: string;
   confirm_artifacts: string[];
   error_code?: LinkedInAssistantErrorCode;
+  error_details?: Record<string, unknown>;
   error_message?: string;
   expected_outcome: string;
+  failure_stage?: WriteValidationActionStage;
   linkedin_response?: Record<string, unknown>;
   prepared_action_id?: string;
   preview?: WriteValidationActionPreview;
@@ -86,6 +98,7 @@ export interface WriteValidationActionResult {
     source: string;
     verified: boolean;
   };
+  warnings?: string[];
 }
 
 export interface WriteValidationReport {
@@ -118,9 +131,12 @@ export interface RunLinkedInWriteValidationOptions {
   baseDir?: string;
   cooldownMs?: number;
   interactive?: boolean;
+  maxRetries?: number;
   onBeforeAction?: (
     preview: WriteValidationActionPreview
   ) => Promise<boolean> | boolean;
+  retryBaseDelayMs?: number;
+  retryMaxDelayMs?: number;
   timeoutMs?: number;
 }
 
@@ -142,6 +158,7 @@ export interface WriteValidationScenarioDefinition
     prepared: ScenarioPrepareResult,
     confirmed: ConfirmByTokenResult
   ) => string | null;
+  validateConfig?: (account: WriteValidationAccount) => void;
   verify: (
     runtime: CoreRuntime,
     account: WriteValidationAccount,
@@ -271,7 +288,7 @@ export function buildWriteValidationSummary(
 }
 
 export function buildRecommendedActions(
-  report: Pick<WriteValidationReport, "actions" | "report_path" | "audit_log_path">
+  report: Pick<WriteValidationReport, "actions" | "report_path" | "audit_log_path" | "account">
 ): string[] {
   const actions: string[] = [
     `Review ${report.report_path} for the full per-action report and screenshots.`,
@@ -280,6 +297,30 @@ export function buildRecommendedActions(
 
   for (const action of report.actions) {
     actions.push(...action.cleanup_guidance);
+
+    if (action.error_code === "AUTH_REQUIRED" || action.error_code === "CAPTCHA_OR_CHALLENGE") {
+      actions.push(
+        `Capture a fresh stored session with "owa auth:session --session ${report.account.session_name}" before rerunning write validation.`
+      );
+    }
+
+    if (action.error_code === "RATE_LIMITED") {
+      actions.push(
+        `Wait for LinkedIn to lift rate limiting on session "${report.account.session_name}" before rerunning write validation.`
+      );
+    }
+
+    if (action.error_code === "TARGET_NOT_FOUND") {
+      actions.push(
+        `Confirm the approved ${action.action_type} target in the write-validation account config still exists before rerunning.`
+      );
+    }
+
+    if (action.error_code === "UI_CHANGED_SELECTOR_FAILED") {
+      actions.push(
+        `Review the failed ${action.action_type} screenshots and update the validator selectors before rerunning.`
+      );
+    }
 
     if (action.status === "fail") {
       actions.push(
