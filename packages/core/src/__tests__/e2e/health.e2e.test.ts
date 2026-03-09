@@ -35,9 +35,15 @@ describe("KeepAlive E2E", () => {
   it("starts, emits health-event, and stops cleanly", async (context) => {
     skipIfE2EUnavailable(e2e, context);
 
+    const cdpUrl = getCdpUrl();
+    if (!cdpUrl) {
+      context.skip("KeepAlive coverage requires a CDP endpoint; fixture replay does not expose one.");
+      return;
+    }
+
     const pool = new CDPConnectionPool({ idleTimeoutMs: 60_000 });
     const service = new SessionKeepAliveService(pool, {
-      cdpUrl: getCdpUrl(),
+      cdpUrl,
       intervalMs: 5_000,
       jitterMs: 0,
       activitySimulationEnabled: false,

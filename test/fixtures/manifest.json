@@ -1,0 +1,77 @@
+{
+  "format": 1,
+  "updatedAt": "2026-03-09T10:00:00.000Z",
+  "defaultSetName": "ci",
+  "sets": {
+    "ci": {
+      "setName": "ci",
+      "rootDir": "ci",
+      "locale": "en-US",
+      "capturedAt": "2026-03-09T10:00:00.000Z",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "routesPath": "routes.json",
+      "description": "Synthetic LinkedIn replay fixtures for CI-safe end-to-end coverage.",
+      "pages": {
+        "feed": {
+          "pageType": "feed",
+          "url": "https://www.linkedin.com/feed/",
+          "htmlPath": "pages/app.html",
+          "recordedAt": "2026-03-09T10:00:00.000Z",
+          "title": "Feed"
+        },
+        "profile": {
+          "pageType": "profile",
+          "url": "https://www.linkedin.com/in/realsimonmiller/",
+          "htmlPath": "pages/app.html",
+          "recordedAt": "2026-03-09T10:00:00.000Z",
+          "title": "Profile"
+        },
+        "messaging": {
+          "pageType": "messaging",
+          "url": "https://www.linkedin.com/messaging/",
+          "htmlPath": "pages/app.html",
+          "recordedAt": "2026-03-09T10:00:00.000Z",
+          "title": "Messaging"
+        },
+        "notifications": {
+          "pageType": "notifications",
+          "url": "https://www.linkedin.com/notifications/",
+          "htmlPath": "pages/app.html",
+          "recordedAt": "2026-03-09T10:00:00.000Z",
+          "title": "Notifications"
+        },
+        "composer": {
+          "pageType": "composer",
+          "url": "https://www.linkedin.com/feed/",
+          "htmlPath": "pages/app.html",
+          "recordedAt": "2026-03-09T10:00:00.000Z",
+          "title": "Composer"
+        },
+        "search": {
+          "pageType": "search",
+          "url": "https://www.linkedin.com/search/results/people/?keywords=Simon%20Miller",
+          "htmlPath": "pages/app.html",
+          "recordedAt": "2026-03-09T10:00:00.000Z",
+          "title": "Search"
+        },
+        "connections": {
+          "pageType": "connections",
+          "url": "https://www.linkedin.com/mynetwork/invite-connect/connections/",
+          "htmlPath": "pages/app.html",
+          "recordedAt": "2026-03-09T10:00:00.000Z",
+          "title": "Connections"
+        },
+        "jobs": {
+          "pageType": "jobs",
+          "url": "https://www.linkedin.com/jobs/search/?keywords=software%20engineer",
+          "htmlPath": "pages/app.html",
+          "recordedAt": "2026-03-09T10:00:00.000Z",
+          "title": "Jobs"
+        }
+      }
+    }
+  }
+}

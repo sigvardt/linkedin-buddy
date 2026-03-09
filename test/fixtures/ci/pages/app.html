@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LinkedIn Replay Fixture</title>
+    <style>
+      body {
+        font-family: Arial, Helvetica, sans-serif;
+        margin: 0;
+        background: #f3f2ef;
+        color: #1d2226;
+      }
+
+      nav.global-nav {
+        background: #ffffff;
+        border-bottom: 1px solid #d9d9d9;
+        padding: 12px 24px;
+        font-weight: 600;
+      }
+
+      main {
+        max-width: 980px;
+        margin: 24px auto;
+        padding: 0 16px 64px;
+      }
+
+      section,
+      article,
+      .panel,
+      .notification-card,
+      .job-card-container,
+      .reusable-search__result-container,
+      .invitation-card,
+      .mn-connection-card,
+      .msg-conversation-card,
+      .feed-shared-update-v2,
+      .jobs-details,
+      .pv-top-card {
+        background: #ffffff;
+        border: 1px solid #d9d9d9;
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 16px;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+
+      a {
+        color: #0a66c2;
+        text-decoration: none;
+      }
+
+      button {
+        border: 1px solid #0a66c2;
+        background: #ffffff;
+        color: #0a66c2;
+        border-radius: 999px;
+        padding: 8px 14px;
+        cursor: pointer;
+        font-weight: 600;
+        margin-right: 8px;
+      }
+
+      button[disabled] {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+
+      .share-box-feed-entry__trigger,
+      .share-actions__primary-action,
+      .msg-form__send-button,
+      .comments-comment-box__submit-button,
+      button.pending,
+      button.accept {
+        background: #0a66c2;
+        color: #ffffff;
+      }
+
+      .react-button--active {
+        background: #0a66c2;
+        color: #ffffff;
+      }
+
+      .update-components-text,
+      .jobs-description__content,
+      .inline-show-more-text,
+      .comments-comment-item__main-content,
+      .msg-s-event-listitem__body {
+        white-space: pre-wrap;
+      }
+
+      [contenteditable="true"] {
+        min-height: 44px;
+        border: 1px solid #c7c7c7;
+        border-radius: 8px;
+        padding: 10px;
+        margin-bottom: 12px;
+        background: #ffffff;
+      }
+
+      .composer-dialog[hidden],
+      .connect-dialog[hidden],
+      .withdraw-dialog[hidden],
+      .comments-comment-box[hidden] {
+        display: none;
+      }
+
+      .composer-dialog,
+      .connect-dialog,
+      .withdraw-dialog {
+        position: sticky;
+        top: 16px;
+        z-index: 10;
+        background: #ffffff;
+        border: 1px solid #0a66c2;
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 16px;
+      }
+
+      .social-details-social-counts__comments,
+      .social-details-social-counts__reactions-count,
+      .social-details-social-counts__reposts,
+      .text-body-small,
+      .text-body-medium,
+      .entity-result__secondary-subtitle,
+      .job-card-container__metadata-wrapper,
+      .notification-card__time,
+      .job-details-jobs-unified-top-card__bullet {
+        color: #666666;
+        font-size: 14px;
+      }
+
+      .msg-s-message-list__event,
+      .msg-s-event-listitem {
+        padding: 10px;
+        border-radius: 10px;
+        border: 1px solid #d9d9d9;
+        margin-bottom: 10px;
+        background: #fafafa;
+      }
+
+      ul.clean-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <nav class="global-nav">LinkedIn Fixture Replay</nav>
+    <main id="replay-root"></main>
+    <script src="/__replay/replay-state.js"></script>
+  </body>
+</html>

@@ -10,6 +10,11 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, type TestContext } from "vitest";
+import {
+  ensureSharedFixtureReplayServer,
+  isFixtureReplayEnabled,
+  shutdownSharedFixtureReplayServer
+} from "../../fixtureReplay.js";
 import { createCoreRuntime, type CoreRuntime } from "../../runtime.js";
 
 /** Default CDP endpoint used by the shared real-session E2E harness. */
@@ -77,7 +82,15 @@ function summarizeUnknownError(error: unknown): string {
   return String(error);
 }
 
-function readConfiguredCdpUrl(): string {
+function isReplayE2EEnabled(): boolean {
+  return isFixtureReplayEnabled();
+}
+
+function readConfiguredCdpUrl(): string | undefined {
+  if (isReplayE2EEnabled()) {
+    return undefined;
+  }
+
   const value = process.env.LINKEDIN_CDP_URL;
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
@@ -229,11 +242,52 @@ async function probeCdpEndpoint(cdpUrl: string): Promise<{
   }
 }
 
+async function probeFixtureReplay(): Promise<{
+  available: boolean;
+  reason: string;
+}> {
+  try {
+    const replayServer = await ensureSharedFixtureReplayServer();
+    if (!replayServer) {
+      return {
+        available: false,
+        reason: "Fixture replay is disabled."
+      };
+    }
+
+    return {
+      available: true,
+      reason:
+        `Fixture replay is active for set ${replayServer.setName} ` +
+        `(${replayServer.summary.locale}, ${replayServer.summary.viewport.width}x${replayServer.summary.viewport.height}).`
+    };
+  } catch (error) {
+    return {
+      available: false,
+      reason: `Fixture replay could not start. ${summarizeUnknownError(error)}`
+    };
+  }
+}
+
 async function probeAuthentication(): Promise<{
   authenticated: boolean;
   reason: string;
 }> {
+  if (isReplayE2EEnabled()) {
+    const replay = await probeFixtureReplay();
+    return {
+      authenticated: replay.available,
+      reason: replay.reason
+    };
+  }
+
   const cdpUrl = getCdpUrl();
+  if (!cdpUrl) {
+    return {
+      authenticated: false,
+      reason: "No CDP URL is configured."
+    };
+  }
 
   try {
     const status = await getRuntime().auth.status();
@@ -267,15 +321,23 @@ async function probeAuthentication(): Promise<{
 export function getRuntime(): CoreRuntime {
   if (!sharedRuntime) {
     const cdpUrl = getCdpUrl();
-    const validationError = getCdpUrlValidationError(cdpUrl);
-    if (validationError) {
-      throw new Error(validationError);
+    if (cdpUrl) {
+      const validationError = getCdpUrlValidationError(cdpUrl);
+      if (validationError) {
+        throw new Error(validationError);
+      }
     }
 
-    sharedRuntime = createCoreRuntime({
-      baseDir: getE2EBaseDir(),
+    sharedRuntime = createCoreRuntime(
       cdpUrl
-    });
+        ? {
+            baseDir: getE2EBaseDir(),
+            cdpUrl
+          }
+        : {
+            baseDir: getE2EBaseDir()
+          }
+    );
   }
   return sharedRuntime;
 }
@@ -283,7 +345,7 @@ export function getRuntime(): CoreRuntime {
 /**
  * Resolves the effective CDP URL for the E2E harness.
  */
-export function getCdpUrl(): string {
+export function getCdpUrl(): string | undefined {
   return readConfiguredCdpUrl();
 }
 
@@ -335,7 +397,16 @@ export async function withE2EEnvironment<T>(callback: () => Promise<T>): Promise
  * Probes whether the configured CDP endpoint is reachable.
  */
 export async function checkCdpAvailable(): Promise<boolean> {
-  return (await probeCdpEndpoint(getCdpUrl())).available;
+  if (isReplayE2EEnabled()) {
+    return (await probeFixtureReplay()).available;
+  }
+
+  const cdpUrl = getCdpUrl();
+  if (!cdpUrl) {
+    return false;
+  }
+
+  return (await probeCdpEndpoint(cdpUrl)).available;
 }
 
 /**
@@ -355,7 +426,28 @@ export async function getE2EAvailability(): Promise<E2EAvailability> {
     return sharedAvailability;
   }
 
+  if (isReplayE2EEnabled()) {
+    const replay = await probeFixtureReplay();
+    sharedAvailability = {
+      cdpAvailable: replay.available,
+      authenticated: replay.available,
+      canRun: replay.available,
+      reason: replay.reason
+    };
+    return sharedAvailability;
+  }
+
   const cdpUrl = getCdpUrl();
+  if (!cdpUrl) {
+    sharedAvailability = {
+      cdpAvailable: false,
+      authenticated: false,
+      canRun: false,
+      reason: "No CDP endpoint is configured."
+    };
+    return sharedAvailability;
+  }
+
   const cdp = await probeCdpEndpoint(cdpUrl);
   if (!cdp.available) {
     sharedAvailability = {
@@ -476,6 +568,8 @@ export function cleanupRuntime(): void {
   if (runtime) {
     runtime.close();
   }
+
+  shutdownSharedFixtureReplayServer();
 
   if (baseDir && existsSync(baseDir)) {
     rmSync(baseDir, { recursive: true, force: true });

@@ -27,5 +27,13 @@ export default [
       ...tsPlugin.configs.recommended.rules,
       "@typescript-eslint/no-explicit-any": "error"
     }
+  },
+  {
+    files: ["test/fixtures/**/*.js"],
+    languageOptions: {
+      globals: {
+        ...globals.browser
+      }
+    }
   }
 ];

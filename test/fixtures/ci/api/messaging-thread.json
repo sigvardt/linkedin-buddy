@@ -1,0 +1,44 @@
+{
+  "data": {
+    "messengerMessagesBySyncToken": {
+      "elements": [
+        {
+          "body": {
+            "text": "Let's use fixture replay for safe coverage."
+          },
+          "deliveredAt": 1773018000000,
+          "actor": {
+            "participantType": {
+              "member": {
+                "firstName": {
+                  "text": "Simon"
+                },
+                "lastName": {
+                  "text": "Miller"
+                }
+              }
+            }
+          }
+        },
+        {
+          "body": {
+            "text": "Sounds good — deterministic tests are much easier to trust."
+          },
+          "deliveredAt": 1773021600000,
+          "actor": {
+            "participantType": {
+              "member": {
+                "firstName": {
+                  "text": "Fixture"
+                },
+                "lastName": {
+                  "text": "Operator"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
