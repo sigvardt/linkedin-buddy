@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatReadOnlyValidationError,
   formatReadOnlyValidationReport,
+  ReadOnlyValidationProgressReporter,
   resolveReadOnlyValidationOutputMode
 } from "../src/liveValidationOutput.js";
 
@@ -242,18 +243,28 @@ describe("live validation output helpers", () => {
   it("renders a scannable human-readable report", () => {
     const output = formatReadOnlyValidationReport(createReportFixture());
 
-    expect(output).toContain("Live Validation: FAIL");
+    expect(output).toContain("Live Validation: MIXED");
     expect(output).toContain(
       "Summary: Checked 3 read-only LinkedIn operations. 1 passed. 2 failed. 2 selector regressions detected versus the previous run."
     );
-    expect(output).toContain("Operations");
-    expect(output).toContain("- PASS feed: 2 matched, 0 failed, 1200ms");
+    expect(output).toContain("Overview");
     expect(output).toContain(
-      "- FAIL notifications: 1 matched, 1 failed, 1600ms | 2 warnings | 2 attempts"
+      "- Mixed result: at least one validation step passed and at least one failed in the same run."
+    );
+    expect(output).toContain(
+      "- Operations: 1 passed operation | 2 failed operations | 3 warnings"
+    );
+    expect(output).toContain("- Coverage: 3/5 steps ran before the validation stopped early.");
+    expect(output).toContain("Operations");
+    expect(output).toContain("- PASS feed: 2 matched, 0 failed, 1.2s");
+    expect(output).toContain(
+      "- FAIL notifications: 1 matched, 1 failed, 1.6s | 2 warnings | 2 attempts"
     );
     expect(output).toContain(
       "- FAIL connections: 0 matched, 2 failed, 900ms | 1 warning | 3 attempts | TIMEOUT"
     );
+    expect(output).toContain("Warnings");
+    expect(output).toContain("- notifications — Recovered after 1 transient retry.");
     expect(output).toContain("Operation Errors");
     expect(output).toContain("- connections [TIMEOUT] — Timed out after 30000ms while running connections.");
     expect(output).toContain("Failures");
@@ -273,21 +284,34 @@ describe("live validation output helpers", () => {
     expect(output).toContain("- 6 requests blocked by the read-only guard");
     expect(output).toContain("https://www.linkedin.com/voyager/api/graphql");
     expect(output).not.toContain("https://cdn.example.org/font.woff2");
+    expect(output).toContain("- 1 more blocked request recorded in the report JSON.");
     expect(output).toContain("Next Steps");
   });
 
   it("matches the full human-readable report snapshot", () => {
     expect(formatReadOnlyValidationReport(createReportFixture())).toMatchInlineSnapshot(`
-      "Live Validation: FAIL
+      "Live Validation: MIXED
       Summary: Checked 3 read-only LinkedIn operations. 1 passed. 2 failed. 2 selector regressions detected versus the previous run.
       Session: smoke (captured 2026-03-09T09:00:00.000Z)
       Report JSON: /tmp/live-readonly/report.json
       Events: /tmp/live-readonly/events.jsonl
 
+      Overview
+      - Mixed result: at least one validation step passed and at least one failed in the same run.
+      - Operations: 1 passed operation | 2 failed operations | 3 warnings
+      - Requests: 5/20 used | 6 blocked requests
+      - Selector diff: 2 regressions | 1 recovery | 3 unchanged selectors
+      - Coverage: 3/5 steps ran before the validation stopped early.
+
       Operations
-      - PASS feed: 2 matched, 0 failed, 1200ms
-      - FAIL notifications: 1 matched, 1 failed, 1600ms | 2 warnings | 2 attempts
+      - PASS feed: 2 matched, 0 failed, 1.2s
+      - FAIL notifications: 1 matched, 1 failed, 1.6s | 2 warnings | 2 attempts
       - FAIL connections: 0 matched, 2 failed, 900ms | 1 warning | 3 attempts | TIMEOUT
+
+      Warnings
+      - notifications — Recovered after 1 transient retry.
+      - notifications — Notifications loaded with a slower-than-usual response.
+      - connections — Retried 2 times before the page still failed.
 
       Operation Errors
       - connections [TIMEOUT] — Timed out after 30000ms while running connections. LinkedIn may be slow or the page may be incomplete; rerun the live validation or increase the timeout.
@@ -309,6 +333,7 @@ describe("live validation output helpers", () => {
       - POST https://www.linkedin.com/voyager/api/identity [non_get]
       - GET https://analytics.example.net/pixel [non_linkedin_domain]
       - POST https://www.linkedin.com/voyager/api/feed [non_get]
+      - 1 more blocked request recorded in the report JSON.
 
       Next Steps
       - Open /tmp/live-readonly/report.json to review selector matches.
@@ -334,7 +359,11 @@ describe("live validation output helpers", () => {
     expect(output).toContain(
       "Live validation is currently restricted to read-only mode."
     );
-    expect(output).toContain('Details: {"option":"read-only"}');
+    expect(output).toContain(
+      "Suggested fix: Review the command flags, fix the precondition, and rerun the validation."
+    );
+    expect(output).toContain("Details: option=read-only");
+    expect(output).toContain("Tip: run linkedin test live --help");
   });
 
   it("matches the human-readable error snapshot", () => {
@@ -347,7 +376,76 @@ describe("live validation output helpers", () => {
     };
 
     expect(formatReadOnlyValidationError(error)).toMatchInlineSnapshot(
-      `"Live validation failed [ACTION_PRECONDITION_FAILED]\nLive validation is currently restricted to read-only mode.\nDetails: {"option":"read-only"}"`
+      `"Live validation failed [ACTION_PRECONDITION_FAILED]\nLive validation is currently restricted to read-only mode.\nSuggested fix: Review the command flags, fix the precondition, and rerun the validation.\nDetails: option=read-only\nTip: run linkedin test live --help for usage and exit codes, or rerun with --json for the structured error payload."`
     );
+  });
+
+  it("emits progress lines from stable live-validation log events", () => {
+    const lines: string[] = [];
+    const reporter = new ReadOnlyValidationProgressReporter({
+      writeLine(line) {
+        lines.push(line);
+      }
+    });
+
+    reporter.handleLog({
+      event: "live_validation.start",
+      payload: {
+        max_requests: 20,
+        min_interval_ms: 5000,
+        session_name: "smoke"
+      }
+    });
+    reporter.handleLog({
+      event: "live_validation.operation.start",
+      payload: {
+        operation: "feed"
+      }
+    });
+    reporter.handleLog({
+      event: "live_validation.operation.done",
+      payload: {
+        attempt_count: 1,
+        failed_count: 0,
+        matched_count: 2,
+        operation: "feed",
+        page_load_ms: 1200,
+        status: "pass",
+        warnings: []
+      }
+    });
+    reporter.handleLog({
+      event: "live_validation.operation.start",
+      payload: {
+        operation: "connections"
+      }
+    });
+    reporter.handleLog({
+      event: "live_validation.operation.failed",
+      payload: {
+        attempt_count: 3,
+        code: "TIMEOUT",
+        operation: "connections",
+        page_load_ms: 900,
+        warnings: ["Retried 2 times before the page still failed."]
+      }
+    });
+    reporter.handleLog({
+      event: "live_validation.done",
+      payload: {
+        fail_count: 1,
+        pass_count: 1,
+        report_path: "/tmp/live-readonly/report.json"
+      }
+    });
+
+    expect(lines).toEqual([
+      "Starting live validation for session smoke (5 steps, request cap 20, min interval 5.0s).",
+      "Checking 1/5: feed...",
+      "Finished 1/5: feed — PASS | 2 matched | 0 failed | 1.2s",
+      "Checking 2/5: connections...",
+      "Finished 2/5: connections — FAIL | TIMEOUT | 3 attempts | 900ms | 1 warning",
+      "Live validation finished — 1 passed, 1 failed. Report: /tmp/live-readonly/report.json"
+    ]);
   });
 });

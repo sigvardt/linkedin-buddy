@@ -20,7 +20,7 @@ import {
   asLinkedInAssistantError,
   type LinkedInAssistantErrorCode
 } from "./errors.js";
-import { JsonEventLogger } from "./logging.js";
+import { JsonEventLogger, type JsonLogEntry } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import { createRunId } from "./run.js";
 import {
@@ -183,11 +183,16 @@ export interface RunReadOnlyValidationOptions {
   onBeforeOperation?: (
     operation: LinkedInReadOnlyValidationOperation
   ) => Promise<void>;
+  onLog?: (entry: JsonLogEntry) => void;
   retryBaseDelayMs?: number;
   retryMaxDelayMs?: number;
   sessionName?: string;
   timeoutMs?: number;
 }
+
+type ReadOnlyValidationLogger = Pick<JsonEventLogger, "getEventsPath"> & {
+  log: (...args: Parameters<JsonEventLogger["log"]>) => JsonLogEntry;
+};
 
 const DEFAULT_OPERATION_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_REQUESTS = 20;
@@ -481,6 +486,13 @@ function validateRunReadOnlyValidationOptions(
     throw new LinkedInAssistantError(
       "ACTION_PRECONDITION_FAILED",
       "onBeforeOperation must be a function when provided."
+    );
+  }
+
+  if (typeof options.onLog !== "undefined" && typeof options.onLog !== "function") {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      "onLog must be a function when provided."
     );
   }
 
@@ -1394,7 +1406,7 @@ async function runOperationWithRetries(
   maxRetries: number,
   retryBaseDelayMs: number,
   retryMaxDelayMs: number,
-  logger: JsonEventLogger
+  logger: ReadOnlyValidationLogger
 ): Promise<ReadOnlyRetriedOperationExecutionResult> {
   const maxAttempts = maxRetries + 1;
   let lastError: LinkedInAssistantError | undefined;
@@ -1545,7 +1557,17 @@ export async function runReadOnlyLinkedInLiveValidation(
   ensureConfigPaths(paths);
 
   const runId = createRunId();
-  const logger = new JsonEventLogger(paths, runId);
+  const eventLogger = new JsonEventLogger(paths, runId);
+  const logger: ReadOnlyValidationLogger = {
+    getEventsPath() {
+      return eventLogger.getEventsPath();
+    },
+    log(level, event, payload = {}) {
+      const entry = eventLogger.log(level, event, payload);
+      validatedOptions.onLog?.(entry);
+      return entry;
+    }
+  };
   const artifacts = new ArtifactHelpers(paths, runId);
   const reportPath = artifacts.resolve(`${READ_ONLY_REPORT_DIR}/report.json`);
   const latestReportPath = resolveLatestReportPath(paths);
