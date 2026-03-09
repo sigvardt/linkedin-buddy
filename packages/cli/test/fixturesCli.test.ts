@@ -193,7 +193,22 @@ describe("linkedin fixtures commands", () => {
         "--set",
         "missing"
       ])
-    ).rejects.toThrow(`Fixture set missing is not defined in ${path.resolve(manifestPath)}.`);
+    ).rejects.toThrow(
+      `Fixture set missing is not defined in ${path.resolve(manifestPath)}. Available fixture sets: manual.`
+    );
+  });
+
+  it("rejects non-numeric --max-age-days values", async () => {
+    await expect(
+      runCli([
+        "node",
+        "linkedin",
+        "fixtures",
+        "check",
+        "--max-age-days",
+        "30days"
+      ])
+    ).rejects.toThrow("max-age-days must be a positive integer.");
   });
 
   it("requires an interactive terminal for fixture recording", async () => {

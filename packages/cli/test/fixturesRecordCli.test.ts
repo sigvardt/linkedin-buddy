@@ -288,6 +288,47 @@ describe("linkedin fixtures record", () => {
     expect(process.env.LINKEDIN_E2E_FIXTURE_SERVER_URL).toBe("http://127.0.0.1:45555");
   });
 
+  it("rejects non-numeric viewport flags before recording starts", async () => {
+    await expect(
+      runCli([
+        "node",
+        "linkedin",
+        "fixtures",
+        "record",
+        "--page",
+        "feed",
+        "--width",
+        "1440px"
+      ])
+    ).rejects.toThrow("width must be a positive integer.");
+
+    await expect(
+      runCli([
+        "node",
+        "linkedin",
+        "fixtures",
+        "record",
+        "--page",
+        "feed",
+        "--height",
+        "900px"
+      ])
+    ).rejects.toThrow("height must be a positive integer.");
+  });
+
+  it("fails fast when --page resolves to an empty selection", async () => {
+    await expect(
+      runCli([
+        "node",
+        "linkedin",
+        "fixtures",
+        "record",
+        "--page",
+        ","
+      ])
+    ).rejects.toThrow("page must include at least one page type when --page is provided.");
+  });
+
   it("writes empty fallback bodies and ignores non-linkedin responses", async () => {
     const manifestPath = path.join(tempDir, "manifest.json");
     let responseHandler:

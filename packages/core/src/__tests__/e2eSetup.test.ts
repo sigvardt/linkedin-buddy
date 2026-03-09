@@ -122,6 +122,16 @@ describe("E2E setup helpers", () => {
     expect(availability.reason).toContain("Fixture replay is active for set ci");
   });
 
+  it("fails fast when replay mode is enabled but the replay harness is misconfigured", async () => {
+    process.env.LINKEDIN_E2E_REPLAY = "1";
+    process.env.LINKEDIN_E2E_FIXTURE_MANIFEST = path.resolve("test/fixtures/missing-manifest.json");
+    delete process.env.LINKEDIN_CDP_URL;
+
+    await expect(getE2EAvailability()).rejects.toThrow(
+      `Fixture replay could not start. Fixture manifest ${path.resolve("test/fixtures/missing-manifest.json")} does not exist.`
+    );
+  });
+
   it("reports malformed CDP URLs as unavailable", async () => {
     process.env.LINKEDIN_CDP_URL = "not-a-url";
 

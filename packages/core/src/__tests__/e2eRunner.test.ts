@@ -51,6 +51,15 @@ describe("run-e2e runner options", () => {
     expect(() => parseRunnerOptions(["--fixtures="]))
       .toThrow("--fixtures requires a non-empty file path");
   });
+
+  it("rejects option-like values after --fixtures", () => {
+    expect(() => parseRunnerOptions(["--fixtures", "--refresh-fixtures"]))
+      .toThrow("--fixtures requires a file path argument, not another flag (--refresh-fixtures)");
+    expect(() => parseRunnerOptions(["--fixtures", "--"]))
+      .toThrow("--fixtures requires a file path argument, not another flag (--)");
+    expect(() => parseRunnerOptions(["--fixtures", "-h"]))
+      .toThrow("--fixtures requires a file path argument, not another flag (-h)");
+  });
 });
 
 describe("run-e2e runner messaging", () => {
@@ -75,7 +84,7 @@ describe("run-e2e runner messaging", () => {
         "CDP endpoint: http://127.0.0.1:18800",
         "Profile: review-profile",
         "Session policy: required",
-        expect.stringContaining("Coverage fixtures:"),
+        expect.stringContaining("Discovery fixtures:"),
         "Opt-in confirms: message",
         "Vitest args: packages/core/src/__tests__/e2e/error-paths.e2e.test.ts"
       ])
@@ -114,12 +123,14 @@ describe("run-e2e runner messaging", () => {
     );
   });
 
-  it("documents fixture replay and strict mode in the help text", () => {
+  it("documents discovery fixtures, replay lane, and strict mode in the help text", () => {
     const helpText = getRunnerHelpText();
 
     expect(helpText).toContain("--require-session");
     expect(helpText).toContain("--fixtures <file>");
     expect(helpText).toContain("--refresh-fixtures");
+    expect(helpText).toContain("saved CLI/MCP discovery targets");
+    expect(helpText).toContain("npm run test:e2e:fixtures");
     expect(helpText).toContain("LINKEDIN_E2E_REQUIRE_SESSION");
     expect(helpText).toContain("docs/e2e-testing.md");
   });

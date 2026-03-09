@@ -50,6 +50,10 @@ To force the raw Vitest suite directly, use:
 npm run test:e2e:raw
 ```
 
+`--fixtures` and `LINKEDIN_E2E_FIXTURE_FILE` only cache the small live
+discovery target file used by the CLI and MCP contract suites. They do **not**
+select the replay manifest used by `npm run test:e2e:fixtures`.
+
 ## Fixture-backed replay runner
 
 Use the replay lane when you want deterministic Playwright coverage without
@@ -66,6 +70,13 @@ Vitest E2E suites headlessly against recorded fixtures.
 Focused reruns work the same way:
 
 ```bash
+npm run test:e2e:fixtures -- packages/core/src/__tests__/e2e/inbox.e2e.test.ts
+```
+
+Replay a non-default recorded set by overriding `LINKEDIN_E2E_FIXTURE_SET`:
+
+```bash
+LINKEDIN_E2E_FIXTURE_SET=da-dk \
 npm run test:e2e:fixtures -- packages/core/src/__tests__/e2e/inbox.e2e.test.ts
 ```
 
@@ -171,6 +182,14 @@ owa fixtures:check --set ci --max-age-days 14
 
 `fixtures check` warns when a set or page is older than the configured age.
 
+Typical record → validate → replay loop:
+
+```bash
+linkedin fixtures record --set manual --page feed --page messaging
+linkedin fixtures check --set manual
+LINKEDIN_E2E_FIXTURE_SET=manual npm run test:e2e:fixtures -- packages/core/src/__tests__/e2e/inbox.e2e.test.ts
+```
+
 Storage rules:
 
 - `test/fixtures/manifest.json` is committed
@@ -179,12 +198,61 @@ Storage rules:
 - large captured HAR files and raw response bodies stay ignored unless you
   intentionally promote them
 
+### Replay manifest format
+
+The replay manifest stays intentionally small. Each manifest entry points at one
+fixture set root, one route file, and a per-page HTML snapshot map:
+
+```json
+{
+  "format": 1,
+  "updatedAt": "2026-03-09T10:00:00.000Z",
+  "defaultSetName": "ci",
+  "sets": {
+    "ci": {
+      "setName": "ci",
+      "rootDir": "ci",
+      "locale": "en-US",
+      "capturedAt": "2026-03-09T10:00:00.000Z",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "routesPath": "routes.json",
+      "pages": {
+        "feed": {
+          "pageType": "feed",
+          "url": "https://www.linkedin.com/feed/",
+          "htmlPath": "pages/app.html",
+          "recordedAt": "2026-03-09T10:00:00.000Z"
+        }
+      }
+    }
+  }
+}
+```
+
+Key path rules:
+
+- `rootDir` stays relative to the manifest directory
+- `routesPath`, `harPath`, every page `htmlPath`, and each route `bodyPath`
+  stay relative to the fixture set root
+- `defaultSetName` must reference a defined manifest key
+- the route file `setName` must match the manifest set name, and duplicate
+  `METHOD + URL` replay keys are rejected
+- unknown set errors list the available set names so you can quickly rerun with
+  `--set <name>` or `LINKEDIN_E2E_FIXTURE_SET=<name>`
+
 ## Contract discovery fixtures
 
 The CLI and MCP contract suites also use a separate lightweight JSON fixture
 file for live discovery. Those files only store a message thread id, a feed
 post URL, a job id, and a connection target so contract-focused reruns do not
 need to rediscover live targets every time.
+
+These discovery files are separate from the replay manifest above: they speed up
+live CLI/MCP reruns, while the replay manifest controls `npm run
+test:e2e:fixtures`.
 
 Fixture files are intentionally small and profile-aware. The helper records the
 fixture format version, capture timestamp, `LINKEDIN_E2E_PROFILE`, and the

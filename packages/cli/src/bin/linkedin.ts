@@ -155,8 +155,9 @@ interface LocalDataDeletionPreview {
 }
 
 function coercePositiveInt(value: string, label: string): number {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
+  const normalized = value.trim();
+  const parsed = Number.parseInt(normalized, 10);
+  if (!/^\d+$/u.test(normalized) || !Number.isFinite(parsed) || parsed <= 0) {
     throw new LinkedInAssistantError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a positive integer.`
@@ -166,8 +167,9 @@ function coercePositiveInt(value: string, label: string): number {
 }
 
 function coerceNonNegativeInt(value: string, label: string): number {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed < 0) {
+  const normalized = value.trim();
+  const parsed = Number.parseInt(normalized, 10);
+  if (!/^\d+$/u.test(normalized) || !Number.isFinite(parsed) || parsed < 0) {
     throw new LinkedInAssistantError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a non-negative integer.`
@@ -294,6 +296,13 @@ function collectFixtureReplayPageTypes(
     .map((item) => item.trim())
     .filter((item) => item.length > 0)
     .map((item) => coerceFixtureReplayPageType(item));
+
+  if (nextValues.length === 0) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      "page must include at least one page type when --page is provided."
+    );
+  }
 
   return [...previous, ...nextValues];
 }
@@ -4246,7 +4255,11 @@ export function createCliProgram(): Command {
           "",
           "Examples:",
           "  linkedin fixtures record --page feed --page messaging",
-          "  owa fixtures:record --set da-dk --page feed,notifications --no-har"
+          "  owa fixtures:record --set da-dk --page feed,notifications --no-har",
+          "",
+          "Next steps:",
+          "  linkedin fixtures check --set <name>",
+          "  LINKEDIN_E2E_FIXTURE_SET=<name> npm run test:e2e:fixtures -- packages/core/src/__tests__/e2e/inbox.e2e.test.ts"
         ].join("\n")
       )
       .action(runFixtureRecordCommand);
@@ -4273,7 +4286,11 @@ export function createCliProgram(): Command {
           "",
           "Examples:",
           "  linkedin fixtures check",
-          "  owa fixtures:check --set ci --max-age-days 14"
+          "  owa fixtures:check --set ci --max-age-days 14",
+          "",
+          "Follow-up:",
+          "  Re-record stale pages with linkedin fixtures record --set <name> --page <type>",
+          "  Replay a checked set with LINKEDIN_E2E_FIXTURE_SET=<name> npm run test:e2e:fixtures"
         ].join("\n")
       )
       .action(runFixtureCheckCommand);

@@ -91,6 +91,19 @@ const TRANSIENT_E2E_ERROR_PATTERN =
 const DEFAULT_REPLAY_POST_URL =
   "https://www.linkedin.com/feed/update/urn:li:activity:fixture-post-1/";
 
+/**
+ * On-disk JSON contract stored in `LINKEDIN_E2E_FIXTURE_FILE`.
+ *
+ * These saved discovery targets are distinct from the replay manifest under
+ * `test/fixtures/manifest.json`: they only cache a few live identifiers needed
+ * by the thin CLI and MCP E2E suites.
+ */
+interface CliCoverageFixtureFile extends CliCoverageFixtures {
+  capturedAt: string;
+  format: number;
+  profileName: string;
+}
+
 function readTrimmedEnv(name: string): string | undefined {
   const value = process.env[name];
   if (typeof value !== "string") {
@@ -272,11 +285,11 @@ function parseCliCoverageFixtures(
 function readCliCoverageFixturesFromFile(filePath: string): CliCoverageFixtures {
   try {
     const raw = readFileSync(filePath, "utf8");
-    return parseCliCoverageFixtures(JSON.parse(raw) as unknown, `Fixture file ${filePath}`);
+    return parseCliCoverageFixtures(JSON.parse(raw) as unknown, `Discovery fixture file ${filePath}`);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     throw new Error(
-      `Could not load coverage fixtures from ${filePath}. ${reason} ` +
+      `Could not load discovery fixtures from ${filePath}. ${reason} ` +
         "Delete the file or rerun with --refresh-fixtures (LINKEDIN_E2E_REFRESH_FIXTURES=1)."
     );
   }
@@ -286,19 +299,17 @@ function writeCliCoverageFixturesToFile(
   filePath: string,
   fixtures: CliCoverageFixtures
 ): void {
+  const payload: CliCoverageFixtureFile = {
+    format: E2E_FIXTURE_FORMAT_VERSION,
+    capturedAt: new Date().toISOString(),
+    profileName: getDefaultProfileName(),
+    ...fixtures
+  };
+
   mkdirSync(path.dirname(filePath), { recursive: true });
   writeFileSync(
     filePath,
-    `${JSON.stringify(
-      {
-        format: E2E_FIXTURE_FORMAT_VERSION,
-        capturedAt: new Date().toISOString(),
-        profileName: getDefaultProfileName(),
-        ...fixtures
-      },
-      null,
-      2
-    )}\n`,
+    `${JSON.stringify(payload, null, 2)}\n`,
     "utf8"
   );
 }

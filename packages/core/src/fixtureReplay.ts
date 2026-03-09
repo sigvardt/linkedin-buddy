@@ -3,19 +3,24 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { BrowserContext } from "playwright-core";
 
+/** Current on-disk schema version for replay manifests and route files. */
 export const LINKEDIN_FIXTURE_MANIFEST_FORMAT_VERSION = 1;
 export const DEFAULT_FIXTURE_STALENESS_DAYS = 30;
+/** Default replay manifest loaded by `npm run test:e2e:fixtures`. */
 export const DEFAULT_FIXTURE_MANIFEST_PATH = path.resolve(
   process.cwd(),
   "test/fixtures/manifest.json"
 );
+/** Internal HTTP endpoint exposed by the local replay server. */
 export const REPLAY_ROUTE_PATH = "/__linkedin_fixture__/replay";
+/** Environment variables that toggle or configure the replay lane. */
 export const FIXTURE_REPLAY_ENV_KEYS = [
   "LINKEDIN_E2E_REPLAY",
   "LINKEDIN_E2E_FIXTURE_SERVER_URL",
   "LINKEDIN_E2E_FIXTURE_SET",
   "LINKEDIN_E2E_FIXTURE_MANIFEST"
 ] as const;
+/** Supported LinkedIn surfaces that can be recorded into a fixture set. */
 export const LINKEDIN_REPLAY_PAGE_TYPES = [
   "feed",
   "profile",
@@ -36,31 +41,44 @@ const FIXTURE_REPLAY_SERVER_TIMEOUT_MS = 30_000;
 
 export type LinkedInReplayPageType = (typeof LINKEDIN_REPLAY_PAGE_TYPES)[number];
 
+/** Browser viewport recorded alongside each fixture set. */
 export interface LinkedInFixtureViewport {
   width: number;
   height: number;
 }
 
+/** Metadata for one replayable LinkedIn page snapshot inside a fixture set. */
 export interface LinkedInFixturePageEntry {
   pageType: LinkedInReplayPageType;
   url: string;
+  /** Path relative to the fixture set root directory. */
   htmlPath: string;
   recordedAt: string;
   title?: string;
 }
 
+/**
+ * Summary metadata stored under one manifest entry.
+ *
+ * `rootDir`, `routesPath`, `harPath`, and each page `htmlPath` stay relative to
+ * the manifest or set root so fixture sets remain relocatable inside the repo.
+ */
 export interface LinkedInFixtureSetSummary {
   setName: string;
+  /** Path relative to the manifest directory. */
   rootDir: string;
   locale: string;
   capturedAt: string;
   viewport: LinkedInFixtureViewport;
+  /** Path relative to `rootDir`. */
   routesPath: string;
   description?: string;
+  /** Optional HAR file path relative to `rootDir`. */
   harPath?: string;
   pages: Partial<Record<LinkedInReplayPageType, LinkedInFixturePageEntry>>;
 }
 
+/** Top-level JSON document that declares the available replay fixture sets. */
 export interface LinkedInFixtureManifest {
   format: number;
   updatedAt: string;
@@ -68,22 +86,31 @@ export interface LinkedInFixtureManifest {
   sets: Record<string, LinkedInFixtureSetSummary>;
 }
 
+/**
+ * Replayable HTTP response metadata.
+ *
+ * Routes may inline `bodyText` for small text payloads or point `bodyPath` at a
+ * response body file relative to the fixture set root.
+ */
 export interface LinkedInFixtureRoute {
   method: string;
   url: string;
   status: number;
   headers: Record<string, string>;
+  /** Path relative to the fixture set root. Mutually exclusive with `bodyText`. */
   bodyPath?: string;
   bodyText?: string;
   pageType?: LinkedInReplayPageType;
 }
 
+/** JSON file stored under each fixture set that lists its replayable routes. */
 export interface LinkedInFixtureRouteFile {
   format: number;
   setName: string;
   routes: LinkedInFixtureRoute[];
 }
 
+/** Fully resolved replay fixture set loaded from disk. */
 export interface LinkedInFixtureSet {
   manifestPath: string;
   setName: string;
@@ -92,6 +119,7 @@ export interface LinkedInFixtureSet {
   routes: LinkedInFixtureRoute[];
 }
 
+/** Staleness warning returned by `checkLinkedInFixtureStaleness()`. */
 export interface FixtureStalenessWarning {
   ageDays: number;
   maxAgeDays: number;
@@ -108,6 +136,7 @@ export interface FixtureReplayEnvironment {
   setName?: string;
 }
 
+/** Running replay server metadata returned by the shared replay bootstrap. */
 export interface StartedFixtureReplayServer {
   baseUrl: string;
   close: () => void;
@@ -149,6 +178,25 @@ const sharedServerState: MutableSharedServerState = {
 };
 
 const linkedInReplayPageTypes = new Set<string>(LINKEDIN_REPLAY_PAGE_TYPES);
+
+function formatAvailableFixtureSets(setNames: string[]): string {
+  if (setNames.length === 0) {
+    return "No fixture sets are defined in this manifest.";
+  }
+
+  return `Available fixture sets: ${[...setNames].sort((left, right) => left.localeCompare(right)).join(", ")}.`;
+}
+
+function createUnknownFixtureSetError(
+  requestedSetName: string,
+  manifestPath: string,
+  setNames: string[]
+): Error {
+  return new Error(
+    `Fixture set ${requestedSetName} is not defined in ${manifestPath}. ` +
+      formatAvailableFixtureSets(setNames)
+  );
+}
 
 function readTrimmedEnv(name: string): string | undefined {
   const value = process.env[name];
@@ -359,7 +407,8 @@ function parseManifest(value: unknown, manifestPath: string): LinkedInFixtureMan
   const defaultSetName = asOptionalString(record.defaultSetName);
   if (defaultSetName && Object.keys(sets).length > 0 && sets[defaultSetName] === undefined) {
     throw new Error(
-      `Fixture manifest ${manifestPath}.defaultSetName must reference a defined fixture set.`
+      `Fixture manifest ${manifestPath}.defaultSetName must reference a defined fixture set. ` +
+        formatAvailableFixtureSets(Object.keys(sets))
     );
   }
 
@@ -980,11 +1029,14 @@ export function resolveFixtureManifestPath(manifestPath?: string): string {
 export function getFixtureReplayEnvironment(): FixtureReplayEnvironment {
   const serverUrl = readTrimmedEnv("LINKEDIN_E2E_FIXTURE_SERVER_URL");
   const setName = readTrimmedEnv("LINKEDIN_E2E_FIXTURE_SET");
+  const validatedServerUrl = serverUrl
+    ? asHttpUrl(serverUrl, "LINKEDIN_E2E_FIXTURE_SERVER_URL")
+    : undefined;
 
   return {
-    enabled: readEnabledFlag("LINKEDIN_E2E_REPLAY") || serverUrl !== undefined,
+    enabled: readEnabledFlag("LINKEDIN_E2E_REPLAY") || validatedServerUrl !== undefined,
     manifestPath: resolveFixtureManifestPath(),
-    ...(serverUrl ? { serverUrl } : {}),
+    ...(validatedServerUrl ? { serverUrl: validatedServerUrl } : {}),
     ...(setName ? { setName } : {})
   };
 }
@@ -1027,14 +1079,18 @@ export async function loadLinkedInFixtureSet(
   requestedSetName?: string
 ): Promise<LinkedInFixtureSet> {
   const manifest = await readLinkedInFixtureManifest(manifestPath);
+  const availableSetNames = Object.keys(manifest.sets);
   const setName = requestedSetName ?? manifest.defaultSetName ?? Object.keys(manifest.sets)[0];
   if (!setName) {
-    throw new Error(`Fixture manifest ${manifestPath} does not define any sets.`);
+    throw new Error(
+      `Fixture manifest ${manifestPath} does not define any sets. ` +
+        'Record one with "linkedin fixtures record --set <name> --page feed" or point the replay lane at a populated manifest.'
+    );
   }
 
   const summary = manifest.sets[setName];
   if (!summary) {
-    throw new Error(`Fixture set ${setName} is not defined in ${manifestPath}.`);
+    throw createUnknownFixtureSetError(setName, manifestPath, availableSetNames);
   }
 
   const routeFilePath = getResolvedRouteFilePath(manifestPath, summary);
@@ -1068,7 +1124,7 @@ export async function checkLinkedInFixtureStaleness(
   const maxAgeDays = options.maxAgeDays ?? DEFAULT_FIXTURE_STALENESS_DAYS;
 
   if (options.setName && manifest.sets[options.setName] === undefined) {
-    throw new Error(`Fixture set ${options.setName} is not defined in ${manifestPath}.`);
+    throw createUnknownFixtureSetError(options.setName, manifestPath, Object.keys(manifest.sets));
   }
 
   const entries = options.setName
