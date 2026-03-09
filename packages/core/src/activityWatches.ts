@@ -188,7 +188,7 @@ function readPositiveInteger(
   return normalized;
 }
 
-function readHttpsUrl(value: string, label: string): string {
+function readHttpUrl(value: string, label: string): string {
   let parsed: URL;
 
   try {
@@ -451,15 +451,22 @@ function resolveSchedule(input: {
   };
 }
 
-function computeInitialNextPollAtMs(nowMs: number): number {
-  return nowMs;
-}
-
 function parseJsonObject(json: string): Record<string, unknown> {
   try {
     return asRecord(JSON.parse(json));
   } catch {
     return {};
+  }
+}
+
+function parseStringArray(json: string): string[] {
+  try {
+    const parsed = JSON.parse(json);
+    return Array.isArray(parsed)
+      ? parsed.filter((value): value is string => typeof value === "string")
+      : [];
+  } catch {
+    return [];
   }
 }
 
@@ -487,17 +494,7 @@ function toActivityWatch(row: ActivityWatchRow): ActivityWatch {
 function toWebhookSubscription(
   row: WebhookSubscriptionRow
 ): WebhookSubscription {
-  let parsedEventTypes: string[] = [];
-  try {
-    const parsed = JSON.parse(row.event_types_json);
-    if (Array.isArray(parsed)) {
-      parsedEventTypes = parsed.filter(
-        (value): value is string => typeof value === "string"
-      );
-    }
-  } catch {
-    parsedEventTypes = [];
-  }
+  const parsedEventTypes = parseStringArray(row.event_types_json);
 
   return {
     id: row.id,
@@ -626,6 +623,7 @@ export class ActivityWatchesService {
     }
 
     const nowMs = Date.now();
+    const profileName = input.profileName ?? "default";
     const target = normalizeTarget(input.kind, input.target);
     const scheduleInput: {
       kind: ActivityWatchKind;
@@ -643,21 +641,21 @@ export class ActivityWatchesService {
     const id = createId("watch");
     this.runtime.db.insertActivityWatch({
       id,
-      profileName: input.profileName ?? "default",
+      profileName,
       kind: input.kind,
       targetJson: JSON.stringify(target),
       scheduleKind: schedule.scheduleKind,
       pollIntervalMs: schedule.pollIntervalMs,
       cronExpression: schedule.cronExpression,
       status: "active",
-      nextPollAtMs: computeInitialNextPollAtMs(nowMs),
+      nextPollAtMs: nowMs,
       createdAtMs: nowMs,
       updatedAtMs: nowMs
     });
 
     this.runtime.logger.log("info", "activity.watch.created", {
       watch_id: id,
-      profile_name: input.profileName ?? "default",
+      profile_name: profileName,
       kind: input.kind
     });
 
@@ -676,24 +674,11 @@ export class ActivityWatchesService {
   }
 
   pauseWatch(id: string): ActivityWatch {
-    ensureWatchExists(this.runtime.db, id);
-    this.runtime.db.updateActivityWatchStatus({
-      id,
-      status: "paused",
-      updatedAtMs: Date.now()
-    });
-    return this.getWatchById(id);
+    return this.setWatchStatus(id, "paused");
   }
 
   resumeWatch(id: string): ActivityWatch {
-    ensureWatchExists(this.runtime.db, id);
-    this.runtime.db.updateActivityWatchStatus({
-      id,
-      status: "active",
-      nextPollAtMs: Date.now(),
-      updatedAtMs: Date.now()
-    });
-    return this.getWatchById(id);
+    return this.setWatchStatus(id, "active", Date.now());
   }
 
   removeWatch(id: string): boolean {
@@ -705,7 +690,7 @@ export class ActivityWatchesService {
     input: CreateWebhookSubscriptionInput
   ): CreatedWebhookSubscription {
     const watch = ensureWatchExists(this.runtime.db, input.watchId);
-    const deliveryUrl = readHttpsUrl(input.deliveryUrl, "deliveryUrl");
+    const deliveryUrl = readHttpUrl(input.deliveryUrl, "deliveryUrl");
     const signingSecret =
       typeof input.signingSecret === "string" && input.signingSecret.trim().length > 0
         ? input.signingSecret.trim()
@@ -762,23 +747,11 @@ export class ActivityWatchesService {
   }
 
   pauseWebhookSubscription(id: string): WebhookSubscription {
-    ensureWebhookSubscriptionExists(this.runtime.db, id);
-    this.runtime.db.updateWebhookSubscriptionStatus({
-      id,
-      status: "paused",
-      updatedAtMs: Date.now()
-    });
-    return this.getWebhookSubscriptionById(id);
+    return this.setWebhookSubscriptionStatus(id, "paused");
   }
 
   resumeWebhookSubscription(id: string): WebhookSubscription {
-    ensureWebhookSubscriptionExists(this.runtime.db, id);
-    this.runtime.db.updateWebhookSubscriptionStatus({
-      id,
-      status: "active",
-      updatedAtMs: Date.now()
-    });
-    return this.getWebhookSubscriptionById(id);
+    return this.setWebhookSubscriptionStatus(id, "active");
   }
 
   removeWebhookSubscription(id: string): boolean {
@@ -804,5 +777,33 @@ export class ActivityWatchesService {
     return this.runtime.db
       .listWebhookDeliveryAttempts(input)
       .map(toWebhookDeliveryAttemptRecord);
+  }
+
+  private setWatchStatus(
+    id: string,
+    status: ActivityWatchStatus,
+    nextPollAtMs?: number
+  ): ActivityWatch {
+    ensureWatchExists(this.runtime.db, id);
+    this.runtime.db.updateActivityWatchStatus({
+      id,
+      status,
+      ...(nextPollAtMs !== undefined ? { nextPollAtMs } : {}),
+      updatedAtMs: Date.now()
+    });
+    return this.getWatchById(id);
+  }
+
+  private setWebhookSubscriptionStatus(
+    id: string,
+    status: WebhookSubscriptionStatus
+  ): WebhookSubscription {
+    ensureWebhookSubscriptionExists(this.runtime.db, id);
+    this.runtime.db.updateWebhookSubscriptionStatus({
+      id,
+      status,
+      updatedAtMs: Date.now()
+    });
+    return this.getWebhookSubscriptionById(id);
   }
 }
