@@ -10,6 +10,7 @@ import {
   type ActivityEntityRecord
 } from "./activityDiff.js";
 import type {
+  ActivityEntityStateRow,
   ActivityWatchRow,
   AssistantDatabase,
   WebhookDeliveryAttemptRow,
@@ -100,6 +101,11 @@ interface EventEmissionResult {
   inserted: boolean;
 }
 
+interface ProcessedDeliveryResult {
+  result: ActivityDeliveryTickResult;
+  subscriptionDisabled: boolean;
+}
+
 function createId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${randomBytes(4).toString("hex")}`;
 }
@@ -117,6 +123,17 @@ function parseJsonObject(json: string): Record<string, unknown> {
     return asRecord(JSON.parse(json));
   } catch {
     return {};
+  }
+}
+
+function parseStringArray(json: string): string[] {
+  try {
+    const parsed = JSON.parse(json);
+    return Array.isArray(parsed)
+      ? parsed.filter((value): value is string => typeof value === "string")
+      : [];
+  } catch {
+    return [];
   }
 }
 
@@ -489,7 +506,10 @@ export class ActivityPollerService {
     });
 
     for (const delivery of claimedDeliveries) {
-      const result = await this.processDelivery(delivery, workerId);
+      const { result, subscriptionDisabled } = await this.processDelivery(
+        delivery,
+        workerId
+      );
       deliveryResults.push(result);
       switch (result.outcome) {
         case "delivered":
@@ -510,7 +530,7 @@ export class ActivityPollerService {
           }
           break;
       }
-      if (result.errorMessage && /disabled/i.test(result.errorMessage)) {
+      if (subscriptionDisabled) {
         disabledSubscriptions += 1;
       }
     }
@@ -539,12 +559,20 @@ export class ActivityPollerService {
     pollStartedAtMs: number
   ): Promise<ActivityWatchTickResult> {
     const existingRows = this.runtime.db.listActivityEntityStates({ watchId: watch.id });
+    const existingRowsByKey = new Map(
+      existingRows.map((row) => [row.entity_key, row] as const)
+    );
     const isInitialBaseline = watch.last_success_at === null;
     const activeSubscriptions = this.runtime.db.listActiveWebhookSubscriptionsByWatchId(
       watch.id
     );
     let emittedEvents = 0;
     let enqueuedDeliveries = 0;
+
+    const recordEmission = (emitted: EventEmissionResult): void => {
+      emittedEvents += emitted.inserted ? 1 : 0;
+      enqueuedDeliveries += emitted.enqueuedDeliveries;
+    };
 
     const applyEntities = async (input: {
       currentEntities: ActivityEntityRecord[];
@@ -554,50 +582,38 @@ export class ActivityPollerService {
         current: ActivityEntityRecord;
         previous: Record<string, unknown>;
       }) => Promise<void>;
-    }): Promise<void> => {
+      }): Promise<void> => {
       const diff = diffActivityEntities(existingRows, input.currentEntities);
 
       if (!isInitialBaseline && input.handleCreated) {
         for (const entity of diff.created) {
           await input.handleCreated(entity);
-          this.runtime.db.upsertActivityEntityState({
+          this.upsertEntityState({
             watchId: watch.id,
-            entityKey: entity.entityKey,
-            entityType: entity.entityType,
-            fingerprint: entity.fingerprint,
-            snapshotJson: JSON.stringify(entity.snapshot),
+            entity,
             firstSeenAtMs: pollStartedAtMs,
-            lastSeenAtMs: pollStartedAtMs,
-            updatedAtMs: pollStartedAtMs
+            pollStartedAtMs
           });
         }
       } else if (!isInitialBaseline && input.emitCreated) {
         for (const entity of diff.created) {
-          const emitted = this.emitEvent({
+          const emitted = this.emitEventForEntity({
             watch,
             subscriptions: activeSubscriptions,
             eventType: input.emitCreated,
-            entityType: entity.entityType,
-            entityKey: entity.entityKey,
-            current: entity.snapshot,
+            entity,
             previous: null,
             changeKind: "created",
             occurredAtMs: pollStartedAtMs,
-            pollFinishedAtMs: Date.now(),
-            ...(entity.url ? { url: entity.url } : {})
+            pollFinishedAtMs: Date.now()
           });
-          emittedEvents += emitted.inserted ? 1 : 0;
-          enqueuedDeliveries += emitted.enqueuedDeliveries;
-          this.runtime.db.upsertActivityEntityState({
+          recordEmission(emitted);
+          this.upsertEntityState({
             watchId: watch.id,
-            entityKey: entity.entityKey,
-            entityType: entity.entityType,
-            fingerprint: entity.fingerprint,
-            snapshotJson: JSON.stringify(entity.snapshot),
+            entity,
             firstSeenAtMs: pollStartedAtMs,
-            lastSeenAtMs: pollStartedAtMs,
             lastEmittedEventId: emitted.eventId,
-            updatedAtMs: pollStartedAtMs
+            pollStartedAtMs
           });
         }
       }
@@ -608,33 +624,15 @@ export class ActivityPollerService {
         }
       }
 
-      for (const entity of [...diff.updated.map((item) => item.current), ...diff.unchanged]) {
-        const existing = existingRows.find((row) => row.entity_key === entity.entityKey);
-        this.runtime.db.upsertActivityEntityState({
-          watchId: watch.id,
-          entityKey: entity.entityKey,
-          entityType: entity.entityType,
-          fingerprint: entity.fingerprint,
-          snapshotJson: JSON.stringify(entity.snapshot),
-          firstSeenAtMs: existing?.first_seen_at ?? pollStartedAtMs,
-          lastSeenAtMs: pollStartedAtMs,
-          updatedAtMs: pollStartedAtMs
-        });
-      }
+      this.upsertKnownEntities({
+        watchId: watch.id,
+        entities: [...diff.updated.map((item) => item.current), ...diff.unchanged],
+        existingByKey: existingRowsByKey,
+        pollStartedAtMs
+      });
 
       if (isInitialBaseline) {
-        for (const entity of diff.created) {
-          this.runtime.db.upsertActivityEntityState({
-            watchId: watch.id,
-            entityKey: entity.entityKey,
-            entityType: entity.entityType,
-            fingerprint: entity.fingerprint,
-            snapshotJson: JSON.stringify(entity.snapshot),
-            firstSeenAtMs: pollStartedAtMs,
-            lastSeenAtMs: pollStartedAtMs,
-            updatedAtMs: pollStartedAtMs
-          });
-        }
+        this.upsertBaselineEntities(watch.id, diff.created, pollStartedAtMs);
       }
     };
 
@@ -655,21 +653,17 @@ export class ActivityPollerService {
               typeof current.snapshot.is_read === "boolean" &&
               previous.is_read !== current.snapshot.is_read
             ) {
-              const emitted = this.emitEvent({
+              const emitted = this.emitEventForEntity({
                 watch,
                 subscriptions: activeSubscriptions,
                 eventType: "linkedin.notifications.item.read_changed",
-                entityType: current.entityType,
-                entityKey: current.entityKey,
-                current: current.snapshot,
+                entity: current,
                 previous,
                 changeKind: "updated",
                 occurredAtMs: pollStartedAtMs,
-                pollFinishedAtMs: Date.now(),
-                ...(current.url ? { url: current.url } : {})
+                pollFinishedAtMs: Date.now()
               });
-              emittedEvents += emitted.inserted ? 1 : 0;
-              enqueuedDeliveries += emitted.enqueuedDeliveries;
+              recordEmission(emitted);
             }
           }
         });
@@ -693,42 +687,34 @@ export class ActivityPollerService {
               direction === "received"
                 ? "linkedin.connections.invitation.received"
                 : "linkedin.connections.invitation.sent_changed";
-            const emitted = this.emitEvent({
+            const emitted = this.emitEventForEntity({
               watch,
               subscriptions: activeSubscriptions,
               eventType,
-              entityType: entity.entityType,
-              entityKey: entity.entityKey,
-              current: entity.snapshot,
+              entity,
               previous: null,
               changeKind: "created",
               occurredAtMs: pollStartedAtMs,
-              pollFinishedAtMs: Date.now(),
-              ...(entity.url ? { url: entity.url } : {})
+              pollFinishedAtMs: Date.now()
             });
-            emittedEvents += emitted.inserted ? 1 : 0;
-            enqueuedDeliveries += emitted.enqueuedDeliveries;
+            recordEmission(emitted);
           },
           handleUpdated: async ({ current, previous }) => {
             if (readText(current.snapshot.sent_or_received) !== "sent") {
               return;
             }
 
-            const emitted = this.emitEvent({
+            const emitted = this.emitEventForEntity({
               watch,
               subscriptions: activeSubscriptions,
               eventType: "linkedin.connections.invitation.sent_changed",
-              entityType: current.entityType,
-              entityKey: current.entityKey,
-              current: current.snapshot,
+              entity: current,
               previous,
               changeKind: "updated",
               occurredAtMs: pollStartedAtMs,
-              pollFinishedAtMs: Date.now(),
-              ...(current.url ? { url: current.url } : {})
+              pollFinishedAtMs: Date.now()
             });
-            emittedEvents += emitted.inserted ? 1 : 0;
-            enqueuedDeliveries += emitted.enqueuedDeliveries;
+            recordEmission(emitted);
           }
         });
         break;
@@ -765,21 +751,17 @@ export class ActivityPollerService {
         await applyEntities({
           currentEntities: [normalizeProfileEntity(profile)],
           handleUpdated: async ({ current, previous }) => {
-            const emitted = this.emitEvent({
+            const emitted = this.emitEventForEntity({
               watch,
               subscriptions: activeSubscriptions,
               eventType: "linkedin.profile.snapshot.changed",
-              entityType: current.entityType,
-              entityKey: current.entityKey,
-              current: current.snapshot,
+              entity: current,
               previous,
               changeKind: "updated",
               occurredAtMs: pollStartedAtMs,
-              pollFinishedAtMs: Date.now(),
-              ...(current.url ? { url: current.url } : {})
+              pollFinishedAtMs: Date.now()
             });
-            emittedEvents += emitted.inserted ? 1 : 0;
-            enqueuedDeliveries += emitted.enqueuedDeliveries;
+            recordEmission(emitted);
           }
         });
         break;
@@ -797,21 +779,17 @@ export class ActivityPollerService {
               return;
             }
 
-            const emitted = this.emitEvent({
+            const emitted = this.emitEventForEntity({
               watch,
               subscriptions: activeSubscriptions,
               eventType: "linkedin.feed.post.engagement_changed",
-              entityType: current.entityType,
-              entityKey: current.entityKey,
-              current: current.snapshot,
+              entity: current,
               previous,
               changeKind: "updated",
               occurredAtMs: pollStartedAtMs,
-              pollFinishedAtMs: Date.now(),
-              ...(current.url ? { url: current.url } : {})
+              pollFinishedAtMs: Date.now()
             });
-            emittedEvents += emitted.inserted ? 1 : 0;
-            enqueuedDeliveries += emitted.enqueuedDeliveries;
+            recordEmission(emitted);
           }
         });
         break;
@@ -824,6 +802,9 @@ export class ActivityPollerService {
         });
         const threadEntities = threads.map(normalizeThreadEntity);
         const threadRows = existingRows.filter((row) => row.entity_type === "thread");
+        const threadRowsByKey = new Map(
+          threadRows.map((row) => [row.entity_key, row] as const)
+        );
         const threadDiff = diffActivityEntities(threadRows, threadEntities);
         const threadsToInspect = isInitialBaseline
           ? threads
@@ -837,81 +818,56 @@ export class ActivityPollerService {
 
         if (!isInitialBaseline) {
           for (const entity of threadDiff.created) {
-            const emitted = this.emitEvent({
+            const emitted = this.emitEventForEntity({
               watch,
               subscriptions: activeSubscriptions,
               eventType: "linkedin.inbox.thread.created",
-              entityType: entity.entityType,
-              entityKey: entity.entityKey,
-              current: entity.snapshot,
+              entity,
               previous: null,
               changeKind: "created",
               occurredAtMs: pollStartedAtMs,
-              pollFinishedAtMs: Date.now(),
-              ...(entity.url ? { url: entity.url } : {})
+              pollFinishedAtMs: Date.now()
             });
-            emittedEvents += emitted.inserted ? 1 : 0;
-            enqueuedDeliveries += emitted.enqueuedDeliveries;
-            this.runtime.db.upsertActivityEntityState({
+            recordEmission(emitted);
+            this.upsertEntityState({
               watchId: watch.id,
-              entityKey: entity.entityKey,
-              entityType: entity.entityType,
-              fingerprint: entity.fingerprint,
-              snapshotJson: JSON.stringify(entity.snapshot),
+              entity,
               firstSeenAtMs: pollStartedAtMs,
-              lastSeenAtMs: pollStartedAtMs,
               lastEmittedEventId: emitted.eventId,
-              updatedAtMs: pollStartedAtMs
+              pollStartedAtMs
             });
           }
 
           for (const { current, previous } of threadDiff.updated) {
-            const emitted = this.emitEvent({
+            const emitted = this.emitEventForEntity({
               watch,
               subscriptions: activeSubscriptions,
               eventType: "linkedin.inbox.thread.updated",
-              entityType: current.entityType,
-              entityKey: current.entityKey,
-              current: current.snapshot,
+              entity: current,
               previous,
               changeKind: "updated",
               occurredAtMs: pollStartedAtMs,
-              pollFinishedAtMs: Date.now(),
-              ...(current.url ? { url: current.url } : {})
+              pollFinishedAtMs: Date.now()
             });
-            emittedEvents += emitted.inserted ? 1 : 0;
-            enqueuedDeliveries += emitted.enqueuedDeliveries;
+            recordEmission(emitted);
           }
         }
 
-        for (const entity of [...threadDiff.updated.map((item) => item.current), ...threadDiff.unchanged]) {
-          const existing = threadRows.find((row) => row.entity_key === entity.entityKey);
-          this.runtime.db.upsertActivityEntityState({
-            watchId: watch.id,
-            entityKey: entity.entityKey,
-            entityType: entity.entityType,
-            fingerprint: entity.fingerprint,
-            snapshotJson: JSON.stringify(entity.snapshot),
-            firstSeenAtMs: existing?.first_seen_at ?? pollStartedAtMs,
-            lastSeenAtMs: pollStartedAtMs,
-            updatedAtMs: pollStartedAtMs
-          });
-        }
+        this.upsertKnownEntities({
+          watchId: watch.id,
+          entities: [...threadDiff.updated.map((item) => item.current), ...threadDiff.unchanged],
+          existingByKey: threadRowsByKey,
+          pollStartedAtMs
+        });
 
         if (isInitialBaseline) {
-          for (const entity of threadDiff.created) {
-            this.runtime.db.upsertActivityEntityState({
-              watchId: watch.id,
-              entityKey: entity.entityKey,
-              entityType: entity.entityType,
-              fingerprint: entity.fingerprint,
-              snapshotJson: JSON.stringify(entity.snapshot),
-              firstSeenAtMs: pollStartedAtMs,
-              lastSeenAtMs: pollStartedAtMs,
-              updatedAtMs: pollStartedAtMs
-            });
-          }
+          this.upsertBaselineEntities(watch.id, threadDiff.created, pollStartedAtMs);
         }
+
+        const messageRows = existingRows.filter((row) => row.entity_type === "message");
+        const messageRowsByKey = new Map(
+          messageRows.map((row) => [row.entity_key, row] as const)
+        );
 
         for (const thread of threadsToInspect) {
           const detail = await this.runtime.inbox.getThread({
@@ -920,67 +876,40 @@ export class ActivityPollerService {
             limit: readNumber(target.messageLimit, 10)
           });
           const messageEntities = normalizeMessageEntities(detail);
-          const messageRows = existingRows.filter((row) => row.entity_type === "message");
           const messageDiff = diffActivityEntities(messageRows, messageEntities);
 
           if (!isInitialBaseline) {
             for (const entity of messageDiff.created) {
-              const emitted = this.emitEvent({
+              const emitted = this.emitEventForEntity({
                 watch,
                 subscriptions: activeSubscriptions,
                 eventType: "linkedin.inbox.message.received",
-                entityType: entity.entityType,
-                entityKey: entity.entityKey,
-                current: entity.snapshot,
+                entity,
                 previous: null,
                 changeKind: "created",
                 occurredAtMs: pollStartedAtMs,
-                pollFinishedAtMs: Date.now(),
-                ...(entity.url ? { url: entity.url } : {})
+                pollFinishedAtMs: Date.now()
               });
-              emittedEvents += emitted.inserted ? 1 : 0;
-              enqueuedDeliveries += emitted.enqueuedDeliveries;
-              this.runtime.db.upsertActivityEntityState({
+              recordEmission(emitted);
+              this.upsertEntityState({
                 watchId: watch.id,
-                entityKey: entity.entityKey,
-                entityType: entity.entityType,
-                fingerprint: entity.fingerprint,
-                snapshotJson: JSON.stringify(entity.snapshot),
+                entity,
                 firstSeenAtMs: pollStartedAtMs,
-                lastSeenAtMs: pollStartedAtMs,
                 lastEmittedEventId: emitted.eventId,
-                updatedAtMs: pollStartedAtMs
+                pollStartedAtMs
               });
             }
           }
 
-          for (const entity of [...messageDiff.updated.map((item) => item.current), ...messageDiff.unchanged]) {
-            const existing = messageRows.find((row) => row.entity_key === entity.entityKey);
-            this.runtime.db.upsertActivityEntityState({
-              watchId: watch.id,
-              entityKey: entity.entityKey,
-              entityType: entity.entityType,
-              fingerprint: entity.fingerprint,
-              snapshotJson: JSON.stringify(entity.snapshot),
-              firstSeenAtMs: existing?.first_seen_at ?? pollStartedAtMs,
-              lastSeenAtMs: pollStartedAtMs,
-              updatedAtMs: pollStartedAtMs
-            });
-          }
+          this.upsertKnownEntities({
+            watchId: watch.id,
+            entities: [...messageDiff.updated.map((item) => item.current), ...messageDiff.unchanged],
+            existingByKey: messageRowsByKey,
+            pollStartedAtMs
+          });
 
           if (isInitialBaseline) {
-            for (const entity of messageDiff.created) {
-              this.runtime.db.upsertActivityEntityState({
-                watchId: watch.id,
-                entityKey: entity.entityKey,
-                entityType: entity.entityType,
-                fingerprint: entity.fingerprint,
-                snapshotJson: JSON.stringify(entity.snapshot),
-                firstSeenAtMs: pollStartedAtMs,
-                lastSeenAtMs: pollStartedAtMs,
-                updatedAtMs: pollStartedAtMs
-              });
-            }
+            this.upsertBaselineEntities(watch.id, messageDiff.created, pollStartedAtMs);
           }
         }
 
@@ -994,6 +923,86 @@ export class ActivityPollerService {
       emittedEvents,
       enqueuedDeliveries
     };
+  }
+
+  private emitEventForEntity(input: {
+    watch: ActivityWatchRow;
+    subscriptions: WebhookSubscriptionRow[];
+    eventType: ActivityEventType;
+    entity: ActivityEntityRecord;
+    previous: Record<string, unknown> | null;
+    changeKind: ActivityEventChangeKind;
+    occurredAtMs: number;
+    pollFinishedAtMs: number;
+  }): EventEmissionResult {
+    return this.emitEvent({
+      watch: input.watch,
+      subscriptions: input.subscriptions,
+      eventType: input.eventType,
+      entityType: input.entity.entityType,
+      entityKey: input.entity.entityKey,
+      current: input.entity.snapshot,
+      previous: input.previous,
+      changeKind: input.changeKind,
+      occurredAtMs: input.occurredAtMs,
+      pollFinishedAtMs: input.pollFinishedAtMs,
+      ...(input.entity.url ? { url: input.entity.url } : {})
+    });
+  }
+
+  private upsertEntityState(input: {
+    watchId: string;
+    entity: ActivityEntityRecord;
+    firstSeenAtMs: number;
+    pollStartedAtMs: number;
+    lastEmittedEventId?: string | null;
+  }): void {
+    this.runtime.db.upsertActivityEntityState({
+      watchId: input.watchId,
+      entityKey: input.entity.entityKey,
+      entityType: input.entity.entityType,
+      fingerprint: input.entity.fingerprint,
+      snapshotJson: JSON.stringify(input.entity.snapshot),
+      firstSeenAtMs: input.firstSeenAtMs,
+      lastSeenAtMs: input.pollStartedAtMs,
+      ...(input.lastEmittedEventId !== undefined
+        ? { lastEmittedEventId: input.lastEmittedEventId }
+        : {}),
+      updatedAtMs: input.pollStartedAtMs
+    });
+  }
+
+  private upsertBaselineEntities(
+    watchId: string,
+    entities: ActivityEntityRecord[],
+    pollStartedAtMs: number
+  ): void {
+    for (const entity of entities) {
+      this.upsertEntityState({
+        watchId,
+        entity,
+        firstSeenAtMs: pollStartedAtMs,
+        pollStartedAtMs
+      });
+    }
+  }
+
+  private upsertKnownEntities(input: {
+    watchId: string;
+    entities: ActivityEntityRecord[];
+    existingByKey: Map<string, ActivityEntityStateRow>;
+    pollStartedAtMs: number;
+  }): void {
+    for (const entity of input.entities) {
+      this.upsertEntityState({
+        watchId: input.watchId,
+        entity,
+        firstSeenAtMs:
+          input.existingByKey.get(entity.entityKey)?.first_seen_at ??
+          input.pollStartedAtMs,
+        pollStartedAtMs: input.pollStartedAtMs
+      });
+    }
   }
 
   private emitEvent(input: {
@@ -1066,17 +1075,7 @@ export class ActivityPollerService {
 
     let enqueuedDeliveries = 0;
     for (const subscription of input.subscriptions) {
-      let allowedEventTypes: string[] = [];
-      try {
-        const parsed = JSON.parse(subscription.event_types_json);
-        if (Array.isArray(parsed)) {
-          allowedEventTypes = parsed.filter(
-            (value): value is string => typeof value === "string"
-          );
-        }
-      } catch {
-        allowedEventTypes = [];
-      }
+      const allowedEventTypes = parseStringArray(subscription.event_types_json);
       if (!allowedEventTypes.includes(input.eventType)) {
         continue;
       }
@@ -1111,7 +1110,7 @@ export class ActivityPollerService {
   private async processDelivery(
     delivery: WebhookDeliveryAttemptRow,
     leaseOwner: string
-  ): Promise<ActivityDeliveryTickResult> {
+  ): Promise<ProcessedDeliveryResult> {
     const subscription = this.runtime.db.getWebhookSubscriptionById(
       delivery.subscription_id
     );
@@ -1124,11 +1123,14 @@ export class ActivityPollerService {
         errorMessage: "Webhook subscription is not active."
       });
       return {
-        deliveryId: delivery.id,
-        subscriptionId: delivery.subscription_id,
-        outcome: "skipped",
-        errorCode: "ACTION_PRECONDITION_FAILED",
-        errorMessage: "Webhook subscription is not active."
+        result: {
+          deliveryId: delivery.id,
+          subscriptionId: delivery.subscription_id,
+          outcome: "skipped",
+          errorCode: "ACTION_PRECONDITION_FAILED",
+          errorMessage: "Webhook subscription is not active."
+        },
+        subscriptionDisabled: false
       };
     }
 
@@ -1157,10 +1159,13 @@ export class ActivityPollerService {
         updatedAtMs: nowMs
       });
       return {
-        deliveryId: delivery.id,
-        subscriptionId: subscription.id,
-        outcome: "delivered",
-        responseStatus: outcome.responseStatus ?? null
+        result: {
+          deliveryId: delivery.id,
+          subscriptionId: subscription.id,
+          outcome: "delivered",
+          responseStatus: outcome.responseStatus ?? null
+        },
+        subscriptionDisabled: false
       };
     }
 
@@ -1201,12 +1206,15 @@ export class ActivityPollerService {
         updatedAtMs: nowMs
       });
       return {
-        deliveryId: delivery.id,
-        subscriptionId: subscription.id,
-        outcome: "retry",
-        responseStatus: outcome.responseStatus ?? null,
-        errorCode: outcome.errorCode ?? null,
-        errorMessage: outcome.errorMessage
+        result: {
+          deliveryId: delivery.id,
+          subscriptionId: subscription.id,
+          outcome: "retry",
+          responseStatus: outcome.responseStatus ?? null,
+          errorCode: outcome.errorCode ?? null,
+          errorMessage: outcome.errorMessage
+        },
+        subscriptionDisabled: false
       };
     }
 
@@ -1236,14 +1244,17 @@ export class ActivityPollerService {
     }
 
     return {
-      deliveryId: delivery.id,
-      subscriptionId: subscription.id,
-      outcome: deadLetter ? "dead_letter" : "failed",
-      responseStatus: outcome.responseStatus ?? null,
-      errorCode: outcome.errorCode ?? null,
-      errorMessage: outcome.disableSubscription
-        ? `${outcome.errorMessage} Subscription disabled.`
-        : outcome.errorMessage
+      result: {
+        deliveryId: delivery.id,
+        subscriptionId: subscription.id,
+        outcome: deadLetter ? "dead_letter" : "failed",
+        responseStatus: outcome.responseStatus ?? null,
+        errorCode: outcome.errorCode ?? null,
+        errorMessage: outcome.disableSubscription
+          ? `${outcome.errorMessage} Subscription disabled.`
+          : outcome.errorMessage
+      },
+      subscriptionDisabled: outcome.disableSubscription === true
     };
   }
 }
