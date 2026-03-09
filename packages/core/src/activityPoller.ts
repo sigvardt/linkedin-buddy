@@ -17,6 +17,7 @@ import type {
   WebhookSubscriptionRow
 } from "./db/database.js";
 import {
+  LinkedInAssistantError,
   asLinkedInAssistantError,
   type LinkedInAssistantErrorCode
 } from "./errors.js";
@@ -106,8 +107,41 @@ interface ProcessedDeliveryResult {
   subscriptionDisabled: boolean;
 }
 
+interface PendingEventReference {
+  eventId: string | null;
+}
+
+interface PendingEventEmission {
+  watch: ActivityWatchRow;
+  eventType: ActivityEventType;
+  entity: ActivityEntityRecord;
+  previous: Record<string, unknown> | null;
+  changeKind: ActivityEventChangeKind;
+  occurredAtMs: number;
+  reference: PendingEventReference;
+}
+
+interface PendingEntityStateMutation {
+  watchId: string;
+  entity: ActivityEntityRecord;
+  firstSeenAtMs: number;
+  pollStartedAtMs: number;
+  eventReference?: PendingEventReference;
+}
+
+interface DeliveryQueueBudget {
+  deferredDeliveries: number;
+  remainingSlots: number;
+}
+
+const ACTIVE_ACTIVITY_TICKS = new Set<string>();
+
 function createId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${randomBytes(4).toString("hex")}`;
+}
+
+function createActivityTickKey(profileName: string): string {
+  return profileName.trim().toLowerCase();
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -174,13 +208,25 @@ function buildEventFingerprint(input: {
   });
 }
 
-function nextPollAtMsForWatch(watch: ActivityWatchRow, nowMs: number): number {
+function nextPollAtMsForWatch(
+  watch: ActivityWatchRow,
+  nowMs: number,
+  minPollIntervalMs: number
+): number {
   if (watch.schedule_kind === "cron" && watch.cron_expression) {
     return getNextCronOccurrenceMs(watch.cron_expression, nowMs);
   }
 
+  const earliestAllowedPollAtMs = nowMs + minPollIntervalMs;
   const pollIntervalMs = watch.poll_interval_ms ?? 5 * 60 * 1000;
-  return nowMs + pollIntervalMs;
+  return Math.max(nowMs + pollIntervalMs, earliestAllowedPollAtMs);
+}
+
+function calculateActivityPollBackoffMs(
+  consecutiveFailures: number,
+  config: ActivityWebhookConfig
+): number {
+  return calculateWebhookDeliveryBackoffMs(consecutiveFailures, config.retry);
 }
 
 function keyForProfileUrl(profileUrl: string): string {
@@ -423,197 +469,373 @@ export class ActivityPollerService {
   } = {}): Promise<ActivityPollTickResult> {
     const profileName = input.profileName ?? "default";
     const workerId = input.workerId ?? `activity-poller:${process.pid}`;
-    const watchResults: ActivityWatchTickResult[] = [];
-    const deliveryResults: ActivityDeliveryTickResult[] = [];
-    let emittedEvents = 0;
-    let enqueuedDeliveries = 0;
-    let failedWatches = 0;
-    let deliveredAttempts = 0;
-    let retriedDeliveries = 0;
-    let failedDeliveries = 0;
-    let deadLetterDeliveries = 0;
-    let disabledSubscriptions = 0;
+    const emptyResult = this.buildEmptyTickResult(profileName, workerId);
 
     if (!this.config.enabled) {
+      return emptyResult;
+    }
+
+    const tickKey = createActivityTickKey(profileName);
+    if (ACTIVE_ACTIVITY_TICKS.has(tickKey)) {
+      this.runtime.logger.log("info", "activity.tick.skipped", {
+        profile_name: profileName,
+        reason: "concurrent_tick",
+        worker_id: workerId
+      });
+      return emptyResult;
+    }
+
+    ACTIVE_ACTIVITY_TICKS.add(tickKey);
+
+    try {
+      const watchResults: ActivityWatchTickResult[] = [];
+      const deliveryResults: ActivityDeliveryTickResult[] = [];
+      let emittedEvents = 0;
+      let enqueuedDeliveries = 0;
+      let failedWatches = 0;
+      let deliveredAttempts = 0;
+      let retriedDeliveries = 0;
+      let failedDeliveries = 0;
+      let deadLetterDeliveries = 0;
+      let disabledSubscriptions = 0;
+
+      const deliveryClaimedAtMs = Date.now();
+      const claimedDeliveries = this.runtime.db.claimDueWebhookDeliveryAttempts({
+        profileName,
+        nowMs: deliveryClaimedAtMs,
+        limit: this.config.maxDeliveriesPerTick,
+        leaseOwner: workerId,
+        leaseTtlMs: this.config.deliveryLeaseTtlMs,
+        clockSkewAllowanceMs: this.config.clockSkewAllowanceMs
+      });
+
+      for (const delivery of claimedDeliveries) {
+        const correlationId = createId("deliverycorr");
+        const { result, subscriptionDisabled } = await this.processDelivery(
+          delivery,
+          workerId,
+          correlationId
+        );
+        deliveryResults.push(result);
+        switch (result.outcome) {
+          case "delivered":
+            deliveredAttempts += 1;
+            break;
+          case "retry":
+            retriedDeliveries += 1;
+            break;
+          case "dead_letter":
+            deadLetterDeliveries += 1;
+            break;
+          case "failed":
+            failedDeliveries += 1;
+            break;
+          case "skipped":
+            if (result.errorCode === "ACTION_PRECONDITION_FAILED") {
+              failedDeliveries += 1;
+            }
+            break;
+        }
+        if (subscriptionDisabled) {
+          disabledSubscriptions += 1;
+        }
+      }
+
+      this.promoteDeferredWebhookDeliveries(profileName, Date.now(), workerId);
+
+      const queuedDeliveries = this.runtime.db.countQueuedWebhookDeliveryAttempts({
+        profileName
+      });
+      let claimedWatches: ActivityWatchRow[] = [];
+
+      if (queuedDeliveries >= this.config.maxEventQueueDepth) {
+        this.runtime.logger.log("warn", "activity.watch.poll.backpressure", {
+          max_event_queue_depth: this.config.maxEventQueueDepth,
+          profile_name: profileName,
+          queued_deliveries: queuedDeliveries,
+          worker_id: workerId
+        });
+      } else {
+        const watchClaimedAtMs = Date.now();
+        claimedWatches = this.runtime.db.claimDueActivityWatches({
+          profileName,
+          nowMs: watchClaimedAtMs,
+          limit: this.config.maxWatchesPerTick,
+          leaseOwner: workerId,
+          leaseTtlMs: this.config.watchLeaseTtlMs,
+          clockSkewAllowanceMs: this.config.clockSkewAllowanceMs
+        });
+      }
+
+      for (const watch of claimedWatches) {
+        const correlationId = createId("pollcorr");
+        const pollStartedAtMs = Date.now();
+
+        try {
+          const result = await this.pollWatch(
+            watch,
+            pollStartedAtMs,
+            workerId,
+            correlationId
+          );
+          emittedEvents += result.emittedEvents;
+          enqueuedDeliveries += result.enqueuedDeliveries;
+          watchResults.push(result);
+        } catch (error) {
+          const failedAtMs = Date.now();
+          const normalized = normalizeWatchError(error);
+          const consecutiveFailures = watch.consecutive_failures + 1;
+          const backoffMs = calculateActivityPollBackoffMs(
+            consecutiveFailures,
+            this.config
+          );
+          const nextPollAtMs = Math.max(
+            nextPollAtMsForWatch(watch, failedAtMs, this.config.minPollIntervalMs),
+            failedAtMs + backoffMs
+          );
+          const markedFailed = this.runtime.db.markActivityWatchPollFailed({
+            id: watch.id,
+            leaseOwner: workerId,
+            nowMs: failedAtMs,
+            nextPollAtMs,
+            errorCode: normalized.code,
+            errorMessage: normalized.message
+          });
+
+          watchResults.push({
+            watchId: watch.id,
+            kind: watch.kind,
+            emittedEvents: 0,
+            enqueuedDeliveries: 0,
+            ...(markedFailed
+              ? {
+                  errorCode: normalized.code,
+                  errorMessage: normalized.message
+                }
+              : {
+                  errorMessage: "Poll result was superseded by another worker."
+                })
+          });
+
+          if (markedFailed) {
+            failedWatches += 1;
+            this.runtime.logger.log("warn", "activity.watch.poll.failed", {
+              backoff_ms: backoffMs,
+              consecutive_failures: consecutiveFailures,
+              correlation_id: correlationId,
+              error_code: normalized.code,
+              error_message: normalized.message,
+              kind: watch.kind,
+              next_poll_at: new Date(nextPollAtMs).toISOString(),
+              profile_name: watch.profile_name,
+              watch_id: watch.id,
+              worker_id: workerId
+            });
+          } else {
+            this.runtime.logger.log("info", "activity.watch.poll.superseded", {
+              correlation_id: correlationId,
+              kind: watch.kind,
+              profile_name: watch.profile_name,
+              watch_id: watch.id,
+              worker_id: workerId
+            });
+          }
+        }
+      }
+
       return {
         profileName,
         workerId,
-        claimedWatches: 0,
-        polledWatches: 0,
-        failedWatches: 0,
-        emittedEvents: 0,
-        enqueuedDeliveries: 0,
-        claimedDeliveries: 0,
-        deliveredAttempts: 0,
-        retriedDeliveries: 0,
-        failedDeliveries: 0,
-        deadLetterDeliveries: 0,
-        disabledSubscriptions: 0,
+        claimedWatches: claimedWatches.length,
+        polledWatches: claimedWatches.length - failedWatches,
+        failedWatches,
+        emittedEvents,
+        enqueuedDeliveries,
+        claimedDeliveries: claimedDeliveries.length,
+        deliveredAttempts,
+        retriedDeliveries,
+        failedDeliveries,
+        deadLetterDeliveries,
+        disabledSubscriptions,
         watchResults,
         deliveryResults
       };
+    } finally {
+      ACTIVE_ACTIVITY_TICKS.delete(tickKey);
     }
+  }
 
-    const nowMs = Date.now();
-    const claimedWatches = this.runtime.db.claimDueActivityWatches({
-      profileName,
-      nowMs,
-      limit: this.config.maxWatchesPerTick,
-      leaseOwner: workerId,
-      leaseTtlMs: this.config.watchLeaseTtlMs
-    });
-
-    for (const watch of claimedWatches) {
-      try {
-        const result = await this.pollWatch(watch, nowMs);
-        emittedEvents += result.emittedEvents;
-        enqueuedDeliveries += result.enqueuedDeliveries;
-        watchResults.push(result);
-        this.runtime.db.markActivityWatchPollSucceeded({
-          id: watch.id,
-          leaseOwner: workerId,
-          nowMs,
-          nextPollAtMs: nextPollAtMsForWatch(watch, nowMs)
-        });
-      } catch (error) {
-        failedWatches += 1;
-        const normalized = normalizeWatchError(error);
-        watchResults.push({
-          watchId: watch.id,
-          kind: watch.kind,
-          emittedEvents: 0,
-          enqueuedDeliveries: 0,
-          errorCode: normalized.code,
-          errorMessage: normalized.message
-        });
-        this.runtime.db.markActivityWatchPollFailed({
-          id: watch.id,
-          leaseOwner: workerId,
-          nowMs,
-          nextPollAtMs: nextPollAtMsForWatch(watch, nowMs),
-          errorCode: normalized.code,
-          errorMessage: normalized.message
-        });
-      }
-    }
-
-    const claimedDeliveries = this.runtime.db.claimDueWebhookDeliveryAttempts({
-      profileName,
-      nowMs,
-      limit: this.config.maxDeliveriesPerTick,
-      leaseOwner: workerId,
-      leaseTtlMs: this.config.deliveryLeaseTtlMs
-    });
-
-    for (const delivery of claimedDeliveries) {
-      const { result, subscriptionDisabled } = await this.processDelivery(
-        delivery,
-        workerId
-      );
-      deliveryResults.push(result);
-      switch (result.outcome) {
-        case "delivered":
-          deliveredAttempts += 1;
-          break;
-        case "retry":
-          retriedDeliveries += 1;
-          break;
-        case "dead_letter":
-          deadLetterDeliveries += 1;
-          break;
-        case "failed":
-          failedDeliveries += 1;
-          break;
-        case "skipped":
-          if (result.errorCode === "ACTION_PRECONDITION_FAILED") {
-            failedDeliveries += 1;
-          }
-          break;
-      }
-      if (subscriptionDisabled) {
-        disabledSubscriptions += 1;
-      }
-    }
-
+  private buildEmptyTickResult(
+    profileName: string,
+    workerId: string
+  ): ActivityPollTickResult {
     return {
       profileName,
       workerId,
-      claimedWatches: claimedWatches.length,
-      polledWatches: claimedWatches.length - failedWatches,
-      failedWatches,
-      emittedEvents,
-      enqueuedDeliveries,
-      claimedDeliveries: claimedDeliveries.length,
-      deliveredAttempts,
-      retriedDeliveries,
-      failedDeliveries,
-      deadLetterDeliveries,
-      disabledSubscriptions,
-      watchResults,
-      deliveryResults
+      claimedWatches: 0,
+      polledWatches: 0,
+      failedWatches: 0,
+      emittedEvents: 0,
+      enqueuedDeliveries: 0,
+      claimedDeliveries: 0,
+      deliveredAttempts: 0,
+      retriedDeliveries: 0,
+      failedDeliveries: 0,
+      deadLetterDeliveries: 0,
+      disabledSubscriptions: 0,
+      watchResults: [],
+      deliveryResults: []
     };
+  }
+
+  private promoteDeferredWebhookDeliveries(
+    profileName: string,
+    nowMs: number,
+    workerId: string
+  ): number {
+    const queuedDeliveries = this.runtime.db.countQueuedWebhookDeliveryAttempts({
+      profileName
+    });
+    const availableSlots = Math.max(
+      0,
+      this.config.maxEventQueueDepth - queuedDeliveries
+    );
+    if (availableSlots <= 0) {
+      return 0;
+    }
+
+    const promoted = this.runtime.db.promoteDeferredWebhookDeliveryAttempts({
+      profileName,
+      nowMs,
+      limit: availableSlots
+    });
+
+    if (promoted > 0) {
+      this.runtime.logger.log("info", "activity.delivery.promoted", {
+        available_slots: availableSlots,
+        profile_name: profileName,
+        promoted_deliveries: promoted,
+        worker_id: workerId
+      });
+    }
+
+    return promoted;
   }
 
   private async pollWatch(
     watch: ActivityWatchRow,
-    pollStartedAtMs: number
+    pollStartedAtMs: number,
+    leaseOwner: string,
+    correlationId: string
   ): Promise<ActivityWatchTickResult> {
     const existingRows = this.runtime.db.listActivityEntityStates({ watchId: watch.id });
     const existingRowsByKey = new Map(
       existingRows.map((row) => [row.entity_key, row] as const)
     );
     const isInitialBaseline = watch.last_success_at === null;
-    const activeSubscriptions = this.runtime.db.listActiveWebhookSubscriptionsByWatchId(
-      watch.id
-    );
-    let emittedEvents = 0;
-    let enqueuedDeliveries = 0;
+    const pendingEventEmissions: PendingEventEmission[] = [];
+    const pendingStateMutations: PendingEntityStateMutation[] = [];
 
-    const recordEmission = (emitted: EventEmissionResult): void => {
-      emittedEvents += emitted.inserted ? 1 : 0;
-      enqueuedDeliveries += emitted.enqueuedDeliveries;
+    const stageEventForEntity = (input: {
+      changeKind: ActivityEventChangeKind;
+      entity: ActivityEntityRecord;
+      eventType: ActivityEventType;
+      occurredAtMs: number;
+      previous: Record<string, unknown> | null;
+      watch: ActivityWatchRow;
+    }): PendingEventReference => {
+      const reference: PendingEventReference = {
+        eventId: null
+      };
+      pendingEventEmissions.push({
+        watch: input.watch,
+        eventType: input.eventType,
+        entity: input.entity,
+        previous: input.previous,
+        changeKind: input.changeKind,
+        occurredAtMs: input.occurredAtMs,
+        reference
+      });
+      return reference;
+    };
+
+    const stageEntityState = (input: PendingEntityStateMutation): void => {
+      pendingStateMutations.push(input);
+    };
+
+    const stageBaselineEntities = (
+      watchId: string,
+      entities: ActivityEntityRecord[],
+      startedAtMs: number
+    ): void => {
+      for (const entity of entities) {
+        stageEntityState({
+          watchId,
+          entity,
+          firstSeenAtMs: startedAtMs,
+          pollStartedAtMs: startedAtMs
+        });
+      }
+    };
+
+    const stageKnownEntities = (input: {
+      watchId: string;
+      entities: ActivityEntityRecord[];
+      existingByKey: Map<string, ActivityEntityStateRow>;
+      pollStartedAtMs: number;
+    }): void => {
+      for (const entity of input.entities) {
+        stageEntityState({
+          watchId: input.watchId,
+          entity,
+          firstSeenAtMs:
+            input.existingByKey.get(entity.entityKey)?.first_seen_at ??
+            input.pollStartedAtMs,
+          pollStartedAtMs: input.pollStartedAtMs
+        });
+      }
     };
 
     const applyEntities = async (input: {
       currentEntities: ActivityEntityRecord[];
       emitCreated?: ActivityEventType;
-      handleCreated?: (entity: ActivityEntityRecord) => Promise<void>;
+      handleCreated?: (
+        entity: ActivityEntityRecord
+      ) => Promise<PendingEventReference | undefined>;
       handleUpdated?: (args: {
         current: ActivityEntityRecord;
         previous: Record<string, unknown>;
       }) => Promise<void>;
-      }): Promise<void> => {
+    }): Promise<void> => {
       const diff = diffActivityEntities(existingRows, input.currentEntities);
 
       if (!isInitialBaseline && input.handleCreated) {
         for (const entity of diff.created) {
-          await input.handleCreated(entity);
-          this.upsertEntityState({
+          const eventReference = await input.handleCreated(entity);
+          stageEntityState({
             watchId: watch.id,
             entity,
             firstSeenAtMs: pollStartedAtMs,
-            pollStartedAtMs
+            pollStartedAtMs,
+            ...(eventReference ? { eventReference } : {})
           });
         }
       } else if (!isInitialBaseline && input.emitCreated) {
         for (const entity of diff.created) {
-          const emitted = this.emitEventForEntity({
+          const eventReference = stageEventForEntity({
             watch,
-            subscriptions: activeSubscriptions,
             eventType: input.emitCreated,
             entity,
             previous: null,
             changeKind: "created",
-            occurredAtMs: pollStartedAtMs,
-            pollFinishedAtMs: Date.now()
+            occurredAtMs: pollStartedAtMs
           });
-          recordEmission(emitted);
-          this.upsertEntityState({
+          stageEntityState({
             watchId: watch.id,
             entity,
             firstSeenAtMs: pollStartedAtMs,
-            lastEmittedEventId: emitted.eventId,
-            pollStartedAtMs
+            pollStartedAtMs,
+            eventReference
           });
         }
       }
@@ -624,7 +846,7 @@ export class ActivityPollerService {
         }
       }
 
-      this.upsertKnownEntities({
+      stageKnownEntities({
         watchId: watch.id,
         entities: [...diff.updated.map((item) => item.current), ...diff.unchanged],
         existingByKey: existingRowsByKey,
@@ -632,7 +854,7 @@ export class ActivityPollerService {
       });
 
       if (isInitialBaseline) {
-        this.upsertBaselineEntities(watch.id, diff.created, pollStartedAtMs);
+        stageBaselineEntities(watch.id, diff.created, pollStartedAtMs);
       }
     };
 
@@ -653,17 +875,14 @@ export class ActivityPollerService {
               typeof current.snapshot.is_read === "boolean" &&
               previous.is_read !== current.snapshot.is_read
             ) {
-              const emitted = this.emitEventForEntity({
+              stageEventForEntity({
                 watch,
-                subscriptions: activeSubscriptions,
                 eventType: "linkedin.notifications.item.read_changed",
                 entity: current,
                 previous,
                 changeKind: "updated",
-                occurredAtMs: pollStartedAtMs,
-                pollFinishedAtMs: Date.now()
+                occurredAtMs: pollStartedAtMs
               });
-              recordEmission(emitted);
             }
           }
         });
@@ -687,34 +906,28 @@ export class ActivityPollerService {
               direction === "received"
                 ? "linkedin.connections.invitation.received"
                 : "linkedin.connections.invitation.sent_changed";
-            const emitted = this.emitEventForEntity({
+            return stageEventForEntity({
               watch,
-              subscriptions: activeSubscriptions,
               eventType,
               entity,
               previous: null,
               changeKind: "created",
-              occurredAtMs: pollStartedAtMs,
-              pollFinishedAtMs: Date.now()
+              occurredAtMs: pollStartedAtMs
             });
-            recordEmission(emitted);
           },
           handleUpdated: async ({ current, previous }) => {
             if (readText(current.snapshot.sent_or_received) !== "sent") {
               return;
             }
 
-            const emitted = this.emitEventForEntity({
+            stageEventForEntity({
               watch,
-              subscriptions: activeSubscriptions,
               eventType: "linkedin.connections.invitation.sent_changed",
               entity: current,
               previous,
               changeKind: "updated",
-              occurredAtMs: pollStartedAtMs,
-              pollFinishedAtMs: Date.now()
+              occurredAtMs: pollStartedAtMs
             });
-            recordEmission(emitted);
           }
         });
         break;
@@ -751,17 +964,14 @@ export class ActivityPollerService {
         await applyEntities({
           currentEntities: [normalizeProfileEntity(profile)],
           handleUpdated: async ({ current, previous }) => {
-            const emitted = this.emitEventForEntity({
+            stageEventForEntity({
               watch,
-              subscriptions: activeSubscriptions,
               eventType: "linkedin.profile.snapshot.changed",
               entity: current,
               previous,
               changeKind: "updated",
-              occurredAtMs: pollStartedAtMs,
-              pollFinishedAtMs: Date.now()
+              occurredAtMs: pollStartedAtMs
             });
-            recordEmission(emitted);
           }
         });
         break;
@@ -779,17 +989,14 @@ export class ActivityPollerService {
               return;
             }
 
-            const emitted = this.emitEventForEntity({
+            stageEventForEntity({
               watch,
-              subscriptions: activeSubscriptions,
               eventType: "linkedin.feed.post.engagement_changed",
               entity: current,
               previous,
               changeKind: "updated",
-              occurredAtMs: pollStartedAtMs,
-              pollFinishedAtMs: Date.now()
+              occurredAtMs: pollStartedAtMs
             });
-            recordEmission(emitted);
           }
         });
         break;
@@ -812,48 +1019,44 @@ export class ActivityPollerService {
               const threadKey = `thread:${thread.thread_id}`;
               return (
                 threadDiff.created.some((entity) => entity.entityKey === threadKey) ||
-                threadDiff.updated.some((entity) => entity.current.entityKey === threadKey)
+                threadDiff.updated.some(
+                  (entity) => entity.current.entityKey === threadKey
+                )
               );
             });
 
         if (!isInitialBaseline) {
           for (const entity of threadDiff.created) {
-            const emitted = this.emitEventForEntity({
+            const eventReference = stageEventForEntity({
               watch,
-              subscriptions: activeSubscriptions,
               eventType: "linkedin.inbox.thread.created",
               entity,
               previous: null,
               changeKind: "created",
-              occurredAtMs: pollStartedAtMs,
-              pollFinishedAtMs: Date.now()
+              occurredAtMs: pollStartedAtMs
             });
-            recordEmission(emitted);
-            this.upsertEntityState({
+            stageEntityState({
               watchId: watch.id,
               entity,
               firstSeenAtMs: pollStartedAtMs,
-              lastEmittedEventId: emitted.eventId,
-              pollStartedAtMs
+              pollStartedAtMs,
+              eventReference
             });
           }
 
           for (const { current, previous } of threadDiff.updated) {
-            const emitted = this.emitEventForEntity({
+            stageEventForEntity({
               watch,
-              subscriptions: activeSubscriptions,
               eventType: "linkedin.inbox.thread.updated",
               entity: current,
               previous,
               changeKind: "updated",
-              occurredAtMs: pollStartedAtMs,
-              pollFinishedAtMs: Date.now()
+              occurredAtMs: pollStartedAtMs
             });
-            recordEmission(emitted);
           }
         }
 
-        this.upsertKnownEntities({
+        stageKnownEntities({
           watchId: watch.id,
           entities: [...threadDiff.updated.map((item) => item.current), ...threadDiff.unchanged],
           existingByKey: threadRowsByKey,
@@ -861,7 +1064,7 @@ export class ActivityPollerService {
         });
 
         if (isInitialBaseline) {
-          this.upsertBaselineEntities(watch.id, threadDiff.created, pollStartedAtMs);
+          stageBaselineEntities(watch.id, threadDiff.created, pollStartedAtMs);
         }
 
         const messageRows = existingRows.filter((row) => row.entity_type === "message");
@@ -880,36 +1083,36 @@ export class ActivityPollerService {
 
           if (!isInitialBaseline) {
             for (const entity of messageDiff.created) {
-              const emitted = this.emitEventForEntity({
+              const eventReference = stageEventForEntity({
                 watch,
-                subscriptions: activeSubscriptions,
                 eventType: "linkedin.inbox.message.received",
                 entity,
                 previous: null,
                 changeKind: "created",
-                occurredAtMs: pollStartedAtMs,
-                pollFinishedAtMs: Date.now()
+                occurredAtMs: pollStartedAtMs
               });
-              recordEmission(emitted);
-              this.upsertEntityState({
+              stageEntityState({
                 watchId: watch.id,
                 entity,
                 firstSeenAtMs: pollStartedAtMs,
-                lastEmittedEventId: emitted.eventId,
-                pollStartedAtMs
+                pollStartedAtMs,
+                eventReference
               });
             }
           }
 
-          this.upsertKnownEntities({
+          stageKnownEntities({
             watchId: watch.id,
-            entities: [...messageDiff.updated.map((item) => item.current), ...messageDiff.unchanged],
+            entities: [
+              ...messageDiff.updated.map((item) => item.current),
+              ...messageDiff.unchanged
+            ],
             existingByKey: messageRowsByKey,
             pollStartedAtMs
           });
 
           if (isInitialBaseline) {
-            this.upsertBaselineEntities(watch.id, messageDiff.created, pollStartedAtMs);
+            stageBaselineEntities(watch.id, messageDiff.created, pollStartedAtMs);
           }
         }
 
@@ -917,11 +1120,96 @@ export class ActivityPollerService {
       }
     }
 
+    const committed = this.runtime.db.runInTransaction(() => {
+      const queueBudget: DeliveryQueueBudget = {
+        deferredDeliveries: 0,
+        remainingSlots: Math.max(
+          0,
+          this.config.maxEventQueueDepth -
+            this.runtime.db.countQueuedWebhookDeliveryAttempts({
+              profileName: watch.profile_name
+            })
+        )
+      };
+      const activeSubscriptions = this.runtime.db.listActiveWebhookSubscriptionsByWatchId(
+        watch.id
+      );
+      const pollFinishedAtMs = Date.now();
+      let committedEmittedEvents = 0;
+      let committedEnqueuedDeliveries = 0;
+
+      for (const pendingEvent of pendingEventEmissions) {
+        const emitted = this.emitEventForEntity({
+          watch: pendingEvent.watch,
+          subscriptions: activeSubscriptions,
+          eventType: pendingEvent.eventType,
+          entity: pendingEvent.entity,
+          previous: pendingEvent.previous,
+          changeKind: pendingEvent.changeKind,
+          occurredAtMs: pendingEvent.occurredAtMs,
+          pollFinishedAtMs,
+          queueBudget,
+          correlationId
+        });
+        if (emitted.inserted) {
+          committedEmittedEvents += 1;
+        }
+        committedEnqueuedDeliveries += emitted.enqueuedDeliveries;
+        pendingEvent.reference.eventId = emitted.eventId;
+      }
+
+      for (const pendingState of pendingStateMutations) {
+        this.upsertEntityState({
+          watchId: pendingState.watchId,
+          entity: pendingState.entity,
+          firstSeenAtMs: pendingState.firstSeenAtMs,
+          pollStartedAtMs: pendingState.pollStartedAtMs,
+          ...(pendingState.eventReference
+            ? { lastEmittedEventId: pendingState.eventReference.eventId }
+            : {})
+        });
+      }
+
+      const committedAtMs = Date.now();
+      const markedSucceeded = this.runtime.db.markActivityWatchPollSucceeded({
+        id: watch.id,
+        leaseOwner,
+        nowMs: committedAtMs,
+        nextPollAtMs: nextPollAtMsForWatch(
+          watch,
+          committedAtMs,
+          this.config.minPollIntervalMs
+        )
+      });
+      if (!markedSucceeded) {
+        throw new LinkedInAssistantError(
+          "ACTION_PRECONDITION_FAILED",
+          "Activity watch poll result was superseded before commit."
+        );
+      }
+
+      return {
+        emittedEvents: committedEmittedEvents,
+        enqueuedDeliveries: committedEnqueuedDeliveries,
+        deferredDeliveries: queueBudget.deferredDeliveries
+      };
+    });
+
+    if (committed.deferredDeliveries > 0) {
+      this.runtime.logger.log("warn", "activity.delivery.deferred", {
+        correlation_id: correlationId,
+        deferred_deliveries: committed.deferredDeliveries,
+        max_event_queue_depth: this.config.maxEventQueueDepth,
+        profile_name: watch.profile_name,
+        watch_id: watch.id
+      });
+    }
+
     return {
       watchId: watch.id,
       kind: watch.kind,
-      emittedEvents,
-      enqueuedDeliveries
+      emittedEvents: committed.emittedEvents,
+      enqueuedDeliveries: committed.enqueuedDeliveries
     };
   }
 
@@ -934,6 +1222,8 @@ export class ActivityPollerService {
     changeKind: ActivityEventChangeKind;
     occurredAtMs: number;
     pollFinishedAtMs: number;
+    queueBudget: DeliveryQueueBudget;
+    correlationId: string;
   }): EventEmissionResult {
     return this.emitEvent({
       watch: input.watch,
@@ -946,6 +1236,8 @@ export class ActivityPollerService {
       changeKind: input.changeKind,
       occurredAtMs: input.occurredAtMs,
       pollFinishedAtMs: input.pollFinishedAtMs,
+      queueBudget: input.queueBudget,
+      correlationId: input.correlationId,
       ...(input.entity.url ? { url: input.entity.url } : {})
     });
   }
@@ -972,39 +1264,6 @@ export class ActivityPollerService {
     });
   }
 
-  private upsertBaselineEntities(
-    watchId: string,
-    entities: ActivityEntityRecord[],
-    pollStartedAtMs: number
-  ): void {
-    for (const entity of entities) {
-      this.upsertEntityState({
-        watchId,
-        entity,
-        firstSeenAtMs: pollStartedAtMs,
-        pollStartedAtMs
-      });
-    }
-  }
-
-  private upsertKnownEntities(input: {
-    watchId: string;
-    entities: ActivityEntityRecord[];
-    existingByKey: Map<string, ActivityEntityStateRow>;
-    pollStartedAtMs: number;
-  }): void {
-    for (const entity of input.entities) {
-      this.upsertEntityState({
-        watchId: input.watchId,
-        entity,
-        firstSeenAtMs:
-          input.existingByKey.get(entity.entityKey)?.first_seen_at ??
-          input.pollStartedAtMs,
-        pollStartedAtMs: input.pollStartedAtMs
-      });
-    }
-  }
-
   private emitEvent(input: {
     watch: ActivityWatchRow;
     subscriptions: WebhookSubscriptionRow[];
@@ -1016,6 +1275,8 @@ export class ActivityPollerService {
     changeKind: ActivityEventChangeKind;
     occurredAtMs: number;
     pollFinishedAtMs: number;
+    queueBudget: DeliveryQueueBudget;
+    correlationId: string;
     url?: string;
   }): EventEmissionResult {
     const eventId = createId("evt");
@@ -1048,6 +1309,7 @@ export class ActivityPollerService {
         current: input.current
       },
       meta: {
+        correlation_id: input.correlationId,
         poll_started_at: new Date(input.occurredAtMs).toISOString(),
         poll_finished_at: new Date(input.pollFinishedAtMs).toISOString()
       }
@@ -1080,6 +1342,7 @@ export class ActivityPollerService {
         continue;
       }
 
+      const status = input.queueBudget.remainingSlots > 0 ? "pending" : "deferred";
       const insertedDelivery = this.runtime.db.insertWebhookDeliveryAttempt({
         id: createId("whdel"),
         watchId: input.watch.id,
@@ -1090,13 +1353,23 @@ export class ActivityPollerService {
         deliveryUrl: subscription.delivery_url,
         payloadJson,
         attemptNumber: 1,
-        status: "pending",
+        status,
         nextAttemptAtMs: input.pollFinishedAtMs,
         createdAtMs: input.pollFinishedAtMs,
         updatedAtMs: input.pollFinishedAtMs
       });
-      if (insertedDelivery) {
+      if (!insertedDelivery) {
+        continue;
+      }
+
+      if (status === "pending") {
         enqueuedDeliveries += 1;
+        input.queueBudget.remainingSlots = Math.max(
+          0,
+          input.queueBudget.remainingSlots - 1
+        );
+      } else {
+        input.queueBudget.deferredDeliveries += 1;
       }
     }
 
@@ -1109,18 +1382,47 @@ export class ActivityPollerService {
 
   private async processDelivery(
     delivery: WebhookDeliveryAttemptRow,
-    leaseOwner: string
+    leaseOwner: string,
+    correlationId: string
   ): Promise<ProcessedDeliveryResult> {
     const subscription = this.runtime.db.getWebhookSubscriptionById(
       delivery.subscription_id
     );
     if (!subscription || subscription.status !== "active") {
-      this.runtime.db.markWebhookDeliveryAttemptFailed({
+      const markedFailed = this.runtime.db.markWebhookDeliveryAttemptFailed({
         id: delivery.id,
         leaseOwner,
         nowMs: Date.now(),
         errorCode: "ACTION_PRECONDITION_FAILED",
         errorMessage: "Webhook subscription is not active."
+      });
+      if (!markedFailed) {
+        this.runtime.logger.log("info", "activity.delivery.superseded", {
+          correlation_id: correlationId,
+          delivery_id: delivery.id,
+          profile_name: delivery.profile_name,
+          subscription_id: delivery.subscription_id,
+          worker_id: leaseOwner
+        });
+        return {
+          result: {
+            deliveryId: delivery.id,
+            subscriptionId: delivery.subscription_id,
+            outcome: "skipped",
+            errorMessage: "Webhook delivery lease was superseded."
+          },
+          subscriptionDisabled: false
+        };
+      }
+
+      this.runtime.logger.log("warn", "activity.delivery.skipped", {
+        correlation_id: correlationId,
+        delivery_id: delivery.id,
+        error_code: "ACTION_PRECONDITION_FAILED",
+        error_message: "Webhook subscription is not active.",
+        profile_name: delivery.profile_name,
+        subscription_id: delivery.subscription_id,
+        worker_id: leaseOwner
       });
       return {
         result: {
@@ -1146,18 +1448,44 @@ export class ActivityPollerService {
     const nowMs = Date.now();
 
     if (outcome.outcome === "delivered") {
-      this.runtime.db.markWebhookDeliveryAttemptDelivered({
-        id: delivery.id,
-        leaseOwner,
-        nowMs,
-        responseStatus: outcome.responseStatus ?? null,
-        responseBodyExcerpt: outcome.responseBodyExcerpt ?? null
+      const committed = this.runtime.db.runInTransaction(() => {
+        const markedDelivered = this.runtime.db.markWebhookDeliveryAttemptDelivered({
+          id: delivery.id,
+          leaseOwner,
+          nowMs,
+          responseStatus: outcome.responseStatus ?? null,
+          responseBodyExcerpt: outcome.responseBodyExcerpt ?? null
+        });
+        if (!markedDelivered) {
+          return false;
+        }
+        this.runtime.db.recordWebhookSubscriptionDelivered({
+          id: subscription.id,
+          deliveredAtMs: nowMs,
+          updatedAtMs: nowMs
+        });
+        return true;
       });
-      this.runtime.db.recordWebhookSubscriptionDelivered({
-        id: subscription.id,
-        deliveredAtMs: nowMs,
-        updatedAtMs: nowMs
-      });
+
+      if (!committed) {
+        this.runtime.logger.log("info", "activity.delivery.superseded", {
+          correlation_id: correlationId,
+          delivery_id: delivery.id,
+          profile_name: delivery.profile_name,
+          subscription_id: subscription.id,
+          worker_id: leaseOwner
+        });
+        return {
+          result: {
+            deliveryId: delivery.id,
+            subscriptionId: subscription.id,
+            outcome: "skipped",
+            errorMessage: "Webhook delivery lease was superseded."
+          },
+          subscriptionDisabled: false
+        };
+      }
+
       return {
         result: {
           deliveryId: delivery.id,
@@ -1170,40 +1498,77 @@ export class ActivityPollerService {
     }
 
     if (outcome.outcome === "retry" && delivery.attempt_number < subscription.max_attempts) {
-      this.runtime.db.markWebhookDeliveryAttemptRetrying({
-        id: delivery.id,
-        leaseOwner,
-        nowMs,
-        responseStatus: outcome.responseStatus ?? null,
-        responseBodyExcerpt: outcome.responseBodyExcerpt ?? null,
-        errorCode: outcome.errorCode ?? null,
-        errorMessage: outcome.errorMessage
+      const nextAttemptAtMs =
+        nowMs +
+        calculateWebhookDeliveryBackoffMs(delivery.attempt_number, this.config.retry);
+      const transition = this.runtime.db.runInTransaction(() => {
+        const markedRetrying = this.runtime.db.markWebhookDeliveryAttemptRetrying({
+          id: delivery.id,
+          leaseOwner,
+          nowMs,
+          responseStatus: outcome.responseStatus ?? null,
+          responseBodyExcerpt: outcome.responseBodyExcerpt ?? null,
+          errorCode: outcome.errorCode ?? null,
+          errorMessage: outcome.errorMessage
+        });
+        if (!markedRetrying) {
+          return "superseded";
+        }
+
+        const insertedRetry = this.runtime.db.insertWebhookDeliveryAttempt({
+          id: createId("whdel"),
+          watchId: delivery.watch_id,
+          profileName: delivery.profile_name,
+          subscriptionId: delivery.subscription_id,
+          eventId: delivery.event_id,
+          eventType: delivery.event_type,
+          deliveryUrl: delivery.delivery_url,
+          payloadJson: delivery.payload_json,
+          attemptNumber: delivery.attempt_number + 1,
+          status: "pending",
+          nextAttemptAtMs,
+          createdAtMs: nowMs,
+          updatedAtMs: nowMs
+        });
+        this.runtime.db.recordWebhookSubscriptionError({
+          id: subscription.id,
+          errorCode: outcome.errorCode ?? null,
+          errorMessage: outcome.errorMessage,
+          updatedAtMs: nowMs
+        });
+        return insertedRetry ? "queued" : "duplicate";
       });
-      this.runtime.db.insertWebhookDeliveryAttempt({
-        id: createId("whdel"),
-        watchId: delivery.watch_id,
-        profileName: delivery.profile_name,
-        subscriptionId: delivery.subscription_id,
-        eventId: delivery.event_id,
-        eventType: delivery.event_type,
-        deliveryUrl: delivery.delivery_url,
-        payloadJson: delivery.payload_json,
-        attemptNumber: delivery.attempt_number + 1,
-        status: "pending",
-        nextAttemptAtMs:
-          nowMs +
-          calculateWebhookDeliveryBackoffMs(
-            delivery.attempt_number,
-            this.config.retry
-          ),
-        createdAtMs: nowMs,
-        updatedAtMs: nowMs
-      });
-      this.runtime.db.recordWebhookSubscriptionError({
-        id: subscription.id,
-        errorCode: outcome.errorCode ?? null,
-        errorMessage: outcome.errorMessage,
-        updatedAtMs: nowMs
+
+      if (transition === "superseded") {
+        this.runtime.logger.log("info", "activity.delivery.superseded", {
+          correlation_id: correlationId,
+          delivery_id: delivery.id,
+          profile_name: delivery.profile_name,
+          subscription_id: subscription.id,
+          worker_id: leaseOwner
+        });
+        return {
+          result: {
+            deliveryId: delivery.id,
+            subscriptionId: subscription.id,
+            outcome: "skipped",
+            errorMessage: "Webhook delivery lease was superseded."
+          },
+          subscriptionDisabled: false
+        };
+      }
+
+      this.runtime.logger.log("warn", "activity.delivery.retry", {
+        correlation_id: correlationId,
+        delivery_id: delivery.id,
+        error_code: outcome.errorCode ?? null,
+        error_message: outcome.errorMessage,
+        next_attempt_at: new Date(nextAttemptAtMs).toISOString(),
+        profile_name: delivery.profile_name,
+        response_status: outcome.responseStatus ?? null,
+        subscription_id: subscription.id,
+        transition,
+        worker_id: leaseOwner
       });
       return {
         result: {
@@ -1219,29 +1584,71 @@ export class ActivityPollerService {
     }
 
     const deadLetter = outcome.outcome === "retry";
-    this.runtime.db.markWebhookDeliveryAttemptFailed({
-      id: delivery.id,
-      leaseOwner,
-      nowMs,
-      responseStatus: outcome.responseStatus ?? null,
-      responseBodyExcerpt: outcome.responseBodyExcerpt ?? null,
-      errorCode: outcome.errorCode ?? null,
-      errorMessage: outcome.errorMessage,
-      deadLetter
-    });
-    this.runtime.db.recordWebhookSubscriptionError({
-      id: subscription.id,
-      errorCode: outcome.errorCode ?? null,
-      errorMessage: outcome.errorMessage,
-      updatedAtMs: nowMs
-    });
-    if (outcome.disableSubscription) {
-      this.runtime.db.updateWebhookSubscriptionStatus({
+    const committed = this.runtime.db.runInTransaction(() => {
+      const markedFailed = this.runtime.db.markWebhookDeliveryAttemptFailed({
+        id: delivery.id,
+        leaseOwner,
+        nowMs,
+        responseStatus: outcome.responseStatus ?? null,
+        responseBodyExcerpt: outcome.responseBodyExcerpt ?? null,
+        errorCode: outcome.errorCode ?? null,
+        errorMessage: outcome.errorMessage,
+        deadLetter
+      });
+      if (!markedFailed) {
+        return false;
+      }
+      this.runtime.db.recordWebhookSubscriptionError({
         id: subscription.id,
-        status: "disabled",
+        errorCode: outcome.errorCode ?? null,
+        errorMessage: outcome.errorMessage,
         updatedAtMs: nowMs
       });
+      if (outcome.disableSubscription) {
+        this.runtime.db.updateWebhookSubscriptionStatus({
+          id: subscription.id,
+          status: "disabled",
+          updatedAtMs: nowMs
+        });
+      }
+      return true;
+    });
+
+    if (!committed) {
+      this.runtime.logger.log("info", "activity.delivery.superseded", {
+        correlation_id: correlationId,
+        delivery_id: delivery.id,
+        profile_name: delivery.profile_name,
+        subscription_id: subscription.id,
+        worker_id: leaseOwner
+      });
+      return {
+        result: {
+          deliveryId: delivery.id,
+          subscriptionId: subscription.id,
+          outcome: "skipped",
+          errorMessage: "Webhook delivery lease was superseded."
+        },
+        subscriptionDisabled: false
+      };
     }
+
+    this.runtime.logger.log(
+      deadLetter || outcome.disableSubscription ? "error" : "warn",
+      deadLetter ? "activity.delivery.dead_letter" : "activity.delivery.failed",
+      {
+        correlation_id: correlationId,
+        dead_lettered: deadLetter,
+        delivery_id: delivery.id,
+        error_code: outcome.errorCode ?? null,
+        error_message: outcome.errorMessage,
+        profile_name: delivery.profile_name,
+        response_status: outcome.responseStatus ?? null,
+        subscription_disabled: outcome.disableSubscription === true,
+        subscription_id: subscription.id,
+        worker_id: leaseOwner
+      }
+    );
 
     return {
       result: {

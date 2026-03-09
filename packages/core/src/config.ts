@@ -95,14 +95,22 @@ export const DEFAULT_SCHEDULER_BUSINESS_END = "17:00";
 export const DEFAULT_ACTIVITY_DAEMON_POLL_INTERVAL_MS = 60 * 1000;
 /** Default number of due activity watches processed during one tick. */
 export const DEFAULT_ACTIVITY_MAX_WATCHES_PER_TICK = 4;
+/** Default cap on concurrently active activity watches per profile. */
+export const DEFAULT_ACTIVITY_MAX_CONCURRENT_WATCHES = 20;
 /** Default lease TTL for claimed activity watches. */
 export const DEFAULT_ACTIVITY_WATCH_LEASE_TTL_MS = 2 * 60 * 1000;
+/** Default minimum poll interval enforced across activity watches. */
+export const DEFAULT_ACTIVITY_MIN_POLL_INTERVAL_MS = 60 * 1000;
 /** Default number of webhook deliveries attempted during one tick. */
 export const DEFAULT_ACTIVITY_MAX_DELIVERIES_PER_TICK = 12;
+/** Default cap on queued webhook deliveries kept ready for dispatch. */
+export const DEFAULT_ACTIVITY_MAX_EVENT_QUEUE_DEPTH = 250;
 /** Default lease TTL for claimed webhook delivery attempts. */
 export const DEFAULT_ACTIVITY_DELIVERY_LEASE_TTL_MS = 60 * 1000;
 /** Default request timeout applied to outbound webhook delivery. */
 export const DEFAULT_ACTIVITY_DELIVERY_TIMEOUT_MS = 10 * 1000;
+/** Default clock-skew allowance used when reclaiming expired activity leases. */
+export const DEFAULT_ACTIVITY_CLOCK_SKEW_ALLOWANCE_MS = 5 * 1000;
 /** Default maximum number of webhook delivery attempts. */
 export const DEFAULT_ACTIVITY_MAX_DELIVERY_ATTEMPTS = 6;
 /** Default initial backoff after a retryable webhook delivery failure. */
@@ -182,14 +190,22 @@ export interface ActivityWebhookConfig {
   daemonPollIntervalMs: number;
   /** Maximum number of due watches processed during one tick. */
   maxWatchesPerTick: number;
+  /** Maximum number of active watches allowed for one profile. */
+  maxConcurrentWatches: number;
   /** Lease TTL for claimed activity watches. */
   watchLeaseTtlMs: number;
+  /** Minimum interval enforced between successive polls for one watch. */
+  minPollIntervalMs: number;
   /** Maximum number of due deliveries processed during one tick. */
   maxDeliveriesPerTick: number;
+  /** Maximum number of queued webhook deliveries buffered locally. */
+  maxEventQueueDepth: number;
   /** Lease TTL for claimed delivery attempts. */
   deliveryLeaseTtlMs: number;
   /** HTTP timeout for one outbound webhook request. */
   deliveryTimeoutMs: number;
+  /** Clock-skew allowance used before expiring leases or schedules. */
+  clockSkewAllowanceMs: number;
   /** Retry policy for retryable webhook delivery failures. */
   retry: ActivityWebhookRetryConfig;
 }
@@ -278,7 +294,8 @@ function invalidActivityWebhookConfig(
 function parseStrictBoolean(
   value: string | undefined,
   fallback: boolean,
-  envName: string
+  envName: string,
+  invalidConfig: typeof invalidSchedulerConfig = invalidSchedulerConfig
 ): boolean {
   if (value === undefined) {
     return fallback;
@@ -293,8 +310,8 @@ function parseStrictBoolean(
     return false;
   }
 
-  throw invalidSchedulerConfig(
-    `${envName} must use a scheduler boolean value: 1, 0, true, false, yes, no, on, or off. Unset it to use the default value.`,
+  throw invalidConfig(
+    `${envName} must use a boolean value: 1, 0, true, false, yes, no, on, or off. Unset it to use the default value.`,
     {
       env: envName,
       value,
@@ -308,7 +325,9 @@ function parseStrictPositiveInteger(input: {
   fallback: number;
   max?: number;
   min?: number;
+  invalidConfig?: typeof invalidSchedulerConfig;
 }): number {
+  const invalidConfig = input.invalidConfig ?? invalidSchedulerConfig;
   const rawValue = process.env[input.envName];
   if (rawValue === undefined) {
     return input.fallback;
@@ -316,7 +335,7 @@ function parseStrictPositiveInteger(input: {
 
   const trimmed = rawValue.trim();
   if (!/^\d+$/.test(trimmed)) {
-    throw invalidSchedulerConfig(
+    throw invalidConfig(
       `${input.envName} must be a whole number greater than 0. Unset it to use the default value.`,
       {
         env: input.envName,
@@ -327,7 +346,7 @@ function parseStrictPositiveInteger(input: {
 
   const parsed = Number.parseInt(trimmed, 10);
   if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-    throw invalidSchedulerConfig(
+    throw invalidConfig(
       `${input.envName} must be a whole number greater than 0. Unset it to use the default value.`,
       {
         env: input.envName,
@@ -337,7 +356,7 @@ function parseStrictPositiveInteger(input: {
   }
 
   if (typeof input.min === "number" && parsed < input.min) {
-    throw invalidSchedulerConfig(
+    throw invalidConfig(
       `${input.envName} must be at least ${input.min}. Unset it to use the default value.`,
       {
         env: input.envName,
@@ -348,7 +367,7 @@ function parseStrictPositiveInteger(input: {
   }
 
   if (typeof input.max === "number" && parsed > input.max) {
-    throw invalidSchedulerConfig(
+    throw invalidConfig(
       `${input.envName} must be at most ${input.max}. Unset it to use the default value.`,
       {
         env: input.envName,
@@ -671,53 +690,88 @@ export function resolveActivityWebhookConfig(): ActivityWebhookConfig {
     parseStrictPositiveInteger({
       envName: "LINKEDIN_ASSISTANT_ACTIVITY_DAEMON_POLL_INTERVAL_SECONDS",
       fallback: DEFAULT_ACTIVITY_DAEMON_POLL_INTERVAL_MS / 1_000,
-      max: 24 * 60 * 60
+      max: 24 * 60 * 60,
+      invalidConfig: invalidActivityWebhookConfig
     }) * 1_000;
   const maxWatchesPerTick = parseStrictPositiveInteger({
     envName: "LINKEDIN_ASSISTANT_ACTIVITY_MAX_WATCHES_PER_TICK",
     fallback: DEFAULT_ACTIVITY_MAX_WATCHES_PER_TICK,
-    max: 100
+    max: 100,
+    invalidConfig: invalidActivityWebhookConfig
+  });
+  const maxConcurrentWatches = parseStrictPositiveInteger({
+    envName: "LINKEDIN_ASSISTANT_ACTIVITY_MAX_CONCURRENT_WATCHES",
+    fallback: DEFAULT_ACTIVITY_MAX_CONCURRENT_WATCHES,
+    max: 1_000,
+    invalidConfig: invalidActivityWebhookConfig
   });
   const watchLeaseTtlMs =
     parseStrictPositiveInteger({
       envName: "LINKEDIN_ASSISTANT_ACTIVITY_WATCH_LEASE_SECONDS",
       fallback: DEFAULT_ACTIVITY_WATCH_LEASE_TTL_MS / 1_000,
-      max: 24 * 60 * 60
+      max: 24 * 60 * 60,
+      invalidConfig: invalidActivityWebhookConfig
+    }) * 1_000;
+  const minPollIntervalMs =
+    parseStrictPositiveInteger({
+      envName: "LINKEDIN_ASSISTANT_ACTIVITY_MIN_POLL_INTERVAL_SECONDS",
+      fallback: DEFAULT_ACTIVITY_MIN_POLL_INTERVAL_MS / 1_000,
+      max: 24 * 60 * 60,
+      invalidConfig: invalidActivityWebhookConfig
     }) * 1_000;
   const maxDeliveriesPerTick = parseStrictPositiveInteger({
     envName: "LINKEDIN_ASSISTANT_ACTIVITY_MAX_DELIVERIES_PER_TICK",
     fallback: DEFAULT_ACTIVITY_MAX_DELIVERIES_PER_TICK,
-    max: 1_000
+    max: 1_000,
+    invalidConfig: invalidActivityWebhookConfig
+  });
+  const maxEventQueueDepth = parseStrictPositiveInteger({
+    envName: "LINKEDIN_ASSISTANT_ACTIVITY_MAX_EVENT_QUEUE_DEPTH",
+    fallback: DEFAULT_ACTIVITY_MAX_EVENT_QUEUE_DEPTH,
+    max: 10_000,
+    invalidConfig: invalidActivityWebhookConfig
   });
   const deliveryLeaseTtlMs =
     parseStrictPositiveInteger({
       envName: "LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_LEASE_SECONDS",
       fallback: DEFAULT_ACTIVITY_DELIVERY_LEASE_TTL_MS / 1_000,
-      max: 24 * 60 * 60
+      max: 24 * 60 * 60,
+      invalidConfig: invalidActivityWebhookConfig
     }) * 1_000;
   const deliveryTimeoutMs =
     parseStrictPositiveInteger({
       envName: "LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_TIMEOUT_SECONDS",
       fallback: DEFAULT_ACTIVITY_DELIVERY_TIMEOUT_MS / 1_000,
-      max: 5 * 60
+      max: 5 * 60,
+      invalidConfig: invalidActivityWebhookConfig
+    }) * 1_000;
+  const clockSkewAllowanceMs =
+    parseStrictPositiveInteger({
+      envName: "LINKEDIN_ASSISTANT_ACTIVITY_CLOCK_SKEW_SECONDS",
+      fallback: DEFAULT_ACTIVITY_CLOCK_SKEW_ALLOWANCE_MS / 1_000,
+      max: 5 * 60,
+      invalidConfig: invalidActivityWebhookConfig
     }) * 1_000;
   const retry: ActivityWebhookRetryConfig = {
     maxAttempts: parseStrictPositiveInteger({
       envName: "LINKEDIN_ASSISTANT_ACTIVITY_MAX_DELIVERY_ATTEMPTS",
       fallback: DEFAULT_ACTIVITY_MAX_DELIVERY_ATTEMPTS,
-      max: 25
+      max: 25,
+      invalidConfig: invalidActivityWebhookConfig
     }),
     initialBackoffMs:
       parseStrictPositiveInteger({
         envName: "LINKEDIN_ASSISTANT_ACTIVITY_INITIAL_BACKOFF_SECONDS",
         fallback: DEFAULT_ACTIVITY_INITIAL_BACKOFF_MS / 1_000,
-        max: 24 * 60 * 60
+        max: 24 * 60 * 60,
+        invalidConfig: invalidActivityWebhookConfig
       }) * 1_000,
     maxBackoffMs:
       parseStrictPositiveInteger({
         envName: "LINKEDIN_ASSISTANT_ACTIVITY_MAX_BACKOFF_SECONDS",
         fallback: DEFAULT_ACTIVITY_MAX_BACKOFF_MS / 1_000,
-        max: 7 * 24 * 60 * 60
+        max: 7 * 24 * 60 * 60,
+        invalidConfig: invalidActivityWebhookConfig
       }) * 1_000
   };
 
@@ -732,18 +786,57 @@ export function resolveActivityWebhookConfig(): ActivityWebhookConfig {
     );
   }
 
+  if (deliveryLeaseTtlMs < deliveryTimeoutMs + clockSkewAllowanceMs) {
+    throw invalidActivityWebhookConfig(
+      "LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_LEASE_SECONDS must be greater than or equal to LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_TIMEOUT_SECONDS plus LINKEDIN_ASSISTANT_ACTIVITY_CLOCK_SKEW_SECONDS.",
+      {
+        env: "LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_LEASE_SECONDS",
+        delivery_lease_ttl_ms: deliveryLeaseTtlMs,
+        delivery_timeout_ms: deliveryTimeoutMs,
+        clock_skew_allowance_ms: clockSkewAllowanceMs
+      }
+    );
+  }
+
+  if (watchLeaseTtlMs <= clockSkewAllowanceMs) {
+    throw invalidActivityWebhookConfig(
+      "LINKEDIN_ASSISTANT_ACTIVITY_WATCH_LEASE_SECONDS must be greater than LINKEDIN_ASSISTANT_ACTIVITY_CLOCK_SKEW_SECONDS.",
+      {
+        env: "LINKEDIN_ASSISTANT_ACTIVITY_WATCH_LEASE_SECONDS",
+        watch_lease_ttl_ms: watchLeaseTtlMs,
+        clock_skew_allowance_ms: clockSkewAllowanceMs
+      }
+    );
+  }
+
+  if (deliveryLeaseTtlMs <= clockSkewAllowanceMs) {
+    throw invalidActivityWebhookConfig(
+      "LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_LEASE_SECONDS must be greater than LINKEDIN_ASSISTANT_ACTIVITY_CLOCK_SKEW_SECONDS.",
+      {
+        env: "LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_LEASE_SECONDS",
+        delivery_lease_ttl_ms: deliveryLeaseTtlMs,
+        clock_skew_allowance_ms: clockSkewAllowanceMs
+      }
+    );
+  }
+
   return {
     enabled: parseStrictBoolean(
       process.env.LINKEDIN_ASSISTANT_ACTIVITY_ENABLED,
       true,
-      "LINKEDIN_ASSISTANT_ACTIVITY_ENABLED"
+      "LINKEDIN_ASSISTANT_ACTIVITY_ENABLED",
+      invalidActivityWebhookConfig
     ),
     daemonPollIntervalMs,
     maxWatchesPerTick,
+    maxConcurrentWatches,
     watchLeaseTtlMs,
+    minPollIntervalMs,
     maxDeliveriesPerTick,
+    maxEventQueueDepth,
     deliveryLeaseTtlMs,
     deliveryTimeoutMs,
+    clockSkewAllowanceMs,
     retry
   };
 }

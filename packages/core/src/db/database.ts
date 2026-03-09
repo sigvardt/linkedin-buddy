@@ -346,6 +346,7 @@ export interface ClaimDueActivityWatchesInput {
   limit: number;
   leaseOwner: string;
   leaseTtlMs: number;
+  clockSkewAllowanceMs?: number;
 }
 
 export interface UpdateActivityWatchStatusInput {
@@ -522,6 +523,13 @@ export interface ClaimDueWebhookDeliveryAttemptsInput {
   limit: number;
   leaseOwner: string;
   leaseTtlMs: number;
+  clockSkewAllowanceMs?: number;
+}
+
+export interface PromoteDeferredWebhookDeliveryAttemptsInput {
+  profileName?: string;
+  nowMs: number;
+  limit: number;
 }
 
 export interface CompleteWebhookDeliveryAttemptInput {
@@ -715,6 +723,11 @@ export class AssistantDatabase {
 
   close(): void {
     this.db.close();
+  }
+
+  runInTransaction<T>(callback: () => T): T {
+    const execute = this.db.transaction((run: () => T) => run());
+    return execute(callback);
   }
 
   insertRunLog(input: RunLogInsert): void {
@@ -1719,11 +1732,16 @@ WHERE id = @id
   ): ActivityWatchRow[] {
     const claimWatches = this.db.transaction(
       (claimInput: ClaimDueActivityWatchesInput): ActivityWatchRow[] => {
+        const leaseExpiredBeforeMs =
+          claimInput.nowMs - (claimInput.clockSkewAllowanceMs ?? 0);
         const profileFilter = claimInput.profileName
           ? "AND profile_name = @profileName"
           : "";
         const candidates = this.db
-          .prepare<ClaimDueActivityWatchesInput, ActivityWatchRow>(
+          .prepare<
+            ClaimDueActivityWatchesInput & { leaseExpiredBeforeMs: number },
+            ActivityWatchRow
+          >(
             `
 SELECT
 ${ACTIVITY_WATCH_SELECT_COLUMNS}
@@ -1733,13 +1751,16 @@ WHERE status = 'active'
   AND next_poll_at <= @nowMs
   AND (
     lease_expires_at IS NULL
-    OR lease_expires_at < @nowMs
+    OR lease_expires_at < @leaseExpiredBeforeMs
   )
 ORDER BY next_poll_at ASC, created_at ASC
 LIMIT @limit
 `
           )
-          .all(claimInput);
+          .all({
+            ...claimInput,
+            leaseExpiredBeforeMs
+          });
 
         const claimed: ActivityWatchRow[] = [];
         const leaseExpiresAtMs = claimInput.nowMs + claimInput.leaseTtlMs;
@@ -1760,7 +1781,7 @@ WHERE id = @id
   AND next_poll_at <= @nowMs
   AND (
     lease_expires_at IS NULL
-    OR lease_expires_at < @nowMs
+    OR lease_expires_at < @leaseExpiredBeforeMs
   )
 `
             )
@@ -1768,6 +1789,7 @@ WHERE id = @id
               id: candidate.id,
               leaseOwner: claimInput.leaseOwner,
               leaseExpiresAtMs,
+              leaseExpiredBeforeMs,
               nowMs: claimInput.nowMs
             });
 
@@ -1889,6 +1911,7 @@ ON CONFLICT(watch_id, entity_key) DO UPDATE SET
   last_seen_at = excluded.last_seen_at,
   last_emitted_event_id = COALESCE(excluded.last_emitted_event_id, activity_entity_state.last_emitted_event_id),
   updated_at = excluded.updated_at
+WHERE activity_entity_state.updated_at <= excluded.updated_at
 `
       )
       .run({
@@ -2298,6 +2321,83 @@ LIMIT @limit
       .all(params);
   }
 
+  countQueuedWebhookDeliveryAttempts(input: {
+    profileName?: string;
+  } = {}): number {
+    const profileFilter = input.profileName ? "AND profile_name = @profileName" : "";
+    const row = this.db
+      .prepare<{ profileName?: string }, { queued_count: number }>(
+        `
+SELECT COUNT(*) AS queued_count
+FROM webhook_delivery_attempt
+WHERE status IN ('pending', 'leased')
+  ${profileFilter}
+`
+      )
+      .get(input);
+
+    return row?.queued_count ?? 0;
+  }
+
+  promoteDeferredWebhookDeliveryAttempts(
+    input: PromoteDeferredWebhookDeliveryAttemptsInput
+  ): number {
+    const promote = this.db.transaction(
+      (
+        promoteInput: PromoteDeferredWebhookDeliveryAttemptsInput
+      ): number => {
+        const profileFilter = promoteInput.profileName
+          ? "AND profile_name = @profileName"
+          : "";
+        const candidates = this.db
+          .prepare<
+            PromoteDeferredWebhookDeliveryAttemptsInput,
+            Pick<WebhookDeliveryAttemptRow, "id">
+          >(
+            `
+SELECT id
+FROM webhook_delivery_attempt
+WHERE status = 'deferred'
+  ${profileFilter}
+  AND next_attempt_at <= @nowMs
+ORDER BY next_attempt_at ASC, created_at ASC
+LIMIT @limit
+`
+          )
+          .all(promoteInput);
+
+        let promoted = 0;
+
+        for (const candidate of candidates) {
+          const result = this.db
+            .prepare(
+              `
+UPDATE webhook_delivery_attempt
+SET
+  status = 'pending',
+  next_attempt_at = @nowMs,
+  updated_at = @nowMs
+WHERE id = @id
+  AND status = 'deferred'
+`
+            )
+            .run({
+              id: candidate.id,
+              nowMs: promoteInput.nowMs
+            });
+
+          if (result.changes === 1) {
+            promoted += 1;
+          }
+        }
+
+        return promoted;
+      }
+    );
+
+    return promote(input);
+  }
+
   claimDueWebhookDeliveryAttempts(
     input: ClaimDueWebhookDeliveryAttemptsInput
   ): WebhookDeliveryAttemptRow[] {
@@ -2305,12 +2405,14 @@ LIMIT @limit
       (
         claimInput: ClaimDueWebhookDeliveryAttemptsInput
       ): WebhookDeliveryAttemptRow[] => {
+        const leaseExpiredBeforeMs =
+          claimInput.nowMs - (claimInput.clockSkewAllowanceMs ?? 0);
         const profileFilter = claimInput.profileName
           ? "AND profile_name = @profileName"
           : "";
         const candidates = this.db
           .prepare<
-            ClaimDueWebhookDeliveryAttemptsInput,
+            ClaimDueWebhookDeliveryAttemptsInput & { leaseExpiredBeforeMs: number },
             WebhookDeliveryAttemptRow
           >(
             `
@@ -2322,13 +2424,16 @@ WHERE status = 'pending'
   AND next_attempt_at <= @nowMs
   AND (
     lease_expires_at IS NULL
-    OR lease_expires_at < @nowMs
+    OR lease_expires_at < @leaseExpiredBeforeMs
   )
 ORDER BY next_attempt_at ASC, created_at ASC
 LIMIT @limit
 `
           )
-          .all(claimInput);
+          .all({
+            ...claimInput,
+            leaseExpiredBeforeMs
+          });
 
         const claimed: WebhookDeliveryAttemptRow[] = [];
         const leaseExpiresAtMs = claimInput.nowMs + claimInput.leaseTtlMs;
@@ -2349,7 +2454,7 @@ WHERE id = @id
   AND next_attempt_at <= @nowMs
   AND (
     lease_expires_at IS NULL
-    OR lease_expires_at < @nowMs
+    OR lease_expires_at < @leaseExpiredBeforeMs
   )
 `
             )
@@ -2357,6 +2462,7 @@ WHERE id = @id
               id: candidate.id,
               leaseOwner: claimInput.leaseOwner,
               leaseExpiresAtMs,
+              leaseExpiredBeforeMs,
               nowMs: claimInput.nowMs
             });
 
