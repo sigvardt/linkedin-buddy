@@ -1,11 +1,19 @@
 import type {
   LinkedInAssistantErrorPayload,
+  ReadOnlyValidationDiffChange,
   ReadOnlyValidationDiffEntry,
   ReadOnlyValidationOperationResult,
-  ReadOnlyValidationReport
+  ReadOnlyValidationReport,
+  ReadOnlyValidationStatus
 } from "@linkedin-assistant/core";
 
 export type ReadOnlyValidationOutputMode = "human" | "json";
+const BLOCKED_REQUEST_PREVIEW_LIMIT = 5;
+const DIFF_CHANGE_LABELS: Record<ReadOnlyValidationDiffChange, string> = {
+  fallback_drift: "Selector drift",
+  new_failure: "New failure",
+  recovered: "Recovered"
+};
 
 function appendSection(lines: string[], title: string, entries: string[]): void {
   if (entries.length === 0) {
@@ -17,43 +25,36 @@ function appendSection(lines: string[], title: string, entries: string[]): void 
   lines.push(...entries);
 }
 
-function formatOutcome(report: ReadOnlyValidationReport): string {
-  return report.outcome === "fail" ? "FAIL" : "PASS";
-}
-
-function formatOperationStatus(operation: ReadOnlyValidationOperationResult): string {
-  return operation.status === "fail" ? "FAIL" : "PASS";
+function formatStatusLabel(status: ReadOnlyValidationStatus): string {
+  return status === "fail" ? "FAIL" : "PASS";
 }
 
 function formatOperationSummary(operation: ReadOnlyValidationOperationResult): string {
   const warningSuffix = operation.warnings.length > 0
     ? ` | ${operation.warnings.length} warning${operation.warnings.length === 1 ? "" : "s"}`
     : "";
-  return `- ${formatOperationStatus(operation)} ${operation.operation}: ${operation.matched_count} matched, ${operation.failed_count} failed, ${operation.page_load_ms}ms${warningSuffix}`;
+  return `- ${formatStatusLabel(operation.status)} ${operation.operation}: ${operation.matched_count} matched, ${operation.failed_count} failed, ${operation.page_load_ms}ms${warningSuffix}`;
 }
 
 function formatDiffEntry(entry: ReadOnlyValidationDiffEntry): string {
-  const changeLabel = entry.change === "new_failure"
-    ? "New failure"
-    : entry.change === "fallback_drift"
-      ? "Selector drift"
-      : "Recovered";
   const previousCandidate = entry.previous_candidate_key ?? "none";
   const currentCandidate = entry.current_candidate_key ?? "none";
 
-  return `- ${changeLabel}: ${entry.operation}/${entry.selector_key} (${previousCandidate} → ${currentCandidate})`;
+  return `- ${DIFF_CHANGE_LABELS[entry.change]}: ${entry.operation}/${entry.selector_key} (${previousCandidate} → ${currentCandidate})`;
 }
 
-function formatBlockedRequests(report: ReadOnlyValidationReport): string[] {
-  return report.blocked_requests.slice(0, 5).map((blockedRequest) => {
+function formatBlockedRequests(
+  blockedRequests: ReadOnlyValidationReport["blocked_requests"]
+): string[] {
+  return blockedRequests.slice(0, BLOCKED_REQUEST_PREVIEW_LIMIT).map((blockedRequest) => {
     return `- ${blockedRequest.method} ${blockedRequest.url} [${blockedRequest.reason}]`;
   });
 }
 
 function formatFailedSelectorBlocks(
-  report: ReadOnlyValidationReport
+  operations: ReadOnlyValidationReport["operations"]
 ): string[] {
-  return report.operations.flatMap((operation) => {
+  return operations.flatMap((operation) => {
     return operation.selector_results
       .filter((selectorResult) => selectorResult.status === "fail")
       .map((selectorResult) => {
@@ -73,7 +74,7 @@ export function formatReadOnlyValidationReport(
   report: ReadOnlyValidationReport
 ): string {
   const lines = [
-    `Live Validation: ${formatOutcome(report)}`,
+    `Live Validation: ${formatStatusLabel(report.outcome)}`,
     `Summary: ${report.summary}`,
     `Session: ${report.session.session_name} (captured ${report.session.captured_at})`,
     `Report JSON: ${report.report_path}`,
@@ -86,7 +87,7 @@ export function formatReadOnlyValidationReport(
     report.operations.map((operation) => formatOperationSummary(operation))
   );
 
-  appendSection(lines, "Failures", formatFailedSelectorBlocks(report));
+  appendSection(lines, "Failures", formatFailedSelectorBlocks(report.operations));
   appendSection(
     lines,
     "Regressions",
@@ -104,7 +105,7 @@ export function formatReadOnlyValidationReport(
       "Blocked Requests",
       [
         `- ${report.blocked_request_count} request${report.blocked_request_count === 1 ? "" : "s"} blocked by the read-only guard`,
-        ...formatBlockedRequests(report)
+        ...formatBlockedRequests(report.blocked_requests)
       ]
     );
   }

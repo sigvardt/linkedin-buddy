@@ -69,8 +69,10 @@ import {
   type LinkedInFixturePageEntry,
   type LinkedInFixtureRoute,
   type LinkedInFixtureSetSummary,
+  type LinkedInReadOnlyValidationOperation,
   type LinkedInReplayPageType,
   type LocalDataDeletionFailure,
+  type ReadOnlyValidationReport,
   type SchedulerConfig,
   type SchedulerJobRow,
   type SchedulerTickResult,
@@ -86,7 +88,8 @@ import {
 import {
   formatReadOnlyValidationError,
   formatReadOnlyValidationReport,
-  resolveReadOnlyValidationOutputMode
+  resolveReadOnlyValidationOutputMode,
+  type ReadOnlyValidationOutputMode
 } from "../liveValidationOutput.js";
 import {
   formatSelectorAuditError,
@@ -1674,6 +1677,45 @@ async function maybeRefreshStoredSession(
   return true;
 }
 
+function createReadOnlyValidationPrompter(
+  sessionName: string
+): (operation: LinkedInReadOnlyValidationOperation) => Promise<void> {
+  return async (operation) => {
+    console.log(`Read-only step: ${operation.summary}`);
+    const confirmed = await promptYesNo("Continue with this step?");
+    if (!confirmed) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        "Read-only live validation was cancelled by the operator.",
+        {
+          operation: operation.id,
+          session_name: sessionName
+        }
+      );
+    }
+  };
+}
+
+function emitReadOnlyValidationResult(
+  report: ReadOnlyValidationReport,
+  outputMode: ReadOnlyValidationOutputMode
+): void {
+  if (outputMode === "json") {
+    printJson(report);
+  } else {
+    const redactedReport = redactStructuredValue(
+      report,
+      cliPrivacyConfig,
+      "cli"
+    ) as typeof report;
+    console.log(formatReadOnlyValidationReport(redactedReport));
+  }
+
+  if (report.outcome === "fail") {
+    process.exitCode = 1;
+  }
+}
+
 async function runLiveReadOnlyValidation(input: {
   json: boolean;
   readOnly: boolean;
@@ -1701,26 +1743,7 @@ async function runLiveReadOnlyValidation(input: {
   const runValidation = async () => {
     const onBeforeOperation = input.yes
       ? undefined
-      : async (operation: Parameters<
-          NonNullable<
-            NonNullable<
-              Parameters<typeof runReadOnlyLinkedInLiveValidation>[0]
-            >["onBeforeOperation"]
-          >
-        >[0]) => {
-          console.log(`Read-only step: ${operation.summary}`);
-          const confirmed = await promptYesNo("Continue with this step?");
-          if (!confirmed) {
-            throw new LinkedInAssistantError(
-              "ACTION_PRECONDITION_FAILED",
-              "Read-only live validation was cancelled by the operator.",
-              {
-                operation: operation.id,
-                session_name: input.sessionName
-              }
-            );
-          }
-        };
+      : createReadOnlyValidationPrompter(input.sessionName);
 
     return runReadOnlyLinkedInLiveValidation({
       sessionName: input.sessionName,
@@ -1731,21 +1754,7 @@ async function runLiveReadOnlyValidation(input: {
 
   try {
     const report = await runValidation();
-
-    if (outputMode === "json") {
-      printJson(report);
-    } else {
-      const redactedReport = redactStructuredValue(
-        report,
-        cliPrivacyConfig,
-        "cli"
-      ) as typeof report;
-      console.log(formatReadOnlyValidationReport(redactedReport));
-    }
-
-    if (report.outcome === "fail") {
-      process.exitCode = 1;
-    }
+    emitReadOnlyValidationResult(report, outputMode);
   } catch (error) {
     const refreshed = await maybeRefreshStoredSession(
       {
@@ -1758,20 +1767,7 @@ async function runLiveReadOnlyValidation(input: {
 
     if (refreshed) {
       const report = await runValidation();
-      if (outputMode === "json") {
-        printJson(report);
-      } else {
-        const redactedReport = redactStructuredValue(
-          report,
-          cliPrivacyConfig,
-          "cli"
-        ) as typeof report;
-        console.log(formatReadOnlyValidationReport(redactedReport));
-      }
-
-      if (report.outcome === "fail") {
-        process.exitCode = 1;
-      }
+      emitReadOnlyValidationResult(report, outputMode);
       return;
     }
 

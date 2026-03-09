@@ -30,6 +30,10 @@ const SESSION_FILE_SUFFIX = ".session.enc.json";
 const SESSION_STORE_SCHEMA_VERSION = 1;
 const AES_GCM_IV_BYTES = 12;
 
+function isNotFoundError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
 interface StoredLinkedInSessionEnvelope {
   version: number;
   algorithm: "aes-256-gcm";
@@ -113,8 +117,35 @@ function normalizeSessionName(sessionName: string | undefined): string {
   return normalized;
 }
 
+function createStoredSessionValidationError(
+  message: string,
+  sessionName: string,
+  filePath: string,
+  cause?: Error
+): LinkedInAssistantError {
+  return new LinkedInAssistantError(
+    "ACTION_PRECONDITION_FAILED",
+    message,
+    {
+      file_path: filePath,
+      session_name: sessionName
+    },
+    cause ? { cause } : undefined
+  );
+}
+
 function encodeBase64Url(value: Buffer): string {
   return value.toString("base64url");
+}
+
+function deriveMachineBoundKey(rawKey: Buffer): Buffer {
+  return createHash("sha256")
+    .update(rawKey)
+    .update("\0")
+    .update(os.hostname())
+    .update("\0")
+    .update(os.userInfo().username)
+    .digest();
 }
 
 function decodeBase64Url(value: string, label: string): Buffer {
@@ -208,16 +239,10 @@ async function readOrCreateMasterKey(storeDir: string): Promise<Buffer> {
   try {
     const existingKey = await readFile(keyPath);
     if (existingKey.length === 32) {
-      return createHash("sha256")
-        .update(existingKey)
-        .update("\0")
-        .update(os.hostname())
-        .update("\0")
-        .update(os.userInfo().username)
-        .digest();
+      return deriveMachineBoundKey(existingKey);
     }
   } catch (error) {
-    if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") {
+    if (!isNotFoundError(error)) {
       throw error;
     }
   }
@@ -225,13 +250,7 @@ async function readOrCreateMasterKey(storeDir: string): Promise<Buffer> {
   const rawKey = randomBytes(32);
   await writeFile(keyPath, rawKey);
   await ensureOwnerOnlyPermissions(keyPath);
-  return createHash("sha256")
-    .update(rawKey)
-    .update("\0")
-    .update(os.hostname())
-    .update("\0")
-    .update(os.userInfo().username)
-    .digest();
+  return deriveMachineBoundKey(rawKey);
 }
 
 function validateEnvelope(
@@ -249,13 +268,10 @@ function validateEnvelope(
     !("tag" in envelope) ||
     !("metadata" in envelope)
   ) {
-    throw new LinkedInAssistantError(
-      "ACTION_PRECONDITION_FAILED",
+    throw createStoredSessionValidationError(
       `Stored LinkedIn session "${sessionName}" is malformed. Capture a fresh session and retry.`,
-      {
-        file_path: filePath,
-        session_name: sessionName
-      }
+      sessionName,
+      filePath
     );
   }
 
@@ -269,13 +285,10 @@ function validateEnvelope(
     typeof normalizedEnvelope.metadata !== "object" ||
     normalizedEnvelope.metadata === null
   ) {
-    throw new LinkedInAssistantError(
-      "ACTION_PRECONDITION_FAILED",
+    throw createStoredSessionValidationError(
       `Stored LinkedIn session "${sessionName}" is unreadable. Capture a fresh session and retry.`,
-      {
-        file_path: filePath,
-        session_name: sessionName
-      }
+      sessionName,
+      filePath
     );
   }
 
@@ -291,13 +304,10 @@ function validateEnvelope(
       typeof metadata.liAtCookieExpiresAt === "string"
     )
   ) {
-    throw new LinkedInAssistantError(
-      "ACTION_PRECONDITION_FAILED",
+    throw createStoredSessionValidationError(
       `Stored LinkedIn session "${sessionName}" is unreadable. Capture a fresh session and retry.`,
-      {
-        file_path: filePath,
-        session_name: sessionName
-      }
+      sessionName,
+      filePath
     );
   }
 
@@ -331,13 +341,10 @@ function validateStorageState(
     !Array.isArray((value as { cookies: unknown }).cookies) ||
     !Array.isArray((value as { origins: unknown }).origins)
   ) {
-    throw new LinkedInAssistantError(
-      "ACTION_PRECONDITION_FAILED",
+    throw createStoredSessionValidationError(
       `Stored LinkedIn session "${sessionName}" could not be decoded. Capture a fresh session and retry.`,
-      {
-        file_path: filePath,
-        session_name: sessionName
-      }
+      sessionName,
+      filePath
     );
   }
 
@@ -371,8 +378,7 @@ export class LinkedInSessionStore {
     storageState: LinkedInBrowserStorageState
   ): Promise<StoredLinkedInSessionMetadata> {
     const normalizedSessionName = normalizeSessionName(sessionName);
-    const paths = resolveConfigPaths(this.baseDir);
-    ensureConfigPaths(paths);
+    ensureConfigPaths(resolveConfigPaths(this.baseDir));
     const storeDir = resolveLinkedInSessionStoreDir(this.baseDir);
     await mkdir(storeDir, { recursive: true });
 
@@ -413,7 +419,7 @@ export class LinkedInSessionStore {
       await readFile(this.getSessionPath(sessionName), "utf8");
       return true;
     } catch (error) {
-      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      if (isNotFoundError(error)) {
         return false;
       }
       throw error;
@@ -428,7 +434,7 @@ export class LinkedInSessionStore {
     try {
       rawEnvelope = await readFile(filePath, "utf8");
     } catch (error) {
-      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      if (isNotFoundError(error)) {
         throw new LinkedInAssistantError(
           "AUTH_REQUIRED",
           `No stored LinkedIn session named "${normalizedSessionName}" was found. Run "owa auth:session --session ${normalizedSessionName}" first.`,
@@ -467,16 +473,11 @@ export class LinkedInSessionStore {
         filePath
       );
     } catch (error) {
-      throw new LinkedInAssistantError(
-        "ACTION_PRECONDITION_FAILED",
+      throw createStoredSessionValidationError(
         `Stored LinkedIn session "${normalizedSessionName}" could not be decrypted. Capture a fresh session and retry.`,
-        {
-          file_path: filePath,
-          session_name: normalizedSessionName
-        },
-        {
-          cause: error instanceof Error ? error : undefined
-        }
+        normalizedSessionName,
+        filePath,
+        error instanceof Error ? error : undefined
       );
     }
 
@@ -489,11 +490,8 @@ export class LinkedInSessionStore {
 
 async function getOrCreatePage(context: BrowserContext) {
   const existingPage = context.pages()[0];
-  if (existingPage) {
-    return existingPage;
-  }
 
-  return context.newPage();
+  return existingPage ?? context.newPage();
 }
 
 async function waitForManualLogin(
