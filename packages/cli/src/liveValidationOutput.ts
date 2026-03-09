@@ -10,18 +10,39 @@ import {
   type ReadOnlyValidationStatus
 } from "@linkedin-assistant/core";
 
+/**
+ * Console output modes supported by the live validation CLI.
+ */
 export type ReadOnlyValidationOutputMode = "human" | "json";
+
+/**
+ * Rendering options for the human-readable live validation report.
+ */
 export interface FormatReadOnlyValidationReportOptions {
+  /** Enable ANSI colors in the formatted output. */
   color?: boolean;
 }
 
+/**
+ * Rendering options for the human-readable live validation error summary.
+ */
 export interface FormatReadOnlyValidationErrorOptions {
+  /** Enable ANSI colors in the formatted output. */
   color?: boolean;
+
+  /** Help command shown in the final remediation hint. */
   helpCommand?: string;
 }
 
+/**
+ * Options for the progress reporter that mirrors structured log events to the
+ * terminal.
+ */
 export interface ReadOnlyValidationProgressReporterOptions {
+  /** Disable all progress output when set to `false`. */
   enabled?: boolean;
+
+  /** Custom line writer used by tests or alternative terminals. */
   writeLine?: (line: string) => void;
 }
 
@@ -356,6 +377,10 @@ function readOperationId(
     : null;
 }
 
+/**
+ * Converts structured live validation log events into concise terminal progress
+ * lines.
+ */
 export class ReadOnlyValidationProgressReporter {
   private readonly enabled: boolean;
   private readonly writeLine: (line: string) => void;
@@ -367,6 +392,9 @@ export class ReadOnlyValidationProgressReporter {
     this.writeLine = options.writeLine ?? ((line: string) => process.stderr.write(`${line}\n`));
   }
 
+  /**
+   * Feeds one structured live validation log entry into the progress renderer.
+   */
   handleLog(entry: ReadOnlyValidationProgressLogEntry): void {
     if (!this.enabled) {
       return;
@@ -511,6 +539,10 @@ export class ReadOnlyValidationProgressReporter {
   }
 }
 
+/**
+ * Resolves whether the CLI should print the human-readable report or the raw
+ * structured JSON payload.
+ */
 export function resolveReadOnlyValidationOutputMode(
   options: { json: boolean },
   isInteractiveOutput: boolean
@@ -518,6 +550,10 @@ export function resolveReadOnlyValidationOutputMode(
   return options.json || !isInteractiveOutput ? "json" : "human";
 }
 
+/**
+ * Formats a structured live validation report for human-readable terminal
+ * output.
+ */
 export function formatReadOnlyValidationReport(
   report: ReadOnlyValidationReport,
   options: FormatReadOnlyValidationReportOptions = {}
@@ -586,6 +622,10 @@ export function formatReadOnlyValidationReport(
   return `${lines.join("\n")}\n`;
 }
 
+/**
+ * Formats a structured live validation failure into a concise operator-facing
+ * error summary.
+ */
 export function formatReadOnlyValidationError(
   payload: LinkedInAssistantErrorPayload,
   options: FormatReadOnlyValidationErrorOptions = {}

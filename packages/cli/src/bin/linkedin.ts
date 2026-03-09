@@ -4156,15 +4156,19 @@ export function createCliProgram(): Command {
         "Confirm that the live validation should run in strictly read-only mode",
         false
       )
-      .option("-s, --session <session>", "Stored session name", "default")
+      .option(
+        "-s, --session <session>",
+        "Stored session name captured by linkedin auth session",
+        "default"
+      )
       .option(
         "--timeout-seconds <seconds>",
-        "Maximum time allowed per validation step",
+        "Navigation and selector timeout per validation step",
         "30"
       )
       .option(
         "--max-requests <count>",
-        "Maximum live page requests allowed before the run stops",
+        "Maximum live page requests allowed before the run stops (retries included)",
         "20"
       )
       .option(
@@ -4189,25 +4193,35 @@ export function createCliProgram(): Command {
       )
       .option(
         "--no-progress",
-        "Hide per-step progress updates in human-readable output"
+        "Hide per-step progress updates in human-readable output (stderr)"
       )
       .option(
         "-y, --yes",
-        "Skip per-step confirmation prompts for unattended runs",
+        "Skip per-step confirmation prompts; read-only guardrails still apply",
         false
       )
       .option(
         "--json",
-        "Print the structured report JSON (recommended for scripts)",
+        "Print the structured report JSON to stdout (recommended for CI/scripts)",
         false
       )
       .addHelpText(
         "after",
         [
           "",
+          "Workflow:",
+          "  - capture or refresh a stored session first with linkedin auth session --session <name>",
+          "  - the validator always runs this fixed suite in order: feed, profile, notifications, inbox, connections",
+          "",
           "Output:",
           "  - interactive terminals default to a human-readable summary with per-step progress",
-          "  - --json prints only the structured report to stdout; prompts stay on stderr",
+          "  - non-interactive terminals default to JSON",
+          "  - --json prints the structured report to stdout; prompts and progress stay on stderr",
+          "  - there is no separate --verbose flag; human mode is already the most detailed built-in view",
+          "",
+          "Configuration:",
+          "  - LINKEDIN_ASSISTANT_HOME stores the encrypted session, reports, and latest-report.json",
+          "  - PLAYWRIGHT_EXECUTABLE_PATH overrides Chromium if Playwright cannot find one",
           "",
           "Exit codes:",
           "  - 0 all validation steps passed",
@@ -4222,9 +4236,15 @@ export function createCliProgram(): Command {
           "  - returns partial results if a later step hits a blocking failure",
           "",
           "Examples:",
-          "  linkedin test live --read-only",
-          "  linkedin test live --read-only --yes --session smoke --max-retries 3",
-          "  linkedin test:live --read-only --yes --json"
+          "  linkedin auth session --session smoke",
+          "  linkedin test live --read-only --session smoke",
+          "  linkedin test live --read-only --session smoke --yes",
+          "  linkedin test live --read-only --session smoke --yes --json",
+          "  linkedin test live --read-only --session smoke --yes --json | jq '.operations[] | select(.operation == \"notifications\")'",
+          "",
+          "Docs:",
+          "  - docs/live-validation.md",
+          "  - docs/live-validation-architecture.md"
         ].join("\n")
       )
       .action(

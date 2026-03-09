@@ -29,6 +29,12 @@ import {
 } from "./auth/sessionStore.js";
 import { inspectLinkedInSession } from "./auth/sessionInspection.js";
 
+/**
+ * Fixed Tier 2 live validation operations executed by the CLI and Core API.
+ *
+ * The run always walks this list in order so report diffs stay comparable from
+ * one execution to the next.
+ */
 export const LINKEDIN_READ_ONLY_VALIDATION_OPERATIONS = [
   {
     id: "feed",
@@ -52,13 +58,27 @@ export const LINKEDIN_READ_ONLY_VALIDATION_OPERATIONS = [
   }
 ] as const;
 
+/**
+ * Descriptor for one built-in read-only live validation operation.
+ */
 export type LinkedInReadOnlyValidationOperation =
   (typeof LINKEDIN_READ_ONLY_VALIDATION_OPERATIONS)[number];
 
+/**
+ * Stable identifier for a built-in read-only live validation operation.
+ */
 export type LinkedInReadOnlyValidationOperationId =
   LinkedInReadOnlyValidationOperation["id"];
 
+/**
+ * Top-level pass/fail status used by selector, operation, and report results.
+ */
 export type ReadOnlyValidationStatus = "pass" | "fail";
+
+/**
+ * Diff category emitted when the current run is compared against the rolling
+ * `latest-report.json` snapshot.
+ */
 export type ReadOnlyValidationDiffChange =
   | "fallback_drift"
   | "new_failure"
@@ -90,6 +110,9 @@ interface ReadOnlyOperationExecutionResult {
   threadUrl?: string;
 }
 
+/**
+ * Selector-level outcome recorded for one validation step.
+ */
 export interface ReadOnlyValidationSelectorResult {
   description: string;
   error?: string;
@@ -100,6 +123,9 @@ export interface ReadOnlyValidationSelectorResult {
   status: ReadOnlyValidationStatus;
 }
 
+/**
+ * Aggregated result for one page-level live validation operation.
+ */
 export interface ReadOnlyValidationOperationResult {
   attempt_count: number;
   completed_at: string;
@@ -119,6 +145,9 @@ export interface ReadOnlyValidationOperationResult {
   warnings: string[];
 }
 
+/**
+ * Selector diff entry comparing the current run against the previous snapshot.
+ */
 export interface ReadOnlyValidationDiffEntry {
   change: ReadOnlyValidationDiffChange;
   current_candidate_key: string | null;
@@ -129,6 +158,9 @@ export interface ReadOnlyValidationDiffEntry {
   selector_key: string;
 }
 
+/**
+ * Regression and recovery summary for the current run.
+ */
 export interface ReadOnlyValidationDiff {
   previous_report_path?: string;
   recoveries: ReadOnlyValidationDiffEntry[];
@@ -136,6 +168,9 @@ export interface ReadOnlyValidationDiff {
   unchanged_count: number;
 }
 
+/**
+ * Network request blocked by the read-only guard during the run.
+ */
 export interface ReadOnlyValidationBlockedRequest {
   blocked_at: string;
   method: string;
@@ -144,6 +179,9 @@ export interface ReadOnlyValidationBlockedRequest {
   url: string;
 }
 
+/**
+ * Full structured report returned by the Tier 2 live validation pipeline.
+ */
 export interface ReadOnlyValidationReport {
   blocked_request_count: number;
   blocked_requests: ReadOnlyValidationBlockedRequest[];
@@ -175,18 +213,40 @@ export interface ReadOnlyValidationReport {
   summary: string;
 }
 
+/**
+ * Optional overrides and hooks for `runReadOnlyLinkedInLiveValidation()`.
+ */
 export interface RunReadOnlyValidationOptions {
+  /** Override the assistant home used for stored sessions, artifacts, and logs. */
   baseDir?: string;
+
+  /** Maximum live requests allowed across the run, including retries. */
   maxRequests?: number;
+
+  /** Maximum transient retries allowed per operation. */
   maxRetries?: number;
+
+  /** Minimum delay enforced between live requests. */
   minIntervalMs?: number;
+
+  /** Called before each operation so the CLI can prompt or pause the run. */
   onBeforeOperation?: (
     operation: LinkedInReadOnlyValidationOperation
   ) => Promise<void>;
+
+  /** Receives structured log events as the run progresses. */
   onLog?: (entry: JsonLogEntry) => void;
+
+  /** Initial exponential-backoff delay for transient retries. */
   retryBaseDelayMs?: number;
+
+  /** Maximum exponential-backoff delay for transient retries. */
   retryMaxDelayMs?: number;
+
+  /** Stored session name previously captured with `linkedin auth session`. */
   sessionName?: string;
+
+  /** Navigation and selector timeout applied to each operation. */
   timeoutMs?: number;
 }
 
@@ -556,6 +616,12 @@ function isAllowedLinkedInHost(hostname: string): boolean {
   );
 }
 
+/**
+ * Returns whether the request is allowed through the Tier 2 read-only network
+ * guard.
+ *
+ * Only `GET` requests to LinkedIn-owned hosts are allowed to continue.
+ */
 export function isAllowedLinkedInReadOnlyRequest(
   urlString: string,
   method: string
@@ -905,6 +971,9 @@ async function installReadOnlyNetworkGuard(
   });
 }
 
+/**
+ * Enforces the per-run request cap and minimum interval between live requests.
+ */
 export class ReadOnlyOperationRateLimiter {
   private lastRequestAtMs: number | null = null;
 
@@ -937,6 +1006,10 @@ export class ReadOnlyOperationRateLimiter {
     }
   }
 
+  /**
+   * Waits until the next request slot is available or throws `RATE_LIMITED`
+   * when the request budget has already been exhausted.
+   */
   async waitTurn(operationId: LinkedInReadOnlyValidationOperationId): Promise<void> {
     if (this.requestCount >= this.maxRequests) {
       throw new LinkedInAssistantError(
@@ -963,10 +1036,16 @@ export class ReadOnlyOperationRateLimiter {
     this.requestCount += 1;
   }
 
+  /**
+   * Returns how many live requests have been consumed so far.
+   */
   getRequestCount(): number {
     return this.requestCount;
   }
 
+  /**
+   * Returns whether the configured request cap has been reached.
+   */
   hasReachedLimit(): boolean {
     return this.requestCount >= this.maxRequests;
   }
@@ -1084,6 +1163,10 @@ function isReadOnlyValidationReport(value: unknown): value is ReadOnlyValidation
   );
 }
 
+/**
+ * Compares the current run with the previous rolling snapshot and classifies
+ * selector regressions, recoveries, and unchanged results.
+ */
 export function computeReadOnlyValidationDiff(
   currentReport: Pick<ReadOnlyValidationReport, "operations">,
   previousReport:
@@ -1504,6 +1587,15 @@ async function createBrowserContext(
   }
 }
 
+/**
+ * Runs the Tier 2 read-only LinkedIn live validation workflow and returns the
+ * structured report persisted under the current run artifact directory.
+ *
+ * The pipeline loads an encrypted stored session, installs a read-only network
+ * guard, walks the fixed operation suite, compares the result against the
+ * previous snapshot, and writes both the run-scoped report and the rolling
+ * `latest-report.json` snapshot.
+ */
 export async function runReadOnlyLinkedInLiveValidation(
   options: RunReadOnlyValidationOptions = {}
 ): Promise<ReadOnlyValidationReport> {
