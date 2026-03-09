@@ -20,10 +20,14 @@ import {
 export interface SessionStatus {
   authenticated: boolean;
   checkedAt: string;
+  checkpointDetected?: boolean;
   currentUrl: string;
+  loginWallDetected?: boolean;
   reason: string;
   rateLimitActive?: boolean;
+  rateLimited?: boolean;
   rateLimitUntil?: string;
+  sessionCookiePresent?: boolean;
 }
 
 export interface SessionOptions {
@@ -144,7 +148,7 @@ export class LinkedInAuthService {
     if (!status.authenticated) {
       const code = status.rateLimitActive
         ? "RATE_LIMITED"
-        : status.currentUrl.includes("/checkpoint")
+        : status.checkpointDetected
           ? "CAPTCHA_OR_CHALLENGE"
           : "AUTH_REQUIRED";
       const guidance = status.rateLimitActive

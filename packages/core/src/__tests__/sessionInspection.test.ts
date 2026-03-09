@@ -38,9 +38,11 @@ describe("inspectLinkedInSession", () => {
     const status = await inspectLinkedInSession(page);
 
     expect(status.authenticated).toBe(false);
+    expect(status.loginWallDetected).toBe(false);
     expect(status.reason).toBe(
       "Could not confirm an authenticated LinkedIn session."
     );
+    expect(status.sessionCookiePresent).toBe(false);
   });
 
   it("marks the session unauthenticated when the login form is visible", async () => {
@@ -52,7 +54,21 @@ describe("inspectLinkedInSession", () => {
     const status = await inspectLinkedInSession(page);
 
     expect(status.authenticated).toBe(false);
+    expect(status.loginWallDetected).toBe(false);
     expect(status.reason).toBe("Login form is visible.");
+  });
+
+  it("detects a login wall even when the URL still looks like feed", async () => {
+    const page = createMockPage({
+      url: "https://www.linkedin.com/feed/",
+      isVisible: (selector) => selector.includes("[data-test-id='sign-in-form']")
+    });
+
+    const status = await inspectLinkedInSession(page);
+
+    expect(status.authenticated).toBe(false);
+    expect(status.loginWallDetected).toBe(true);
+    expect(status.reason).toBe("LinkedIn login wall detected.");
   });
 
   it("detects LinkedIn rate-limit challenge URLs", async () => {
@@ -63,7 +79,21 @@ describe("inspectLinkedInSession", () => {
     const status = await inspectLinkedInSession(page);
 
     expect(status.authenticated).toBe(false);
+    expect(status.checkpointDetected).toBe(true);
+    expect(status.rateLimited).toBe(true);
     expect(status.reason).toBe("LinkedIn rate-limit challenge detected.");
+  });
+
+  it("flags LinkedIn authwall pages as login walls", async () => {
+    const page = createMockPage({
+      url: "https://www.linkedin.com/authwall?trk=public_profile"
+    });
+
+    const status = await inspectLinkedInSession(page);
+
+    expect(status.authenticated).toBe(false);
+    expect(status.loginWallDetected).toBe(true);
+    expect(status.reason).toContain("Login form");
   });
 
   it("authenticates when the localized profile-menu aria label is visible", async () => {
@@ -77,6 +107,7 @@ describe("inspectLinkedInSession", () => {
     });
 
     expect(status.authenticated).toBe(true);
+    expect(status.loginWallDetected).toBe(false);
     expect(status.reason).toContain("authenticated");
   });
 

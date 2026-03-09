@@ -10,12 +10,22 @@ export interface LinkedInSessionInspection {
   checkedAt: string;
   currentUrl: string;
   reason: string;
+  checkpointDetected: boolean;
+  loginWallDetected: boolean;
+  rateLimited: boolean;
+  sessionCookiePresent: boolean;
 }
 
 const LOGIN_FORM_SELECTOR = "input[name='session_key'], input#username";
 const CHECKPOINT_FORM_SELECTOR = "form[action*='checkpoint']";
 const AUTH_NAV_SELECTOR = "nav.global-nav";
 const AUTH_PROFILE_MENU_SELECTOR = "[data-control-name='nav.settings_view_profile']";
+const LOGIN_WALL_SELECTOR = [
+  "[data-test-id='sign-in-form']",
+  ".authwall",
+  "form[action*='login-submit']",
+  "a[href*='/login'][data-tracking-control-name]"
+].join(", ");
 
 async function isVisibleSafe(page: Page, selector: string): Promise<boolean> {
   try {
@@ -71,26 +81,39 @@ export async function inspectLinkedInSession(
   const checkpointVisible =
     isCheckpointUrl(currentUrl) ||
     (await isVisibleSafe(page, CHECKPOINT_FORM_SELECTOR));
+  const sessionCookiePresent = await hasSessionCookie(page);
 
   if (checkpointVisible) {
-    const reason = isRateLimitedChallengeUrl(currentUrl)
+    const rateLimited = isRateLimitedChallengeUrl(currentUrl);
+    const reason = rateLimited
       ? "LinkedIn rate-limit challenge detected."
       : "LinkedIn checkpoint detected. Manual verification is required.";
     return {
       authenticated: false,
       checkedAt,
       currentUrl,
-      reason
+      reason,
+      checkpointDetected: true,
+      loginWallDetected: false,
+      rateLimited,
+      sessionCookiePresent
     };
   }
 
   const loginFormVisible = await isVisibleSafe(page, LOGIN_FORM_SELECTOR);
-  if (loginFormVisible || isLoginUrl(currentUrl)) {
+  const loginWallVisible = await isVisibleSafe(page, LOGIN_WALL_SELECTOR);
+  if (loginFormVisible || isLoginUrl(currentUrl) || loginWallVisible) {
     return {
       authenticated: false,
       checkedAt,
       currentUrl,
-      reason: "Login form is visible."
+      reason: loginWallVisible
+        ? "LinkedIn login wall detected."
+        : "Login form is visible.",
+      checkpointDetected: false,
+      loginWallDetected: loginWallVisible || isLoginUrl(currentUrl),
+      rateLimited: false,
+      sessionCookiePresent
     };
   }
 
@@ -103,14 +126,16 @@ export async function inspectLinkedInSession(
     page,
     profileMenuSelector
   );
-  const sessionCookiePresent = await hasSessionCookie(page);
-
   if (navVisible || profileMenuVisible || sessionCookiePresent) {
     return {
       authenticated: true,
       checkedAt,
       currentUrl,
-      reason: "LinkedIn session appears authenticated."
+      reason: "LinkedIn session appears authenticated.",
+      checkpointDetected: false,
+      loginWallDetected: false,
+      rateLimited: false,
+      sessionCookiePresent
     };
   }
 
@@ -118,6 +143,10 @@ export async function inspectLinkedInSession(
     authenticated: false,
     checkedAt,
     currentUrl,
-    reason: "Could not confirm an authenticated LinkedIn session."
+    reason: "Could not confirm an authenticated LinkedIn session.",
+    checkpointDetected: false,
+    loginWallDetected: false,
+    rateLimited: false,
+    sessionCookiePresent
   };
 }

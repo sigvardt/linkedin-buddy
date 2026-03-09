@@ -1,5 +1,12 @@
 import type { BrowserContext, Page } from "playwright-core";
 import { inspectLinkedInSession } from "./auth/sessionInspection.js";
+import {
+  getLinkedInSessionFingerprint,
+  summarizeLinkedInSessionCookies,
+  type LinkedInSessionCookieMetadata
+} from "./auth/sessionStore.js";
+
+export const DEFAULT_SESSION_COOKIE_EXPIRY_WARNING_MS = 60 * 60_000;
 
 export interface BrowserHealthStatus {
   healthy: boolean;
@@ -13,6 +20,14 @@ export interface SessionHealthStatus {
   currentUrl: string;
   reason: string;
   checkedAt: string;
+  checkpointDetected: boolean;
+  cookieExpiringSoon: boolean;
+  loginWallDetected: boolean;
+  nextCookieExpiryAt: string | null;
+  rateLimited: boolean;
+  sessionCookieFingerprint: string | null;
+  sessionCookiePresent: boolean;
+  sessionCookies: LinkedInSessionCookieMetadata[];
 }
 
 export interface FullHealthStatus {
@@ -63,7 +78,31 @@ export async function checkLinkedInSession(
       waitUntil: "domcontentloaded"
     });
 
-    return inspectLinkedInSession(page);
+    const inspection = await inspectLinkedInSession(page);
+    const cookies = await context.cookies("https://www.linkedin.com");
+    const sessionCookies = summarizeLinkedInSessionCookies(cookies);
+    const nextCookieExpiryAt = sessionCookies.find(
+      (cookie) => cookie.expiresAt !== null && (cookie.expiresInMs ?? 0) > 0
+    )?.expiresAt ?? null;
+    const cookieExpiringSoon = sessionCookies.some(
+      (cookie) =>
+        cookie.expiresInMs !== null &&
+        cookie.expiresInMs > 0 &&
+        cookie.expiresInMs <= DEFAULT_SESSION_COOKIE_EXPIRY_WARNING_MS
+    );
+
+    return {
+      ...inspection,
+      cookieExpiringSoon,
+      nextCookieExpiryAt,
+      sessionCookieFingerprint:
+        sessionCookies.length > 0
+          ? getLinkedInSessionFingerprint({ cookies })
+          : null,
+      sessionCookiePresent:
+        inspection.sessionCookiePresent || sessionCookies.length > 0,
+      sessionCookies
+    };
   } catch (error) {
     const checkedAt = new Date().toISOString();
     const currentUrl = context.pages()[0]?.url() ?? "";
@@ -76,7 +115,15 @@ export async function checkLinkedInSession(
       authenticated: false,
       checkedAt,
       currentUrl,
-      reason
+      reason,
+      checkpointDetected: false,
+      cookieExpiringSoon: false,
+      loginWallDetected: false,
+      nextCookieExpiryAt: null,
+      rateLimited: false,
+      sessionCookieFingerprint: null,
+      sessionCookiePresent: false,
+      sessionCookies: []
     };
   }
 }

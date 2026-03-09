@@ -120,4 +120,54 @@ describe("CDPConnectionPool", () => {
     expect(first.close).toHaveBeenCalledTimes(1);
     expect(second.close).toHaveBeenCalledTimes(1);
   });
+
+  it("preemptively reconnects stale connections before they age out", async () => {
+    vi.useFakeTimers();
+
+    const pool = new CDPConnectionPool({
+      idleTimeoutMs: 60_000,
+      maxConnectionAgeMs: 1_000
+    });
+    const first = createMockBrowser(true);
+    const second = createMockBrowser(true);
+
+    playwrightMocks.connectOverCDP
+      .mockResolvedValueOnce(first.mockBrowser)
+      .mockResolvedValueOnce(second.mockBrowser);
+
+    const firstLease = await pool.acquire("http://127.0.0.1:18800");
+    firstLease.release();
+
+    await vi.advanceTimersByTimeAsync(1_500);
+
+    const secondLease = await pool.acquire("http://127.0.0.1:18800");
+
+    expect(playwrightMocks.connectOverCDP).toHaveBeenCalledTimes(2);
+    expect(first.close).toHaveBeenCalledTimes(1);
+    expect(secondLease.context).toBe(second.mockContext);
+
+    secondLease.release();
+    await pool.dispose();
+  });
+
+  it("exposes connection stats for monitoring", async () => {
+    const pool = new CDPConnectionPool({ idleTimeoutMs: 10 });
+    const { mockBrowser } = createMockBrowser();
+    playwrightMocks.connectOverCDP.mockResolvedValue(mockBrowser);
+
+    const lease = await pool.acquire("http://127.0.0.1:18800");
+    const [stats] = pool.getStats();
+
+    expect(stats).toMatchObject({
+      cdpUrl: "http://127.0.0.1:18800",
+      connected: true,
+      idleScheduled: false,
+      refCount: 1
+    });
+    expect(stats?.connectedAt).toContain("T");
+    expect(stats?.lastAcquiredAt).toContain("T");
+
+    lease.release();
+    await pool.dispose();
+  });
 });
