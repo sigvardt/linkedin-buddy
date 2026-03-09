@@ -66,6 +66,9 @@ interface AcceptanceProbeResult {
   acceptedDetection: string;
 }
 
+/**
+ * Accepted sent invitation enriched with follow-up preparation status.
+ */
 export interface LinkedInAcceptedConnection {
   profile_url_key: string;
   profile_url: string;
@@ -83,12 +86,18 @@ export interface LinkedInAcceptedConnection {
   followup_expires_at_ms: number | null;
 }
 
+/**
+ * Input for listing accepted connections that may need follow-up work.
+ */
 export interface ListAcceptedConnectionsInput {
   profileName?: string;
   since?: string;
   sinceMs?: number;
 }
 
+/**
+ * Input for the manual batch prepare workflow after acceptance detection.
+ */
 export interface PrepareFollowupsAfterAcceptInput {
   profileName?: string;
   since?: string;
@@ -96,6 +105,10 @@ export interface PrepareFollowupsAfterAcceptInput {
   operatorNote?: string;
 }
 
+/**
+ * Input for preparing a follow-up for one accepted connection by stable
+ * profile identity.
+ */
 export interface PrepareAcceptedConnectionFollowupInput {
   profileName?: string;
   profileUrlKey: string;
@@ -103,6 +116,10 @@ export interface PrepareAcceptedConnectionFollowupInput {
   refreshState?: boolean;
 }
 
+/**
+ * Prepared follow-up action details returned from the accepted-connection
+ * follow-up flow.
+ */
 export interface PreparedAcceptedConnectionFollowup {
   connection: LinkedInAcceptedConnection;
   preparedActionId: string;
@@ -111,12 +128,18 @@ export interface PreparedAcceptedConnectionFollowup {
   preview: Record<string, unknown>;
 }
 
+/**
+ * Result returned from the manual batch follow-up prepare command.
+ */
 export interface PrepareFollowupsAfterAcceptResult {
   since: string;
   acceptedConnections: LinkedInAcceptedConnection[];
   preparedFollowups: PreparedAcceptedConnectionFollowup[];
 }
 
+/**
+ * Runtime dependencies used by the confirm-time follow-up executor.
+ */
 export interface LinkedInFollowupsExecutorRuntime {
   db: AssistantDatabase;
   auth: LinkedInAuthService;
@@ -128,6 +151,9 @@ export interface LinkedInFollowupsExecutorRuntime {
   logger: JsonEventLogger;
 }
 
+/**
+ * Runtime dependencies used by the accepted-connection follow-up service.
+ */
 export interface LinkedInFollowupsRuntime extends LinkedInFollowupsExecutorRuntime {
   connections: {
     listPendingInvitations(input: {
@@ -159,6 +185,9 @@ function extractFirstName(fullName: string): string {
   return normalizeText(fullName).split(" ")[0] ?? "";
 }
 
+/**
+ * Builds the default accepted-connection follow-up message.
+ */
 export function buildDefaultFollowupText(fullName: string): string {
   const firstName = extractFirstName(fullName);
   if (firstName) {
@@ -168,6 +197,10 @@ export function buildDefaultFollowupText(fullName: string): string {
   return "Hi, thanks for accepting my invitation. Great to connect.";
 }
 
+/**
+ * Resolves the accepted-connection follow-up lookback window from a relative
+ * duration or absolute timestamp.
+ */
 export function resolveFollowupSinceWindow(
   since: string | undefined,
   nowMs = Date.now()
@@ -822,6 +855,9 @@ function mapAcceptedConnections(
   );
 }
 
+/**
+ * Confirm-time executor for accepted-connection follow-up actions.
+ */
 export class FollowupAfterAcceptActionExecutor
   implements ActionExecutor<LinkedInFollowupsExecutorRuntime>
 {
@@ -1099,6 +1135,10 @@ export class FollowupAfterAcceptActionExecutor
   }
 }
 
+/**
+ * Builds the follow-up action executor registry used by the shared two-phase
+ * commit runtime.
+ */
 export function createFollowupActionExecutors(): Record<
   string,
   ActionExecutor<LinkedInFollowupsExecutorRuntime>
@@ -1108,6 +1148,14 @@ export function createFollowupActionExecutors(): Record<
   };
 }
 
+/**
+ * Lists accepted sent invitations and prepares follow-up actions on demand.
+ *
+ * @remarks
+ * This service never auto-confirms prepared actions. It produces prepared
+ * actions that must still be confirmed through the shared two-phase commit
+ * flow.
+ */
 export class LinkedInFollowupsService {
   constructor(private readonly runtime: LinkedInFollowupsRuntime) {}
 
@@ -1135,6 +1183,10 @@ export class LinkedInFollowupsService {
     };
   }
 
+  /**
+   * Refreshes accepted invitation state and returns accepted connections within
+   * the requested lookback window.
+   */
   async listAcceptedConnections(
     input: ListAcceptedConnectionsInput = {}
   ): Promise<LinkedInAcceptedConnection[]> {
@@ -1149,6 +1201,10 @@ export class LinkedInFollowupsService {
     }).acceptedConnections;
   }
 
+  /**
+   * Refreshes accepted invitation state and prepares follow-ups for every
+   * accepted connection that still needs one.
+   */
   async prepareFollowupsAfterAccept(
     input: PrepareFollowupsAfterAcceptInput = {}
   ): Promise<PrepareFollowupsAfterAcceptResult> {
@@ -1195,6 +1251,13 @@ export class LinkedInFollowupsService {
     };
   }
 
+  /**
+   * Prepares a follow-up for one accepted connection identified by
+   * `profileUrlKey`.
+   *
+   * @returns The prepared action when the connection still needs a follow-up;
+   * otherwise `null`.
+   */
   async prepareFollowupForAcceptedConnection(
     input: PrepareAcceptedConnectionFollowupInput
   ): Promise<PreparedAcceptedConnectionFollowup | null> {

@@ -42,6 +42,13 @@ export interface ConfirmFailureArtifactConfig {
   traceMaxBytes: number;
 }
 
+/**
+ * Scheduler lane names accepted by config validation.
+ *
+ * @remarks
+ * Only `followup_preparation` performs useful work in the current build. The
+ * remaining names reserve stable config values for future scheduler queues.
+ */
 export const SCHEDULER_LANES = [
   "inbox_triage",
   "pending_invite_checks",
@@ -49,47 +56,89 @@ export const SCHEDULER_LANES = [
   "feed_engagement"
 ] as const;
 
+/**
+ * Union of supported scheduler lane identifiers.
+ */
 export type SchedulerLane = (typeof SCHEDULER_LANES)[number];
 
+/**
+ * Scheduler lanes enabled by default when no explicit env override is set.
+ */
 export const DEFAULT_SCHEDULER_ENABLED_LANES: SchedulerLane[] = [
   "followup_preparation"
 ];
 
+/** Default background poll interval for the local scheduler daemon. */
 export const DEFAULT_SCHEDULER_POLL_INTERVAL_MS = 5 * 60 * 1000;
+/** Default number of due jobs claimed and processed in one tick. */
 export const DEFAULT_SCHEDULER_MAX_JOBS_PER_TICK = 2;
+/** Default cap on active scheduler jobs tracked for one profile. */
 export const DEFAULT_SCHEDULER_MAX_ACTIVE_JOBS_PER_PROFILE = 100;
+/** Default lease TTL applied when a worker claims scheduler jobs. */
 export const DEFAULT_SCHEDULER_LEASE_TTL_MS = 2 * 60 * 1000;
+/** Default delay between acceptance detection and follow-up preparation. */
 export const DEFAULT_SCHEDULER_FOLLOWUP_DELAY_MS = 15 * 60 * 1000;
+/** Default lookback window used when refreshing accepted connections. */
 export const DEFAULT_SCHEDULER_FOLLOWUP_LOOKBACK_MS =
   30 * 24 * 60 * 60 * 1000;
+/** Default maximum retry attempts for a scheduler job. */
 export const DEFAULT_SCHEDULER_MAX_ATTEMPTS = 5;
+/** Default initial retry backoff for retryable scheduler failures. */
 export const DEFAULT_SCHEDULER_INITIAL_BACKOFF_MS = 5 * 60 * 1000;
+/** Default cap for exponential scheduler retry backoff. */
 export const DEFAULT_SCHEDULER_MAX_BACKOFF_MS = 6 * 60 * 60 * 1000;
+/** Default local business-hours start used by the scheduler. */
 export const DEFAULT_SCHEDULER_BUSINESS_START = "09:00";
+/** Default local business-hours end used by the scheduler. */
 export const DEFAULT_SCHEDULER_BUSINESS_END = "17:00";
 
+/**
+ * Business-hours window applied before the scheduler may prepare due work.
+ */
 export interface SchedulerBusinessHoursConfig {
+  /** IANA timezone used to interpret the local business-hours window. */
   timeZone: string;
+  /** Inclusive local start time in `HH:MM` 24-hour format. */
   startTime: string;
+  /** Exclusive local end time in `HH:MM` 24-hour format. */
   endTime: string;
 }
 
+/**
+ * Retry policy applied when scheduler jobs fail with retryable errors.
+ */
 export interface SchedulerRetryConfig {
+  /** Maximum attempts before a job is marked failed. */
   maxAttempts: number;
+  /** Initial retry delay used for the first retryable failure. */
   initialBackoffMs: number;
+  /** Upper bound for exponential backoff growth. */
   maxBackoffMs: number;
 }
 
+/**
+ * Resolved scheduler configuration shared by the CLI daemon and core service.
+ */
 export interface SchedulerConfig {
+  /** Master on/off switch for scheduler work. */
   enabled: boolean;
+  /** Delay between background daemon ticks. */
   pollIntervalMs: number;
+  /** Maximum number of due jobs processed in one tick. */
   maxJobsPerTick: number;
+  /** Maximum number of active jobs tracked for one profile. */
   maxActiveJobsPerProfile: number;
+  /** Lease TTL used when a worker claims scheduler jobs. */
   leaseTtlMs: number;
+  /** Enabled scheduler lanes after config validation and normalization. */
   enabledLanes: SchedulerLane[];
+  /** Local business-hours window used for due-time alignment. */
   businessHours: SchedulerBusinessHoursConfig;
+  /** Delay between acceptance detection and follow-up job due time. */
   followupDelayMs: number;
+  /** Accepted-connection lookback window used during refresh. */
   followupLookbackMs: number;
+  /** Retry policy for retryable scheduler failures. */
   retry: SchedulerRetryConfig;
 }
 
@@ -437,6 +486,14 @@ export function resolveConfirmFailureArtifactConfig(): ConfirmFailureArtifactCon
   };
 }
 
+/**
+ * Resolves scheduler settings from environment variables.
+ *
+ * @remarks
+ * This function validates business hours, lane names, and retry bounds up
+ * front so the CLI can fail fast with actionable guidance before any work is
+ * queued or prepared.
+ */
 export function resolveSchedulerConfig(): SchedulerConfig {
   const pollIntervalMs =
     parseStrictPositiveInteger({

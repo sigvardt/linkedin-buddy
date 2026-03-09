@@ -335,8 +335,17 @@ describe("linkedin scheduler CLI UX", () => {
     const schedulerCommand = program.commands.find(
       (command) => command.name() === "scheduler"
     );
+    const startCommand = schedulerCommand?.commands.find(
+      (command) => command.name() === "start"
+    );
     const statusCommand = schedulerCommand?.commands.find(
       (command) => command.name() === "status"
+    );
+    const stopCommand = schedulerCommand?.commands.find(
+      (command) => command.name() === "stop"
+    );
+    const runOnceCommand = schedulerCommand?.commands.find(
+      (command) => command.name() === "run-once"
     );
 
     expect(schedulerCommand?.description()).toContain(
@@ -345,7 +354,16 @@ describe("linkedin scheduler CLI UX", () => {
     expect(schedulerCommand?.description()).toContain(
       "prepared actions still require manual confirmation"
     );
+    expect(startCommand?.helpInformation() ?? "").toContain(
+      "current poll interval"
+    );
     expect(statusCommand?.helpInformation() ?? "").toContain("--json");
     expect(statusCommand?.helpInformation() ?? "").toContain("--jobs");
+    expect(stopCommand?.helpInformation() ?? "").toMatch(
+      /without deleting queued\s+jobs/
+    );
+    expect(runOnceCommand?.helpInformation() ?? "").toContain(
+      "refresh queue state"
+    );
   });
 });
