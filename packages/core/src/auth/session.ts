@@ -251,11 +251,13 @@ export class LinkedInAuthService {
         const hp = humanize(page, { fast: false });
         await hp.type(
           "input[name='session_key'], input#username",
-          options.email
+          options.email,
+          { profile: "careful" }
         );
         await hp.type(
           "input[name='session_password'], input#password",
-          options.password
+          options.password,
+          { profile: "careful" }
         );
 
         const signInButton = page.locator(
