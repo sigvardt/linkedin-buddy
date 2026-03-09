@@ -1,7 +1,11 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Page } from "playwright-core";
 import type { TypingProfile } from "../humanize.js";
-import { HumanizedPage, getAdjacentTypoCandidates } from "../humanize.js";
+import {
+  attachHumanizeLogger,
+  HumanizedPage,
+  getAdjacentTypoCandidates
+} from "../humanize.js";
 
 function createStableTypingOptions(overrides: Partial<TypingProfile> = {}) {
   return {
@@ -82,6 +86,11 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+beforeEach(() => {
+  vi.spyOn(console, "debug").mockImplementation(() => {});
+  vi.spyOn(console, "info").mockImplementation(() => {});
+});
+
 describe("HumanizedPage hardening", () => {
   it("falls back to direct input when simulated typing fails", async () => {
     const { fill, keyboard, page } = createPageMock();
@@ -133,5 +142,47 @@ describe("HumanizedPage hardening", () => {
     expect(() => new HumanizedPage(page, { jitterRange: -1 })).toThrow(/jitterRange/);
     expect(() => getAdjacentTypoCandidates(42 as unknown as string)).toThrow(/character/);
     await expect(humanizedPage.type("", "ok")).rejects.toThrow(/selector/);
+    expect(
+      () => new HumanizedPage(page, { typingProfiles: "fast" } as unknown as never)
+    ).toThrow(/Did you mean "typingProfile"/);
+    await expect(
+      humanizedPage.type("#composer", "ok", {
+        profileOverrides: {
+          typoChance: 0.2
+        } as unknown as Partial<TypingProfile>
+      })
+    ).rejects.toThrow(/Did you mean "typoRate"/);
+  });
+
+  it("emits logger-backed typing start and completion events with field labels", async () => {
+    const { page } = createPageMock();
+    const logger = {
+      log: vi.fn()
+    };
+    attachHumanizeLogger(page, logger);
+    const humanizedPage = new HumanizedPage(page, { baseDelay: 0, jitterRange: 0 });
+
+    await humanizedPage.type("#composer", "hello", {
+      ...createStableTypingOptions(),
+      fieldLabel: "email"
+    });
+
+    expect(logger.log).toHaveBeenCalledWith(
+      "info",
+      "humanize.typing.start",
+      expect.objectContaining({
+        field_label: "email",
+        graphemeCount: 5,
+        typing_profile: "careful"
+      })
+    );
+    expect(logger.log).toHaveBeenCalledWith(
+      "info",
+      "humanize.typing.done",
+      expect.objectContaining({
+        field_label: "email",
+        mode: "simulated"
+      })
+    );
   });
 });

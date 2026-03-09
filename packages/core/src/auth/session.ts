@@ -1,6 +1,7 @@
 import type { BrowserContext, Page } from "playwright-core";
 import { LinkedInAssistantError } from "../errors.js";
-import { humanize } from "../humanize.js";
+import { attachHumanizeLogger, detachHumanizeLogger, humanize } from "../humanize.js";
+import type { JsonEventLogger } from "../logging.js";
 import { ProfileManager } from "../profileManager.js";
 import {
   inspectLinkedInSession,
@@ -96,7 +97,8 @@ export class LinkedInAuthService {
     private readonly profileManager: ProfileManager,
     private readonly cdpUrl?: string,
     private readonly selectorLocale: LinkedInSelectorLocale =
-      DEFAULT_LINKEDIN_SELECTOR_LOCALE
+      DEFAULT_LINKEDIN_SELECTOR_LOCALE,
+    private readonly logger?: Pick<JsonEventLogger, "log">
   ) {}
 
   async status(options: SessionOptions = {}): Promise<SessionStatus> {
@@ -244,9 +246,21 @@ export class LinkedInAuthService {
         }
 
         // Human-like typing for credentials
-        const hp = humanize(page);
-        await hp.type("input[name='session_key'], input#username", options.email);
-        await hp.type("input[name='session_password'], input#password", options.password);
+        if (this.logger) {
+          attachHumanizeLogger(page, this.logger);
+        }
+
+        try {
+          const hp = humanize(page);
+          await hp.type("input[name='session_key'], input#username", options.email, {
+            fieldLabel: "email"
+          });
+          await hp.type("input[name='session_password'], input#password", options.password, {
+            fieldLabel: "password"
+          });
+        } finally {
+          detachHumanizeLogger(page);
+        }
 
         const signInButton = page.locator(
           "button[type='submit'][data-litms-control-urn='login-submit'], button[type='submit']:has-text('Sign in')"
