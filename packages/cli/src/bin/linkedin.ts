@@ -138,6 +138,18 @@ import {
   type SchedulerStatusReport,
   type SchedulerStopReport
 } from "../schedulerOutput.js";
+import {
+  formatKeepAliveError,
+  formatKeepAliveStartReport,
+  formatKeepAliveStatusReport,
+  formatKeepAliveStopReport,
+  resolveKeepAliveOutputMode,
+  type KeepAliveOutputMode,
+  type KeepAliveRecentEvent,
+  type KeepAliveStartReport,
+  type KeepAliveStatusReport,
+  type KeepAliveStopReport
+} from "../keepAliveOutput.js";
 
 const cliPrivacyConfig = resolvePrivacyConfig();
 const SELECTOR_AUDIT_DOC_PATH = "docs/selector-audit.md";
@@ -741,6 +753,7 @@ interface KeepAliveState {
   maxConsecutiveFailures: number;
   consecutiveFailures: number;
   lastTickAt?: string;
+  lastCheckStartedAt?: string;
   lastHealthyAt?: string;
   authenticated?: boolean;
   browserHealthy?: boolean;
@@ -748,6 +761,7 @@ interface KeepAliveState {
   reason?: string;
   lastError?: string;
   cdpUrl?: string;
+  healthCheckInProgress?: boolean;
   stoppedAt?: string;
 }
 
@@ -1023,6 +1037,69 @@ async function appendKeepAliveEvent(
   const files = getKeepAliveFiles(profileName);
   await ensureKeepAliveDir(files);
   await appendFile(files.logPath, `${JSON.stringify(event)}\n`, "utf8");
+}
+
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function asKeepAliveRecentEvent(value: unknown): KeepAliveRecentEvent | null {
+  if (!isRecordValue(value)) {
+    return null;
+  }
+
+  const ts = value.ts;
+  const event = value.event;
+  if (
+    typeof ts !== "string" ||
+    ts.trim().length === 0 ||
+    typeof event !== "string" ||
+    event.trim().length === 0
+  ) {
+    return null;
+  }
+
+  return {
+    ...value,
+    ts,
+    event
+  } as KeepAliveRecentEvent;
+}
+
+async function readKeepAliveRecentEvents(
+  profileName: string,
+  limit: number = 5
+): Promise<KeepAliveRecentEvent[]> {
+  const files = getKeepAliveFiles(profileName);
+
+  try {
+    const raw = await readFile(files.logPath, "utf8");
+    const events = raw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .slice(-limit)
+      .map((line) => {
+        try {
+          return asKeepAliveRecentEvent(JSON.parse(line) as unknown);
+        } catch {
+          return null;
+        }
+      })
+      .filter((event): event is KeepAliveRecentEvent => event !== null);
+
+    return events;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "ENOENT"
+    ) {
+      return [];
+    }
+
+    throw error;
+  }
 }
 
 async function readSchedulerPid(profileName: string): Promise<number | null> {
@@ -1662,6 +1739,9 @@ async function captureStoredSession(input: {
   writeCliNotice(
     "Sign in manually. The browser closes automatically after the authenticated session is stored."
   );
+  writeCliNotice(
+    "Leave the LinkedIn window open after sign-in until the CLI confirms the session was captured. Press Ctrl+C if you need to cancel."
+  );
 
   return captureLinkedInSession({
     sessionName: input.sessionName,
@@ -1915,31 +1995,185 @@ async function runRateLimitStatus(clear: boolean): Promise<void> {
   printJson(status);
 }
 
+interface KeepAliveCliOutputOptions {
+  outputMode: KeepAliveOutputMode;
+  quiet: boolean;
+  verbose: boolean;
+}
+
+function emitKeepAliveStartReport(
+  report: KeepAliveStartReport,
+  options: KeepAliveCliOutputOptions
+): void {
+  if (options.outputMode === "json") {
+    printJson(report);
+    return;
+  }
+
+  console.log(
+    formatKeepAliveStartReport(
+      redactStructuredValue(report, cliPrivacyConfig, "cli") as KeepAliveStartReport,
+      {
+        quiet: options.quiet,
+        verbose: options.verbose
+      }
+    )
+  );
+}
+
+function emitKeepAliveStatusReport(
+  report: KeepAliveStatusReport,
+  options: KeepAliveCliOutputOptions
+): void {
+  if (options.outputMode === "json") {
+    printJson(report);
+    return;
+  }
+
+  console.log(
+    formatKeepAliveStatusReport(
+      redactStructuredValue(report, cliPrivacyConfig, "cli") as KeepAliveStatusReport,
+      {
+        quiet: options.quiet,
+        verbose: options.verbose
+      }
+    )
+  );
+}
+
+function emitKeepAliveStopReport(
+  report: KeepAliveStopReport,
+  options: KeepAliveCliOutputOptions
+): void {
+  if (options.outputMode === "json") {
+    printJson(report);
+    return;
+  }
+
+  console.log(
+    formatKeepAliveStopReport(
+      redactStructuredValue(report, cliPrivacyConfig, "cli") as KeepAliveStopReport,
+      {
+        quiet: options.quiet,
+        verbose: options.verbose
+      }
+    )
+  );
+}
+
+function writeKeepAliveProgressNotice(
+  outputMode: KeepAliveOutputMode,
+  quiet: boolean,
+  message: string
+): void {
+  if (outputMode === "human" && !quiet) {
+    writeCliNotice(message);
+  }
+}
+
+function warnAboutExternalCdpDaemonSession(): void {
+  writeCliWarning("--cdp-url attaches keepalive to an existing browser session.");
+  writeCliNotice("The daemon will share cookies and session state with that browser until you stop it.");
+  writeCliNotice("For an isolated tool-owned profile, omit --cdp-url.");
+}
+
+function assertKeepAliveVerbosityOptions(input: {
+  quiet?: boolean;
+  verbose?: boolean;
+}): void {
+  if (input.quiet && input.verbose) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      'Choose either "--quiet" or "--verbose", not both.'
+    );
+  }
+}
+
+async function runKeepAliveCliAction(
+  input: { json?: boolean; quiet?: boolean; verbose?: boolean },
+  action: (options: KeepAliveCliOutputOptions) => Promise<void>
+): Promise<void> {
+  const options: KeepAliveCliOutputOptions = {
+    outputMode: resolveKeepAliveOutputMode(input, Boolean(stdout.isTTY)),
+    quiet: Boolean(input.quiet),
+    verbose: Boolean(input.verbose)
+  };
+
+  try {
+    assertKeepAliveVerbosityOptions(input);
+    await action(options);
+  } catch (error) {
+    if (options.outputMode === "json") {
+      throw error;
+    }
+
+    process.stderr.write(
+      `${formatKeepAliveError(toLinkedInAssistantErrorPayload(error, cliPrivacyConfig), {
+        quiet: options.quiet
+      })}\n`
+    );
+    process.exitCode = 1;
+  }
+}
+
+async function buildKeepAliveStatusReport(
+  profileName: string
+): Promise<KeepAliveStatusReport> {
+  const normalizedProfileName = coerceProfileName(profileName);
+  const pid = await readKeepAlivePid(normalizedProfileName);
+  const state = await readKeepAliveState(normalizedProfileName);
+  const running = typeof pid === "number" ? isProcessRunning(pid) : false;
+  const files = getKeepAliveFiles(normalizedProfileName);
+
+  return {
+    profile_name: normalizedProfileName,
+    running,
+    pid: typeof pid === "number" ? pid : null,
+    state,
+    stale_pid_file: Boolean(pid && !running),
+    state_path: files.statePath,
+    log_path: files.logPath,
+    recent_events: await readKeepAliveRecentEvents(normalizedProfileName)
+  };
+}
+
 async function runKeepAliveStart(input: {
   profileName: string;
   intervalSeconds: number;
   jitterSeconds: number;
   maxConsecutiveFailures: number;
-}, cdpUrl?: string): Promise<void> {
+}, options: KeepAliveCliOutputOptions, cdpUrl?: string): Promise<void> {
   const profileName = coerceProfileName(input.profileName);
+  const files = getKeepAliveFiles(profileName);
   const existingPid = await readKeepAlivePid(profileName);
   if (existingPid && isProcessRunning(existingPid)) {
     const currentState = await readKeepAliveState(profileName);
-    printJson({
+    emitKeepAliveStartReport({
       started: false,
       reason: "Keepalive daemon is already running for this profile.",
       profile_name: profileName,
       pid: existingPid,
-      state: currentState
-    });
+      state: currentState,
+      state_path: files.statePath,
+      log_path: files.logPath
+    }, options);
     return;
   }
 
+  const recoveredStalePid = Boolean(existingPid && !isProcessRunning(existingPid));
   if (existingPid && !isProcessRunning(existingPid)) {
     await removeKeepAlivePid(profileName);
   }
 
   maybeWarnAboutSelectorLocaleConfig(cliSelectorLocale);
+  if (cdpUrl) {
+    warnAboutExternalCdpDaemonSession();
+  }
+  writeKeepAliveProgressNotice(
+    options.outputMode,
+    options.quiet,
+    `Starting keepalive daemon for profile ${profileName}.`
+  );
 
   const cliEntrypoint = resolveKeepAliveCliEntrypoint();
   if (!cliEntrypoint) {
@@ -1994,18 +2228,28 @@ async function runKeepAliveStart(input: {
     jitterMs: input.jitterSeconds * 1_000,
     maxConsecutiveFailures: input.maxConsecutiveFailures,
     consecutiveFailures: 0,
+    healthCheckInProgress: false,
     ...(cdpUrl ? { cdpUrl } : {})
   };
 
   await writeKeepAlivePid(profileName, daemon.pid);
   await writeKeepAliveState(profileName, initialState);
 
-  printJson({
+  writeKeepAliveProgressNotice(
+    options.outputMode,
+    options.quiet,
+    "The first session health check will continue in the background; use `linkedin keepalive status` to inspect it."
+  );
+
+  emitKeepAliveStartReport({
     started: true,
     profile_name: profileName,
     pid: daemon.pid,
-    state_path: getKeepAliveFiles(profileName).statePath
-  });
+    state: initialState,
+    state_path: files.statePath,
+    log_path: files.logPath,
+    ...(recoveredStalePid ? { recovered_stale_pid: true } : {})
+  }, options);
 }
 
 function resolveKeepAliveCliEntrypoint(): string | undefined {
@@ -2025,32 +2269,31 @@ function resolveKeepAliveCliEntrypoint(): string | undefined {
   return process.argv[1];
 }
 
-async function runKeepAliveStatus(profileName: string): Promise<void> {
-  const normalizedProfileName = coerceProfileName(profileName);
-  const pid = await readKeepAlivePid(normalizedProfileName);
-  const state = await readKeepAliveState(normalizedProfileName);
-  const running = typeof pid === "number" ? isProcessRunning(pid) : false;
-
-  printJson({
-    profile_name: normalizedProfileName,
-    running,
-    pid,
-    state,
-    stale_pid_file: Boolean(pid && !running)
-  });
+async function runKeepAliveStatus(
+  profileName: string,
+  options: KeepAliveCliOutputOptions
+): Promise<void> {
+  emitKeepAliveStatusReport(await buildKeepAliveStatusReport(profileName), options);
 }
 
-async function runKeepAliveStop(profileName: string): Promise<void> {
+async function runKeepAliveStop(
+  profileName: string,
+  options: KeepAliveCliOutputOptions
+): Promise<void> {
   const normalizedProfileName = coerceProfileName(profileName);
+  const files = getKeepAliveFiles(normalizedProfileName);
   const pid = await readKeepAlivePid(normalizedProfileName);
   const previousState = await readKeepAliveState(normalizedProfileName);
 
   if (!pid) {
-    printJson({
+    emitKeepAliveStopReport({
       stopped: false,
       profile_name: normalizedProfileName,
-      reason: "No keepalive daemon pid file found."
-    });
+      reason: "No keepalive daemon is currently running for this profile.",
+      state: previousState,
+      state_path: files.statePath,
+      log_path: files.logPath
+    }, options);
     return;
   }
 
@@ -2066,14 +2309,23 @@ async function runKeepAliveStop(profileName: string): Promise<void> {
         lastError: "Recovered from stale pid file."
       });
     }
-    printJson({
+    emitKeepAliveStopReport({
       stopped: true,
       profile_name: normalizedProfileName,
       pid,
-      reason: "Recovered stale keepalive pid file."
-    });
+      reason: "Removed a stale keepalive PID file for this profile.",
+      state: await readKeepAliveState(normalizedProfileName),
+      state_path: files.statePath,
+      log_path: files.logPath
+    }, options);
     return;
   }
+
+  writeKeepAliveProgressNotice(
+    options.outputMode,
+    options.quiet,
+    `Stopping keepalive daemon for profile ${normalizedProfileName}.`
+  );
 
   try {
     process.kill(pid, "SIGTERM");
@@ -2117,12 +2369,19 @@ async function runKeepAliveStop(profileName: string): Promise<void> {
     });
   }
 
-  printJson({
+  const nextState = await readKeepAliveState(normalizedProfileName);
+  emitKeepAliveStopReport({
     stopped: true,
     profile_name: normalizedProfileName,
     pid,
-    forced: running
-  });
+    forced: running,
+    reason: running
+      ? "Keepalive daemon did not exit after SIGTERM, so it was force-stopped."
+      : "Keepalive daemon exited cleanly.",
+    state: nextState,
+    state_path: files.statePath,
+    log_path: files.logPath
+  }, options);
 }
 
 async function runKeepAliveDaemon(input: {
@@ -2152,6 +2411,7 @@ async function runKeepAliveDaemon(input: {
     jitterMs: input.jitterSeconds * 1_000,
     maxConsecutiveFailures: input.maxConsecutiveFailures,
     consecutiveFailures: 0,
+    healthCheckInProgress: false,
     ...(cdpUrl ? { cdpUrl } : {})
   };
 
@@ -2171,15 +2431,35 @@ async function runKeepAliveDaemon(input: {
   try {
     while (!stopRequested) {
       const tickAt = new Date().toISOString();
+      const currentState = (await readKeepAliveState(profileName)) ?? initialState;
+      const inProgressState: KeepAliveState = {
+        ...currentState,
+        pid: process.pid,
+        profileName,
+        updatedAt: tickAt,
+        intervalMs: input.intervalSeconds * 1_000,
+        jitterMs: input.jitterSeconds * 1_000,
+        maxConsecutiveFailures: input.maxConsecutiveFailures,
+        lastCheckStartedAt: tickAt,
+        healthCheckInProgress: true
+      };
+
+      await writeKeepAliveState(profileName, inProgressState);
+      await appendKeepAliveEvent(profileName, {
+        ts: tickAt,
+        event: "keepalive.tick.started",
+        profile_name: profileName,
+        interval_ms: input.intervalSeconds * 1_000,
+        jitter_ms: input.jitterSeconds * 1_000
+      });
 
       try {
         const health = await runtime.healthCheck({ profileName });
         const healthy = health.browser.healthy && health.session.authenticated;
         consecutiveFailures = healthy ? 0 : consecutiveFailures + 1;
 
-        const priorState = (await readKeepAliveState(profileName)) ?? initialState;
         const nextState: KeepAliveState = {
-          ...priorState,
+          ...inProgressState,
           pid: process.pid,
           profileName,
           updatedAt: tickAt,
@@ -2195,7 +2475,8 @@ async function runKeepAliveDaemon(input: {
           authenticated: health.session.authenticated,
           browserHealthy: health.browser.healthy,
           currentUrl: health.session.currentUrl,
-          reason: health.session.reason
+          reason: health.session.reason,
+          healthCheckInProgress: false
         };
         if (healthy) {
           nextState.lastHealthyAt = tickAt;
@@ -2223,7 +2504,7 @@ async function runKeepAliveDaemon(input: {
         }
 
         const nextState: KeepAliveState = {
-          ...(await readKeepAliveState(profileName) ?? initialState),
+          ...inProgressState,
           pid: process.pid,
           profileName,
           updatedAt: tickAt,
@@ -2236,7 +2517,8 @@ async function runKeepAliveDaemon(input: {
           maxConsecutiveFailures: input.maxConsecutiveFailures,
           consecutiveFailures,
           lastTickAt: tickAt,
-          lastError: message
+          lastError: message,
+          healthCheckInProgress: false
         };
         await writeKeepAliveState(profileName, nextState);
         await appendKeepAliveEvent(profileName, {
@@ -2278,6 +2560,7 @@ async function runKeepAliveDaemon(input: {
       profileName,
       status: "stopped",
       updatedAt: now,
+      healthCheckInProgress: false,
       stoppedAt: now
     });
     await appendKeepAliveEvent(profileName, {
@@ -5096,6 +5379,7 @@ export function createCliProgram(): Command {
           "  - opens a dedicated browser window for manual login only",
           "  - stores Playwright session state encrypted at rest",
           "  - never prints cookies or storage contents",
+          "  - keep the LinkedIn window open until the CLI confirms capture",
           "",
           "Examples:",
           "  linkedin auth session",
@@ -5497,11 +5781,31 @@ export function createCliProgram(): Command {
 
   const keepAliveCommand = program
     .command("keepalive")
-    .description("Run and manage a background session keepalive daemon");
+    .description(
+      "Manage the local session keepalive daemon that records background LinkedIn health checks"
+    )
+    .addHelpText(
+      "after",
+      [
+        "",
+        "Interactive terminals default to human-readable keepalive summaries.",
+        "Use --json for automation or to inspect the structured daemon state directly.",
+        "Use --verbose for recent daemon events and extra session diagnostics.",
+        "Use --quiet for a concise human summary and to suppress progress notices.",
+        "",
+        "Examples:",
+        "  linkedin keepalive start --profile default",
+        "  linkedin keepalive status --profile default --verbose",
+        "  linkedin keepalive stop --profile default",
+        "  linkedin keepalive status --profile smoke --json"
+      ].join("\n")
+    );
 
   keepAliveCommand
     .command("start")
-    .description("Start keepalive daemon for a profile")
+    .description(
+      "Start the local keepalive daemon for a profile and begin background session health checks"
+    )
     .option("-p, --profile <profile>", "Profile name", "default")
     .option(
       "--interval-seconds <seconds>",
@@ -5518,49 +5822,110 @@ export function createCliProgram(): Command {
       "Mark daemon degraded after this many consecutive failures",
       "5"
     )
+    .option("--json", "Print the structured keepalive payload", false)
+    .option("--verbose", "Show extra diagnostics in human-readable output", false)
+    .option("--quiet", "Print a concise human-readable summary", false)
+    .addHelpText(
+      "after",
+      [
+        "",
+        "The daemon writes PID, state, and event-log files under the keepalive directory.",
+        "Human output shows a startup summary and reminds you how to inspect the first background health checks.",
+        "Use --quiet if you only need a compact confirmation message."
+      ].join("\n")
+    )
     .action(
       async (options: {
         profile: string;
         intervalSeconds: string;
         jitterSeconds: string;
         maxConsecutiveFailures: string;
+        json: boolean;
+        quiet: boolean;
+        verbose: boolean;
       }) => {
-        await runKeepAliveStart(
-          {
-            profileName: options.profile,
-            intervalSeconds: coercePositiveInt(
-              options.intervalSeconds,
-              "interval-seconds"
-            ),
-            jitterSeconds: coerceNonNegativeInt(
-              options.jitterSeconds,
-              "jitter-seconds"
-            ),
-            maxConsecutiveFailures: coercePositiveInt(
-              options.maxConsecutiveFailures,
-              "max-consecutive-failures"
-            )
-          },
-          readCdpUrl()
-        );
+        await runKeepAliveCliAction(options, async (outputOptions) => {
+          await runKeepAliveStart(
+            {
+              profileName: options.profile,
+              intervalSeconds: coercePositiveInt(
+                options.intervalSeconds,
+                "interval-seconds"
+              ),
+              jitterSeconds: coerceNonNegativeInt(
+                options.jitterSeconds,
+                "jitter-seconds"
+              ),
+              maxConsecutiveFailures: coercePositiveInt(
+                options.maxConsecutiveFailures,
+                "max-consecutive-failures"
+              )
+            },
+            outputOptions,
+            readCdpUrl()
+          );
+        });
       }
     );
 
   keepAliveCommand
     .command("status")
-    .description("Show keepalive daemon status for a profile")
+    .description("Show daemon health, the latest saved session check, and recovery guidance")
     .option("-p, --profile <profile>", "Profile name", "default")
-    .action(async (options: { profile: string }) => {
-      await runKeepAliveStatus(options.profile);
-    });
+    .option("--json", "Print the structured keepalive payload", false)
+    .option("--verbose", "Show recent daemon events and extra diagnostics", false)
+    .option("--quiet", "Print a concise human-readable summary", false)
+    .addHelpText(
+      "after",
+      [
+        "",
+        "Status reads the daemon state and recent keepalive events saved for the selected profile.",
+        "Use --verbose to include recent daemon events, timestamps, and extra session detail.",
+        "Use --json for automation or to inspect the raw saved state."
+      ].join("\n")
+    )
+    .action(
+      async (options: {
+        profile: string;
+        json: boolean;
+        quiet: boolean;
+        verbose: boolean;
+      }) => {
+        await runKeepAliveCliAction(options, async (outputOptions) => {
+          await runKeepAliveStatus(options.profile, outputOptions);
+        });
+      }
+    );
 
   keepAliveCommand
     .command("stop")
-    .description("Stop keepalive daemon for a profile")
+    .description(
+      "Stop the local keepalive daemon and preserve the last saved health state"
+    )
     .option("-p, --profile <profile>", "Profile name", "default")
-    .action(async (options: { profile: string }) => {
-      await runKeepAliveStop(options.profile);
-    });
+    .option("--json", "Print the structured keepalive payload", false)
+    .option("--verbose", "Show extra diagnostics in human-readable output", false)
+    .option("--quiet", "Print a concise human-readable summary", false)
+    .addHelpText(
+      "after",
+      [
+        "",
+        "Stopping the daemon preserves the last saved state file and event log for later inspection.",
+        "Use status after stopping if you want to confirm the daemon is idle or review the last recorded failure."
+      ].join("\n")
+    )
+    .action(
+      async (options: {
+        profile: string;
+        json: boolean;
+        quiet: boolean;
+        verbose: boolean;
+      }) => {
+        await runKeepAliveCliAction(options, async (outputOptions) => {
+          await runKeepAliveStop(options.profile, outputOptions);
+        });
+      }
+    );
 
   keepAliveCommand
     .command("__run", { hidden: true })
