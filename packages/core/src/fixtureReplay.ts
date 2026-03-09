@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { BrowserContext } from "playwright-core";
 
@@ -26,6 +26,13 @@ export const LINKEDIN_REPLAY_PAGE_TYPES = [
   "connections",
   "jobs"
 ] as const;
+
+const MAX_FIXTURE_JSON_FILE_BYTES = 8 * 1024 * 1024;
+const MAX_FIXTURE_HAR_FILE_BYTES = 256 * 1024 * 1024;
+const MAX_FIXTURE_RESPONSE_BODY_BYTES = 16 * 1024 * 1024;
+const MAX_REPLAY_REQUEST_BODY_BYTES = 64 * 1024;
+const FIXTURE_REPLAY_FETCH_TIMEOUT_MS = 15_000;
+const FIXTURE_REPLAY_SERVER_TIMEOUT_MS = 30_000;
 
 export type LinkedInReplayPageType = (typeof LINKEDIN_REPLAY_PAGE_TYPES)[number];
 
@@ -110,7 +117,7 @@ export interface StartedFixtureReplayServer {
 }
 
 interface ReplayLookupEntry {
-  body: Buffer;
+  body: () => Promise<Buffer>;
   headers: Record<string, string>;
   status: number;
 }
@@ -123,6 +130,17 @@ interface ReplayRequestPayload {
 interface MutableSharedServerState {
   promise: Promise<StartedFixtureReplayServer> | undefined;
   started: StartedFixtureReplayServer | undefined;
+}
+
+class FixtureReplayHttpError extends Error {
+  constructor(
+    readonly status: number,
+    readonly errorCode: string,
+    message: string
+  ) {
+    super(message);
+    this.name = "FixtureReplayHttpError";
+  }
 }
 
 const sharedServerState: MutableSharedServerState = {
@@ -168,12 +186,64 @@ function asString(value: unknown, label: string): string {
   return resolved;
 }
 
+function asTimestampString(value: unknown, label: string): string {
+  const resolved = asString(value, label);
+  if (!Number.isFinite(Date.parse(resolved))) {
+    throw new Error(`${label} must be a valid ISO-8601 timestamp.`);
+  }
+
+  return resolved;
+}
+
 function asFiniteNumber(value: unknown, label: string): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     throw new Error(`${label} must be a finite number.`);
   }
 
   return value;
+}
+
+function asPositiveInteger(value: unknown, label: string): number {
+  const resolved = asFiniteNumber(value, label);
+  if (!Number.isInteger(resolved) || resolved <= 0) {
+    throw new Error(`${label} must be a positive integer.`);
+  }
+
+  return resolved;
+}
+
+function asStatusCode(value: unknown, label: string): number {
+  const resolved = asPositiveInteger(value, label);
+  if (resolved < 100 || resolved > 599) {
+    throw new Error(`${label} must be a valid HTTP status code.`);
+  }
+
+  return resolved;
+}
+
+function asHttpMethod(value: unknown, label: string): string {
+  const resolved = asString(value, label).toUpperCase();
+  if (!/^[A-Z]+$/.test(resolved)) {
+    throw new Error(`${label} must be a valid HTTP method token.`);
+  }
+
+  return resolved;
+}
+
+function asHttpUrl(value: unknown, label: string): string {
+  const resolved = asString(value, label);
+  let parsed: URL;
+  try {
+    parsed = new URL(resolved);
+  } catch {
+    throw new Error(`${label} must be an absolute http(s) URL.`);
+  }
+
+  if (!(parsed.protocol === "http:" || parsed.protocol === "https:")) {
+    throw new Error(`${label} must use the http or https protocol.`);
+  }
+
+  return resolved;
 }
 
 function asPageType(value: unknown, label: string): LinkedInReplayPageType {
@@ -188,8 +258,8 @@ function asPageType(value: unknown, label: string): LinkedInReplayPageType {
 function parseViewport(value: unknown, label: string): LinkedInFixtureViewport {
   const record = asRecord(value, label);
   return {
-    width: asFiniteNumber(record.width, `${label}.width`),
-    height: asFiniteNumber(record.height, `${label}.height`)
+    width: asPositiveInteger(record.width, `${label}.width`),
+    height: asPositiveInteger(record.height, `${label}.height`)
   };
 }
 
@@ -199,30 +269,43 @@ function parsePageEntry(
   label: string
 ): LinkedInFixturePageEntry {
   const record = asRecord(value, label);
+  const pageType = asPageType(record.pageType ?? key, `${label}.pageType`);
+  if (pageType !== key) {
+    throw new Error(`${label}.pageType must match page key ${key}.`);
+  }
+
   return {
-    pageType: asPageType(record.pageType ?? key, `${label}.pageType`),
-    url: asString(record.url, `${label}.url`),
+    pageType,
+    url: asHttpUrl(record.url, `${label}.url`),
     htmlPath: asString(record.htmlPath, `${label}.htmlPath`),
-    recordedAt: asString(record.recordedAt, `${label}.recordedAt`),
+    recordedAt: asTimestampString(record.recordedAt, `${label}.recordedAt`),
     ...(asOptionalString(record.title) ? { title: asString(record.title, `${label}.title`) } : {})
   };
 }
 
 function parseSetSummary(key: string, value: unknown, label: string): LinkedInFixtureSetSummary {
   const record = asRecord(value, label);
+  const setName = asString(record.setName ?? key, `${label}.setName`);
+  if (setName !== key) {
+    throw new Error(`${label}.setName must match set key ${key}.`);
+  }
+
   const pagesRecord = asRecord(record.pages ?? {}, `${label}.pages`);
   const pages: Partial<Record<LinkedInReplayPageType, LinkedInFixturePageEntry>> = {};
 
   for (const [pageKey, pageValue] of Object.entries(pagesRecord)) {
     const page = parsePageEntry(pageKey, pageValue, `${label}.pages.${pageKey}`);
+    if (pages[page.pageType] !== undefined) {
+      throw new Error(`${label}.pages.${pageKey} duplicates pageType ${page.pageType}.`);
+    }
     pages[page.pageType] = page;
   }
 
   return {
-    setName: asString(record.setName ?? key, `${label}.setName`),
+    setName,
     rootDir: asString(record.rootDir, `${label}.rootDir`),
     locale: asString(record.locale, `${label}.locale`),
-    capturedAt: asString(record.capturedAt, `${label}.capturedAt`),
+    capturedAt: asTimestampString(record.capturedAt, `${label}.capturedAt`),
     viewport: parseViewport(record.viewport, `${label}.viewport`),
     routesPath: asString(record.routesPath, `${label}.routesPath`),
     ...(asOptionalString(record.description)
@@ -244,15 +327,19 @@ function parseRoute(value: unknown, label: string): LinkedInFixtureRoute {
   }
 
   const pageTypeValue = record.pageType;
+  const bodyPath = asOptionalString(record.bodyPath);
+  const bodyText = typeof record.bodyText === "string" ? record.bodyText : undefined;
+  if (bodyPath && bodyText !== undefined) {
+    throw new Error(`${label} must not define both bodyPath and bodyText.`);
+  }
+
   return {
-    method: asString(record.method, `${label}.method`).toUpperCase(),
-    url: asString(record.url, `${label}.url`),
-    status: asFiniteNumber(record.status, `${label}.status`),
+    method: asHttpMethod(record.method, `${label}.method`),
+    url: asHttpUrl(record.url, `${label}.url`),
+    status: asStatusCode(record.status, `${label}.status`),
     headers: normalizeFixtureRouteHeaders(headers),
-    ...(asOptionalString(record.bodyPath)
-      ? { bodyPath: asString(record.bodyPath, `${label}.bodyPath`) }
-      : {}),
-    ...(typeof record.bodyText === "string" ? { bodyText: record.bodyText } : {}),
+    ...(bodyPath ? { bodyPath: asString(bodyPath, `${label}.bodyPath`) } : {}),
+    ...(bodyText !== undefined ? { bodyText } : {}),
     ...(pageTypeValue !== undefined
       ? { pageType: asPageType(pageTypeValue, `${label}.pageType`) }
       : {})
@@ -269,11 +356,18 @@ function parseManifest(value: unknown, manifestPath: string): LinkedInFixtureMan
     sets[key] = parsedSet;
   }
 
+  const defaultSetName = asOptionalString(record.defaultSetName);
+  if (defaultSetName && Object.keys(sets).length > 0 && sets[defaultSetName] === undefined) {
+    throw new Error(
+      `Fixture manifest ${manifestPath}.defaultSetName must reference a defined fixture set.`
+    );
+  }
+
   return {
     format: asFiniteNumber(record.format, `Fixture manifest ${manifestPath}.format`),
-    updatedAt: asString(record.updatedAt, `Fixture manifest ${manifestPath}.updatedAt`),
-    ...(asOptionalString(record.defaultSetName)
-      ? { defaultSetName: asString(record.defaultSetName, `Fixture manifest ${manifestPath}.defaultSetName`) }
+    updatedAt: asTimestampString(record.updatedAt, `Fixture manifest ${manifestPath}.updatedAt`),
+    ...(defaultSetName
+      ? { defaultSetName }
       : {}),
     sets
   };
@@ -315,6 +409,21 @@ function normalizeRouteUrl(url: string): string {
   return parsed.toString();
 }
 
+function summarizeUnknownError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return String(error);
+}
+
+function sanitizeForErrorMessage(value: string): string {
+  return Array.from(value, (character) => {
+    const codePoint = character.codePointAt(0) ?? 0x20;
+    return codePoint < 0x20 || codePoint === 0x7f ? " " : character;
+  }).join("").trim();
+}
+
 export function buildFixtureRouteKey(
   route: Pick<LinkedInFixtureRoute, "method" | "url">
 ): string {
@@ -325,18 +434,22 @@ function resolveFixtureSetBaseDir(
   manifestPath: string,
   summary: LinkedInFixtureSetSummary
 ): string {
-  return path.resolve(path.dirname(manifestPath), summary.rootDir);
+  return resolveFixtureRelativePath(
+    path.dirname(manifestPath),
+    summary.rootDir,
+    `Fixture set ${summary.setName} rootDir`
+  );
 }
 
 function getResolvedRouteFilePath(
   manifestPath: string,
   summary: LinkedInFixtureSetSummary
 ): string {
-  return path.resolve(resolveFixtureSetBaseDir(manifestPath, summary), summary.routesPath);
-}
-
-async function readJsonFile(filePath: string): Promise<unknown> {
-  return JSON.parse(await readFile(filePath, "utf8")) as unknown;
+  return resolveFixtureRelativePath(
+    resolveFixtureSetBaseDir(manifestPath, summary),
+    summary.routesPath,
+    `Fixture set ${summary.setName} routesPath`
+  );
 }
 
 export function isLinkedInFixtureReplayUrl(url: string): boolean {
@@ -365,6 +478,98 @@ function getAgeDays(recordedAt: string): number {
   }
 
   return Math.floor((Date.now() - recordedMs) / (24 * 60 * 60 * 1000));
+}
+
+function resolveFixtureRelativePath(
+  baseDir: string,
+  relativePath: string,
+  label: string
+): string {
+  const normalizedBaseDir = path.resolve(baseDir);
+  const resolvedPath = path.resolve(normalizedBaseDir, relativePath);
+  const normalizedRelativePath = path.relative(normalizedBaseDir, resolvedPath);
+
+  if (
+    path.isAbsolute(relativePath) ||
+    normalizedRelativePath === "" ||
+    normalizedRelativePath === "." ||
+    normalizedRelativePath.startsWith("..") ||
+    path.isAbsolute(normalizedRelativePath)
+  ) {
+    if (relativePath === "." || relativePath === "./") {
+      return resolvedPath;
+    }
+
+    throw new Error(`${label} ${relativePath} must stay within ${normalizedBaseDir}.`);
+  }
+
+  return resolvedPath;
+}
+
+function createFixtureReadError(fileLabel: string, filePath: string, error: unknown): Error {
+  const errorCode =
+    typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
+      ? error.code
+      : undefined;
+
+  if (errorCode === "ENOENT") {
+    return new Error(`${fileLabel} ${filePath} does not exist.`);
+  }
+
+  if (errorCode === "EACCES" || errorCode === "EPERM") {
+    return new Error(
+      `${fileLabel} ${filePath} is not readable because of filesystem permissions.`
+    );
+  }
+
+  if (errorCode === "EISDIR") {
+    return new Error(`${fileLabel} ${filePath} must be a file.`);
+  }
+
+  return new Error(`${fileLabel} ${filePath} could not be read. ${summarizeUnknownError(error)}`);
+}
+
+function createFixtureWriteError(fileLabel: string, filePath: string, error: unknown): Error {
+  const errorCode =
+    typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
+      ? error.code
+      : undefined;
+
+  if (errorCode === "ENOSPC") {
+    return new Error(`${fileLabel} ${filePath} could not be written because the disk is full.`);
+  }
+
+  if (errorCode === "EACCES" || errorCode === "EPERM") {
+    return new Error(
+      `${fileLabel} ${filePath} could not be written because of filesystem permissions.`
+    );
+  }
+
+  return new Error(`${fileLabel} ${filePath} could not be written. ${summarizeUnknownError(error)}`);
+}
+
+async function assertFixtureFile(
+  filePath: string,
+  fileLabel: string,
+  maxBytes: number
+): Promise<number> {
+  try {
+    const fileStats = await stat(filePath);
+    if (!fileStats.isFile()) {
+      throw new Error(`${fileLabel} ${filePath} must be a file.`);
+    }
+
+    if (fileStats.size > maxBytes) {
+      throw new Error(`${fileLabel} ${filePath} exceeds the ${maxBytes}-byte replay limit.`);
+    }
+
+    return fileStats.size;
+  } catch (error) {
+    if (error instanceof Error && !("code" in error)) {
+      throw error;
+    }
+    throw createFixtureReadError(fileLabel, filePath, error);
+  }
 }
 
 export function normalizeFixtureRouteHeaders(
@@ -397,13 +602,15 @@ function assertFixtureFileFormat(
 }
 
 function createReplayMissBody(payload: ReplayRequestPayload): Buffer {
+  const method = sanitizeForErrorMessage(payload.method.toUpperCase());
+  const url = sanitizeForErrorMessage(payload.url);
   return Buffer.from(
     JSON.stringify(
       {
         error: "fixture_not_found",
-        message: `No replay fixture exists for ${payload.method.toUpperCase()} ${payload.url}.`,
-        method: payload.method.toUpperCase(),
-        url: payload.url
+        message: `No replay fixture exists for ${method} ${url}.`,
+        method,
+        url
       },
       null,
       2
@@ -414,24 +621,83 @@ function createReplayMissBody(payload: ReplayRequestPayload): Buffer {
 
 async function readReplayRequestPayload(request: IncomingMessage): Promise<ReplayRequestPayload> {
   if (request.method === "GET") {
-    const parsed = new URL(request.url ?? REPLAY_ROUTE_PATH, "http://127.0.0.1");
-    return {
-      method: asString(parsed.searchParams.get("method"), "replay request method"),
-      url: asString(parsed.searchParams.get("url"), "replay request url")
-    };
+    try {
+      const parsed = new URL(request.url ?? REPLAY_ROUTE_PATH, "http://127.0.0.1");
+      return {
+        method: asHttpMethod(parsed.searchParams.get("method"), "replay request method"),
+        url: asHttpUrl(parsed.searchParams.get("url"), "replay request url")
+      };
+    } catch (error) {
+      throw new FixtureReplayHttpError(
+        400,
+        "fixture_replay_invalid_request",
+        `Replay request query is invalid. ${summarizeUnknownError(error)}`
+      );
+    }
+  }
+
+  if (request.method !== "POST") {
+    throw new FixtureReplayHttpError(
+      405,
+      "fixture_replay_method_not_allowed",
+      `Replay requests must use GET or POST, received ${request.method ?? "UNKNOWN"}.`
+    );
   }
 
   const chunks: Buffer[] = [];
+  let totalBytes = 0;
   for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalBytes += buffer.byteLength;
+    if (totalBytes > MAX_REPLAY_REQUEST_BODY_BYTES) {
+      throw new FixtureReplayHttpError(
+        413,
+        "fixture_replay_request_too_large",
+        `Replay request body exceeded ${MAX_REPLAY_REQUEST_BODY_BYTES} bytes.`
+      );
+    }
+    chunks.push(buffer);
   }
 
   const raw = Buffer.concat(chunks).toString("utf8");
-  const record = asRecord(JSON.parse(raw) as unknown, "replay request body");
-  return {
-    method: asString(record.method, "replay request body.method"),
-    url: asString(record.url, "replay request body.url")
-  };
+  let parsedJson: unknown;
+  try {
+    parsedJson = JSON.parse(raw) as unknown;
+  } catch (error) {
+    throw new FixtureReplayHttpError(
+      400,
+      "fixture_replay_invalid_request",
+      `Replay request body must be valid JSON. ${summarizeUnknownError(error)}`
+    );
+  }
+
+  try {
+    const record = asRecord(parsedJson, "replay request body");
+    return {
+      method: asHttpMethod(record.method, "replay request body.method"),
+      url: asHttpUrl(record.url, "replay request body.url")
+    };
+  } catch (error) {
+    throw new FixtureReplayHttpError(
+      400,
+      "fixture_replay_invalid_request",
+      `Replay request body is invalid. ${summarizeUnknownError(error)}`
+    );
+  }
+}
+
+function createReplayErrorBody(errorCode: string, message: string): Buffer {
+  return Buffer.from(
+    JSON.stringify(
+      {
+        error: errorCode,
+        message
+      },
+      null,
+      2
+    ),
+    "utf8"
+  );
 }
 
 function writeServerResponse(
@@ -448,21 +714,109 @@ function writeServerResponse(
 }
 
 function resolveFixtureBodyPath(baseDir: string, bodyPath: string): string {
-  const normalizedBaseDir = path.resolve(baseDir);
-  const resolvedPath = path.resolve(normalizedBaseDir, bodyPath);
-  const relativePath = path.relative(normalizedBaseDir, resolvedPath);
+  return resolveFixtureRelativePath(baseDir, bodyPath, "Fixture route bodyPath");
+}
 
-  if (
-    path.isAbsolute(bodyPath) ||
-    relativePath.startsWith("..") ||
-    path.isAbsolute(relativePath)
-  ) {
-    throw new Error(
-      `Fixture route bodyPath ${bodyPath} must stay within ${normalizedBaseDir}.`
+async function readJsonFile(
+  filePath: string,
+  fileLabel: string,
+  maxBytes: number = MAX_FIXTURE_JSON_FILE_BYTES
+): Promise<unknown> {
+  await assertFixtureFile(filePath, fileLabel, maxBytes);
+
+  let raw: string;
+  try {
+    raw = await readFile(filePath, "utf8");
+  } catch (error) {
+    throw createFixtureReadError(fileLabel, filePath, error);
+  }
+
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch (error) {
+    throw new Error(`${fileLabel} ${filePath} contains invalid JSON. ${summarizeUnknownError(error)}`);
+  }
+}
+
+async function readFixtureBodyFile(filePath: string, fileLabel: string): Promise<Buffer> {
+  await assertFixtureFile(filePath, fileLabel, MAX_FIXTURE_RESPONSE_BODY_BYTES);
+
+  try {
+    return await readFile(filePath);
+  } catch (error) {
+    throw createFixtureReadError(fileLabel, filePath, error);
+  }
+}
+
+async function validateFixtureSetAssets(
+  manifestPath: string,
+  summary: LinkedInFixtureSetSummary,
+  routes: LinkedInFixtureRoute[]
+): Promise<string> {
+  const baseDir = resolveFixtureSetBaseDir(manifestPath, summary);
+  const seenRouteKeys = new Set<string>();
+
+  if (summary.harPath) {
+    const harPath = resolveFixtureRelativePath(
+      baseDir,
+      summary.harPath,
+      `Fixture set ${summary.setName} harPath`
+    );
+    await assertFixtureFile(
+      harPath,
+      `Fixture HAR file for set ${summary.setName}`,
+      MAX_FIXTURE_HAR_FILE_BYTES
     );
   }
 
-  return resolvedPath;
+  for (const page of Object.values(summary.pages)) {
+    if (!page) {
+      continue;
+    }
+
+    const pagePath = resolveFixtureRelativePath(
+      baseDir,
+      page.htmlPath,
+      `Fixture page ${summary.setName}/${page.pageType} htmlPath`
+    );
+    await assertFixtureFile(
+      pagePath,
+      `Fixture page HTML for ${summary.setName}/${page.pageType}`,
+      MAX_FIXTURE_RESPONSE_BODY_BYTES
+    );
+  }
+
+  for (const [index, route] of routes.entries()) {
+    const routeLabel = `Fixture route ${summary.setName}.routes[${index}]`;
+    const routeKey = buildFixtureRouteKey(route);
+    if (seenRouteKeys.has(routeKey)) {
+      throw new Error(`${routeLabel} duplicates replay key ${routeKey}.`);
+    }
+    seenRouteKeys.add(routeKey);
+
+    if (route.pageType && summary.pages[route.pageType] === undefined) {
+      throw new Error(`${routeLabel}.pageType ${route.pageType} is not defined in the manifest pages map.`);
+    }
+
+    if (route.bodyPath) {
+      const bodyFilePath = resolveFixtureBodyPath(baseDir, route.bodyPath);
+      await assertFixtureFile(
+        bodyFilePath,
+        `Fixture response body for ${routeLabel}`,
+        MAX_FIXTURE_RESPONSE_BODY_BYTES
+      );
+      continue;
+    }
+
+    if (
+      route.bodyText !== undefined &&
+      Buffer.byteLength(route.bodyText, "utf8") > MAX_FIXTURE_RESPONSE_BODY_BYTES
+    ) {
+      throw new Error(`${routeLabel}.bodyText exceeds the ${MAX_FIXTURE_RESPONSE_BODY_BYTES}-byte replay limit.`);
+    }
+  }
+
+  return baseDir;
 }
 
 async function buildReplayLookup(
@@ -472,9 +826,23 @@ async function buildReplayLookup(
   const lookup = new Map<string, ReplayLookupEntry>();
 
   for (const route of routes) {
+    let pendingBodyLoad: Promise<Buffer> | undefined;
     const body = route.bodyPath
-      ? await readFile(resolveFixtureBodyPath(baseDir, route.bodyPath))
-      : Buffer.from(route.bodyText ?? "", "utf8");
+      ? async (): Promise<Buffer> => {
+          if (!pendingBodyLoad) {
+            const resolvedBodyPath = resolveFixtureBodyPath(baseDir, route.bodyPath ?? "");
+            pendingBodyLoad = readFixtureBodyFile(
+              resolvedBodyPath,
+              `Fixture response body for ${buildFixtureRouteKey(route)}`
+            ).finally(() => {
+              pendingBodyLoad = undefined;
+            });
+          }
+
+          return await pendingBodyLoad;
+        }
+      : async (): Promise<Buffer> => Buffer.from(route.bodyText ?? "", "utf8");
+
     lookup.set(buildFixtureRouteKey(route), {
       body,
       headers: normalizeFixtureRouteHeaders(route.headers),
@@ -517,13 +885,25 @@ async function startFixtureReplayServer(
         return;
       }
 
+      const body = await lookupEntry.body();
+
       writeServerResponse(
         response,
         lookupEntry.status,
         lookupEntry.headers,
-        lookupEntry.body
+        body
       );
     } catch (error) {
+      if (error instanceof FixtureReplayHttpError) {
+        writeServerResponse(
+          response,
+          error.status,
+          { "content-type": "application/json; charset=utf-8" },
+          createReplayErrorBody(error.errorCode, error.message)
+        );
+        return;
+      }
+
       const message = error instanceof Error ? error.message : String(error);
       writeServerResponse(
         response,
@@ -544,16 +924,26 @@ async function startFixtureReplayServer(
     }
   });
 
+  server.headersTimeout = FIXTURE_REPLAY_SERVER_TIMEOUT_MS;
+  server.requestTimeout = FIXTURE_REPLAY_SERVER_TIMEOUT_MS;
+  server.keepAliveTimeout = 5_000;
+
   const started = await new Promise<StartedFixtureReplayServer>((resolve, reject) => {
-    server.once("error", reject);
+    const rejectOnce = (error: Error): void => {
+      server.close();
+      reject(error);
+    };
+
+    server.once("error", rejectOnce);
     server.listen(0, "127.0.0.1", () => {
       const address = server.address();
       if (!address || typeof address === "string") {
+        server.close();
         reject(new Error("Fixture replay server did not expose a TCP address."));
         return;
       }
 
-      server.removeListener("error", reject);
+      server.removeListener("error", rejectOnce);
       server.unref();
       resolve({
         baseUrl: `http://127.0.0.1:${address.port}`,
@@ -606,7 +996,10 @@ export function isFixtureReplayEnabled(): boolean {
 export async function readLinkedInFixtureManifest(
   manifestPath: string = resolveFixtureManifestPath()
 ): Promise<LinkedInFixtureManifest> {
-  const parsed = parseManifest(await readJsonFile(manifestPath), manifestPath);
+  const parsed = parseManifest(
+    await readJsonFile(manifestPath, "Fixture manifest"),
+    manifestPath
+  );
   assertFixtureFileFormat("Fixture manifest", manifestPath, parsed.format);
 
   return parsed;
@@ -620,7 +1013,13 @@ export async function writeLinkedInFixtureManifest(
     ...manifest,
     updatedAt: new Date().toISOString()
   } satisfies LinkedInFixtureManifest;
-  await writeFile(manifestPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+
+  try {
+    await mkdir(path.dirname(manifestPath), { recursive: true });
+    await writeFile(manifestPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  } catch (error) {
+    throw createFixtureWriteError("Fixture manifest", manifestPath, error);
+  }
 }
 
 export async function loadLinkedInFixtureSet(
@@ -639,13 +1038,23 @@ export async function loadLinkedInFixtureSet(
   }
 
   const routeFilePath = getResolvedRouteFilePath(manifestPath, summary);
-  const parsedRouteFile = parseRouteFile(await readJsonFile(routeFilePath), routeFilePath);
+  const parsedRouteFile = parseRouteFile(
+    await readJsonFile(routeFilePath, "Fixture route file"),
+    routeFilePath
+  );
   assertFixtureFileFormat("Fixture route file", routeFilePath, parsedRouteFile.format);
+  if (parsedRouteFile.setName !== setName) {
+    throw new Error(
+      `Fixture route file ${routeFilePath} declares setName ${parsedRouteFile.setName}, expected ${setName}.`
+    );
+  }
+
+  const baseDir = await validateFixtureSetAssets(manifestPath, summary, parsedRouteFile.routes);
 
   return {
     manifestPath,
     setName,
-    baseDir: resolveFixtureSetBaseDir(manifestPath, summary),
+    baseDir,
     summary,
     routes: parsedRouteFile.routes
   };
@@ -784,26 +1193,40 @@ export async function attachFixtureReplayToContext(
       return;
     }
 
-    const replayResponse = await fetch(`${replayServer.baseUrl}${REPLAY_ROUTE_PATH}`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json"
-      },
-      body: JSON.stringify({
-        method: route.request().method().toUpperCase(),
-        url: requestUrl
-      } satisfies ReplayRequestPayload)
-    });
+    try {
+      const replayResponse = await fetch(`${replayServer.baseUrl}${REPLAY_ROUTE_PATH}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          method: route.request().method().toUpperCase(),
+          url: requestUrl
+        } satisfies ReplayRequestPayload),
+        signal: AbortSignal.timeout(FIXTURE_REPLAY_FETCH_TIMEOUT_MS)
+      });
 
-    const body = Buffer.from(await replayResponse.arrayBuffer());
-    const headers = normalizeFixtureRouteHeaders(
-      Object.fromEntries(replayResponse.headers.entries())
-    );
-    await route.fulfill({
-      status: replayResponse.status,
-      headers,
-      body
-    });
+      const body = Buffer.from(await replayResponse.arrayBuffer());
+      const headers = normalizeFixtureRouteHeaders(
+        Object.fromEntries(replayResponse.headers.entries())
+      );
+      await route.fulfill({
+        status: replayResponse.status,
+        headers,
+        body
+      });
+    } catch (error) {
+      await route.fulfill({
+        status: 502,
+        headers: {
+          "content-type": "application/json; charset=utf-8"
+        },
+        body: createReplayErrorBody(
+          "fixture_replay_unavailable",
+          `Fixture replay request failed for ${sanitizeForErrorMessage(route.request().method().toUpperCase())} ${sanitizeForErrorMessage(requestUrl)}. ${summarizeUnknownError(error)}`
+        )
+      });
+    }
   });
 
   return replayServer;

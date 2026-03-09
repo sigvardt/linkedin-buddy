@@ -32,6 +32,8 @@ interface TestFixturePageEntry {
 
 interface CreateFixtureSetInput {
   capturedAt?: string;
+  harBody?: Buffer | string;
+  harPath?: string;
   locale?: string;
   manifestFormat?: number;
   pages?: Partial<Record<LinkedInReplayPageType, TestFixturePageEntry>>;
@@ -111,6 +113,7 @@ async function createFixtureSet(input: CreateFixtureSetInput = {}): Promise<Crea
           height: 900
         },
         routesPath,
+        ...(input.harPath ? { harPath: input.harPath } : {}),
         pages
       }
     }
@@ -127,6 +130,27 @@ async function createFixtureSet(input: CreateFixtureSetInput = {}): Promise<Crea
     const absolutePath = path.join(setRootDir, relativePath);
     await mkdir(path.dirname(absolutePath), { recursive: true });
     await writeFile(absolutePath, body);
+  }
+
+  if (input.harPath && input.harBody !== undefined) {
+    const absoluteHarPath = path.join(setRootDir, input.harPath);
+    await mkdir(path.dirname(absoluteHarPath), { recursive: true });
+    await writeFile(absoluteHarPath, input.harBody);
+  }
+
+  const providedResponsePaths = new Set(Object.keys(input.responseFiles ?? {}));
+  for (const page of Object.values(pages)) {
+    if (!page || providedResponsePaths.has(page.htmlPath)) {
+      continue;
+    }
+
+    const absolutePagePath = path.join(setRootDir, page.htmlPath);
+    await mkdir(path.dirname(absolutePagePath), { recursive: true });
+    await writeFile(
+      absolutePagePath,
+      `<html><body>${page.pageType} fixture</body></html>`,
+      "utf8"
+    );
   }
 
   return {
@@ -310,7 +334,7 @@ describe("fixtureReplay manifests and staleness", () => {
     await expect(readLinkedInFixtureManifest(corruptManifestPath)).rejects.toThrow();
   });
 
-  it("rejects malformed route files and missing response bodies", async () => {
+  it("rejects malformed route files, duplicate route keys, and missing response bodies", async () => {
     const malformedFixtureSet = await createFixtureSet();
     await writeJsonFixture(path.join(malformedFixtureSet.setRootDir, "routes.json"), {
       format: 1,
@@ -340,7 +364,34 @@ describe("fixtureReplay manifests and staleness", () => {
 
     enableReplay(missingBodyFixtureSet.manifestPath, missingBodyFixtureSet.setName);
 
-    await expect(ensureSharedFixtureReplayServer()).rejects.toThrow("ENOENT");
+    await expect(ensureSharedFixtureReplayServer()).rejects.toThrow("does not exist");
+
+    const duplicateRouteFixtureSet = await createFixtureSet({
+      routes: [
+        {
+          method: "GET",
+          url: "https://www.linkedin.com/jobs/search/?location=Copenhagen&keywords=software%20engineer",
+          status: 200,
+          headers: {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          bodyText: '{"variant":1}'
+        },
+        {
+          method: "GET",
+          url: "https://www.linkedin.com/jobs/search/?keywords=software%20engineer&location=Copenhagen",
+          status: 200,
+          headers: {
+            "Content-Type": "application/json; charset=utf-8"
+          },
+          bodyText: '{"variant":2}'
+        }
+      ]
+    });
+
+    await expect(
+      loadLinkedInFixtureSet(duplicateRouteFixtureSet.manifestPath, duplicateRouteFixtureSet.setName)
+    ).rejects.toThrow("duplicates replay key");
   });
 
   it("rejects replay route body paths that escape the fixture set directory", async () => {
@@ -365,11 +416,7 @@ describe("fixtureReplay manifests and staleness", () => {
     );
   });
 
-  it("warns on stale empty sets and invalid recorded timestamps", async () => {
-    const emptyFixtureSet = await createFixtureSet({
-      capturedAt: "2025-01-01T00:00:00.000Z",
-      pages: {}
-    });
+  it("rejects invalid timestamps, inconsistent route metadata, and missing page files", async () => {
     const invalidTimestampFixtureSet = await createFixtureSet({
       pages: {
         feed: {
@@ -382,15 +429,129 @@ describe("fixtureReplay manifests and staleness", () => {
       }
     });
 
+    await expect(readLinkedInFixtureManifest(invalidTimestampFixtureSet.manifestPath)).rejects.toThrow(
+      "valid ISO-8601 timestamp"
+    );
+
+    const routeSetMismatchFixtureSet = await createFixtureSet();
+    await writeJsonFixture(path.join(routeSetMismatchFixtureSet.setRootDir, "routes.json"), {
+      format: 1,
+      setName: "other-set",
+      routes: []
+    });
+
+    await expect(
+      loadLinkedInFixtureSet(
+        routeSetMismatchFixtureSet.manifestPath,
+        routeSetMismatchFixtureSet.setName
+      )
+    ).rejects.toThrow("declares setName other-set");
+
+    const missingPageFixtureSet = await createFixtureSet();
+    await rm(path.join(missingPageFixtureSet.setRootDir, "pages/feed.html"));
+
+    await expect(
+      loadLinkedInFixtureSet(missingPageFixtureSet.manifestPath, missingPageFixtureSet.setName)
+    ).rejects.toThrow("Fixture page HTML");
+  });
+
+  it("rejects rootDir, routesPath, and page htmlPath traversal", async () => {
+    const tempDir = await createTempDir("linkedin-fixture-traversal-");
+    const manifestPath = path.join(tempDir, "manifest.json");
+    const capturedAt = "2026-03-09T10:00:00.000Z";
+
+    await writeJsonFixture(manifestPath, {
+      format: 1,
+      updatedAt: capturedAt,
+      defaultSetName: "ci",
+      sets: {
+        ci: {
+          setName: "ci",
+          rootDir: "../outside",
+          locale: "en-US",
+          capturedAt,
+          viewport: {
+            width: 1440,
+            height: 900
+          },
+          routesPath: "routes.json",
+          pages: {}
+        }
+      }
+    } satisfies LinkedInFixtureManifest);
+
+    await expect(loadLinkedInFixtureSet(manifestPath, "ci")).rejects.toThrow("rootDir");
+
+    const setRootDir = path.join(tempDir, "ci");
+    await mkdir(setRootDir, { recursive: true });
+    await writeJsonFixture(path.join(setRootDir, "routes.json"), {
+      format: 1,
+      setName: "ci",
+      routes: []
+    });
+
+    await writeJsonFixture(manifestPath, {
+      format: 1,
+      updatedAt: capturedAt,
+      defaultSetName: "ci",
+      sets: {
+        ci: {
+          setName: "ci",
+          rootDir: "ci",
+          locale: "en-US",
+          capturedAt,
+          viewport: {
+            width: 1440,
+            height: 900
+          },
+          routesPath: "../routes.json",
+          pages: {}
+        }
+      }
+    } satisfies LinkedInFixtureManifest);
+
+    await expect(loadLinkedInFixtureSet(manifestPath, "ci")).rejects.toThrow("routesPath");
+
+    await writeJsonFixture(manifestPath, {
+      format: 1,
+      updatedAt: capturedAt,
+      defaultSetName: "ci",
+      sets: {
+        ci: {
+          setName: "ci",
+          rootDir: "ci",
+          locale: "en-US",
+          capturedAt,
+          viewport: {
+            width: 1440,
+            height: 900
+          },
+          routesPath: "routes.json",
+          pages: {
+            feed: {
+              pageType: "feed",
+              url: "https://www.linkedin.com/feed/",
+              htmlPath: "../pages/feed.html",
+              recordedAt: capturedAt,
+              title: "Feed"
+            }
+          }
+        }
+      }
+    } satisfies LinkedInFixtureManifest);
+
+    await expect(loadLinkedInFixtureSet(manifestPath, "ci")).rejects.toThrow("htmlPath");
+  });
+
+  it("warns on stale empty sets", async () => {
+    const emptyFixtureSet = await createFixtureSet({
+      capturedAt: "2025-01-01T00:00:00.000Z",
+      pages: {}
+    });
+
     const emptyWarnings = await checkLinkedInFixtureStaleness(emptyFixtureSet.manifestPath, {
       maxAgeDays: 30
     });
-    const invalidWarnings = await checkLinkedInFixtureStaleness(
-      invalidTimestampFixtureSet.manifestPath,
-      {
-        maxAgeDays: 1
-      }
-    );
 
     expect(emptyWarnings).toHaveLength(1);
     expect(emptyWarnings[0]).toMatchObject({
@@ -403,8 +564,6 @@ describe("fixtureReplay manifests and staleness", () => {
         maxAgeDays: 30
       })
     ).rejects.toThrow(`Fixture set missing is not defined in ${emptyFixtureSet.manifestPath}.`);
-    expect(invalidWarnings).toHaveLength(1);
-    expect(invalidWarnings[0]?.ageDays).toBe(Number.POSITIVE_INFINITY);
   });
 });
 
@@ -487,7 +646,7 @@ describe("fixtureReplay server", () => {
     expect(concurrentBodies.every((entry) => entry.body === largeBody)).toBe(true);
   });
 
-  it("returns structured fixture misses and request parsing failures", async () => {
+  it("returns structured fixture misses, request parsing failures, and request-size limits", async () => {
     const fixtureSet = await createFixtureSet();
     enableReplay(fixtureSet.manifestPath, fixtureSet.setName);
 
@@ -521,14 +680,70 @@ describe("fixtureReplay server", () => {
       url: "https://www.linkedin.com/does-not-exist/"
     });
 
-    expect(malformedPayloadResponse.status).toBe(500);
+    expect(malformedPayloadResponse.status).toBe(400);
     expect(await malformedPayloadResponse.json()).toMatchObject({
-      error: "fixture_replay_error"
+      error: "fixture_replay_invalid_request"
+    });
+
+    const oversizedPayloadResponse = await fetch(`${replayServer?.baseUrl}${REPLAY_ROUTE_PATH}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body:
+        '{"method":"GET","url":"https://www.linkedin.com/feed/","pad":"' +
+        "x".repeat(70_000) +
+        '"}'
+    });
+
+    expect(oversizedPayloadResponse.status).toBe(413);
+    expect(await oversizedPayloadResponse.json()).toMatchObject({
+      error: "fixture_replay_request_too_large"
     });
 
     expect(unknownPathResponse.status).toBe(404);
     expect(await unknownPathResponse.json()).toEqual({
       error: "not_found"
+    });
+  });
+
+  it("returns structured errors when fixture bodies disappear after server startup", async () => {
+    const fixtureSet = await createFixtureSet({
+      routes: [
+        {
+          method: "GET",
+          url: "https://www.linkedin.com/feed/",
+          status: 200,
+          headers: {
+            "Content-Type": "text/html; charset=utf-8"
+          },
+          bodyPath: "responses/feed.html"
+        }
+      ],
+      responseFiles: {
+        "responses/feed.html": "<html><body>fixture</body></html>"
+      }
+    });
+    enableReplay(fixtureSet.manifestPath, fixtureSet.setName);
+
+    const replayServer = await ensureSharedFixtureReplayServer();
+    await rm(path.join(fixtureSet.setRootDir, "responses/feed.html"));
+
+    const replayResponse = await fetch(`${replayServer?.baseUrl}${REPLAY_ROUTE_PATH}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        method: "GET",
+        url: "https://www.linkedin.com/feed/"
+      })
+    });
+
+    expect(replayResponse.status).toBe(500);
+    expect(await replayResponse.json()).toMatchObject({
+      error: "fixture_replay_error",
+      message: expect.stringContaining("does not exist")
     });
   });
 
@@ -690,7 +905,7 @@ describe("fixtureReplay browser routing", () => {
     expect(fulfilledBody).toEqual(Buffer.from("<html><body>feed fixture</body></html>"));
   });
 
-  it("surfaces network failures when the configured replay server is unreachable", async () => {
+  it("returns structured route failures when the configured replay server is unreachable", async () => {
     const fixtureSet = await createFixtureSet({
       setName: "remote"
     });
@@ -715,7 +930,21 @@ describe("fixtureReplay browser routing", () => {
 
     const linkedInRoute = createRouteMock("https://www.linkedin.com/feed/");
 
-    await expect(routeHandler(linkedInRoute)).rejects.toThrow();
-    expect(linkedInRoute.fulfill).not.toHaveBeenCalled();
+    await routeHandler(linkedInRoute);
+
+    expect(linkedInRoute.fulfill).toHaveBeenCalledTimes(1);
+    expect(linkedInRoute.fulfill).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 502,
+        headers: {
+          "content-type": "application/json; charset=utf-8"
+        }
+      })
+    );
+
+    const fulfilledBody = linkedInRoute.fulfill.mock.calls[0]?.[0]?.body;
+    expect(JSON.parse(String(fulfilledBody))).toMatchObject({
+      error: "fixture_replay_unavailable"
+    });
   });
 });
