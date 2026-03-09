@@ -1,4 +1,4 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { BrowserContext } from "playwright-core";
@@ -10,6 +10,12 @@ export const DEFAULT_FIXTURE_MANIFEST_PATH = path.resolve(
   "test/fixtures/manifest.json"
 );
 export const REPLAY_ROUTE_PATH = "/__linkedin_fixture__/replay";
+export const FIXTURE_REPLAY_ENV_KEYS = [
+  "LINKEDIN_E2E_REPLAY",
+  "LINKEDIN_E2E_FIXTURE_SERVER_URL",
+  "LINKEDIN_E2E_FIXTURE_SET",
+  "LINKEDIN_E2E_FIXTURE_MANIFEST"
+] as const;
 export const LINKEDIN_REPLAY_PAGE_TYPES = [
   "feed",
   "profile",
@@ -106,7 +112,6 @@ export interface StartedFixtureReplayServer {
 interface ReplayLookupEntry {
   body: Buffer;
   headers: Record<string, string>;
-  route: LinkedInFixtureRoute;
   status: number;
 }
 
@@ -116,16 +121,16 @@ interface ReplayRequestPayload {
 }
 
 interface MutableSharedServerState {
-  server: Server | undefined;
   promise: Promise<StartedFixtureReplayServer> | undefined;
   started: StartedFixtureReplayServer | undefined;
 }
 
 const sharedServerState: MutableSharedServerState = {
-  server: undefined,
   promise: undefined,
   started: undefined
 };
+
+const linkedInReplayPageTypes = new Set<string>(LINKEDIN_REPLAY_PAGE_TYPES);
 
 function readTrimmedEnv(name: string): string | undefined {
   const value = process.env[name];
@@ -173,7 +178,7 @@ function asFiniteNumber(value: unknown, label: string): number {
 
 function asPageType(value: unknown, label: string): LinkedInReplayPageType {
   const resolved = asString(value, label);
-  if ((LINKEDIN_REPLAY_PAGE_TYPES as readonly string[]).includes(resolved)) {
+  if (linkedInReplayPageTypes.has(resolved)) {
     return resolved as LinkedInReplayPageType;
   }
 
@@ -235,7 +240,7 @@ function parseRoute(value: unknown, label: string): LinkedInFixtureRoute {
   const headersRecord = asRecord(record.headers ?? {}, `${label}.headers`);
   const headers: Record<string, string> = {};
   for (const [headerKey, headerValue] of Object.entries(headersRecord)) {
-    headers[headerKey.toLowerCase()] = String(headerValue);
+    headers[headerKey] = String(headerValue);
   }
 
   const pageTypeValue = record.pageType;
@@ -243,7 +248,7 @@ function parseRoute(value: unknown, label: string): LinkedInFixtureRoute {
     method: asString(record.method, `${label}.method`).toUpperCase(),
     url: asString(record.url, `${label}.url`),
     status: asFiniteNumber(record.status, `${label}.status`),
-    headers,
+    headers: normalizeFixtureRouteHeaders(headers),
     ...(asOptionalString(record.bodyPath)
       ? { bodyPath: asString(record.bodyPath, `${label}.bodyPath`) }
       : {}),
@@ -310,8 +315,10 @@ function normalizeRouteUrl(url: string): string {
   return parsed.toString();
 }
 
-function buildRouteKey(method: string, url: string): string {
-  return `${method.toUpperCase()} ${normalizeRouteUrl(url)}`;
+export function buildFixtureRouteKey(
+  route: Pick<LinkedInFixtureRoute, "method" | "url">
+): string {
+  return `${route.method.toUpperCase()} ${normalizeRouteUrl(route.url)}`;
 }
 
 function resolveFixtureSetBaseDir(
@@ -332,7 +339,7 @@ async function readJsonFile(filePath: string): Promise<unknown> {
   return JSON.parse(await readFile(filePath, "utf8")) as unknown;
 }
 
-function isLinkedInReplayLikeUrl(url: string): boolean {
+export function isLinkedInFixtureReplayUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
     if (!(parsed.protocol === "http:" || parsed.protocol === "https:")) {
@@ -357,12 +364,33 @@ function getAgeDays(recordedAt: string): number {
   return Math.floor((Date.now() - recordedMs) / (24 * 60 * 60 * 1000));
 }
 
-function removeUnsafeHeaders(headers: Record<string, string>): Record<string, string> {
-  const safeHeaders = { ...headers };
-  delete safeHeaders["content-length"];
-  delete safeHeaders["content-encoding"];
-  delete safeHeaders["transfer-encoding"];
-  return safeHeaders;
+export function normalizeFixtureRouteHeaders(
+  headers: Record<string, string>
+): Record<string, string> {
+  const normalizedHeaders: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    normalizedHeaders[key.toLowerCase()] = value;
+  }
+
+  delete normalizedHeaders["content-length"];
+  delete normalizedHeaders["content-encoding"];
+  delete normalizedHeaders["transfer-encoding"];
+  return normalizedHeaders;
+}
+
+function assertFixtureFileFormat(
+  fileLabel: string,
+  filePath: string,
+  format: number
+): void {
+  if (format === LINKEDIN_FIXTURE_MANIFEST_FORMAT_VERSION) {
+    return;
+  }
+
+  throw new Error(
+    `${fileLabel} ${filePath} uses unsupported format ${format}. ` +
+      `Expected ${LINKEDIN_FIXTURE_MANIFEST_FORMAT_VERSION}.`
+  );
 }
 
 function createReplayMissBody(payload: ReplayRequestPayload): Buffer {
@@ -417,21 +445,18 @@ function writeServerResponse(
 }
 
 async function buildReplayLookup(
-  manifestPath: string,
-  summary: LinkedInFixtureSetSummary,
+  baseDir: string,
   routes: LinkedInFixtureRoute[]
 ): Promise<Map<string, ReplayLookupEntry>> {
-  const baseDir = resolveFixtureSetBaseDir(manifestPath, summary);
   const lookup = new Map<string, ReplayLookupEntry>();
 
   for (const route of routes) {
     const body = route.bodyPath
       ? await readFile(path.resolve(baseDir, route.bodyPath))
       : Buffer.from(route.bodyText ?? "", "utf8");
-    lookup.set(buildRouteKey(route.method, route.url), {
+    lookup.set(buildFixtureRouteKey(route), {
       body,
-      headers: removeUnsafeHeaders(route.headers),
-      route,
+      headers: normalizeFixtureRouteHeaders(route.headers),
       status: route.status
     });
   }
@@ -444,7 +469,7 @@ async function startFixtureReplayServer(
   requestedSetName?: string
 ): Promise<StartedFixtureReplayServer> {
   const fixtureSet = await loadLinkedInFixtureSet(manifestPath, requestedSetName);
-  const lookup = await buildReplayLookup(manifestPath, fixtureSet.summary, fixtureSet.routes);
+  const lookup = await buildReplayLookup(fixtureSet.baseDir, fixtureSet.routes);
 
   const server = createServer(async (request, response) => {
     try {
@@ -460,7 +485,7 @@ async function startFixtureReplayServer(
       }
 
       const payload = await readReplayRequestPayload(request);
-      const lookupEntry = lookup.get(buildRouteKey(payload.method, payload.url));
+      const lookupEntry = lookup.get(buildFixtureRouteKey(payload));
       if (!lookupEntry) {
         writeServerResponse(
           response,
@@ -521,7 +546,6 @@ async function startFixtureReplayServer(
     });
   });
 
-  sharedServerState.server = server;
   sharedServerState.started = started;
   return started;
 }
@@ -543,17 +567,14 @@ export function resolveFixtureManifestPath(manifestPath?: string): string {
 }
 
 export function getFixtureReplayEnvironment(): FixtureReplayEnvironment {
+  const serverUrl = readTrimmedEnv("LINKEDIN_E2E_FIXTURE_SERVER_URL");
+  const setName = readTrimmedEnv("LINKEDIN_E2E_FIXTURE_SET");
+
   return {
-    enabled:
-      readEnabledFlag("LINKEDIN_E2E_REPLAY") ||
-      readTrimmedEnv("LINKEDIN_E2E_FIXTURE_SERVER_URL") !== undefined,
+    enabled: readEnabledFlag("LINKEDIN_E2E_REPLAY") || serverUrl !== undefined,
     manifestPath: resolveFixtureManifestPath(),
-    ...(readTrimmedEnv("LINKEDIN_E2E_FIXTURE_SERVER_URL")
-      ? { serverUrl: asString(readTrimmedEnv("LINKEDIN_E2E_FIXTURE_SERVER_URL"), "LINKEDIN_E2E_FIXTURE_SERVER_URL") }
-      : {}),
-    ...(readTrimmedEnv("LINKEDIN_E2E_FIXTURE_SET")
-      ? { setName: asString(readTrimmedEnv("LINKEDIN_E2E_FIXTURE_SET"), "LINKEDIN_E2E_FIXTURE_SET") }
-      : {})
+    ...(serverUrl ? { serverUrl } : {}),
+    ...(setName ? { setName } : {})
   };
 }
 
@@ -565,12 +586,7 @@ export async function readLinkedInFixtureManifest(
   manifestPath: string = resolveFixtureManifestPath()
 ): Promise<LinkedInFixtureManifest> {
   const parsed = parseManifest(await readJsonFile(manifestPath), manifestPath);
-  if (parsed.format !== LINKEDIN_FIXTURE_MANIFEST_FORMAT_VERSION) {
-    throw new Error(
-      `Fixture manifest ${manifestPath} uses unsupported format ${parsed.format}. ` +
-        `Expected ${LINKEDIN_FIXTURE_MANIFEST_FORMAT_VERSION}.`
-    );
-  }
+  assertFixtureFileFormat("Fixture manifest", manifestPath, parsed.format);
 
   return parsed;
 }
@@ -603,12 +619,7 @@ export async function loadLinkedInFixtureSet(
 
   const routeFilePath = getResolvedRouteFilePath(manifestPath, summary);
   const parsedRouteFile = parseRouteFile(await readJsonFile(routeFilePath), routeFilePath);
-  if (parsedRouteFile.format !== LINKEDIN_FIXTURE_MANIFEST_FORMAT_VERSION) {
-    throw new Error(
-      `Fixture route file ${routeFilePath} uses unsupported format ${parsedRouteFile.format}. ` +
-        `Expected ${LINKEDIN_FIXTURE_MANIFEST_FORMAT_VERSION}.`
-    );
-  }
+  assertFixtureFileFormat("Fixture route file", routeFilePath, parsedRouteFile.format);
 
   return {
     manifestPath,
@@ -712,7 +723,6 @@ export async function ensureSharedFixtureReplayServer(): Promise<StartedFixtureR
 
 export function shutdownSharedFixtureReplayServer(): void {
   sharedServerState.started?.close();
-  sharedServerState.server = undefined;
   sharedServerState.started = undefined;
   sharedServerState.promise = undefined;
 }
@@ -743,7 +753,7 @@ export async function attachFixtureReplayToContext(
       return;
     }
 
-    if (!isLinkedInReplayLikeUrl(requestUrl)) {
+    if (!isLinkedInFixtureReplayUrl(requestUrl)) {
       await route.abort().catch(() => undefined);
       return;
     }
@@ -760,7 +770,9 @@ export async function attachFixtureReplayToContext(
     });
 
     const body = Buffer.from(await replayResponse.arrayBuffer());
-    const headers = removeUnsafeHeaders(Object.fromEntries(replayResponse.headers.entries()));
+    const headers = normalizeFixtureRouteHeaders(
+      Object.fromEntries(replayResponse.headers.entries())
+    );
     await route.fulfill({
       status: replayResponse.status,
       headers,
