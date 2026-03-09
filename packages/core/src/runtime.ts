@@ -1,10 +1,14 @@
 import { ArtifactHelpers } from "./artifacts.js";
+import { ActivityPollerService } from "./activityPoller.js";
+import { ActivityWatchesService } from "./activityWatches.js";
 import {
   ensureConfigPaths,
   getLinkedInSelectorLocaleConfigWarning,
   resolveConfigPaths,
   resolveConfirmFailureArtifactConfig,
   resolveLinkedInSelectorLocaleConfigResolution,
+  resolveActivityWebhookConfig,
+  type ActivityWebhookConfig,
   type ConfigPaths,
   type ConfirmFailureArtifactConfig
 } from "./config.js";
@@ -110,6 +114,7 @@ export interface CoreRuntime {
   confirmFailureArtifacts: ConfirmFailureArtifactConfig;
   privacy: PrivacyConfig;
   postSafetyLint: LinkedInPostSafetyLintConfig;
+  activityConfig: ActivityWebhookConfig;
   db: AssistantDatabase;
   logger: JsonEventLogger;
   artifacts: ArtifactHelpers;
@@ -126,6 +131,8 @@ export interface CoreRuntime {
   feed: LinkedInFeedService;
   posts: LinkedInPostsService;
   inbox: LinkedInInboxService;
+  activityWatches: ActivityWatchesService;
+  activityPoller: ActivityPollerService;
   selectorAudit: LinkedInSelectorAuditService;
   testAutoConfirm: TestAutoConfirmConfig;
   healthCheck: (options?: { profileName?: string }) => Promise<FullHealthStatus>;
@@ -143,6 +150,7 @@ export function createCoreRuntime(
   ensureConfigPaths(paths);
   const privacy = resolvePrivacyConfig(options.privacy);
   const postSafetyLint = resolveLinkedInPostSafetyLintConfig(paths.baseDir);
+  const activityConfig = resolveActivityWebhookConfig();
   const selectorLocaleResolution = resolveLinkedInSelectorLocaleConfigResolution(
     options.selectorLocale
   );
@@ -226,6 +234,7 @@ export function createCoreRuntime(
     confirmFailureArtifacts,
     privacy,
     postSafetyLint,
+    activityConfig,
     db,
     logger,
     artifacts,
@@ -246,6 +255,8 @@ export function createCoreRuntime(
     feed: undefined as unknown as LinkedInFeedService,
     posts: undefined as unknown as LinkedInPostsService,
     inbox: undefined as unknown as LinkedInInboxService,
+    activityWatches: undefined as unknown as ActivityWatchesService,
+    activityPoller: undefined as unknown as ActivityPollerService,
     selectorAudit: undefined as unknown as LinkedInSelectorAuditService,
     testAutoConfirm,
     healthCheck: async (
@@ -289,6 +300,8 @@ export function createCoreRuntime(
   const postsRuntime: LinkedInPostsRuntime = runtime;
   runtime.posts = new LinkedInPostsService(postsRuntime);
   runtime.inbox = new LinkedInInboxService(runtime);
+  runtime.activityWatches = new ActivityWatchesService(runtime);
+  runtime.activityPoller = new ActivityPollerService(runtime);
   runtime.selectorAudit = new LinkedInSelectorAuditService(runtime);
 
   logger.log("info", "runtime.started", {

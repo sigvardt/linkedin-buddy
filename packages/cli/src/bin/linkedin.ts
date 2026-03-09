@@ -18,6 +18,9 @@ import { stdin, stdout } from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Command } from "commander";
 import {
+  ACTIVITY_EVENT_TYPES,
+  ACTIVITY_WATCH_KINDS,
+  ACTIVITY_WATCH_STATUSES,
   DEFAULT_FOLLOWUP_SINCE,
   LINKEDIN_ASSISTANT_SELECTOR_LOCALE_ENV,
   AssistantDatabase,
@@ -54,6 +57,7 @@ import {
   ProfileManager,
   readLinkedInFixtureManifest,
   resolveFixtureManifestPath,
+  resolveActivityWebhookConfig,
   resolveConfigPaths,
   resolveFollowupSinceWindow,
   resolveLinkedInSelectorLocaleConfigResolution,
@@ -66,7 +70,13 @@ import {
   runReadOnlyLinkedInLiveValidation,
   upsertWriteValidationAccount,
   toLinkedInAssistantErrorPayload,
+  WEBHOOK_DELIVERY_ATTEMPT_STATUSES,
+  WEBHOOK_SUBSCRIPTION_STATUSES,
   writeLinkedInFixtureManifest,
+  type ActivityEventType,
+  type ActivityPollTickResult,
+  type ActivityWatchKind,
+  type ActivityWatchStatus,
   type DraftQualityReport,
   type LinkedInFixtureManifest,
   type LinkedInFixturePageEntry,
@@ -81,6 +91,8 @@ import {
   type SchedulerTickResult,
   type SearchCategory,
   type SelectorAuditReport,
+  type WebhookDeliveryAttemptStatus,
+  type WebhookSubscriptionStatus,
   type WriteValidationAccountTargets,
   type WriteValidationActionPreview,
   type WriteValidationReport
@@ -3001,6 +3013,942 @@ async function runSchedulerDaemon(
   }
 }
 
+type ActivityDaemonStateSummary = Pick<
+  ActivityPollTickResult,
+  | "claimedWatches"
+  | "polledWatches"
+  | "failedWatches"
+  | "emittedEvents"
+  | "enqueuedDeliveries"
+  | "claimedDeliveries"
+  | "deliveredAttempts"
+  | "retriedDeliveries"
+  | "failedDeliveries"
+  | "deadLetterDeliveries"
+  | "disabledSubscriptions"
+>;
+
+interface ActivityDaemonState {
+  pid: number;
+  profileName: string;
+  startedAt: string;
+  updatedAt: string;
+  status: "starting" | "running" | "idle" | "degraded" | "stopped";
+  daemonPollIntervalMs: number;
+  maxWatchesPerTick: number;
+  maxDeliveriesPerTick: number;
+  consecutiveFailures: number;
+  maxConsecutiveFailures: number;
+  lastTickAt?: string;
+  lastSuccessfulTickAt?: string;
+  lastSummary?: ActivityDaemonStateSummary;
+  lastError?: string;
+  cdpUrl?: string;
+  stoppedAt?: string;
+}
+
+interface ActivityFiles {
+  dir: string;
+  pidPath: string;
+  statePath: string;
+  logPath: string;
+}
+
+const ACTIVITY_DAEMON_MAX_CONSECUTIVE_FAILURES = 5;
+
+function asCliObject(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      "Activity target must be a JSON object."
+    );
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function parseJsonObjectString(
+  value: string,
+  label: string
+): Record<string, unknown> {
+  try {
+    return asCliObject(JSON.parse(value));
+  } catch (error) {
+    if (error instanceof LinkedInAssistantError) {
+      throw error;
+    }
+
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `${label} must be valid JSON object text.`,
+      {
+        cause: error instanceof Error ? error.message : String(error)
+      }
+    );
+  }
+}
+
+async function readActivityTargetInput(input: {
+  target?: string;
+  targetFile?: string;
+}): Promise<Record<string, unknown> | undefined> {
+  const target = typeof input.target === "string" ? input.target.trim() : "";
+  const targetFile =
+    typeof input.targetFile === "string" ? input.targetFile.trim() : "";
+
+  if (target && targetFile) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      "Specify either --target or --target-file, not both."
+    );
+  }
+
+  if (targetFile) {
+    return asCliObject(await readJsonInputFile(targetFile, "activity target"));
+  }
+
+  if (target) {
+    return parseJsonObjectString(target, "--target");
+  }
+
+  return undefined;
+}
+
+function coerceEnumValue<T extends string>(
+  value: string,
+  allowed: readonly T[],
+  label: string
+): T {
+  const normalized = value.trim();
+  if ((allowed as readonly string[]).includes(normalized)) {
+    return normalized as T;
+  }
+
+  throw new LinkedInAssistantError(
+    "ACTION_PRECONDITION_FAILED",
+    `${label} must be one of: ${allowed.join(", ")}.`
+  );
+}
+
+function coerceActivityEventTypes(
+  values: string[] | undefined
+): ActivityEventType[] {
+  if (!values || values.length === 0) {
+    return [];
+  }
+
+  return values.map((value) =>
+    coerceEnumValue(value, ACTIVITY_EVENT_TYPES, "event")
+  );
+}
+
+function coerceActivityWatchKind(value: string): ActivityWatchKind {
+  return coerceEnumValue(value, ACTIVITY_WATCH_KINDS, "kind");
+}
+
+function coerceActivityWatchStatusValue(value: string): ActivityWatchStatus {
+  return coerceEnumValue(value, ACTIVITY_WATCH_STATUSES, "status");
+}
+
+function coerceWebhookSubscriptionStatusValue(
+  value: string
+): WebhookSubscriptionStatus {
+  return coerceEnumValue(value, WEBHOOK_SUBSCRIPTION_STATUSES, "status");
+}
+
+function coerceWebhookDeliveryStatusValue(
+  value: string
+): WebhookDeliveryAttemptStatus {
+  return coerceEnumValue(value, WEBHOOK_DELIVERY_ATTEMPT_STATUSES, "status");
+}
+
+function getActivityFiles(profileName: string): ActivityFiles {
+  const slug = profileSlug(profileName);
+  const dir = path.join(resolveConfigPaths().baseDir, "activity");
+  return {
+    dir,
+    pidPath: path.join(dir, `${slug}.pid`),
+    statePath: path.join(dir, `${slug}.state.json`),
+    logPath: path.join(dir, `${slug}.events.jsonl`)
+  };
+}
+
+async function ensureActivityDir(files: ActivityFiles): Promise<void> {
+  await mkdir(files.dir, { recursive: true });
+}
+
+async function readActivityPid(profileName: string): Promise<number | null> {
+  const files = getActivityFiles(profileName);
+  try {
+    const raw = await readFile(files.pidPath, "utf8");
+    const pid = Number.parseInt(raw.trim(), 10);
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function writeActivityPid(profileName: string, pid: number): Promise<void> {
+  const files = getActivityFiles(profileName);
+  await ensureActivityDir(files);
+  await writeFile(files.pidPath, `${pid}\n`, "utf8");
+}
+
+async function removeActivityPid(profileName: string): Promise<void> {
+  const files = getActivityFiles(profileName);
+  try {
+    await unlink(files.pidPath);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+}
+
+async function readActivityState(
+  profileName: string
+): Promise<ActivityDaemonState | null> {
+  const files = getActivityFiles(profileName);
+  return readJsonFile<ActivityDaemonState>(files.statePath);
+}
+
+async function writeActivityState(
+  profileName: string,
+  state: ActivityDaemonState
+): Promise<void> {
+  const files = getActivityFiles(profileName);
+  await ensureActivityDir(files);
+  await writeJsonFile(files.statePath, state);
+}
+
+async function appendActivityEvent(
+  profileName: string,
+  event: Record<string, unknown>
+): Promise<void> {
+  const files = getActivityFiles(profileName);
+  await ensureActivityDir(files);
+  await appendFile(files.logPath, `${JSON.stringify(event)}\n`, "utf8");
+}
+
+function summarizeActivityTick(
+  result: ActivityPollTickResult
+): ActivityDaemonStateSummary {
+  return {
+    claimedWatches: result.claimedWatches,
+    polledWatches: result.polledWatches,
+    failedWatches: result.failedWatches,
+    emittedEvents: result.emittedEvents,
+    enqueuedDeliveries: result.enqueuedDeliveries,
+    claimedDeliveries: result.claimedDeliveries,
+    deliveredAttempts: result.deliveredAttempts,
+    retriedDeliveries: result.retriedDeliveries,
+    failedDeliveries: result.failedDeliveries,
+    deadLetterDeliveries: result.deadLetterDeliveries,
+    disabledSubscriptions: result.disabledSubscriptions
+  };
+}
+
+function resolveActivityStatusConfig(): Partial<
+  Record<"activity_config" | "activity_config_error", unknown>
+> {
+  try {
+    return {
+      activity_config: resolveActivityWebhookConfig()
+    };
+  } catch (error) {
+    return {
+      activity_config_error: toLinkedInAssistantErrorPayload(error, cliPrivacyConfig)
+    };
+  }
+}
+
+async function runActivityWatchAdd(input: {
+  profileName: string;
+  kind: ActivityWatchKind;
+  target?: Record<string, unknown>;
+  intervalSeconds?: number;
+  cron?: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.activity.watch.add.start", {
+      profileName: input.profileName,
+      kind: input.kind
+    });
+
+    const watch = runtime.activityWatches.createWatch({
+      profileName: input.profileName,
+      kind: input.kind,
+      ...(input.target ? { target: input.target } : {}),
+      ...(typeof input.intervalSeconds === "number"
+        ? { intervalSeconds: input.intervalSeconds }
+        : {}),
+      ...(input.cron ? { cron: input.cron } : {})
+    });
+
+    runtime.logger.log("info", "cli.activity.watch.add.done", {
+      profileName: input.profileName,
+      watchId: watch.id,
+      kind: watch.kind
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      watch
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runActivityWatchList(input: {
+  profileName: string;
+  status?: ActivityWatchStatus;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    const watches = runtime.activityWatches.listWatches({
+      profileName: input.profileName,
+      ...(input.status ? { status: input.status } : {})
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      count: watches.length,
+      watches
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runActivityWatchPause(id: string, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    const watch = runtime.activityWatches.pauseWatch(id);
+    printJson({
+      run_id: runtime.runId,
+      watch
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runActivityWatchResume(id: string, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    const watch = runtime.activityWatches.resumeWatch(id);
+    printJson({
+      run_id: runtime.runId,
+      watch
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runActivityWatchRemove(id: string, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    const removed = runtime.activityWatches.removeWatch(id);
+    printJson({
+      run_id: runtime.runId,
+      watch_id: id,
+      removed
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runActivityWebhookAdd(input: {
+  watchId: string;
+  deliveryUrl: string;
+  eventTypes?: ActivityEventType[];
+  signingSecret?: string;
+  maxAttempts?: number;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    const subscription = runtime.activityWatches.createWebhookSubscription({
+      watchId: input.watchId,
+      deliveryUrl: input.deliveryUrl,
+      ...(input.eventTypes ? { eventTypes: input.eventTypes } : {}),
+      ...(input.signingSecret ? { signingSecret: input.signingSecret } : {}),
+      ...(typeof input.maxAttempts === "number"
+        ? { maxAttempts: input.maxAttempts }
+        : {})
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      subscription
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runActivityWebhookList(input: {
+  profileName: string;
+  watchId?: string;
+  status?: WebhookSubscriptionStatus;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    const subscriptions = runtime.activityWatches.listWebhookSubscriptions({
+      profileName: input.profileName,
+      ...(input.watchId ? { watchId: input.watchId } : {}),
+      ...(input.status ? { status: input.status } : {})
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      count: subscriptions.length,
+      subscriptions
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runActivityWebhookPause(
+  id: string,
+  cdpUrl?: string
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    const subscription = runtime.activityWatches.pauseWebhookSubscription(id);
+    printJson({
+      run_id: runtime.runId,
+      subscription
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runActivityWebhookResume(
+  id: string,
+  cdpUrl?: string
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    const subscription = runtime.activityWatches.resumeWebhookSubscription(id);
+    printJson({
+      run_id: runtime.runId,
+      subscription
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runActivityWebhookRemove(
+  id: string,
+  cdpUrl?: string
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    const removed = runtime.activityWatches.removeWebhookSubscription(id);
+    printJson({
+      run_id: runtime.runId,
+      subscription_id: id,
+      removed
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runActivityEventsList(input: {
+  profileName: string;
+  watchId?: string;
+  limit: number;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    const events = runtime.activityWatches.listEvents({
+      profileName: input.profileName,
+      ...(input.watchId ? { watchId: input.watchId } : {}),
+      limit: input.limit
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      count: events.length,
+      events
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runActivityDeliveriesList(input: {
+  profileName: string;
+  watchId?: string;
+  subscriptionId?: string;
+  status?: WebhookDeliveryAttemptStatus;
+  limit: number;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    const deliveries = runtime.activityWatches.listDeliveries({
+      profileName: input.profileName,
+      ...(input.watchId ? { watchId: input.watchId } : {}),
+      ...(input.subscriptionId ? { subscriptionId: input.subscriptionId } : {}),
+      ...(input.status ? { status: input.status } : {}),
+      limit: input.limit
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      count: deliveries.length,
+      deliveries
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runActivityRunOnce(
+  profileName: string,
+  cdpUrl?: string
+): Promise<void> {
+  const normalizedProfileName = coerceProfileName(profileName);
+  const runtime = createRuntime(cdpUrl);
+  const activityConfig = resolveActivityWebhookConfig();
+
+  try {
+    const result = await runtime.activityPoller.runTick({
+      profileName: normalizedProfileName,
+      workerId: `cli:${runtime.runId}`
+    });
+
+    if (
+      result.failedWatches > 0 ||
+      result.failedDeliveries > 0 ||
+      result.deadLetterDeliveries > 0
+    ) {
+      process.exitCode = 1;
+    }
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: normalizedProfileName,
+      activity_config: activityConfig,
+      ...result
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runActivityStart(
+  profileName: string,
+  cdpUrl?: string
+): Promise<void> {
+  const normalizedProfileName = coerceProfileName(profileName);
+  const files = getActivityFiles(normalizedProfileName);
+  const existingPid = await readActivityPid(normalizedProfileName);
+  if (existingPid && isProcessRunning(existingPid)) {
+    printJson({
+      started: false,
+      reason: "Activity daemon is already running for this profile.",
+      profile_name: normalizedProfileName,
+      pid: existingPid,
+      state: await readActivityState(normalizedProfileName),
+      state_path: files.statePath,
+      log_path: files.logPath,
+      ...resolveActivityStatusConfig()
+    });
+    return;
+  }
+
+  if (existingPid && !isProcessRunning(existingPid)) {
+    await removeActivityPid(normalizedProfileName);
+  }
+
+  maybeWarnAboutSelectorLocaleConfig(cliSelectorLocale);
+
+  const activityConfig = resolveActivityWebhookConfig();
+  const cliEntrypoint = resolveKeepAliveCliEntrypoint();
+  if (!cliEntrypoint) {
+    throw new LinkedInAssistantError(
+      "UNKNOWN",
+      "Could not resolve CLI entrypoint for activity daemon startup."
+    );
+  }
+
+  const daemonArgs = [cliEntrypoint];
+  if (cdpUrl) {
+    daemonArgs.push("--cdp-url", cdpUrl);
+  }
+  if (cliSelectorLocale) {
+    daemonArgs.push("--selector-locale", cliSelectorLocale);
+  }
+  daemonArgs.push("activity", "__run", "--profile", normalizedProfileName);
+
+  const daemon = spawn(process.execPath, daemonArgs, {
+    detached: true,
+    stdio: "ignore",
+    env: process.env
+  });
+  daemon.unref();
+
+  if (!daemon.pid) {
+    throw new LinkedInAssistantError(
+      "UNKNOWN",
+      "Activity daemon did not return a process id."
+    );
+  }
+
+  const now = new Date().toISOString();
+  const initialState: ActivityDaemonState = {
+    pid: daemon.pid,
+    profileName: normalizedProfileName,
+    startedAt: now,
+    updatedAt: now,
+    status: "starting",
+    daemonPollIntervalMs: activityConfig.daemonPollIntervalMs,
+    maxWatchesPerTick: activityConfig.maxWatchesPerTick,
+    maxDeliveriesPerTick: activityConfig.maxDeliveriesPerTick,
+    consecutiveFailures: 0,
+    maxConsecutiveFailures: ACTIVITY_DAEMON_MAX_CONSECUTIVE_FAILURES,
+    ...(cdpUrl ? { cdpUrl } : {})
+  };
+
+  await writeActivityPid(normalizedProfileName, daemon.pid);
+  await writeActivityState(normalizedProfileName, initialState);
+
+  printJson({
+    started: true,
+    profile_name: normalizedProfileName,
+    pid: daemon.pid,
+    state_path: files.statePath,
+    log_path: files.logPath,
+    activity_config: activityConfig
+  });
+}
+
+async function runActivityStatus(profileName: string): Promise<void> {
+  const normalizedProfileName = coerceProfileName(profileName);
+  const pid = await readActivityPid(normalizedProfileName);
+  const state = await readActivityState(normalizedProfileName);
+  const running = typeof pid === "number" ? isProcessRunning(pid) : false;
+  const files = getActivityFiles(normalizedProfileName);
+  const db = new AssistantDatabase(resolveConfigPaths().dbPath);
+
+  try {
+    const watches = db.listActivityWatches({
+      profileName: normalizedProfileName
+    });
+    const subscriptions = db.listWebhookSubscriptions({
+      profileName: normalizedProfileName
+    });
+    const recentEvents = db.listActivityEvents({
+      profileName: normalizedProfileName,
+      limit: 5
+    });
+    const recentDeliveries = db.listWebhookDeliveryAttempts({
+      profileName: normalizedProfileName,
+      limit: 5
+    });
+
+    printJson({
+      profile_name: normalizedProfileName,
+      running,
+      pid: typeof pid === "number" ? pid : null,
+      state,
+      stale_pid_file: Boolean(pid && !running),
+      state_path: files.statePath,
+      log_path: files.logPath,
+      watch_count: watches.length,
+      active_watch_count: watches.filter((watch) => watch.status === "active").length,
+      subscription_count: subscriptions.length,
+      active_subscription_count: subscriptions.filter(
+        (subscription) => subscription.status === "active"
+      ).length,
+      recent_event_count: recentEvents.length,
+      recent_delivery_count: recentDeliveries.length,
+      ...resolveActivityStatusConfig()
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function runActivityStop(profileName: string): Promise<void> {
+  const normalizedProfileName = coerceProfileName(profileName);
+  const files = getActivityFiles(normalizedProfileName);
+  const pid = await readActivityPid(normalizedProfileName);
+  const previousState = await readActivityState(normalizedProfileName);
+
+  if (!pid) {
+    printJson({
+      stopped: false,
+      profile_name: normalizedProfileName,
+      reason: "No activity daemon is currently running for this profile.",
+      state_path: files.statePath,
+      log_path: files.logPath
+    });
+    return;
+  }
+
+  if (!isProcessRunning(pid)) {
+    await removeActivityPid(normalizedProfileName);
+    const now = new Date().toISOString();
+    if (previousState) {
+      await writeActivityState(normalizedProfileName, {
+        ...previousState,
+        status: "stopped",
+        updatedAt: now,
+        stoppedAt: now,
+        lastError: "Recovered from stale pid file."
+      });
+    }
+    printJson({
+      stopped: true,
+      profile_name: normalizedProfileName,
+      pid,
+      reason: "Removed a stale activity PID file for this profile.",
+      state_path: files.statePath,
+      log_path: files.logPath
+    });
+    return;
+  }
+
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch (error) {
+    throw new LinkedInAssistantError(
+      "UNKNOWN",
+      "Failed to send SIGTERM to activity daemon.",
+      {
+        profile_name: normalizedProfileName,
+        pid,
+        cause: error instanceof Error ? error.message : String(error)
+      }
+    );
+  }
+
+  const deadline = Date.now() + 5_000;
+  let running = true;
+  while (Date.now() < deadline) {
+    await sleep(200);
+    running = isProcessRunning(pid);
+    if (!running) {
+      break;
+    }
+  }
+
+  if (running) {
+    process.kill(pid, "SIGKILL");
+  }
+
+  await removeActivityPid(normalizedProfileName);
+  const now = new Date().toISOString();
+  if (previousState) {
+    await writeActivityState(normalizedProfileName, {
+      ...previousState,
+      status: "stopped",
+      updatedAt: now,
+      stoppedAt: now,
+      ...(running ? { lastError: "Activity daemon required SIGKILL to stop." } : {})
+    });
+  }
+
+  printJson({
+    stopped: true,
+    profile_name: normalizedProfileName,
+    pid,
+    forced: running,
+    reason: running
+      ? "Activity daemon did not exit after SIGTERM, so it was force-stopped."
+      : "Activity daemon exited cleanly.",
+    state_path: files.statePath,
+    log_path: files.logPath
+  });
+}
+
+async function runActivityDaemon(
+  profileName: string,
+  cdpUrl?: string
+): Promise<void> {
+  const activityConfig = resolveActivityWebhookConfig();
+  let stopRequested = false;
+  let consecutiveFailures = 0;
+
+  const requestStop = () => {
+    stopRequested = true;
+  };
+  process.on("SIGTERM", requestStop);
+  process.on("SIGINT", requestStop);
+
+  const startedAt = new Date().toISOString();
+  const initialState: ActivityDaemonState = {
+    pid: process.pid,
+    profileName,
+    startedAt,
+    updatedAt: startedAt,
+    status: "running",
+    daemonPollIntervalMs: activityConfig.daemonPollIntervalMs,
+    maxWatchesPerTick: activityConfig.maxWatchesPerTick,
+    maxDeliveriesPerTick: activityConfig.maxDeliveriesPerTick,
+    consecutiveFailures: 0,
+    maxConsecutiveFailures: ACTIVITY_DAEMON_MAX_CONSECUTIVE_FAILURES,
+    ...(cdpUrl ? { cdpUrl } : {})
+  };
+
+  await writeActivityPid(profileName, process.pid);
+  await writeActivityState(profileName, initialState);
+  await appendActivityEvent(profileName, {
+    ts: startedAt,
+    event: "activity.daemon.started",
+    pid: process.pid,
+    profile_name: profileName,
+    cdp_url: cdpUrl ?? null,
+    activity_config: activityConfig
+  });
+
+  try {
+    while (!stopRequested) {
+      const tickAt = new Date().toISOString();
+
+      try {
+        const runtime = createRuntime(cdpUrl);
+
+        try {
+          const result = await runtime.activityPoller.runTick({
+            profileName,
+            workerId: `activity-daemon:${process.pid}`
+          });
+
+          consecutiveFailures = 0;
+          const nextState: ActivityDaemonState = {
+            ...((await readActivityState(profileName)) ?? initialState),
+            pid: process.pid,
+            profileName,
+            updatedAt: tickAt,
+            status:
+              result.failedWatches > 0 ||
+              result.failedDeliveries > 0 ||
+              result.deadLetterDeliveries > 0
+                ? "degraded"
+                : result.claimedWatches === 0 && result.claimedDeliveries === 0
+                  ? "idle"
+                  : "running",
+            daemonPollIntervalMs: activityConfig.daemonPollIntervalMs,
+            maxWatchesPerTick: activityConfig.maxWatchesPerTick,
+            maxDeliveriesPerTick: activityConfig.maxDeliveriesPerTick,
+            consecutiveFailures,
+            maxConsecutiveFailures: ACTIVITY_DAEMON_MAX_CONSECUTIVE_FAILURES,
+            lastTickAt: tickAt,
+            lastSuccessfulTickAt: tickAt,
+            lastSummary: summarizeActivityTick(result)
+          };
+          delete nextState.lastError;
+
+          await writeActivityState(profileName, nextState);
+          await appendActivityEvent(profileName, {
+            ts: tickAt,
+            event: "activity.tick",
+            profile_name: profileName,
+            summary: summarizeActivityTick(result)
+          });
+        } finally {
+          runtime.close();
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const lockHeld = isProfileLockHeldError(error);
+        if (!lockHeld) {
+          consecutiveFailures += 1;
+        }
+
+        const nextState: ActivityDaemonState = {
+          ...((await readActivityState(profileName)) ?? initialState),
+          pid: process.pid,
+          profileName,
+          updatedAt: tickAt,
+          status:
+            consecutiveFailures >= ACTIVITY_DAEMON_MAX_CONSECUTIVE_FAILURES
+              ? "degraded"
+              : "running",
+          daemonPollIntervalMs: activityConfig.daemonPollIntervalMs,
+          maxWatchesPerTick: activityConfig.maxWatchesPerTick,
+          maxDeliveriesPerTick: activityConfig.maxDeliveriesPerTick,
+          consecutiveFailures,
+          maxConsecutiveFailures: ACTIVITY_DAEMON_MAX_CONSECUTIVE_FAILURES,
+          lastTickAt: tickAt,
+          lastError: message
+        };
+        await writeActivityState(profileName, nextState);
+        await appendActivityEvent(profileName, {
+          ts: tickAt,
+          event: lockHeld ? "activity.tick.skipped" : "activity.tick.error",
+          profile_name: profileName,
+          consecutive_failures: consecutiveFailures,
+          error: message,
+          ...(lockHeld ? { reason: "profile_lock_held" } : {})
+        });
+      }
+
+      if (stopRequested) {
+        break;
+      }
+
+      let sleepRemainingMs = Math.max(1_000, activityConfig.daemonPollIntervalMs);
+      while (!stopRequested && sleepRemainingMs > 0) {
+        const chunkMs = Math.min(500, sleepRemainingMs);
+        await sleep(chunkMs);
+        sleepRemainingMs -= chunkMs;
+      }
+    }
+  } finally {
+    const now = new Date().toISOString();
+    const lastState = (await readActivityState(profileName)) ?? initialState;
+    await writeActivityState(profileName, {
+      ...lastState,
+      pid: process.pid,
+      profileName,
+      status: "stopped",
+      updatedAt: now,
+      stoppedAt: now
+    });
+    await appendActivityEvent(profileName, {
+      ts: now,
+      event: "activity.daemon.stopped",
+      pid: process.pid,
+      profile_name: profileName
+    });
+
+    await removeActivityPid(profileName).catch(() => undefined);
+  }
+}
+
 async function runLogin(
   profileName: string,
   timeoutMinutes: number,
@@ -4761,6 +5709,290 @@ export function createCliProgram(): Command {
     .action(async (options: { profile: string }) => {
       await runSchedulerDaemon(options.profile, readCdpUrl());
     });
+
+  const activityCommand = program
+    .command("activity")
+    .description(
+      "Manage poll-based LinkedIn activity watches, webhook subscriptions, and the local activity daemon"
+    )
+    .addHelpText(
+      "afterAll",
+      [
+        "",
+        "Examples:",
+        "  linkedin activity watch add --profile default --kind notifications --interval-seconds 600",
+        "  linkedin activity webhook add --watch <watch-id> --url https://example.com/hooks/linkedin",
+        "  linkedin activity run-once --profile default",
+        "  linkedin activity start --profile default",
+        "  linkedin activity status --profile default",
+        "  linkedin activity stop --profile default"
+      ].join("\n")
+    );
+
+  const activityWatchCommand = activityCommand
+    .command("watch")
+    .description("Manage durable LinkedIn polling watches");
+
+  activityWatchCommand
+    .command("add")
+    .description("Create a new activity watch")
+    .requiredOption("--kind <kind>", `Watch kind: ${ACTIVITY_WATCH_KINDS.join(", ")}`)
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("--interval-seconds <seconds>", "Poll interval in seconds")
+    .option("--cron <expression>", "Cron schedule expression")
+    .option("--target <json>", "Watch target as JSON object text")
+    .option("--target-file <path>", "Read watch target from a JSON file")
+    .action(
+      async (options: {
+        kind: string;
+        profile: string;
+        intervalSeconds?: string;
+        cron?: string;
+        target?: string;
+        targetFile?: string;
+      }) => {
+        const target = await readActivityTargetInput(options);
+        await runActivityWatchAdd(
+          {
+            profileName: options.profile,
+            kind: coerceActivityWatchKind(options.kind),
+            ...(typeof options.intervalSeconds === "string"
+              ? {
+                  intervalSeconds: coercePositiveInt(
+                    options.intervalSeconds,
+                    "interval-seconds"
+                  )
+                }
+              : {}),
+            ...(options.cron ? { cron: options.cron } : {}),
+            ...(target ? { target } : {})
+          },
+          readCdpUrl()
+        );
+      }
+    );
+
+  activityWatchCommand
+    .command("list")
+    .description("List activity watches for a profile")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option(
+      "--status <status>",
+      `Filter by status: ${ACTIVITY_WATCH_STATUSES.join(", ")}`
+    )
+    .action(async (options: { profile: string; status?: string }) => {
+      await runActivityWatchList(
+        {
+          profileName: options.profile,
+          ...(options.status
+            ? { status: coerceActivityWatchStatusValue(options.status) }
+            : {})
+        },
+        readCdpUrl()
+      );
+    });
+
+  activityWatchCommand
+    .command("pause")
+    .description("Pause an activity watch")
+    .argument("<watchId>", "Activity watch id")
+    .action(async (watchId: string) => {
+      await runActivityWatchPause(watchId, readCdpUrl());
+    });
+
+  activityWatchCommand
+    .command("resume")
+    .description("Resume an activity watch and make it due immediately")
+    .argument("<watchId>", "Activity watch id")
+    .action(async (watchId: string) => {
+      await runActivityWatchResume(watchId, readCdpUrl());
+    });
+
+  activityWatchCommand
+    .command("remove")
+    .description("Remove an activity watch")
+    .argument("<watchId>", "Activity watch id")
+    .action(async (watchId: string) => {
+      await runActivityWatchRemove(watchId, readCdpUrl());
+    });
+
+  const activityWebhookCommand = activityCommand
+    .command("webhook")
+    .description("Manage webhook subscriptions for activity watches");
+
+  activityWebhookCommand
+    .command("add")
+    .description("Register a webhook subscription for one watch")
+    .requiredOption("--watch <watchId>", "Activity watch id")
+    .requiredOption("--url <deliveryUrl>", "Webhook delivery URL")
+    .option("-e, --event <eventType...>", `Event filters: ${ACTIVITY_EVENT_TYPES.join(", ")}`)
+    .option("--secret <secret>", "Webhook signing secret")
+    .option("--max-attempts <count>", "Maximum delivery attempts")
+    .action(
+      async (options: {
+        watch: string;
+        url: string;
+        event?: string[];
+        secret?: string;
+        maxAttempts?: string;
+      }) => {
+        await runActivityWebhookAdd(
+          {
+            watchId: options.watch,
+            deliveryUrl: options.url,
+            ...(options.event
+              ? { eventTypes: coerceActivityEventTypes(options.event) }
+              : {}),
+            ...(options.secret ? { signingSecret: options.secret } : {}),
+            ...(typeof options.maxAttempts === "string"
+              ? { maxAttempts: coercePositiveInt(options.maxAttempts, "max-attempts") }
+              : {})
+          },
+          readCdpUrl()
+        );
+      }
+    );
+
+  activityWebhookCommand
+    .command("list")
+    .description("List webhook subscriptions")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("--watch <watchId>", "Filter by watch id")
+    .option(
+      "--status <status>",
+      `Filter by status: ${WEBHOOK_SUBSCRIPTION_STATUSES.join(", ")}`
+    )
+    .action(
+      async (options: { profile: string; watch?: string; status?: string }) => {
+        await runActivityWebhookList(
+          {
+            profileName: options.profile,
+            ...(options.watch ? { watchId: options.watch } : {}),
+            ...(options.status
+              ? { status: coerceWebhookSubscriptionStatusValue(options.status) }
+              : {})
+          },
+          readCdpUrl()
+        );
+      }
+    );
+
+  activityWebhookCommand
+    .command("pause")
+    .description("Pause a webhook subscription")
+    .argument("<subscriptionId>", "Webhook subscription id")
+    .action(async (subscriptionId: string) => {
+      await runActivityWebhookPause(subscriptionId, readCdpUrl());
+    });
+
+  activityWebhookCommand
+    .command("resume")
+    .description("Resume a webhook subscription")
+    .argument("<subscriptionId>", "Webhook subscription id")
+    .action(async (subscriptionId: string) => {
+      await runActivityWebhookResume(subscriptionId, readCdpUrl());
+    });
+
+  activityWebhookCommand
+    .command("remove")
+    .description("Remove a webhook subscription")
+    .argument("<subscriptionId>", "Webhook subscription id")
+    .action(async (subscriptionId: string) => {
+      await runActivityWebhookRemove(subscriptionId, readCdpUrl());
+    });
+
+  activityCommand
+    .command("events")
+    .description("List recently emitted activity events")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("--watch <watchId>", "Filter by watch id")
+    .option("-l, --limit <limit>", "Maximum events to return", "20")
+    .action(async (options: { profile: string; watch?: string; limit: string }) => {
+      await runActivityEventsList(
+        {
+          profileName: options.profile,
+          ...(options.watch ? { watchId: options.watch } : {}),
+          limit: coercePositiveInt(options.limit, "limit")
+        },
+        readCdpUrl()
+      );
+    });
+
+  activityCommand
+    .command("deliveries")
+    .description("List recent webhook delivery attempts")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("--watch <watchId>", "Filter by watch id")
+    .option("--subscription <subscriptionId>", "Filter by webhook subscription id")
+    .option(
+      "--status <status>",
+      `Filter by status: ${WEBHOOK_DELIVERY_ATTEMPT_STATUSES.join(", ")}`
+    )
+    .option("-l, --limit <limit>", "Maximum deliveries to return", "20")
+    .action(
+      async (options: {
+        profile: string;
+        watch?: string;
+        subscription?: string;
+        status?: string;
+        limit: string;
+      }) => {
+        await runActivityDeliveriesList(
+          {
+            profileName: options.profile,
+            ...(options.watch ? { watchId: options.watch } : {}),
+            ...(options.subscription ? { subscriptionId: options.subscription } : {}),
+            ...(options.status
+              ? { status: coerceWebhookDeliveryStatusValue(options.status) }
+              : {}),
+            limit: coercePositiveInt(options.limit, "limit")
+          },
+          readCdpUrl()
+        );
+      }
+    );
+
+  activityCommand
+    .command("start")
+    .description("Start the local activity polling daemon for a profile")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(async (options: { profile: string }) => {
+      await runActivityStart(options.profile, readCdpUrl());
+    });
+
+  activityCommand
+    .command("status")
+    .description("Show local activity daemon state and persistent queue counts")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(async (options: { profile: string }) => {
+      await runActivityStatus(options.profile);
+    });
+
+  activityCommand
+    .command("stop")
+    .description("Stop the local activity polling daemon")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(async (options: { profile: string }) => {
+      await runActivityStop(options.profile);
+    });
+
+  activityCommand
+    .command("run-once")
+    .alias("tick")
+    .description("Run one activity polling tick immediately")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(async (options: { profile: string }) => {
+      await runActivityRunOnce(options.profile, readCdpUrl());
+    });
+
+  activityCommand
+    .command("__run", { hidden: true })
+    .description("Internal activity daemon command")
+    .requiredOption("-p, --profile <profile>", "Profile name")
+    .action(async (options: { profile: string }) => {
+      await runActivityDaemon(options.profile, readCdpUrl());
+    });
+
 
   program
     .command("login")

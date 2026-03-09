@@ -1,6 +1,15 @@
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
+import type {
+  ActivityEntityType,
+  ActivityEventType,
+  ActivityScheduleKind,
+  ActivityWatchKind,
+  ActivityWatchStatus,
+  WebhookDeliveryAttemptStatus,
+  WebhookSubscriptionStatus
+} from "../activityTypes.js";
 import type { SchedulerLane } from "../config.js";
 import { migrations, type Migration } from "./migrations.js";
 
@@ -287,6 +296,263 @@ export interface CancelSchedulerJobInput {
   leaseOwner?: string | null;
 }
 
+export interface ActivityWatchInsert {
+  id: string;
+  profileName: string;
+  kind: ActivityWatchKind;
+  targetJson: string;
+  scheduleKind: ActivityScheduleKind;
+  pollIntervalMs?: number | null;
+  cronExpression?: string | null;
+  status: ActivityWatchStatus;
+  nextPollAtMs: number;
+  lastPolledAtMs?: number | null;
+  lastSuccessAtMs?: number | null;
+  consecutiveFailures?: number;
+  lastErrorCode?: string | null;
+  lastErrorMessage?: string | null;
+  leaseOwner?: string | null;
+  leasedAtMs?: number | null;
+  leaseExpiresAtMs?: number | null;
+  createdAtMs: number;
+  updatedAtMs: number;
+}
+
+export interface ActivityWatchRow {
+  id: string;
+  profile_name: string;
+  kind: ActivityWatchKind;
+  target_json: string;
+  schedule_kind: ActivityScheduleKind;
+  poll_interval_ms: number | null;
+  cron_expression: string | null;
+  status: ActivityWatchStatus;
+  next_poll_at: number;
+  last_polled_at: number | null;
+  last_success_at: number | null;
+  consecutive_failures: number;
+  last_error_code: string | null;
+  last_error_message: string | null;
+  lease_owner: string | null;
+  leased_at: number | null;
+  lease_expires_at: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface ClaimDueActivityWatchesInput {
+  profileName?: string;
+  nowMs: number;
+  limit: number;
+  leaseOwner: string;
+  leaseTtlMs: number;
+}
+
+export interface UpdateActivityWatchStatusInput {
+  id: string;
+  status: ActivityWatchStatus;
+  updatedAtMs: number;
+  nextPollAtMs?: number | null;
+}
+
+export interface CompleteActivityWatchPollInput {
+  id: string;
+  nowMs: number;
+  nextPollAtMs: number;
+  leaseOwner: string;
+}
+
+export interface FailActivityWatchPollInput {
+  id: string;
+  nowMs: number;
+  nextPollAtMs: number;
+  leaseOwner: string;
+  errorCode?: string | null;
+  errorMessage: string;
+}
+
+export interface ActivityEntityStateUpsert {
+  watchId: string;
+  entityKey: string;
+  entityType: ActivityEntityType;
+  fingerprint: string;
+  snapshotJson: string;
+  firstSeenAtMs: number;
+  lastSeenAtMs: number;
+  lastEmittedEventId?: string | null;
+  updatedAtMs: number;
+}
+
+export interface ActivityEntityStateRow {
+  watch_id: string;
+  entity_key: string;
+  entity_type: ActivityEntityType;
+  fingerprint: string;
+  snapshot_json: string;
+  first_seen_at: number;
+  last_seen_at: number;
+  last_emitted_event_id: string | null;
+  updated_at: number;
+}
+
+export interface ActivityEventInsert {
+  id: string;
+  watchId: string;
+  profileName: string;
+  eventType: ActivityEventType;
+  entityKey: string;
+  payloadJson: string;
+  fingerprint: string;
+  occurredAtMs: number;
+  createdAtMs: number;
+}
+
+export interface ActivityEventRow {
+  id: string;
+  watch_id: string;
+  profile_name: string;
+  event_type: ActivityEventType;
+  entity_key: string;
+  payload_json: string;
+  fingerprint: string;
+  occurred_at: number;
+  created_at: number;
+}
+
+export interface WebhookSubscriptionInsert {
+  id: string;
+  watchId: string;
+  status: WebhookSubscriptionStatus;
+  eventTypesJson: string;
+  deliveryUrl: string;
+  signingSecret: string;
+  maxAttempts: number;
+  lastDeliveredAtMs?: number | null;
+  lastErrorCode?: string | null;
+  lastErrorMessage?: string | null;
+  createdAtMs: number;
+  updatedAtMs: number;
+}
+
+export interface WebhookSubscriptionRow {
+  id: string;
+  watch_id: string;
+  status: WebhookSubscriptionStatus;
+  event_types_json: string;
+  delivery_url: string;
+  signing_secret: string;
+  max_attempts: number;
+  last_delivered_at: number | null;
+  last_error_code: string | null;
+  last_error_message: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface UpdateWebhookSubscriptionStatusInput {
+  id: string;
+  status: WebhookSubscriptionStatus;
+  updatedAtMs: number;
+}
+
+export interface RecordWebhookSubscriptionDeliveryInput {
+  id: string;
+  deliveredAtMs: number;
+  updatedAtMs: number;
+}
+
+export interface RecordWebhookSubscriptionErrorInput {
+  id: string;
+  errorCode?: string | null;
+  errorMessage: string;
+  updatedAtMs: number;
+}
+
+export interface WebhookDeliveryAttemptInsert {
+  id: string;
+  watchId: string;
+  profileName: string;
+  subscriptionId: string;
+  eventId: string;
+  eventType: ActivityEventType;
+  deliveryUrl: string;
+  payloadJson: string;
+  attemptNumber: number;
+  status: WebhookDeliveryAttemptStatus;
+  responseStatus?: number | null;
+  responseBodyExcerpt?: string | null;
+  nextAttemptAtMs: number;
+  leaseOwner?: string | null;
+  leasedAtMs?: number | null;
+  leaseExpiresAtMs?: number | null;
+  lastAttemptAtMs?: number | null;
+  lastErrorCode?: string | null;
+  lastErrorMessage?: string | null;
+  createdAtMs: number;
+  updatedAtMs: number;
+}
+
+export interface WebhookDeliveryAttemptRow {
+  id: string;
+  watch_id: string;
+  profile_name: string;
+  subscription_id: string;
+  event_id: string;
+  event_type: ActivityEventType;
+  delivery_url: string;
+  payload_json: string;
+  attempt_number: number;
+  status: WebhookDeliveryAttemptStatus;
+  response_status: number | null;
+  response_body_excerpt: string | null;
+  next_attempt_at: number;
+  lease_owner: string | null;
+  leased_at: number | null;
+  lease_expires_at: number | null;
+  last_attempt_at: number | null;
+  last_error_code: string | null;
+  last_error_message: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface ClaimDueWebhookDeliveryAttemptsInput {
+  profileName?: string;
+  nowMs: number;
+  limit: number;
+  leaseOwner: string;
+  leaseTtlMs: number;
+}
+
+export interface CompleteWebhookDeliveryAttemptInput {
+  id: string;
+  leaseOwner: string;
+  nowMs: number;
+  responseStatus?: number | null;
+  responseBodyExcerpt?: string | null;
+}
+
+export interface RetryWebhookDeliveryAttemptInput {
+  id: string;
+  leaseOwner: string;
+  nowMs: number;
+  responseStatus?: number | null;
+  responseBodyExcerpt?: string | null;
+  errorCode?: string | null;
+  errorMessage: string;
+}
+
+export interface FailWebhookDeliveryAttemptInput {
+  id: string;
+  leaseOwner: string;
+  nowMs: number;
+  responseStatus?: number | null;
+  responseBodyExcerpt?: string | null;
+  errorCode?: string | null;
+  errorMessage: string;
+  deadLetter?: boolean;
+}
+
 const PREPARED_ACTION_SELECT_COLUMNS = `
   id,
   action_type,
@@ -343,6 +609,91 @@ ORDER BY
   END ASC,
   scheduled_at ASC,
   created_at ASC
+`;
+
+const ACTIVITY_WATCH_SELECT_COLUMNS = `
+  id,
+  profile_name,
+  kind,
+  target_json,
+  schedule_kind,
+  poll_interval_ms,
+  cron_expression,
+  status,
+  next_poll_at,
+  last_polled_at,
+  last_success_at,
+  consecutive_failures,
+  last_error_code,
+  last_error_message,
+  lease_owner,
+  leased_at,
+  lease_expires_at,
+  created_at,
+  updated_at
+`;
+
+const ACTIVITY_ENTITY_STATE_SELECT_COLUMNS = `
+  watch_id,
+  entity_key,
+  entity_type,
+  fingerprint,
+  snapshot_json,
+  first_seen_at,
+  last_seen_at,
+  last_emitted_event_id,
+  updated_at
+`;
+
+const ACTIVITY_EVENT_SELECT_COLUMNS = `
+  id,
+  watch_id,
+  profile_name,
+  event_type,
+  entity_key,
+  payload_json,
+  fingerprint,
+  occurred_at,
+  created_at
+`;
+
+const WEBHOOK_SUBSCRIPTION_SELECT_COLUMNS = `
+  id,
+  watch_id,
+  status,
+  event_types_json,
+  delivery_url,
+  signing_secret,
+  max_attempts,
+  last_delivered_at,
+  last_error_code,
+  last_error_message,
+  created_at,
+  updated_at
+`;
+
+const WEBHOOK_DELIVERY_ATTEMPT_SELECT_COLUMNS = `
+  id,
+  watch_id,
+  profile_name,
+  subscription_id,
+  event_id,
+  event_type,
+  delivery_url,
+  payload_json,
+  attempt_number,
+  status,
+  response_status,
+  response_body_excerpt,
+  next_attempt_at,
+  lease_owner,
+  leased_at,
+  lease_expires_at,
+  last_attempt_at,
+  last_error_code,
+  last_error_message,
+  created_at,
+  updated_at
 `;
 
 export class AssistantDatabase {
@@ -1216,6 +1567,910 @@ WHERE id = @id
       .run({
         ...input,
         leaseOwner: input.leaseOwner ?? null
+      });
+
+    return result.changes === 1;
+  }
+
+  insertActivityWatch(input: ActivityWatchInsert): void {
+    this.db
+      .prepare(
+        `
+INSERT INTO activity_watch (
+  id,
+  profile_name,
+  kind,
+  target_json,
+  schedule_kind,
+  poll_interval_ms,
+  cron_expression,
+  status,
+  next_poll_at,
+  last_polled_at,
+  last_success_at,
+  consecutive_failures,
+  last_error_code,
+  last_error_message,
+  lease_owner,
+  leased_at,
+  lease_expires_at,
+  created_at,
+  updated_at
+)
+VALUES (
+  @id,
+  @profileName,
+  @kind,
+  @targetJson,
+  @scheduleKind,
+  @pollIntervalMs,
+  @cronExpression,
+  @status,
+  @nextPollAtMs,
+  @lastPolledAtMs,
+  @lastSuccessAtMs,
+  @consecutiveFailures,
+  @lastErrorCode,
+  @lastErrorMessage,
+  @leaseOwner,
+  @leasedAtMs,
+  @leaseExpiresAtMs,
+  @createdAtMs,
+  @updatedAtMs
+)
+`
+      )
+      .run({
+        ...input,
+        pollIntervalMs: input.pollIntervalMs ?? null,
+        cronExpression: input.cronExpression ?? null,
+        lastPolledAtMs: input.lastPolledAtMs ?? null,
+        lastSuccessAtMs: input.lastSuccessAtMs ?? null,
+        consecutiveFailures: input.consecutiveFailures ?? 0,
+        lastErrorCode: input.lastErrorCode ?? null,
+        lastErrorMessage: input.lastErrorMessage ?? null,
+        leaseOwner: input.leaseOwner ?? null,
+        leasedAtMs: input.leasedAtMs ?? null,
+        leaseExpiresAtMs: input.leaseExpiresAtMs ?? null
+      });
+  }
+
+  getActivityWatchById(id: string): ActivityWatchRow | undefined {
+    return this.db
+      .prepare<unknown[], ActivityWatchRow>(
+        `
+SELECT
+${ACTIVITY_WATCH_SELECT_COLUMNS}
+FROM activity_watch
+WHERE id = ?
+LIMIT 1
+`
+      )
+      .get(id);
+  }
+
+  listActivityWatches(input: {
+    profileName?: string;
+    status?: ActivityWatchStatus;
+  } = {}): ActivityWatchRow[] {
+    const clauses: string[] = [];
+    const params: Record<string, unknown> = {};
+
+    if (input.profileName) {
+      clauses.push("profile_name = @profileName");
+      params.profileName = input.profileName;
+    }
+
+    if (input.status) {
+      clauses.push("status = @status");
+      params.status = input.status;
+    }
+
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+
+    return this.db
+      .prepare<Record<string, unknown>, ActivityWatchRow>(
+        `
+SELECT
+${ACTIVITY_WATCH_SELECT_COLUMNS}
+FROM activity_watch
+${where}
+ORDER BY profile_name ASC, next_poll_at ASC, created_at ASC
+`
+      )
+      .all(params);
+  }
+
+  deleteActivityWatch(id: string): boolean {
+    const result = this.db
+      .prepare(
+        `
+DELETE FROM activity_watch
+WHERE id = ?
+`
+      )
+      .run(id);
+
+    return result.changes === 1;
+  }
+
+  updateActivityWatchStatus(input: UpdateActivityWatchStatusInput): boolean {
+    const result = this.db
+      .prepare(
+        `
+UPDATE activity_watch
+SET
+  status = @status,
+  next_poll_at = COALESCE(@nextPollAtMs, next_poll_at),
+  updated_at = @updatedAtMs
+WHERE id = @id
+`
+      )
+      .run({
+        ...input,
+        nextPollAtMs: input.nextPollAtMs ?? null
+      });
+
+    return result.changes === 1;
+  }
+
+  claimDueActivityWatches(
+    input: ClaimDueActivityWatchesInput
+  ): ActivityWatchRow[] {
+    const claimWatches = this.db.transaction(
+      (claimInput: ClaimDueActivityWatchesInput): ActivityWatchRow[] => {
+        const profileFilter = claimInput.profileName
+          ? "AND profile_name = @profileName"
+          : "";
+        const candidates = this.db
+          .prepare<ClaimDueActivityWatchesInput, ActivityWatchRow>(
+            `
+SELECT
+${ACTIVITY_WATCH_SELECT_COLUMNS}
+FROM activity_watch
+WHERE status = 'active'
+  ${profileFilter}
+  AND next_poll_at <= @nowMs
+  AND (
+    lease_expires_at IS NULL
+    OR lease_expires_at < @nowMs
+  )
+ORDER BY next_poll_at ASC, created_at ASC
+LIMIT @limit
+`
+          )
+          .all(claimInput);
+
+        const claimed: ActivityWatchRow[] = [];
+        const leaseExpiresAtMs = claimInput.nowMs + claimInput.leaseTtlMs;
+
+        for (const candidate of candidates) {
+          const result = this.db
+            .prepare(
+              `
+UPDATE activity_watch
+SET
+  lease_owner = @leaseOwner,
+  leased_at = @nowMs,
+  lease_expires_at = @leaseExpiresAtMs,
+  last_polled_at = @nowMs,
+  updated_at = @nowMs
+WHERE id = @id
+  AND status = 'active'
+  AND next_poll_at <= @nowMs
+  AND (
+    lease_expires_at IS NULL
+    OR lease_expires_at < @nowMs
+  )
+`
+            )
+            .run({
+              id: candidate.id,
+              leaseOwner: claimInput.leaseOwner,
+              leaseExpiresAtMs,
+              nowMs: claimInput.nowMs
+            });
+
+          if (result.changes === 1) {
+            claimed.push({
+              ...candidate,
+              lease_owner: claimInput.leaseOwner,
+              leased_at: claimInput.nowMs,
+              lease_expires_at: leaseExpiresAtMs,
+              last_polled_at: claimInput.nowMs,
+              updated_at: claimInput.nowMs
+            });
+          }
+        }
+
+        return claimed;
+      }
+    );
+
+    return claimWatches(input);
+  }
+
+  markActivityWatchPollSucceeded(
+    input: CompleteActivityWatchPollInput
+  ): boolean {
+    const result = this.db
+      .prepare(
+        `
+UPDATE activity_watch
+SET
+  next_poll_at = @nextPollAtMs,
+  last_success_at = @nowMs,
+  consecutive_failures = 0,
+  last_error_code = NULL,
+  last_error_message = NULL,
+  lease_owner = NULL,
+  leased_at = NULL,
+  lease_expires_at = NULL,
+  updated_at = @nowMs
+WHERE id = @id
+  AND lease_owner = @leaseOwner
+`
+      )
+      .run(input);
+
+    return result.changes === 1;
+  }
+
+  markActivityWatchPollFailed(input: FailActivityWatchPollInput): boolean {
+    const result = this.db
+      .prepare(
+        `
+UPDATE activity_watch
+SET
+  next_poll_at = @nextPollAtMs,
+  consecutive_failures = consecutive_failures + 1,
+  last_error_code = @errorCode,
+  last_error_message = @errorMessage,
+  lease_owner = NULL,
+  leased_at = NULL,
+  lease_expires_at = NULL,
+  updated_at = @nowMs
+WHERE id = @id
+  AND lease_owner = @leaseOwner
+`
+      )
+      .run({
+        ...input,
+        errorCode: input.errorCode ?? null
+      });
+
+    return result.changes === 1;
+  }
+
+  listActivityEntityStates(input: { watchId: string }): ActivityEntityStateRow[] {
+    return this.db
+      .prepare<{ watchId: string }, ActivityEntityStateRow>(
+        `
+SELECT
+${ACTIVITY_ENTITY_STATE_SELECT_COLUMNS}
+FROM activity_entity_state
+WHERE watch_id = @watchId
+ORDER BY entity_type ASC, entity_key ASC
+`
+      )
+      .all(input);
+  }
+
+  upsertActivityEntityState(input: ActivityEntityStateUpsert): void {
+    this.db
+      .prepare(
+        `
+INSERT INTO activity_entity_state (
+  watch_id,
+  entity_key,
+  entity_type,
+  fingerprint,
+  snapshot_json,
+  first_seen_at,
+  last_seen_at,
+  last_emitted_event_id,
+  updated_at
+)
+VALUES (
+  @watchId,
+  @entityKey,
+  @entityType,
+  @fingerprint,
+  @snapshotJson,
+  @firstSeenAtMs,
+  @lastSeenAtMs,
+  @lastEmittedEventId,
+  @updatedAtMs
+)
+ON CONFLICT(watch_id, entity_key) DO UPDATE SET
+  entity_type = excluded.entity_type,
+  fingerprint = excluded.fingerprint,
+  snapshot_json = excluded.snapshot_json,
+  last_seen_at = excluded.last_seen_at,
+  last_emitted_event_id = COALESCE(excluded.last_emitted_event_id, activity_entity_state.last_emitted_event_id),
+  updated_at = excluded.updated_at
+`
+      )
+      .run({
+        ...input,
+        lastEmittedEventId: input.lastEmittedEventId ?? null
+      });
+  }
+
+  insertActivityEvent(input: ActivityEventInsert): boolean {
+    const result = this.db
+      .prepare(
+        `
+INSERT OR IGNORE INTO activity_event (
+  id,
+  watch_id,
+  profile_name,
+  event_type,
+  entity_key,
+  payload_json,
+  fingerprint,
+  occurred_at,
+  created_at
+)
+VALUES (
+  @id,
+  @watchId,
+  @profileName,
+  @eventType,
+  @entityKey,
+  @payloadJson,
+  @fingerprint,
+  @occurredAtMs,
+  @createdAtMs
+)
+`
+      )
+      .run(input);
+
+    return result.changes === 1;
+  }
+
+  getActivityEventById(id: string): ActivityEventRow | undefined {
+    return this.db
+      .prepare<unknown[], ActivityEventRow>(
+        `
+SELECT
+${ACTIVITY_EVENT_SELECT_COLUMNS}
+FROM activity_event
+WHERE id = ?
+LIMIT 1
+`
+      )
+      .get(id);
+  }
+
+  listActivityEvents(input: {
+    profileName?: string;
+    watchId?: string;
+    limit?: number;
+  } = {}): ActivityEventRow[] {
+    const clauses: string[] = [];
+    const params: Record<string, unknown> = {
+      limit: input.limit ?? 50
+    };
+
+    if (input.profileName) {
+      clauses.push("profile_name = @profileName");
+      params.profileName = input.profileName;
+    }
+
+    if (input.watchId) {
+      clauses.push("watch_id = @watchId");
+      params.watchId = input.watchId;
+    }
+
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+
+    return this.db
+      .prepare<Record<string, unknown>, ActivityEventRow>(
+        `
+SELECT
+${ACTIVITY_EVENT_SELECT_COLUMNS}
+FROM activity_event
+${where}
+ORDER BY created_at DESC
+LIMIT @limit
+`
+      )
+      .all(params);
+  }
+
+  insertWebhookSubscription(input: WebhookSubscriptionInsert): void {
+    this.db
+      .prepare(
+        `
+INSERT INTO webhook_subscription (
+  id,
+  watch_id,
+  status,
+  event_types_json,
+  delivery_url,
+  signing_secret,
+  max_attempts,
+  last_delivered_at,
+  last_error_code,
+  last_error_message,
+  created_at,
+  updated_at
+)
+VALUES (
+  @id,
+  @watchId,
+  @status,
+  @eventTypesJson,
+  @deliveryUrl,
+  @signingSecret,
+  @maxAttempts,
+  @lastDeliveredAtMs,
+  @lastErrorCode,
+  @lastErrorMessage,
+  @createdAtMs,
+  @updatedAtMs
+)
+`
+      )
+      .run({
+        ...input,
+        lastDeliveredAtMs: input.lastDeliveredAtMs ?? null,
+        lastErrorCode: input.lastErrorCode ?? null,
+        lastErrorMessage: input.lastErrorMessage ?? null
+      });
+  }
+
+  getWebhookSubscriptionById(id: string): WebhookSubscriptionRow | undefined {
+    return this.db
+      .prepare<unknown[], WebhookSubscriptionRow>(
+        `
+SELECT
+${WEBHOOK_SUBSCRIPTION_SELECT_COLUMNS}
+FROM webhook_subscription
+WHERE id = ?
+LIMIT 1
+`
+      )
+      .get(id);
+  }
+
+  listWebhookSubscriptions(input: {
+    watchId?: string;
+    profileName?: string;
+    status?: WebhookSubscriptionStatus;
+  } = {}): WebhookSubscriptionRow[] {
+    const clauses: string[] = [];
+    const params: Record<string, unknown> = {};
+    let join = "";
+
+    if (input.watchId) {
+      clauses.push("webhook_subscription.watch_id = @watchId");
+      params.watchId = input.watchId;
+    }
+
+    if (input.profileName) {
+      join = "INNER JOIN activity_watch ON activity_watch.id = webhook_subscription.watch_id";
+      clauses.push("activity_watch.profile_name = @profileName");
+      params.profileName = input.profileName;
+    }
+
+    if (input.status) {
+      clauses.push("webhook_subscription.status = @status");
+      params.status = input.status;
+    }
+
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+
+    return this.db
+      .prepare<Record<string, unknown>, WebhookSubscriptionRow>(
+        `
+SELECT
+${WEBHOOK_SUBSCRIPTION_SELECT_COLUMNS}
+FROM webhook_subscription
+${join}
+${where}
+ORDER BY webhook_subscription.created_at ASC
+`
+      )
+      .all(params);
+  }
+
+  listActiveWebhookSubscriptionsByWatchId(
+    watchId: string
+  ): WebhookSubscriptionRow[] {
+    return this.db
+      .prepare<{ watchId: string }, WebhookSubscriptionRow>(
+        `
+SELECT
+${WEBHOOK_SUBSCRIPTION_SELECT_COLUMNS}
+FROM webhook_subscription
+WHERE watch_id = @watchId
+  AND status = 'active'
+ORDER BY created_at ASC
+`
+      )
+      .all({ watchId });
+  }
+
+  deleteWebhookSubscription(id: string): boolean {
+    const result = this.db
+      .prepare(
+        `
+DELETE FROM webhook_subscription
+WHERE id = ?
+`
+      )
+      .run(id);
+
+    return result.changes === 1;
+  }
+
+  updateWebhookSubscriptionStatus(
+    input: UpdateWebhookSubscriptionStatusInput
+  ): boolean {
+    const result = this.db
+      .prepare(
+        `
+UPDATE webhook_subscription
+SET
+  status = @status,
+  updated_at = @updatedAtMs
+WHERE id = @id
+`
+      )
+      .run(input);
+
+    return result.changes === 1;
+  }
+
+  recordWebhookSubscriptionDelivered(
+    input: RecordWebhookSubscriptionDeliveryInput
+  ): boolean {
+    const result = this.db
+      .prepare(
+        `
+UPDATE webhook_subscription
+SET
+  last_delivered_at = @deliveredAtMs,
+  last_error_code = NULL,
+  last_error_message = NULL,
+  updated_at = @updatedAtMs
+WHERE id = @id
+`
+      )
+      .run(input);
+
+    return result.changes === 1;
+  }
+
+  recordWebhookSubscriptionError(
+    input: RecordWebhookSubscriptionErrorInput
+  ): boolean {
+    const result = this.db
+      .prepare(
+        `
+UPDATE webhook_subscription
+SET
+  last_error_code = @errorCode,
+  last_error_message = @errorMessage,
+  updated_at = @updatedAtMs
+WHERE id = @id
+`
+      )
+      .run({
+        ...input,
+        errorCode: input.errorCode ?? null
+      });
+
+    return result.changes === 1;
+  }
+
+  insertWebhookDeliveryAttempt(input: WebhookDeliveryAttemptInsert): boolean {
+    const result = this.db
+      .prepare(
+        `
+INSERT OR IGNORE INTO webhook_delivery_attempt (
+  id,
+  watch_id,
+  profile_name,
+  subscription_id,
+  event_id,
+  event_type,
+  delivery_url,
+  payload_json,
+  attempt_number,
+  status,
+  response_status,
+  response_body_excerpt,
+  next_attempt_at,
+  lease_owner,
+  leased_at,
+  lease_expires_at,
+  last_attempt_at,
+  last_error_code,
+  last_error_message,
+  created_at,
+  updated_at
+)
+VALUES (
+  @id,
+  @watchId,
+  @profileName,
+  @subscriptionId,
+  @eventId,
+  @eventType,
+  @deliveryUrl,
+  @payloadJson,
+  @attemptNumber,
+  @status,
+  @responseStatus,
+  @responseBodyExcerpt,
+  @nextAttemptAtMs,
+  @leaseOwner,
+  @leasedAtMs,
+  @leaseExpiresAtMs,
+  @lastAttemptAtMs,
+  @lastErrorCode,
+  @lastErrorMessage,
+  @createdAtMs,
+  @updatedAtMs
+)
+`
+      )
+      .run({
+        ...input,
+        responseStatus: input.responseStatus ?? null,
+        responseBodyExcerpt: input.responseBodyExcerpt ?? null,
+        leaseOwner: input.leaseOwner ?? null,
+        leasedAtMs: input.leasedAtMs ?? null,
+        leaseExpiresAtMs: input.leaseExpiresAtMs ?? null,
+        lastAttemptAtMs: input.lastAttemptAtMs ?? null,
+        lastErrorCode: input.lastErrorCode ?? null,
+        lastErrorMessage: input.lastErrorMessage ?? null
+      });
+
+    return result.changes === 1;
+  }
+
+  getWebhookDeliveryAttemptById(
+    id: string
+  ): WebhookDeliveryAttemptRow | undefined {
+    return this.db
+      .prepare<unknown[], WebhookDeliveryAttemptRow>(
+        `
+SELECT
+${WEBHOOK_DELIVERY_ATTEMPT_SELECT_COLUMNS}
+FROM webhook_delivery_attempt
+WHERE id = ?
+LIMIT 1
+`
+      )
+      .get(id);
+  }
+
+  listWebhookDeliveryAttempts(input: {
+    profileName?: string;
+    watchId?: string;
+    subscriptionId?: string;
+    status?: WebhookDeliveryAttemptStatus;
+    limit?: number;
+  } = {}): WebhookDeliveryAttemptRow[] {
+    const clauses: string[] = [];
+    const params: Record<string, unknown> = {
+      limit: input.limit ?? 50
+    };
+
+    if (input.profileName) {
+      clauses.push("profile_name = @profileName");
+      params.profileName = input.profileName;
+    }
+
+    if (input.watchId) {
+      clauses.push("watch_id = @watchId");
+      params.watchId = input.watchId;
+    }
+
+    if (input.subscriptionId) {
+      clauses.push("subscription_id = @subscriptionId");
+      params.subscriptionId = input.subscriptionId;
+    }
+
+    if (input.status) {
+      clauses.push("status = @status");
+      params.status = input.status;
+    }
+
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+
+    return this.db
+      .prepare<Record<string, unknown>, WebhookDeliveryAttemptRow>(
+        `
+SELECT
+${WEBHOOK_DELIVERY_ATTEMPT_SELECT_COLUMNS}
+FROM webhook_delivery_attempt
+${where}
+ORDER BY created_at DESC
+LIMIT @limit
+`
+      )
+      .all(params);
+  }
+
+  claimDueWebhookDeliveryAttempts(
+    input: ClaimDueWebhookDeliveryAttemptsInput
+  ): WebhookDeliveryAttemptRow[] {
+    const claimAttempts = this.db.transaction(
+      (
+        claimInput: ClaimDueWebhookDeliveryAttemptsInput
+      ): WebhookDeliveryAttemptRow[] => {
+        const profileFilter = claimInput.profileName
+          ? "AND profile_name = @profileName"
+          : "";
+        const candidates = this.db
+          .prepare<
+            ClaimDueWebhookDeliveryAttemptsInput,
+            WebhookDeliveryAttemptRow
+          >(
+            `
+SELECT
+${WEBHOOK_DELIVERY_ATTEMPT_SELECT_COLUMNS}
+FROM webhook_delivery_attempt
+WHERE status = 'pending'
+  ${profileFilter}
+  AND next_attempt_at <= @nowMs
+  AND (
+    lease_expires_at IS NULL
+    OR lease_expires_at < @nowMs
+  )
+ORDER BY next_attempt_at ASC, created_at ASC
+LIMIT @limit
+`
+          )
+          .all(claimInput);
+
+        const claimed: WebhookDeliveryAttemptRow[] = [];
+        const leaseExpiresAtMs = claimInput.nowMs + claimInput.leaseTtlMs;
+
+        for (const candidate of candidates) {
+          const result = this.db
+            .prepare(
+              `
+UPDATE webhook_delivery_attempt
+SET
+  status = 'leased',
+  lease_owner = @leaseOwner,
+  leased_at = @nowMs,
+  lease_expires_at = @leaseExpiresAtMs,
+  updated_at = @nowMs
+WHERE id = @id
+  AND status = 'pending'
+  AND next_attempt_at <= @nowMs
+  AND (
+    lease_expires_at IS NULL
+    OR lease_expires_at < @nowMs
+  )
+`
+            )
+            .run({
+              id: candidate.id,
+              leaseOwner: claimInput.leaseOwner,
+              leaseExpiresAtMs,
+              nowMs: claimInput.nowMs
+            });
+
+          if (result.changes === 1) {
+            claimed.push({
+              ...candidate,
+              status: 'leased',
+              lease_owner: claimInput.leaseOwner,
+              leased_at: claimInput.nowMs,
+              lease_expires_at: leaseExpiresAtMs,
+              updated_at: claimInput.nowMs
+            });
+          }
+        }
+
+        return claimed;
+      }
+    );
+
+    return claimAttempts(input);
+  }
+
+  markWebhookDeliveryAttemptDelivered(
+    input: CompleteWebhookDeliveryAttemptInput
+  ): boolean {
+    const result = this.db
+      .prepare(
+        `
+UPDATE webhook_delivery_attempt
+SET
+  status = 'delivered',
+  response_status = @responseStatus,
+  response_body_excerpt = @responseBodyExcerpt,
+  last_attempt_at = @nowMs,
+  lease_owner = NULL,
+  leased_at = NULL,
+  lease_expires_at = NULL,
+  updated_at = @nowMs
+WHERE id = @id
+  AND status = 'leased'
+  AND lease_owner = @leaseOwner
+`
+      )
+      .run({
+        ...input,
+        responseStatus: input.responseStatus ?? null,
+        responseBodyExcerpt: input.responseBodyExcerpt ?? null
+      });
+
+    return result.changes === 1;
+  }
+
+  markWebhookDeliveryAttemptRetrying(
+    input: RetryWebhookDeliveryAttemptInput
+  ): boolean {
+    const result = this.db
+      .prepare(
+        `
+UPDATE webhook_delivery_attempt
+SET
+  status = 'retrying',
+  response_status = @responseStatus,
+  response_body_excerpt = @responseBodyExcerpt,
+  last_attempt_at = @nowMs,
+  last_error_code = @errorCode,
+  last_error_message = @errorMessage,
+  lease_owner = NULL,
+  leased_at = NULL,
+  lease_expires_at = NULL,
+  updated_at = @nowMs
+WHERE id = @id
+  AND status = 'leased'
+  AND lease_owner = @leaseOwner
+`
+      )
+      .run({
+        ...input,
+        responseStatus: input.responseStatus ?? null,
+        responseBodyExcerpt: input.responseBodyExcerpt ?? null,
+        errorCode: input.errorCode ?? null
+      });
+
+    return result.changes === 1;
+  }
+
+  markWebhookDeliveryAttemptFailed(
+    input: FailWebhookDeliveryAttemptInput
+  ): boolean {
+    const result = this.db
+      .prepare(
+        `
+UPDATE webhook_delivery_attempt
+SET
+  status = @status,
+  response_status = @responseStatus,
+  response_body_excerpt = @responseBodyExcerpt,
+  last_attempt_at = @nowMs,
+  last_error_code = @errorCode,
+  last_error_message = @errorMessage,
+  lease_owner = NULL,
+  leased_at = NULL,
+  lease_expires_at = NULL,
+  updated_at = @nowMs
+WHERE id = @id
+  AND status = 'leased'
+  AND lease_owner = @leaseOwner
+`
+      )
+      .run({
+        ...input,
+        status: input.deadLetter ? 'dead_letter' : 'failed',
+        responseStatus: input.responseStatus ?? null,
+        responseBodyExcerpt: input.responseBodyExcerpt ?? null,
+        errorCode: input.errorCode ?? null
       });
 
     return result.changes === 1;

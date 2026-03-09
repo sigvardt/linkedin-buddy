@@ -216,5 +216,136 @@ CREATE INDEX IF NOT EXISTS scheduler_job_lane_schedule_idx
 CREATE INDEX IF NOT EXISTS scheduler_job_prepared_action_idx
   ON scheduler_job(prepared_action_id);
 `
+  },
+  {
+    id: "006_activity_webhooks",
+    sql: `
+CREATE TABLE IF NOT EXISTS activity_watch (
+  id TEXT PRIMARY KEY,
+  profile_name TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  target_json TEXT NOT NULL,
+  schedule_kind TEXT NOT NULL,
+  poll_interval_ms INTEGER,
+  cron_expression TEXT,
+  status TEXT NOT NULL,
+  next_poll_at INTEGER NOT NULL,
+  last_polled_at INTEGER,
+  last_success_at INTEGER,
+  consecutive_failures INTEGER NOT NULL DEFAULT 0,
+  last_error_code TEXT,
+  last_error_message TEXT,
+  lease_owner TEXT,
+  leased_at INTEGER,
+  lease_expires_at INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  CHECK (
+    (schedule_kind = 'interval' AND poll_interval_ms IS NOT NULL AND cron_expression IS NULL)
+    OR (schedule_kind = 'cron' AND poll_interval_ms IS NULL AND cron_expression IS NOT NULL)
+  )
+);
+
+CREATE INDEX IF NOT EXISTS activity_watch_profile_status_next_poll_idx
+  ON activity_watch(profile_name, status, next_poll_at);
+
+CREATE INDEX IF NOT EXISTS activity_watch_status_next_poll_idx
+  ON activity_watch(status, next_poll_at);
+
+CREATE TABLE IF NOT EXISTS activity_entity_state (
+  watch_id TEXT NOT NULL,
+  entity_key TEXT NOT NULL,
+  entity_type TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  snapshot_json TEXT NOT NULL,
+  first_seen_at INTEGER NOT NULL,
+  last_seen_at INTEGER NOT NULL,
+  last_emitted_event_id TEXT,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (watch_id, entity_key),
+  FOREIGN KEY (watch_id) REFERENCES activity_watch(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS activity_entity_state_watch_type_idx
+  ON activity_entity_state(watch_id, entity_type);
+
+CREATE TABLE IF NOT EXISTS activity_event (
+  id TEXT PRIMARY KEY,
+  watch_id TEXT NOT NULL,
+  profile_name TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  entity_key TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  occurred_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (watch_id) REFERENCES activity_watch(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS activity_event_fingerprint_idx
+  ON activity_event(fingerprint);
+
+CREATE INDEX IF NOT EXISTS activity_event_watch_created_idx
+  ON activity_event(watch_id, created_at);
+
+CREATE INDEX IF NOT EXISTS activity_event_profile_created_idx
+  ON activity_event(profile_name, created_at);
+
+CREATE TABLE IF NOT EXISTS webhook_subscription (
+  id TEXT PRIMARY KEY,
+  watch_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  event_types_json TEXT NOT NULL,
+  delivery_url TEXT NOT NULL,
+  signing_secret TEXT NOT NULL,
+  max_attempts INTEGER NOT NULL DEFAULT 6,
+  last_delivered_at INTEGER,
+  last_error_code TEXT,
+  last_error_message TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (watch_id) REFERENCES activity_watch(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS webhook_subscription_watch_status_idx
+  ON webhook_subscription(watch_id, status);
+
+CREATE TABLE IF NOT EXISTS webhook_delivery_attempt (
+  id TEXT PRIMARY KEY,
+  watch_id TEXT NOT NULL,
+  profile_name TEXT NOT NULL,
+  subscription_id TEXT NOT NULL,
+  event_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  delivery_url TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  attempt_number INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  response_status INTEGER,
+  response_body_excerpt TEXT,
+  next_attempt_at INTEGER NOT NULL,
+  lease_owner TEXT,
+  leased_at INTEGER,
+  lease_expires_at INTEGER,
+  last_attempt_at INTEGER,
+  last_error_code TEXT,
+  last_error_message TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  UNIQUE (subscription_id, event_id, attempt_number),
+  FOREIGN KEY (watch_id) REFERENCES activity_watch(id) ON DELETE CASCADE,
+  FOREIGN KEY (subscription_id) REFERENCES webhook_subscription(id) ON DELETE CASCADE,
+  FOREIGN KEY (event_id) REFERENCES activity_event(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS webhook_delivery_attempt_profile_status_next_idx
+  ON webhook_delivery_attempt(profile_name, status, next_attempt_at);
+
+CREATE INDEX IF NOT EXISTS webhook_delivery_attempt_subscription_created_idx
+  ON webhook_delivery_attempt(subscription_id, created_at);
+
+CREATE INDEX IF NOT EXISTS webhook_delivery_attempt_event_attempt_idx
+  ON webhook_delivery_attempt(event_id, attempt_number);
+`
   }
 ];
