@@ -2,8 +2,7 @@ import { EventEmitter } from "node:events";
 import type { BrowserContext, Page } from "playwright-core";
 import type {
   LinkedInBrowserStorageState,
-  RestoreStoredLinkedInSessionOptions,
-  SaveStoredLinkedInSessionOptions
+  LinkedInSessionStore
 } from "./auth/sessionStore.js";
 import {
   getLinkedInSessionFingerprint,
@@ -37,6 +36,43 @@ const ACTIVITY_PATTERNS = [
   "network-peek"
 ] as const;
 
+const KEEP_ALIVE_PAGE_GOTO_OPTIONS = {
+  waitUntil: "domcontentloaded"
+} as const;
+
+const LINKEDIN_KEEP_ALIVE_URLS = {
+  feed: "https://www.linkedin.com/feed/",
+  network: "https://www.linkedin.com/mynetwork/",
+  notifications: "https://www.linkedin.com/notifications/"
+} as const;
+
+type ActivityPattern = (typeof ACTIVITY_PATTERNS)[number];
+
+const ACTIVITY_PATTERN_DETAILS: Readonly<
+  Record<
+    ActivityPattern,
+    {
+      detail: string;
+      shouldScrollDown?: boolean;
+      url: string;
+    }
+  >
+> = {
+  "feed-scroll": {
+    detail: "Rotated keepalive activity: scrolled the LinkedIn feed",
+    shouldScrollDown: true,
+    url: LINKEDIN_KEEP_ALIVE_URLS.feed
+  },
+  "network-peek": {
+    detail: "Rotated keepalive activity: viewed the network page",
+    url: LINKEDIN_KEEP_ALIVE_URLS.network
+  },
+  "notifications-peek": {
+    detail: "Rotated keepalive activity: checked the notifications page",
+    url: LINKEDIN_KEEP_ALIVE_URLS.notifications
+  }
+};
+
 interface SessionSnapshot {
   capturedAt: string;
   fingerprint: string;
@@ -44,17 +80,17 @@ interface SessionSnapshot {
   storageState: LinkedInBrowserStorageState;
 }
 
-interface KeepAliveSessionStoreLike {
-  restoreToContext(
-    context: BrowserContext,
-    sessionName?: string,
-    options?: RestoreStoredLinkedInSessionOptions
-  ): Promise<unknown>;
-  saveWithBackups(
-    sessionName: string,
-    storageState: LinkedInBrowserStorageState,
-    options?: SaveStoredLinkedInSessionOptions
-  ): Promise<unknown>;
+type KeepAliveSessionStoreLike = Pick<
+  LinkedInSessionStore,
+  "restoreToContext" | "saveWithBackups"
+>;
+
+interface SessionRestoreAttempt {
+  attemptDetail: string;
+  attemptMetadata: Record<string, unknown>;
+  restore: () => Promise<unknown>;
+  successDetail: string;
+  successMetadata: Record<string, unknown>;
 }
 
 export type KeepAliveEventType =
@@ -83,10 +119,10 @@ export type KeepAliveEventType =
 export interface KeepAliveEvent {
   type: KeepAliveEventType;
   timestamp: string;
-  health?: FullHealthStatus | undefined;
+  health?: FullHealthStatus;
   consecutiveFailures: number;
-  detail?: string | undefined;
-  metadata?: Record<string, unknown> | undefined;
+  detail?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface KeepAliveAlertThresholds {
@@ -193,6 +229,14 @@ function millisecondsUntil(isoTimestamp: string | null | undefined): number | nu
   return timestampMs - Date.now();
 }
 
+function isTimestampWithinWindow(
+  isoTimestamp: string | null | undefined,
+  windowMs: number
+): boolean {
+  const remainingMs = millisecondsUntil(isoTimestamp);
+  return remainingMs !== null && remainingMs > 0 && remainingMs <= windowMs;
+}
+
 async function getOrCreatePage(context: BrowserContext): Promise<Page> {
   const existingPage = context.pages()[0];
   if (existingPage) {
@@ -202,12 +246,15 @@ async function getOrCreatePage(context: BrowserContext): Promise<Page> {
   return context.newPage();
 }
 
+async function navigateToKeepAlivePage(page: Page, url: string): Promise<void> {
+  await page.goto(url, KEEP_ALIVE_PAGE_GOTO_OPTIONS);
+}
+
 export class SessionKeepAliveService extends EventEmitter {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private running = false;
   private tickInFlight = false;
   private consecutiveFailures = 0;
-  private tickCount = 0;
   private healthyTickCount = 0;
   private declaredDead = false;
   private networkInterruptedAtMs: number | undefined;
@@ -294,7 +341,6 @@ export class SessionKeepAliveService extends EventEmitter {
 
     this.running = true;
     this.consecutiveFailures = 0;
-    this.tickCount = 0;
     this.healthyTickCount = 0;
     this.declaredDead = false;
     this.networkInterruptedAtMs = undefined;
@@ -396,7 +442,6 @@ export class SessionKeepAliveService extends EventEmitter {
     }
 
     this.tickInFlight = true;
-    this.tickCount += 1;
     this.metrics.lastTickAt = new Date().toISOString();
     let lease: ConnectionLease | undefined;
 
@@ -454,16 +499,24 @@ export class SessionKeepAliveService extends EventEmitter {
     this.metrics.sessionUptimeMs = this.getSessionUptimeMs();
   }
 
+  private clearFailureState(): void {
+    this.consecutiveFailures = 0;
+    this.declaredDead = false;
+    this.metrics.consecutiveFailures = 0;
+  }
+
+  private markSessionHealthy(): void {
+    this.clearFailureState();
+    this.metrics.lastHealthyAt = new Date().toISOString();
+    this.metrics.sessionUptimeMs = this.getSessionUptimeMs();
+  }
+
   private async handleHealthyState(
     health: FullHealthStatus,
     lease: ConnectionLease
   ): Promise<void> {
     this.healthyTickCount += 1;
-    this.consecutiveFailures = 0;
-    this.declaredDead = false;
-    this.metrics.consecutiveFailures = 0;
-    this.metrics.lastHealthyAt = new Date().toISOString();
-    this.metrics.sessionUptimeMs = this.getSessionUptimeMs();
+    this.markSessionHealthy();
 
     this.emitKeepAliveEvent({
       type: "healthy",
@@ -488,11 +541,9 @@ export class SessionKeepAliveService extends EventEmitter {
   }
 
   private shouldRefreshCookies(health: FullHealthStatus): boolean {
-    const expiresInMs = millisecondsUntil(health.session.nextCookieExpiryAt);
-    return (
-      expiresInMs !== null &&
-      expiresInMs > 0 &&
-      expiresInMs <= this.cookieRefreshLeadMs
+    return isTimestampWithinWindow(
+      health.session.nextCookieExpiryAt,
+      this.cookieRefreshLeadMs
     );
   }
 
@@ -501,7 +552,7 @@ export class SessionKeepAliveService extends EventEmitter {
       ? this.nightActivityEveryHealthyTicks
       : this.activityEveryHealthyTicks;
 
-    return cadence > 0 && this.healthyTickCount % cadence === 0;
+    return this.healthyTickCount % cadence === 0;
   }
 
   private async handleUnauthenticatedState(
@@ -528,11 +579,11 @@ export class SessionKeepAliveService extends EventEmitter {
     }
 
     let recovered = false;
-
-    if (
+    const shouldAttemptSoftRefresh =
       this.sessionRefreshEnabled &&
-      (health.session.sessionCookiePresent || this.shouldRefreshCookies(health))
-    ) {
+      (health.session.sessionCookiePresent || this.shouldRefreshCookies(health));
+
+    if (shouldAttemptSoftRefresh) {
       recovered = await this.attemptSoftRefresh(lease, health);
     }
 
@@ -541,9 +592,7 @@ export class SessionKeepAliveService extends EventEmitter {
     }
 
     if (recovered) {
-      this.consecutiveFailures = 0;
-      this.declaredDead = false;
-      this.metrics.consecutiveFailures = 0;
+      this.clearFailureState();
       return;
     }
 
@@ -656,10 +705,7 @@ export class SessionKeepAliveService extends EventEmitter {
         });
 
         if (health.session.authenticated) {
-          this.consecutiveFailures = 0;
-          this.declaredDead = false;
-          this.metrics.lastHealthyAt = new Date().toISOString();
-          this.metrics.sessionUptimeMs = this.getSessionUptimeMs();
+          this.markSessionHealthy();
           this.recoverFromNetworkInterruption(health);
           await this.captureSessionSnapshot(lease, health);
         }
@@ -720,9 +766,7 @@ export class SessionKeepAliveService extends EventEmitter {
   ): Promise<FullHealthStatus | null> {
     try {
       const page = await getOrCreatePage(lease.context);
-      await page.goto("https://www.linkedin.com/feed/", {
-        waitUntil: "domcontentloaded"
-      });
+      await navigateToKeepAlivePage(page, LINKEDIN_KEEP_ALIVE_URLS.feed);
 
       this.metrics.lastCookieRefreshAt = new Date().toISOString();
       if (reason === "proactive") {
@@ -735,8 +779,7 @@ export class SessionKeepAliveService extends EventEmitter {
       const refreshedHealth = await checkFullHealth(lease.context);
       this.updateMetricsFromHealth(refreshedHealth);
       if (refreshedHealth.session.authenticated) {
-        this.metrics.lastHealthyAt = new Date().toISOString();
-        this.metrics.sessionUptimeMs = this.getSessionUptimeMs();
+        this.markSessionHealthy();
         await this.captureSessionSnapshot(lease, refreshedHealth);
       }
 
@@ -744,6 +787,48 @@ export class SessionKeepAliveService extends EventEmitter {
     } catch {
       return null;
     }
+  }
+
+  private async attemptSessionRestore(
+    lease: ConnectionLease,
+    attempt: SessionRestoreAttempt
+  ): Promise<boolean> {
+    this.emitKeepAliveEvent({
+      type: "soft-reauth-attempt",
+      detail: attempt.attemptDetail,
+      metadata: attempt.attemptMetadata
+    });
+
+    try {
+      await attempt.restore();
+      const restoredHealth = await checkFullHealth(lease.context);
+      this.updateMetricsFromHealth(restoredHealth);
+      if (!restoredHealth.session.authenticated) {
+        return false;
+      }
+
+      await this.captureSessionSnapshot(lease, restoredHealth);
+      this.emitKeepAliveEvent({
+        type: "soft-reauth-success",
+        health: restoredHealth,
+        detail: attempt.successDetail,
+        metadata: attempt.successMetadata
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private shouldCaptureSessionSnapshot(health: FullHealthStatus): boolean {
+    const knownFingerprint = health.session.sessionCookieFingerprint;
+
+    return (
+      this.backupSessions.length === 0 ||
+      knownFingerprint == null ||
+      knownFingerprint !== this.metrics.lastSessionFingerprint ||
+      this.shouldRefreshCookies(health)
+    );
   }
 
   private async captureSessionSnapshot(
@@ -754,15 +839,7 @@ export class SessionKeepAliveService extends EventEmitter {
       return;
     }
 
-    const knownFingerprint = health.session.sessionCookieFingerprint;
-    const shouldCapture =
-      this.backupSessions.length === 0 ||
-      knownFingerprint === null ||
-      knownFingerprint === undefined ||
-      knownFingerprint !== this.metrics.lastSessionFingerprint ||
-      this.shouldRefreshCookies(health);
-
-    if (!shouldCapture) {
+    if (!this.shouldCaptureSessionSnapshot(health)) {
       return;
     }
 
@@ -823,74 +900,49 @@ export class SessionKeepAliveService extends EventEmitter {
   }
 
   private async restoreBackupSession(lease: ConnectionLease): Promise<boolean> {
-    if (this.options.sessionStore) {
-      this.emitKeepAliveEvent({
-        type: "soft-reauth-attempt",
-        detail: `Attempting stored-session restore for ${this.sessionName}`,
-        metadata: {
+    const sessionStore = this.options.sessionStore;
+    if (sessionStore) {
+      const restoredFromSessionStore = await this.attemptSessionRestore(lease, {
+        attemptDetail: `Attempting stored-session restore for ${this.sessionName}`,
+        attemptMetadata: {
           sessionName: this.sessionName,
+          source: "session-store"
+        },
+        restore: () =>
+          sessionStore.restoreToContext(lease.context, this.sessionName, {
+            allowExpired: false,
+            maxBackups: this.maxBackupSessions
+          }),
+        successDetail: `Recovered authentication from stored session ${this.sessionName}`,
+        successMetadata: {
           source: "session-store"
         }
       });
 
-      try {
-        await this.options.sessionStore.restoreToContext(
-          lease.context,
-          this.sessionName,
-          {
-            allowExpired: false,
-            maxBackups: this.maxBackupSessions
-          }
-        );
-        const restoredHealth = await checkFullHealth(lease.context);
-        this.updateMetricsFromHealth(restoredHealth);
-        if (restoredHealth.session.authenticated) {
-          await this.captureSessionSnapshot(lease, restoredHealth);
-          this.emitKeepAliveEvent({
-            type: "soft-reauth-success",
-            health: restoredHealth,
-            detail: `Recovered authentication from stored session ${this.sessionName}`,
-            metadata: {
-              source: "session-store"
-            }
-          });
-          return true;
-        }
-      } catch {
-        // Fall back to in-memory snapshots below.
+      if (restoredFromSessionStore) {
+        return true;
       }
     }
 
     for (const snapshot of this.backupSessions) {
-      this.emitKeepAliveEvent({
-        type: "soft-reauth-attempt",
-        detail: "Attempting in-memory session restore",
-        metadata: {
+      const restoredFromMemory = await this.attemptSessionRestore(lease, {
+        attemptDetail: "Attempting in-memory session restore",
+        attemptMetadata: {
           capturedAt: snapshot.capturedAt,
           nextCookieExpiryAt: snapshot.nextCookieExpiryAt,
           source: "memory"
+        },
+        restore: () =>
+          restoreLinkedInSessionCookies(lease.context, snapshot.storageState),
+        successDetail: "Recovered authentication from in-memory backup session",
+        successMetadata: {
+          source: "memory",
+          capturedAt: snapshot.capturedAt
         }
       });
 
-      try {
-        await restoreLinkedInSessionCookies(lease.context, snapshot.storageState);
-        const restoredHealth = await checkFullHealth(lease.context);
-        this.updateMetricsFromHealth(restoredHealth);
-        if (restoredHealth.session.authenticated) {
-          await this.captureSessionSnapshot(lease, restoredHealth);
-          this.emitKeepAliveEvent({
-            type: "soft-reauth-success",
-            health: restoredHealth,
-            detail: "Recovered authentication from in-memory backup session",
-            metadata: {
-              source: "memory",
-              capturedAt: snapshot.capturedAt
-            }
-          });
-          return true;
-        }
-      } catch {
-        // Continue through remaining snapshots.
+      if (restoredFromMemory) {
+        return true;
       }
     }
 
@@ -913,9 +965,7 @@ export class SessionKeepAliveService extends EventEmitter {
 
     try {
       const page = await getOrCreatePage(lease.context);
-      await page.goto("https://www.linkedin.com/feed/", {
-        waitUntil: "domcontentloaded"
-      });
+      await navigateToKeepAlivePage(page, LINKEDIN_KEEP_ALIVE_URLS.feed);
       await humanize(page, { fast: true }).idle();
       this.metrics.lastWarmupAt = new Date().toISOString();
       this.emitKeepAliveEvent({
@@ -931,44 +981,23 @@ export class SessionKeepAliveService extends EventEmitter {
     try {
       const page = await getOrCreatePage(lease.context);
       const hp = humanize(page, { fast: true });
-      const pattern = ACTIVITY_PATTERNS[
-        this.activityPatternIndex % ACTIVITY_PATTERNS.length
-      ];
+      const pattern =
+        ACTIVITY_PATTERNS[
+          this.activityPatternIndex % ACTIVITY_PATTERNS.length
+        ] ?? ACTIVITY_PATTERNS[0];
+      const activity = ACTIVITY_PATTERN_DETAILS[pattern];
       this.activityPatternIndex += 1;
-      let detail = "";
 
-      switch (pattern) {
-        case "feed-scroll": {
-          await page.goto("https://www.linkedin.com/feed/", {
-            waitUntil: "domcontentloaded"
-          });
-          await hp.scrollDown();
-          await hp.idle();
-          detail = "Rotated keepalive activity: scrolled the LinkedIn feed";
-          break;
-        }
-        case "notifications-peek": {
-          await page.goto("https://www.linkedin.com/notifications/", {
-            waitUntil: "domcontentloaded"
-          });
-          await hp.idle();
-          detail = "Rotated keepalive activity: checked the notifications page";
-          break;
-        }
-        case "network-peek": {
-          await page.goto("https://www.linkedin.com/mynetwork/", {
-            waitUntil: "domcontentloaded"
-          });
-          await hp.idle();
-          detail = "Rotated keepalive activity: viewed the network page";
-          break;
-        }
+      await navigateToKeepAlivePage(page, activity.url);
+      if (activity.shouldScrollDown) {
+        await hp.scrollDown();
       }
+      await hp.idle();
 
       this.metrics.lastActivityAt = new Date().toISOString();
       this.emitKeepAliveEvent({
         type: "activity",
-        detail,
+        detail: activity.detail,
         metadata: {
           pattern
         }
@@ -1018,11 +1047,7 @@ export class SessionKeepAliveService extends EventEmitter {
   private trimReconnectWindow(): void {
     const windowMs = this.alertThresholds.reconnectsInWindow.windowMs;
     const cutoffMs = Date.now() - windowMs;
-    while (
-      this.reconnectTimestampsMs.length > 0 &&
-      this.reconnectTimestampsMs[0] !== undefined &&
-      this.reconnectTimestampsMs[0] < cutoffMs
-    ) {
+    while ((this.reconnectTimestampsMs[0] ?? Number.POSITIVE_INFINITY) < cutoffMs) {
       this.reconnectTimestampsMs.shift();
     }
   }
@@ -1032,10 +1057,10 @@ export class SessionKeepAliveService extends EventEmitter {
     this.metrics.reconnectCountInWindow = this.reconnectTimestampsMs.length;
 
     const cookieExpiryMs = millisecondsUntil(this.metrics.nextCookieExpiryAt);
-    const cookieAlertActive =
-      cookieExpiryMs !== null &&
-      cookieExpiryMs > 0 &&
-      cookieExpiryMs <= this.alertThresholds.cookieExpiringWithinMs;
+    const cookieAlertActive = isTimestampWithinWindow(
+      this.metrics.nextCookieExpiryAt,
+      this.alertThresholds.cookieExpiringWithinMs
+    );
     this.updateAlert(
       "cookie-expiry",
       cookieAlertActive,
@@ -1091,9 +1116,9 @@ export class SessionKeepAliveService extends EventEmitter {
       timestamp: partial.timestamp ?? new Date().toISOString(),
       consecutiveFailures: partial.consecutiveFailures ?? this.consecutiveFailures,
       type: partial.type,
-      health: partial.health,
-      detail: partial.detail,
-      metadata: partial.metadata
+      ...(partial.health === undefined ? {} : { health: partial.health }),
+      ...(partial.detail === undefined ? {} : { detail: partial.detail }),
+      ...(partial.metadata === undefined ? {} : { metadata: partial.metadata })
     };
 
     this.eventLog.push(event);
