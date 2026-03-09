@@ -1921,13 +1921,14 @@ async function runKeepAliveStart(input: {
   jitterSeconds: number;
   maxConsecutiveFailures: number;
 }, cdpUrl?: string): Promise<void> {
-  const existingPid = await readKeepAlivePid(input.profileName);
+  const profileName = coerceProfileName(input.profileName);
+  const existingPid = await readKeepAlivePid(profileName);
   if (existingPid && isProcessRunning(existingPid)) {
-    const currentState = await readKeepAliveState(input.profileName);
+    const currentState = await readKeepAliveState(profileName);
     printJson({
       started: false,
       reason: "Keepalive daemon is already running for this profile.",
-      profile_name: input.profileName,
+      profile_name: profileName,
       pid: existingPid,
       state: currentState
     });
@@ -1935,7 +1936,7 @@ async function runKeepAliveStart(input: {
   }
 
   if (existingPid && !isProcessRunning(existingPid)) {
-    await removeKeepAlivePid(input.profileName);
+    await removeKeepAlivePid(profileName);
   }
 
   maybeWarnAboutSelectorLocaleConfig(cliSelectorLocale);
@@ -1959,7 +1960,7 @@ async function runKeepAliveStart(input: {
     "keepalive",
     "__run",
     "--profile",
-    input.profileName,
+    profileName,
     "--interval-seconds",
     String(input.intervalSeconds),
     "--jitter-seconds",
@@ -1985,7 +1986,7 @@ async function runKeepAliveStart(input: {
   const now = new Date().toISOString();
   const initialState: KeepAliveState = {
     pid: daemon.pid,
-    profileName: input.profileName,
+    profileName,
     startedAt: now,
     updatedAt: now,
     status: "starting",
@@ -1996,14 +1997,14 @@ async function runKeepAliveStart(input: {
     ...(cdpUrl ? { cdpUrl } : {})
   };
 
-  await writeKeepAlivePid(input.profileName, daemon.pid);
-  await writeKeepAliveState(input.profileName, initialState);
+  await writeKeepAlivePid(profileName, daemon.pid);
+  await writeKeepAliveState(profileName, initialState);
 
   printJson({
     started: true,
-    profile_name: input.profileName,
+    profile_name: profileName,
     pid: daemon.pid,
-    state_path: getKeepAliveFiles(input.profileName).statePath
+    state_path: getKeepAliveFiles(profileName).statePath
   });
 }
 
@@ -2025,12 +2026,13 @@ function resolveKeepAliveCliEntrypoint(): string | undefined {
 }
 
 async function runKeepAliveStatus(profileName: string): Promise<void> {
-  const pid = await readKeepAlivePid(profileName);
-  const state = await readKeepAliveState(profileName);
+  const normalizedProfileName = coerceProfileName(profileName);
+  const pid = await readKeepAlivePid(normalizedProfileName);
+  const state = await readKeepAliveState(normalizedProfileName);
   const running = typeof pid === "number" ? isProcessRunning(pid) : false;
 
   printJson({
-    profile_name: profileName,
+    profile_name: normalizedProfileName,
     running,
     pid,
     state,
@@ -2039,23 +2041,24 @@ async function runKeepAliveStatus(profileName: string): Promise<void> {
 }
 
 async function runKeepAliveStop(profileName: string): Promise<void> {
-  const pid = await readKeepAlivePid(profileName);
-  const previousState = await readKeepAliveState(profileName);
+  const normalizedProfileName = coerceProfileName(profileName);
+  const pid = await readKeepAlivePid(normalizedProfileName);
+  const previousState = await readKeepAliveState(normalizedProfileName);
 
   if (!pid) {
     printJson({
       stopped: false,
-      profile_name: profileName,
+      profile_name: normalizedProfileName,
       reason: "No keepalive daemon pid file found."
     });
     return;
   }
 
   if (!isProcessRunning(pid)) {
-    await removeKeepAlivePid(profileName);
+    await removeKeepAlivePid(normalizedProfileName);
     const now = new Date().toISOString();
     if (previousState) {
-      await writeKeepAliveState(profileName, {
+      await writeKeepAliveState(normalizedProfileName, {
         ...previousState,
         status: "stopped",
         updatedAt: now,
@@ -2065,7 +2068,7 @@ async function runKeepAliveStop(profileName: string): Promise<void> {
     }
     printJson({
       stopped: true,
-      profile_name: profileName,
+      profile_name: normalizedProfileName,
       pid,
       reason: "Recovered stale keepalive pid file."
     });
@@ -2079,7 +2082,7 @@ async function runKeepAliveStop(profileName: string): Promise<void> {
       "UNKNOWN",
       "Failed to send SIGTERM to keepalive daemon.",
       {
-        profile_name: profileName,
+        profile_name: normalizedProfileName,
         pid,
         cause: error instanceof Error ? error.message : String(error)
       }
@@ -2100,10 +2103,10 @@ async function runKeepAliveStop(profileName: string): Promise<void> {
     process.kill(pid, "SIGKILL");
   }
 
-  await removeKeepAlivePid(profileName);
+  await removeKeepAlivePid(normalizedProfileName);
   const now = new Date().toISOString();
   if (previousState) {
-    await writeKeepAliveState(profileName, {
+    await writeKeepAliveState(normalizedProfileName, {
       ...previousState,
       status: "stopped",
       updatedAt: now,
@@ -2116,7 +2119,7 @@ async function runKeepAliveStop(profileName: string): Promise<void> {
 
   printJson({
     stopped: true,
-    profile_name: profileName,
+    profile_name: normalizedProfileName,
     pid,
     forced: running
   });
@@ -2129,7 +2132,7 @@ async function runKeepAliveDaemon(input: {
   maxConsecutiveFailures: number;
 }, cdpUrl?: string): Promise<void> {
   const runtime = createRuntime(cdpUrl);
-  const profileName = input.profileName;
+  const profileName = coerceProfileName(input.profileName);
   let stopRequested = false;
   let consecutiveFailures = 0;
 
@@ -2159,7 +2162,10 @@ async function runKeepAliveDaemon(input: {
     event: "keepalive.daemon.started",
     pid: process.pid,
     profile_name: profileName,
-    cdp_url: cdpUrl ?? null
+    cdp_url: cdpUrl ?? null,
+    interval_ms: input.intervalSeconds * 1_000,
+    jitter_ms: input.jitterSeconds * 1_000,
+    max_consecutive_failures: input.maxConsecutiveFailures
   });
 
   try {
@@ -2205,7 +2211,9 @@ async function runKeepAliveDaemon(input: {
           consecutive_failures: consecutiveFailures,
           browser_healthy: health.browser.healthy,
           authenticated: health.session.authenticated,
-          reason: health.session.reason
+          reason: health.session.reason,
+          interval_ms: input.intervalSeconds * 1_000,
+          jitter_ms: input.jitterSeconds * 1_000
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -2237,6 +2245,8 @@ async function runKeepAliveDaemon(input: {
           profile_name: profileName,
           consecutive_failures: consecutiveFailures,
           error: message,
+          interval_ms: input.intervalSeconds * 1_000,
+          jitter_ms: input.jitterSeconds * 1_000,
           ...(lockHeld ? { reason: "profile_lock_held" } : {})
         });
       }
@@ -2257,6 +2267,9 @@ async function runKeepAliveDaemon(input: {
       }
     }
   } finally {
+    process.off("SIGTERM", requestStop);
+    process.off("SIGINT", requestStop);
+
     const now = new Date().toISOString();
     const lastState = (await readKeepAliveState(profileName)) ?? initialState;
     await writeKeepAliveState(profileName, {
@@ -2271,7 +2284,8 @@ async function runKeepAliveDaemon(input: {
       ts: now,
       event: "keepalive.daemon.stopped",
       pid: process.pid,
-      profile_name: profileName
+      profile_name: profileName,
+      final_consecutive_failures: consecutiveFailures
     });
 
     await removeKeepAlivePid(profileName).catch(() => undefined);
@@ -5572,7 +5586,7 @@ export function createCliProgram(): Command {
               options.intervalSeconds,
               "interval-seconds"
             ),
-            jitterSeconds: coercePositiveInt(
+            jitterSeconds: coerceNonNegativeInt(
               options.jitterSeconds,
               "jitter-seconds"
             ),
