@@ -474,6 +474,11 @@ describe("ActivityWatchesService", () => {
     expect(service.getWebhookSubscriptionById("whsub_invalid_json").eventTypes).toEqual(
       []
     );
+    expect(
+      service.listWebhookSubscriptions({
+        profileName: "default"
+      })
+    ).toHaveLength(3);
 
     runtime.db.insertActivityEvent({
       id: "evt_old",

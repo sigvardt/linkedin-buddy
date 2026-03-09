@@ -666,18 +666,18 @@ const ACTIVITY_EVENT_SELECT_COLUMNS = `
 `;
 
 const WEBHOOK_SUBSCRIPTION_SELECT_COLUMNS = `
-  id,
-  watch_id,
-  status,
-  event_types_json,
-  delivery_url,
-  signing_secret,
-  max_attempts,
-  last_delivered_at,
-  last_error_code,
-  last_error_message,
-  created_at,
-  updated_at
+  webhook_subscription.id AS id,
+  webhook_subscription.watch_id AS watch_id,
+  webhook_subscription.status AS status,
+  webhook_subscription.event_types_json AS event_types_json,
+  webhook_subscription.delivery_url AS delivery_url,
+  webhook_subscription.signing_secret AS signing_secret,
+  webhook_subscription.max_attempts AS max_attempts,
+  webhook_subscription.last_delivered_at AS last_delivered_at,
+  webhook_subscription.last_error_code AS last_error_code,
+  webhook_subscription.last_error_message AS last_error_message,
+  webhook_subscription.created_at AS created_at,
+  webhook_subscription.updated_at AS updated_at
 `;
 
 const WEBHOOK_DELIVERY_ATTEMPT_SELECT_COLUMNS = `

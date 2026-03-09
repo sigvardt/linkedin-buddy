@@ -284,12 +284,157 @@ function invalidActivityWebhookConfig(
   message: string,
   details: Record<string, unknown>
 ): LinkedInAssistantError {
+  const env = typeof details.env === "string" ? details.env : undefined;
+  const guidance = env ? ACTIVITY_WEBHOOK_ENV_GUIDANCE[env] : undefined;
+  let suggestion = guidance?.suggestion;
+  let example = guidance ? `${env}=${guidance.exampleValue}` : undefined;
+
+  if (
+    env === "LINKEDIN_ASSISTANT_ACTIVITY_MAX_BACKOFF_SECONDS" &&
+    typeof details.initial_backoff_ms === "number"
+  ) {
+    const minimumSeconds = Math.ceil(details.initial_backoff_ms / 1_000);
+    suggestion =
+      `Increase ${env} to at least ${minimumSeconds}, or lower LINKEDIN_ASSISTANT_ACTIVITY_INITIAL_BACKOFF_SECONDS.`;
+    example = `${env}=${minimumSeconds}`;
+  }
+
+  if (
+    env === "LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_LEASE_SECONDS" &&
+    typeof details.delivery_timeout_ms === "number" &&
+    typeof details.clock_skew_allowance_ms === "number"
+  ) {
+    const minimumSeconds = Math.ceil(
+      (details.delivery_timeout_ms + details.clock_skew_allowance_ms) / 1_000
+    );
+    suggestion =
+      `Increase ${env} to at least ${minimumSeconds}, or lower the delivery timeout or clock skew allowance.`;
+    example = `${env}=${minimumSeconds}`;
+  } else if (
+    env === "LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_LEASE_SECONDS" &&
+    typeof details.clock_skew_allowance_ms === "number"
+  ) {
+    const minimumSeconds = Math.floor(details.clock_skew_allowance_ms / 1_000) + 1;
+    suggestion =
+      `Increase ${env} to more than ${Math.floor(details.clock_skew_allowance_ms / 1_000)}, or lower LINKEDIN_ASSISTANT_ACTIVITY_CLOCK_SKEW_SECONDS.`;
+    example = `${env}=${minimumSeconds}`;
+  }
+
+  if (
+    env === "LINKEDIN_ASSISTANT_ACTIVITY_WATCH_LEASE_SECONDS" &&
+    typeof details.clock_skew_allowance_ms === "number"
+  ) {
+    const minimumSeconds = Math.floor(details.clock_skew_allowance_ms / 1_000) + 1;
+    suggestion =
+      `Increase ${env} to more than ${Math.floor(details.clock_skew_allowance_ms / 1_000)}, or lower LINKEDIN_ASSISTANT_ACTIVITY_CLOCK_SKEW_SECONDS.`;
+    example = `${env}=${minimumSeconds}`;
+  }
+
   return new LinkedInAssistantError(
     "ACTION_PRECONDITION_FAILED",
     message,
-    details
+    {
+      ...details,
+      ...(guidance ? { default_value: guidance.defaultValue } : {}),
+      ...(example ? { example } : {}),
+      ...(suggestion ? { suggestion } : {})
+    }
   );
 }
+
+const ACTIVITY_WEBHOOK_ENV_GUIDANCE: Record<
+  string,
+  {
+    defaultValue: string;
+    exampleValue: string;
+    suggestion: string;
+  }
+> = {
+  LINKEDIN_ASSISTANT_ACTIVITY_ENABLED: {
+    defaultValue: "true",
+    exampleValue: "false",
+    suggestion:
+      "Use true or false to enable or disable activity polling, or unset the variable to restore the default."
+  },
+  LINKEDIN_ASSISTANT_ACTIVITY_DAEMON_POLL_INTERVAL_SECONDS: {
+    defaultValue: String(DEFAULT_ACTIVITY_DAEMON_POLL_INTERVAL_MS / 1_000),
+    exampleValue: "120",
+    suggestion:
+      "Use a whole-number daemon interval in seconds, such as 120, or unset the variable to restore the default cadence."
+  },
+  LINKEDIN_ASSISTANT_ACTIVITY_MAX_WATCHES_PER_TICK: {
+    defaultValue: String(DEFAULT_ACTIVITY_MAX_WATCHES_PER_TICK),
+    exampleValue: "8",
+    suggestion:
+      "Use a whole-number watch batch size, or unset the variable to restore the default per-tick watch budget."
+  },
+  LINKEDIN_ASSISTANT_ACTIVITY_MAX_CONCURRENT_WATCHES: {
+    defaultValue: String(DEFAULT_ACTIVITY_MAX_CONCURRENT_WATCHES),
+    exampleValue: "50",
+    suggestion:
+      "Use a whole-number per-profile watch limit, or pause existing watches before raising the limit."
+  },
+  LINKEDIN_ASSISTANT_ACTIVITY_WATCH_LEASE_SECONDS: {
+    defaultValue: String(DEFAULT_ACTIVITY_WATCH_LEASE_TTL_MS / 1_000),
+    exampleValue: "180",
+    suggestion:
+      "Use a whole-number lease duration in seconds that comfortably exceeds clock skew and expected poll time."
+  },
+  LINKEDIN_ASSISTANT_ACTIVITY_MIN_POLL_INTERVAL_SECONDS: {
+    defaultValue: String(DEFAULT_ACTIVITY_MIN_POLL_INTERVAL_MS / 1_000),
+    exampleValue: "300",
+    suggestion:
+      "Use a whole-number minimum poll interval in seconds, or unset the variable to restore the default lower bound."
+  },
+  LINKEDIN_ASSISTANT_ACTIVITY_MAX_DELIVERIES_PER_TICK: {
+    defaultValue: String(DEFAULT_ACTIVITY_MAX_DELIVERIES_PER_TICK),
+    exampleValue: "20",
+    suggestion:
+      "Use a whole-number delivery batch size, or unset the variable to restore the default per-tick delivery budget."
+  },
+  LINKEDIN_ASSISTANT_ACTIVITY_MAX_EVENT_QUEUE_DEPTH: {
+    defaultValue: String(DEFAULT_ACTIVITY_MAX_EVENT_QUEUE_DEPTH),
+    exampleValue: "500",
+    suggestion:
+      "Use a whole-number queue depth large enough for bursts, or unset the variable to restore the default queue cap."
+  },
+  LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_LEASE_SECONDS: {
+    defaultValue: String(DEFAULT_ACTIVITY_DELIVERY_LEASE_TTL_MS / 1_000),
+    exampleValue: "90",
+    suggestion:
+      "Use a whole-number delivery lease in seconds that exceeds the HTTP timeout and clock skew allowance."
+  },
+  LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_TIMEOUT_SECONDS: {
+    defaultValue: String(DEFAULT_ACTIVITY_DELIVERY_TIMEOUT_MS / 1_000),
+    exampleValue: "20",
+    suggestion:
+      "Use a whole-number webhook timeout in seconds that is lower than the delivery lease duration."
+  },
+  LINKEDIN_ASSISTANT_ACTIVITY_CLOCK_SKEW_SECONDS: {
+    defaultValue: String(DEFAULT_ACTIVITY_CLOCK_SKEW_ALLOWANCE_MS / 1_000),
+    exampleValue: "10",
+    suggestion:
+      "Use a whole-number clock-skew allowance in seconds, or unset the variable to restore the default tolerance."
+  },
+  LINKEDIN_ASSISTANT_ACTIVITY_MAX_DELIVERY_ATTEMPTS: {
+    defaultValue: String(DEFAULT_ACTIVITY_MAX_DELIVERY_ATTEMPTS),
+    exampleValue: "8",
+    suggestion:
+      "Use a whole-number retry-attempt budget, or unset the variable to restore the default delivery retry count."
+  },
+  LINKEDIN_ASSISTANT_ACTIVITY_INITIAL_BACKOFF_SECONDS: {
+    defaultValue: String(DEFAULT_ACTIVITY_INITIAL_BACKOFF_MS / 1_000),
+    exampleValue: "120",
+    suggestion:
+      "Use a whole-number retry backoff in seconds, or unset the variable to restore the default initial backoff."
+  },
+  LINKEDIN_ASSISTANT_ACTIVITY_MAX_BACKOFF_SECONDS: {
+    defaultValue: String(DEFAULT_ACTIVITY_MAX_BACKOFF_MS / 1_000),
+    exampleValue: "3600",
+    suggestion:
+      "Use a whole-number maximum backoff in seconds that is greater than or equal to the initial backoff."
+  }
+};
 
 function parseStrictBoolean(
   value: string | undefined,
