@@ -5,7 +5,8 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "linkedin": "dist/bin/linkedin.js"
+    "linkedin": "dist/bin/linkedin.js",
+    "owa": "dist/bin/linkedin.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

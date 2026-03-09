@@ -1,0 +1,204 @@
+{
+  "format": 1,
+  "setName": "ci",
+  "routes": [
+    {
+      "method": "GET",
+      "url": "https://www.linkedin.com/__replay/replay-state.js",
+      "status": 200,
+      "headers": {
+        "content-type": "application/javascript; charset=utf-8"
+      },
+      "bodyPath": "assets/replay-state.js"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.linkedin.com/login",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8"
+      },
+      "bodyPath": "pages/login.html"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.linkedin.com/feed/",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8"
+      },
+      "bodyPath": "pages/app.html",
+      "pageType": "feed"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.linkedin.com/feed/update/urn:li:activity:fixture-post-1/",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8"
+      },
+      "bodyPath": "pages/app.html",
+      "pageType": "feed"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.linkedin.com/messaging/",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8"
+      },
+      "bodyPath": "pages/app.html",
+      "pageType": "messaging"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.linkedin.com/messaging/thread/fixture-thread-1/",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8"
+      },
+      "bodyPath": "pages/app.html",
+      "pageType": "messaging"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.linkedin.com/voyagerMessagingGraphQL/graphql?queryId=messengerConversations.fixture&variables=%7B%22start%22%3A0%7D",
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8"
+      },
+      "bodyPath": "api/messaging-conversations.json",
+      "pageType": "messaging"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.linkedin.com/voyagerMessagingGraphQL/graphql?queryId=messengerMessages.fixture&variables=%7B%22threadId%22%3A%22fixture-thread-1%22%7D",
+      "status": 200,
+      "headers": {
+        "content-type": "application/json; charset=utf-8"
+      },
+      "bodyPath": "api/messaging-thread.json",
+      "pageType": "messaging"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.linkedin.com/in/me/",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8"
+      },
+      "bodyPath": "pages/app.html",
+      "pageType": "profile"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.linkedin.com/in/realsimonmiller/",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8"
+      },
+      "bodyPath": "pages/app.html",
+      "pageType": "profile"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.linkedin.com/search/results/people/?keywords=Simon%20Miller",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8"
+      },
+      "bodyPath": "pages/app.html",
+      "pageType": "search"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.linkedin.com/search/results/companies/?keywords=Power%20International",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8"
+      },
+      "bodyPath": "pages/app.html",
+      "pageType": "search"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.linkedin.com/search/results/jobs/?keywords=software%20engineer%20copenhagen",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8"
+      },
+      "bodyPath": "pages/app.html",
+      "pageType": "search"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.linkedin.com/jobs/search/?keywords=software%20engineer",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8"
+      },
+      "bodyPath": "pages/app.html",
+      "pageType": "jobs"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.linkedin.com/jobs/search/?keywords=software%20engineer&location=Copenhagen",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8"
+      },
+      "bodyPath": "pages/app.html",
+      "pageType": "jobs"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.linkedin.com/jobs/view/1234567890/",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8"
+      },
+      "bodyPath": "pages/app.html",
+      "pageType": "jobs"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.linkedin.com/notifications/",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8"
+      },
+      "bodyPath": "pages/app.html",
+      "pageType": "notifications"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.linkedin.com/mynetwork/invite-connect/connections/",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8"
+      },
+      "bodyPath": "pages/app.html",
+      "pageType": "connections"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.linkedin.com/mynetwork/invitation-manager/",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8"
+      },
+      "bodyPath": "pages/app.html",
+      "pageType": "connections"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.linkedin.com/mynetwork/invitation-manager/sent/",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8"
+      },
+      "bodyPath": "pages/app.html",
+      "pageType": "connections"
+    }
+  ]
+}

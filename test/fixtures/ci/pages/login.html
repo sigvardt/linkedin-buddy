@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LinkedIn Login Replay</title>
+  </head>
+  <body>
+    <main>
+      <p>Redirecting to the replay feed…</p>
+    </main>
+    <script>
+      document.cookie = "li_at=fixture-session; path=/; SameSite=Lax";
+      setTimeout(() => {
+        window.location.replace("https://www.linkedin.com/feed/");
+      }, 25);
+    </script>
+  </body>
+</html>

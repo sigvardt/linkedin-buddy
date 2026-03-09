@@ -7,3 +7,11 @@ dist
 *.tsbuildinfo
 
 .linkedin-assistant
+
+test/fixtures/*
+!test/fixtures/manifest.json
+!test/fixtures/ci/
+!test/fixtures/ci/**
+test/fixtures/*/responses/
+test/fixtures/*/responses/**
+test/fixtures/*/session.har

@@ -1,17 +1,23 @@
 # E2E Testing
 
-The E2E suite exercises the CLI, the MCP tool surface, and the core two-phase
-commit flows against a real authenticated LinkedIn browser session.
+The E2E suite now has two complementary lanes:
 
-## Runner behavior
+- a live-session runner for validating behavior against an authenticated LinkedIn browser
+- a fixture-backed replay runner that serves recorded LinkedIn HTML/HTTP responses locally
 
-Use the default runner from the repo root:
+The replay lane gives CI and local development deterministic end-to-end coverage
+without touching live LinkedIn.
+
+## Live runner
+
+Use the default runner from the repo root when you want to exercise a real
+LinkedIn session over CDP:
 
 ```bash
 npm run test:e2e
 ```
 
-The runner:
+The live runner:
 
 1. Prints the effective E2E configuration.
 2. Checks that a CDP endpoint is reachable.
@@ -19,11 +25,8 @@ The runner:
 4. Runs the Vitest E2E suite.
 
 If no authenticated session is available, the runner prints a skip reason and
-exits successfully. This makes it safe for CI environments that do not have a
-LinkedIn browser session.
-
-Pass `--require-session` when a missing CDP/authenticated session should fail
-instead of skip:
+exits successfully. Pass `--require-session` when a missing CDP/authenticated
+session should fail instead of skip:
 
 ```bash
 npm run test:e2e -- --require-session
@@ -38,6 +41,7 @@ simple:
 ```bash
 npm run test:e2e -- packages/core/src/__tests__/e2e/cli.e2e.test.ts
 npm run test:e2e -- --reporter=verbose packages/core/src/__tests__/e2e/error-paths.e2e.test.ts
+npm run test:e2e -- --help
 ```
 
 To force the raw Vitest suite directly, use:
@@ -46,18 +50,37 @@ To force the raw Vitest suite directly, use:
 npm run test:e2e:raw
 ```
 
-The runner itself also has built-in help:
+## Fixture-backed replay runner
+
+Use the replay lane when you want deterministic Playwright coverage without
+credentials or live LinkedIn traffic:
 
 ```bash
-npm run test:e2e -- --help
+npm run test:e2e:fixtures
 ```
+
+This script enables `LINKEDIN_E2E_REPLAY=1`, loads
+`test/fixtures/manifest.json`, starts the local replay server, and runs the same
+Vitest E2E suites headlessly against recorded fixtures.
+
+Focused reruns work the same way:
+
+```bash
+npm run test:e2e:fixtures -- packages/core/src/__tests__/e2e/inbox.e2e.test.ts
+```
+
+CI uses this lane so E2E coverage runs without a real LinkedIn account.
+Unrecorded LinkedIn routes fail closed with fixture-miss errors, and non-
+LinkedIn network requests are aborted instead of silently passing through.
 
 ## Coverage lanes
 
-The E2E matrix now has four layers:
+The E2E matrix now has five layers:
 
 - Live runtime suites in `packages/core/src/__tests__/e2e/*.e2e.test.ts`
   validate the LinkedIn interaction logic directly.
+- Fixture-backed runtime suites reuse the same files but run against the local
+  replay server in CI and local headless runs.
 - Thin CLI contract coverage in
   `packages/core/src/__tests__/e2e/cli.e2e.test.ts` validates parsing, JSON
   output, exit codes, keepalive behavior, selector audit, and confirm
@@ -72,24 +95,29 @@ The E2E matrix now has four layers:
   parsing, skip semantics, fixture replay, retry behavior, and confirm
   contracts without needing LinkedIn access.
 
-The default `npm run test:e2e` path only executes tests that are read-only,
-preview-only, or use the `test.echo` executor for the generic confirm
-entrypoints. Real outbound confirms remain opt-in.
+The default live lane only executes tests that are read-only, preview-only, or
+use the `test.echo` executor for the generic confirm entrypoints. Real outbound
+confirms remain opt-in.
 
 ## Prerequisites
 
 - Node.js 22+
 - Installed dependencies via `npm install`
-- Playwright Chromium dependencies available for the existing toolchain
-- A dedicated Chromium session exposed over CDP and already logged into LinkedIn
+- Playwright Chromium available via `npx playwright install chromium`
+- For the live lane only: a dedicated Chromium session exposed over CDP and
+  already logged into LinkedIn
 
 Environment variables:
 
-- `LINKEDIN_CDP_URL` — optional, defaults to `http://localhost:18800`
+- `LINKEDIN_CDP_URL` — live lane only, defaults to `http://localhost:18800`
 - `LINKEDIN_E2E_PROFILE` — optional logical profile name, defaults to `default`
 - `LINKEDIN_E2E_REQUIRE_SESSION` — optional, set to `1` or `true` to fail instead of skip
-- `LINKEDIN_E2E_FIXTURE_FILE` — optional JSON file used to record or replay shared CLI/MCP fixtures
-- `LINKEDIN_E2E_REFRESH_FIXTURES` — optional, set to `1` or `true` to overwrite the fixture file
+- `LINKEDIN_E2E_REPLAY` — optional, set to `1` or `true` to enable replay mode
+- `LINKEDIN_E2E_FIXTURE_MANIFEST` — optional manifest path for replay mode, defaults to `test/fixtures/manifest.json`
+- `LINKEDIN_E2E_FIXTURE_SET` — optional fixture set name override, defaults to the manifest default set
+- `LINKEDIN_E2E_FIXTURE_SERVER_URL` — optional externally managed replay server base URL
+- `LINKEDIN_E2E_FIXTURE_FILE` — optional JSON file used to record or replay shared CLI/MCP discovery fixtures in the live lane
+- `LINKEDIN_E2E_REFRESH_FIXTURES` — optional, set to `1` or `true` to overwrite the live discovery fixture file
 - `LINKEDIN_E2E_JOB_QUERY` — optional job query override for live fixture discovery, defaults to `software engineer`
 - `LINKEDIN_E2E_JOB_LOCATION` — optional job location override for live fixture discovery, defaults to `Copenhagen`
 - `LINKEDIN_E2E_MESSAGE_TARGET_PATTERN` — optional regex source used when live-discovering the approved inbox thread, defaults to `Simon Miller`
@@ -103,12 +131,60 @@ Environment variables:
 - `LINKEDIN_E2E_COMMENT_POST_URL` — required only when `LINKEDIN_E2E_ENABLE_COMMENT_CONFIRM=1`
 - `LINKEDIN_ENABLE_POST_WRITE_E2E` — optional, enables real post publishing after explicit approval
 
-## Fixture replay workflow
+## Recorded fixture workflow
 
-The CLI and MCP contract suites only need a few stable identifiers: a message
-thread id, a feed post URL, a job id, and a connection target. The runner can
-capture those into a small JSON file so you can replay the same targets while
-iterating on contract or output bugs.
+Replay fixtures live under `test/fixtures/`. The committed manifest points to a
+small `ci` fixture set that is safe for headless CI. Local recordings can add
+more sets without overwriting others.
+
+Record or refresh pages manually:
+
+```bash
+linkedin fixtures record --page feed --page messaging
+owa fixtures:record --set da-dk --page profile,notifications --no-har
+```
+
+Supported page types:
+
+- `feed`
+- `profile`
+- `messaging`
+- `notifications`
+- `composer`
+- `search`
+- `connections`
+- `jobs`
+
+The recorder:
+
+- launches a persistent Playwright browser for manual LinkedIn navigation
+- records LinkedIn/Licdn responses into a fixture set plus optional HAR output
+- stores per-page metadata including capture date, locale, viewport, and URL
+- preserves untouched pages and routes so you can re-record one page at a time
+
+Validate fixture freshness:
+
+```bash
+linkedin fixtures check
+owa fixtures:check --set ci --max-age-days 14
+```
+
+`fixtures check` warns when a set or page is older than the configured age.
+
+Storage rules:
+
+- `test/fixtures/manifest.json` is committed
+- `test/fixtures/ci/**` is committed for deterministic CI coverage
+- other local fixture sets under `test/fixtures/<set>/` stay ignored by default
+- large captured HAR files and raw response bodies stay ignored unless you
+  intentionally promote them
+
+## Contract discovery fixtures
+
+The CLI and MCP contract suites also use a separate lightweight JSON fixture
+file for live discovery. Those files only store a message thread id, a feed
+post URL, a job id, and a connection target so contract-focused reruns do not
+need to rediscover live targets every time.
 
 Fixture files are intentionally small and profile-aware. The helper records the
 fixture format version, capture timestamp, `LINKEDIN_E2E_PROFILE`, and the
@@ -116,30 +192,25 @@ stable identifiers needed by the CLI/MCP suites. Replays fail fast when the
 saved format is unsupported or when the saved profile name does not match the
 current `LINKEDIN_E2E_PROFILE`.
 
-Capture or refresh the fixtures:
+Capture or refresh the live discovery fixtures:
 
 ```bash
-npm run test:e2e -- \
-  --fixtures .tmp/e2e-fixtures.json \
-  --refresh-fixtures \
-  packages/core/src/__tests__/e2e/cli.e2e.test.ts
+npm run test:e2e --   --fixtures .tmp/e2e-fixtures.json   --refresh-fixtures   packages/core/src/__tests__/e2e/cli.e2e.test.ts
 ```
 
-Replay the saved fixtures on later runs:
+Replay the saved discovery fixtures on later live runs:
 
 ```bash
-npm run test:e2e -- \
-  --fixtures .tmp/e2e-fixtures.json \
-  packages/core/src/__tests__/e2e/mcp.e2e.test.ts
+npm run test:e2e --   --fixtures .tmp/e2e-fixtures.json   packages/core/src/__tests__/e2e/mcp.e2e.test.ts
 ```
 
-If the replay file becomes stale or malformed, rerun with `--refresh-fixtures`
-to overwrite it with fresh live-discovery output.
+If the discovery file becomes stale or malformed, rerun with
+`--refresh-fixtures` to overwrite it with fresh live-discovery output.
 
 Live discovery uses `LINKEDIN_E2E_MESSAGE_TARGET_PATTERN`,
 `LINKEDIN_E2E_JOB_QUERY`, `LINKEDIN_E2E_JOB_LOCATION`, and
-`LINKEDIN_E2E_CONNECTION_TARGET`. Once a fixture file exists, the CLI and MCP
-contract suites can replay it without rediscovering those targets.
+`LINKEDIN_E2E_CONNECTION_TARGET`. Once a discovery fixture file exists, the CLI
+and MCP contract suites can replay it without rediscovering those targets.
 
 ## Safe defaults
 
@@ -237,8 +308,9 @@ LINKEDIN_ENABLE_POST_WRITE_E2E=1 npm run test:e2e
 
 The E2E suite now covers:
 
-- Live runtime suites for auth, health, profile, search, jobs, inbox,
-  connections, feed, notifications, and preview coverage for outbound actions
+- Live and fixture-backed runtime suites for auth, health, profile, search,
+  jobs, inbox, connections, feed, notifications, and preview coverage for
+  outbound actions
 - CLI command groups: session, rate-limit, keepalive, inbox, connections,
   followups, feed, post, notifications, jobs, profile, selector audit,
   health, and both confirm entrypoints
@@ -255,9 +327,12 @@ The E2E suite now covers:
 
 ### Architecture
 
-- `scripts/run-e2e.js` is the single entrypoint that probes CDP/authentication,
-  chooses skip versus fail behavior, prints configuration, and forwards the
-  remaining args to Vitest.
+- `scripts/run-e2e.js` is the live-session entrypoint that probes
+  CDP/authentication, chooses skip versus fail behavior, prints configuration,
+  and forwards the remaining args to Vitest.
+- `packages/core/src/fixtureReplay.ts` owns the replay manifest format, local
+  mock server, route matching, and Playwright request interception used by the
+  fixture-backed lane.
 - `packages/core/src/__tests__/e2e/setup.ts` owns the shared runtime,
   temporary assistant home, stale-directory cleanup, and explicit skip helpers.
   Use `setupE2ESuite()` plus `skipIfE2EUnavailable()` instead of re-implementing
@@ -277,7 +352,10 @@ The E2E suite now covers:
    truly needs a new live identifier.
 6. Update the runner `--help`, `README.md`, and this guide whenever you add a
    new E2E environment variable, fixture field, or safety rule.
-7. Add or update non-live unit tests when changing `scripts/run-e2e.js`,
+7. Update `test/fixtures/manifest.json`, the committed `test/fixtures/ci/`
+   set, and this guide together whenever replay selectors or routes change.
+8. Add or update non-live unit tests when changing `scripts/run-e2e.js`,
+   `packages/core/src/fixtureReplay.ts`,
    `packages/core/src/__tests__/e2e/setup.ts`, or
    `packages/core/src/__tests__/e2e/helpers.ts`.
 

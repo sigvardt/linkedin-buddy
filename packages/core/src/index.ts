@@ -8,6 +8,7 @@ export * from "./db/database.js";
 export * from "./draftQualityEval.js";
 export * from "./draftQualityTypes.js";
 export * from "./errors.js";
+export * from "./fixtureReplay.js";
 export * from "./healthCheck.js";
 export * from "./humanize.js";
 export * from "./keepAlive.js";

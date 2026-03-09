@@ -7,6 +7,10 @@ import {
 } from "playwright-core";
 import type { ConfigPaths } from "./config.js";
 import { LinkedInAssistantError } from "./errors.js";
+import {
+  attachFixtureReplayToContext,
+  isFixtureReplayEnabled
+} from "./fixtureReplay.js";
 
 type PersistentLaunchOptions = NonNullable<
   Parameters<typeof chromium.launchPersistentContext>[1]
@@ -90,9 +94,10 @@ export class ProfileManager {
     callback: (context: BrowserContext) => Promise<T>
   ): Promise<T> {
     return this.withProfileLock(profileName, async (userDataDir) => {
+      const fixtureReplayEnabled = isFixtureReplayEnabled();
       const launchOptions: PersistentLaunchOptions = {
         ...(options.launchOptions ?? {}),
-        headless: options.headless ?? true
+        headless: fixtureReplayEnabled ? true : (options.headless ?? true)
       };
 
       const executablePath = process.env.PLAYWRIGHT_EXECUTABLE_PATH;
@@ -103,6 +108,7 @@ export class ProfileManager {
       let context: BrowserContext | undefined;
       try {
         context = await chromium.launchPersistentContext(userDataDir, launchOptions);
+        await attachFixtureReplayToContext(context);
         return await callback(context);
       } catch (error) {
         throw withPlaywrightInstallHint(error);

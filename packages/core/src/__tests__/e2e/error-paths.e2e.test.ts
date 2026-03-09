@@ -22,9 +22,10 @@ async function createIsolatedRuntime(): Promise<{
   dispose: () => Promise<void>;
 }> {
   const baseDir = await mkdtemp(path.join(os.tmpdir(), "linkedin-e2e-"));
+  const cdpUrl = getCdpUrl();
   const runtime = createCoreRuntime({
     baseDir,
-    cdpUrl: getCdpUrl()
+    ...(cdpUrl ? { cdpUrl } : {})
   });
 
   return {

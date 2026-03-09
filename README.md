@@ -404,47 +404,69 @@ npm run typecheck
 npm run build
 ```
 
-## E2E Testing (Real Browser)
+## E2E Testing
 
 Unit tests use mocks. The E2E suite validates the CLI, MCP tools, and selected
-two-phase commit flows against a real authenticated LinkedIn session.
+two-phase commit flows in two modes:
 
-Run the default E2E runner:
+- a live-session lane for authenticated LinkedIn coverage via CDP
+- a fixture-backed lane that replays recorded LinkedIn HTML/HTTP fixtures locally
+
+### Commands
 
 ```bash
+# Live authenticated lane
 npm run test:e2e
+
+# Deterministic headless replay lane used by CI
+npm run test:e2e:fixtures
+
+# Show live-runner help and overrides
+npm run test:e2e -- --help
 ```
 
-The runner now skips cleanly when no authenticated CDP session is available,
-which makes it safe to invoke in CI.
+The live runner skips cleanly when no authenticated CDP session is available.
+The replay runner does not need credentials and uses `test/fixtures/manifest.json`
+plus the committed `ci` fixture set.
 
-See `docs/e2e-testing.md` for the full workflow, safe targets, and opt-in write
-flags. Run `npm run test:e2e -- --help` for the runner's built-in flag and
-environment reference.
+### Fixture workflow
 
-Pass `npm run test:e2e -- --require-session` when a missing session should fail
-instead of skip, and use `--fixtures <file>` to capture or replay the shared
-CLI/MCP coverage fixtures while iterating on E2E failures. Saved fixtures are
-profile-specific, so refresh them when `LINKEDIN_E2E_PROFILE` changes.
+Record or refresh replay fixtures manually:
+
+```bash
+linkedin fixtures record --page feed --page messaging
+owa fixtures:record --set da-dk --page profile,notifications --no-har
+```
+
+Check fixture freshness:
+
+```bash
+linkedin fixtures check
+owa fixtures:check --set ci --max-age-days 14
+```
+
+Replay fixtures are stored under `test/fixtures/`. The manifest and committed
+`ci` set stay in git for deterministic CI coverage; other local fixture sets,
+HAR files, and bulky response captures stay ignored by default.
 
 ### Coverage lanes
 
-- Default lane: read-only runtime coverage, prepare-only mutation previews, and
-  safe `test.echo` confirms for the generic confirm entrypoints
-- Contract lanes: thin CLI and MCP suites that reuse the same live fixtures
-  instead of rediscovering targets on every run
-- Opt-in write lanes: real message, connection, like, comment, and post
+- Live and replayed runtime coverage for auth, health, feed, inbox,
+  connections, profile, search, jobs, and notifications
+- CLI and MCP contract suites that verify output shape, exit codes, and confirm
+  entrypoints end-to-end
+- Opt-in write lanes for real message, connection, like, comment, and post
   confirms guarded behind explicit environment flags
-- Non-live guard rails: helper and runner unit tests that cover option parsing,
-  fixture replay, skip semantics, and confirm contract hardening
+- Non-live guard rails that cover runner parsing, fixture replay, skip
+  semantics, and confirm contract hardening
 
-### Prerequisites
+### Live prerequisites
 
 - Node.js 22+
 - `npm install`
-- Authenticated LinkedIn session in a dedicated Chromium instance exposed via
-  CDP (default: `http://localhost:18800`)
-- Optional: `LINKEDIN_CDP_URL` to point at a different CDP endpoint
+- `npx playwright install chromium`
+- For the live lane only: an authenticated Chromium session exposed via CDP
+  (default: `http://localhost:18800`)
 
 ### Safe defaults
 
@@ -452,36 +474,5 @@ By default, the E2E suite only performs read-only operations, prepare-only
 two-phase commit steps, or safe `test.echo` confirmations for the generic
 confirm entrypoints. Real outbound confirms remain opt-in.
 
-```bash
-# Default run: safe coverage only
-npm run test:e2e
-
-# Show the runner help, flags, and env overrides
-npm run test:e2e -- --help
-
-# Focus a specific E2E file while keeping the runner checks
-npm run test:e2e -- packages/core/src/__tests__/e2e/cli.e2e.test.ts
-
-# Capture or refresh the shared CLI/MCP fixtures while debugging contract bugs
-npm run test:e2e -- --fixtures .tmp/e2e-fixtures.json --refresh-fixtures \
-  packages/core/src/__tests__/e2e/cli.e2e.test.ts
-
-# Raw Vitest E2E run when you already know the session is available
-npm run test:e2e:raw
-```
-
-### Opt-in writes
-
-Use the flags documented in `docs/e2e-testing.md` for:
-
-- `LINKEDIN_E2E_ENABLE_MESSAGE_CONFIRM=1`
-- `LINKEDIN_E2E_ENABLE_CONNECTION_CONFIRM=1`
-- `LINKEDIN_E2E_ENABLE_LIKE_CONFIRM=1`
-- `LINKEDIN_E2E_ENABLE_COMMENT_CONFIRM=1`
-- `LINKEDIN_ENABLE_POST_WRITE_E2E=1`
-
-### Safe targets
-
-- Safe message target: Simon Miller (`linkedin.com/in/realsimonmiller`)
-- Safe connection target: Simon Miller unless an explicitly approved alternative is provided
-- Public actions like likes, comments, and posts require explicit approval before enabling write confirms
+See `docs/e2e-testing.md` for the full workflow, the replay manifest format,
+safe targets, and opt-in write flags.

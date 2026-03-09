@@ -18,6 +18,9 @@ import {
 
 const originalAssistantHome = process.env.LINKEDIN_ASSISTANT_HOME;
 const originalCdpUrl = process.env.LINKEDIN_CDP_URL;
+const originalReplayEnabled = process.env.LINKEDIN_E2E_REPLAY;
+const originalFixtureManifest = process.env.LINKEDIN_E2E_FIXTURE_MANIFEST;
+const originalFixtureSet = process.env.LINKEDIN_E2E_FIXTURE_SET;
 
 afterEach(() => {
   cleanupRuntime();
@@ -31,10 +34,27 @@ afterEach(() => {
 
   if (originalCdpUrl === undefined) {
     delete process.env.LINKEDIN_CDP_URL;
-    return;
+  } else {
+    process.env.LINKEDIN_CDP_URL = originalCdpUrl;
   }
 
-  process.env.LINKEDIN_CDP_URL = originalCdpUrl;
+  if (originalReplayEnabled === undefined) {
+    delete process.env.LINKEDIN_E2E_REPLAY;
+  } else {
+    process.env.LINKEDIN_E2E_REPLAY = originalReplayEnabled;
+  }
+
+  if (originalFixtureManifest === undefined) {
+    delete process.env.LINKEDIN_E2E_FIXTURE_MANIFEST;
+  } else {
+    process.env.LINKEDIN_E2E_FIXTURE_MANIFEST = originalFixtureManifest;
+  }
+
+  if (originalFixtureSet === undefined) {
+    delete process.env.LINKEDIN_E2E_FIXTURE_SET;
+  } else {
+    process.env.LINKEDIN_E2E_FIXTURE_SET = originalFixtureSet;
+  }
 });
 
 describe("E2E setup helpers", () => {
@@ -82,6 +102,24 @@ describe("E2E setup helpers", () => {
     delete process.env.LINKEDIN_CDP_URL;
 
     expect(getCdpUrl()).toBe(DEFAULT_E2E_CDP_URL);
+  });
+
+  it("switches to fixture replay availability when replay mode is enabled", async () => {
+    process.env.LINKEDIN_E2E_REPLAY = "1";
+    process.env.LINKEDIN_E2E_FIXTURE_MANIFEST = path.resolve("test/fixtures/manifest.json");
+    process.env.LINKEDIN_E2E_FIXTURE_SET = "ci";
+    delete process.env.LINKEDIN_CDP_URL;
+
+    expect(getCdpUrl()).toBeUndefined();
+
+    const availability = await getE2EAvailability();
+
+    expect(availability).toMatchObject({
+      cdpAvailable: true,
+      authenticated: true,
+      canRun: true
+    });
+    expect(availability.reason).toContain("Fixture replay is active for set ci");
   });
 
   it("reports malformed CDP URLs as unavailable", async () => {

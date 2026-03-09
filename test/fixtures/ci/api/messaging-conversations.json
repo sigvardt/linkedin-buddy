@@ -1,0 +1,19 @@
+{
+  "data": {
+    "messengerConversationsBySyncToken": {
+      "elements": [
+        {
+          "conversationUrl": "https://www.linkedin.com/messaging/thread/fixture-thread-1/",
+          "title": {
+            "text": "Simon Miller"
+          },
+          "descriptionText": {
+            "text": "Let's use fixture replay for safe coverage."
+          },
+          "unreadCount": 1,
+          "entityUrn": "urn:li:msg_conversation:(urn:li:fs_messagingProfile:viewer,fixture-thread-1)"
+        }
+      ]
+    }
+  }
+}

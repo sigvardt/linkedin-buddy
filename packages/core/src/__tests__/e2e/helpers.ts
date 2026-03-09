@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { isFixtureReplayEnabled } from "../../fixtureReplay.js";
 import type { CoreRuntime } from "../../runtime.js";
 import { toLinkedInAssistantErrorPayload } from "../../errors.js";
 import { TEST_ECHO_ACTION_TYPE } from "../../twoPhaseCommit.js";
@@ -87,6 +88,8 @@ const DEFAULT_JOB_LOCATION = "Copenhagen";
 const E2E_FIXTURE_FORMAT_VERSION = 1;
 const TRANSIENT_E2E_ERROR_PATTERN =
   /timed out|timeout|Target closed|Execution context was destroyed|page crashed|browser has been closed|context was closed|ECONNRESET|ECONNREFUSED|EPIPE/i;
+const DEFAULT_REPLAY_POST_URL =
+  "https://www.linkedin.com/feed/update/urn:li:activity:fixture-post-1/";
 
 function readTrimmedEnv(name: string): string | undefined {
   const value = process.env[name];
@@ -101,6 +104,10 @@ function readTrimmedEnv(name: string): string | undefined {
 function readEnabledFlag(name: string): boolean {
   const value = readTrimmedEnv(name);
   return value === "1" || value === "true";
+}
+
+export function isReplayModeEnabled(): boolean {
+  return isFixtureReplayEnabled();
 }
 
 function getDefaultJobQuery(): string {
@@ -397,11 +404,21 @@ async function captureCommandExecution(
   const stderrChunks: string[] = [];
   const originalStdoutWrite = process.stdout.write;
   const originalStderrWrite = process.stderr.write;
+  const originalConsoleLog = console.log;
+  const originalConsoleError = console.error;
   const originalExitCode = process.exitCode;
   let exitCode = 0;
 
   process.stdout.write = createWriteInterceptor(stdoutChunks);
   process.stderr.write = createWriteInterceptor(stderrChunks);
+  console.log = (...args: unknown[]) => {
+    stdoutChunks.push(`${args.map((value) => summarizeUnknownValue(value)).join(" ")}
+`);
+  };
+  console.error = (...args: unknown[]) => {
+    stderrChunks.push(`${args.map((value) => summarizeUnknownValue(value)).join(" ")}
+`);
+  };
   process.exitCode = 0;
 
   let error: unknown;
@@ -420,6 +437,8 @@ async function captureCommandExecution(
   } finally {
     process.stdout.write = originalStdoutWrite;
     process.stderr.write = originalStderrWrite;
+    console.log = originalConsoleLog;
+    console.error = originalConsoleError;
     exitCode = process.exitCode ?? 0;
     process.exitCode = originalExitCode;
   }
@@ -504,22 +523,25 @@ export function getDefaultMessageTargetPattern(): RegExp {
 
 /** Returns whether an opt-in E2E flag is enabled. */
 export function isOptInEnabled(name: string): boolean {
-  return readEnabledFlag(name);
+  return isReplayModeEnabled() || readEnabledFlag(name);
 }
 
 /** Returns the configured connection confirm mode for real outbound tests. */
 export function getConnectionConfirmMode(): string {
-  return readTrimmedEnv("LINKEDIN_E2E_CONNECTION_CONFIRM_MODE") ?? "";
+  return readTrimmedEnv("LINKEDIN_E2E_CONNECTION_CONFIRM_MODE") ??
+    (isReplayModeEnabled() ? "invite" : "");
 }
 
 /** Returns the approved post URL used by the real like confirm test. */
 export function getOptInLikePostUrl(): string | undefined {
-  return readTrimmedEnv("LINKEDIN_E2E_LIKE_POST_URL");
+  return readTrimmedEnv("LINKEDIN_E2E_LIKE_POST_URL") ??
+    (isReplayModeEnabled() ? DEFAULT_REPLAY_POST_URL : undefined);
 }
 
 /** Returns the approved post URL used by the real comment confirm test. */
 export function getOptInCommentPostUrl(): string | undefined {
-  return readTrimmedEnv("LINKEDIN_E2E_COMMENT_POST_URL");
+  return readTrimmedEnv("LINKEDIN_E2E_COMMENT_POST_URL") ??
+    (isReplayModeEnabled() ? DEFAULT_REPLAY_POST_URL : undefined);
 }
 
 /**
@@ -538,7 +560,13 @@ export async function runCliCommandWith(
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const execute = async (): Promise<void> => {
-      await runner(["node", "linkedin", "--cdp-url", getCdpUrl(), ...args]);
+      const cdpUrl = getCdpUrl();
+      await runner([
+        "node",
+        "linkedin",
+        ...(cdpUrl ? ["--cdp-url", cdpUrl] : []),
+        ...args
+      ]);
     };
 
     const wrappedExecution = async (): Promise<void> => {
@@ -608,11 +636,13 @@ export async function callMcpToolWith(
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const execute = async (): Promise<unknown> =>
-      caller(name, {
-        cdpUrl: getCdpUrl(),
-        ...args
+    const execute = async (): Promise<unknown> => {
+      const cdpUrl = getCdpUrl();
+      return caller(name, {
+        ...args,
+        ...(cdpUrl ? { cdpUrl } : {})
       });
+    };
 
     const wrappedExecution = async (): Promise<unknown> => {
       if (options.assistantHome) {

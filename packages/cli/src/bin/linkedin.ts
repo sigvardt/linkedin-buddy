@@ -25,20 +25,28 @@ import {
   asLinkedInAssistantError,
   clearRateLimitState,
   createLocalDataDeletionPlan,
+  createEmptyFixtureManifest,
   evaluateDraftQuality,
   getLinkedInSelectorLocaleConfigWarning,
   isInRateLimitCooldown,
+  LINKEDIN_REPLAY_PAGE_TYPES,
   LINKEDIN_FEED_REACTION_TYPES,
   LINKEDIN_POST_VISIBILITY_TYPES,
   LINKEDIN_SELECTOR_LOCALES,
   LinkedInAssistantError,
   LinkedInSchedulerService,
+  DEFAULT_FIXTURE_STALENESS_DAYS,
   createCoreRuntime,
+  checkLinkedInFixtureStaleness,
   deleteLocalData,
+  loadLinkedInFixtureSet,
   normalizeLinkedInFeedReaction,
   normalizeLinkedInPostVisibility,
   parseDraftQualityCandidateSet,
   parseDraftQualityDataset,
+  ProfileManager,
+  readLinkedInFixtureManifest,
+  resolveFixtureManifestPath,
   resolveConfigPaths,
   resolveFollowupSinceWindow,
   resolveLinkedInSelectorLocaleConfigResolution,
@@ -48,7 +56,13 @@ import {
   resolvePrivacyConfig,
   resolveSchedulerConfig,
   toLinkedInAssistantErrorPayload,
+  writeLinkedInFixtureManifest,
   type DraftQualityReport,
+  type LinkedInFixtureManifest,
+  type LinkedInFixturePageEntry,
+  type LinkedInFixtureRoute,
+  type LinkedInFixtureSetSummary,
+  type LinkedInReplayPageType,
   type LocalDataDeletionFailure,
   type SchedulerConfig,
   type SchedulerJobRow,
@@ -146,6 +160,17 @@ function coercePositiveInt(value: string, label: string): number {
   return parsed;
 }
 
+function coerceNonNegativeInt(value: string, label: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `${label} must be a non-negative integer.`
+    );
+  }
+  return parsed;
+}
+
 function coerceSearchCategory(value: string): SearchCategory {
   if (value === "people" || value === "companies" || value === "jobs") {
     return value;
@@ -207,6 +232,470 @@ function createRuntime(cdpUrl?: string) {
           ...(cliSelectorLocale ? { selectorLocale: cliSelectorLocale } : {})
         }
   );
+}
+
+const DEFAULT_FIXTURE_RECORD_PROFILE = "fixtures";
+const DEFAULT_FIXTURE_RECORD_SET = "manual";
+const DEFAULT_FIXTURE_VIEWPORT = {
+  width: 1440,
+  height: 900
+} as const;
+const FIXTURE_ROUTE_FILE_NAME = "routes.json";
+const FIXTURE_RESPONSE_DIR_NAME = "responses";
+const FIXTURE_PAGES_DIR_NAME = "pages";
+const FIXTURE_REPLAY_ENV_KEYS = [
+  "LINKEDIN_E2E_REPLAY",
+  "LINKEDIN_E2E_FIXTURE_SERVER_URL",
+  "LINKEDIN_E2E_FIXTURE_SET",
+  "LINKEDIN_E2E_FIXTURE_MANIFEST"
+] as const;
+const FIXTURE_CAPTURE_URLS: Record<LinkedInReplayPageType, string> = {
+  composer: "https://www.linkedin.com/feed/",
+  connections: "https://www.linkedin.com/mynetwork/invite-connect/connections/",
+  feed: "https://www.linkedin.com/feed/",
+  jobs: "https://www.linkedin.com/jobs/search/?keywords=software%20engineer",
+  messaging: "https://www.linkedin.com/messaging/",
+  notifications: "https://www.linkedin.com/notifications/",
+  profile: "https://www.linkedin.com/in/me/",
+  search: "https://www.linkedin.com/search/results/people/?keywords=Simon%20Miller"
+};
+
+interface FixtureRecordInput {
+  har: boolean;
+  height: number;
+  manifestPath?: string;
+  pageTypes: LinkedInReplayPageType[];
+  profileName: string;
+  setName: string;
+  width: number;
+}
+
+function isFixtureReplayPageType(value: string): value is LinkedInReplayPageType {
+  return (LINKEDIN_REPLAY_PAGE_TYPES as readonly string[]).includes(value);
+}
+
+function coerceFixtureReplayPageType(value: string): LinkedInReplayPageType {
+  const normalized = value.trim().toLowerCase();
+  if (isFixtureReplayPageType(normalized)) {
+    return normalized;
+  }
+
+  throw new LinkedInAssistantError(
+    "ACTION_PRECONDITION_FAILED",
+    `page must be one of: ${LINKEDIN_REPLAY_PAGE_TYPES.join(", ")}.`
+  );
+}
+
+function collectFixtureReplayPageTypes(
+  value: string,
+  previous: LinkedInReplayPageType[]
+): LinkedInReplayPageType[] {
+  const nextValues = value
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+    .map((item) => coerceFixtureReplayPageType(item));
+
+  return [...previous, ...nextValues];
+}
+
+function uniqueFixtureReplayPageTypes(
+  pageTypes: LinkedInReplayPageType[]
+): LinkedInReplayPageType[] {
+  return Array.from(new Set(pageTypes));
+}
+
+function normalizeFixtureRouteHeaders(
+  headers: Record<string, string>
+): Record<string, string> {
+  const normalized: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    normalized[key.toLowerCase()] = value;
+  }
+
+  delete normalized["content-length"];
+  delete normalized["content-encoding"];
+  delete normalized["transfer-encoding"];
+  return normalized;
+}
+
+function createFixtureRouteKey(route: Pick<LinkedInFixtureRoute, "method" | "url">): string {
+  return `${route.method.toUpperCase()} ${route.url}`;
+}
+
+function sanitizeFixtureFileStem(value: string): string {
+  return value.replace(/[^a-z0-9._-]+/giu, "-").replace(/-{2,}/gu, "-");
+}
+
+function guessFixtureResponseExtension(
+  contentType: string | undefined,
+  url: string
+): string {
+  const normalizedType = (contentType ?? "").toLowerCase();
+  if (normalizedType.includes("text/html")) {
+    return ".html";
+  }
+  if (normalizedType.includes("application/json")) {
+    return ".json";
+  }
+  if (normalizedType.includes("javascript")) {
+    return ".js";
+  }
+  if (normalizedType.includes("text/css")) {
+    return ".css";
+  }
+  if (normalizedType.includes("image/png")) {
+    return ".png";
+  }
+  if (normalizedType.includes("image/jpeg")) {
+    return ".jpg";
+  }
+  if (normalizedType.includes("image/svg")) {
+    return ".svg";
+  }
+
+  try {
+    const parsed = new URL(url);
+    const extension = path.extname(parsed.pathname);
+    return extension || ".bin";
+  } catch {
+    return ".bin";
+  }
+}
+
+function shouldCaptureFixtureResponse(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.protocol === "http:" || parsed.protocol === "https:"
+    ) && (parsed.hostname.endsWith("linkedin.com") || parsed.hostname.endsWith("licdn.com"));
+  } catch {
+    return false;
+  }
+}
+
+async function loadFixtureManifestOrCreate(
+  manifestPath: string
+): Promise<LinkedInFixtureManifest> {
+  if (!existsSync(manifestPath)) {
+    return createEmptyFixtureManifest();
+  }
+
+  return await readLinkedInFixtureManifest(manifestPath);
+}
+
+async function loadExistingFixtureRoutes(
+  manifestPath: string,
+  setName: string
+): Promise<LinkedInFixtureRoute[]> {
+  if (!existsSync(manifestPath)) {
+    return [];
+  }
+
+  const manifest = await readLinkedInFixtureManifest(manifestPath);
+  const setSummary = manifest.sets[setName];
+  if (!setSummary) {
+    return [];
+  }
+
+  const routesPath = path.resolve(
+    path.dirname(manifestPath),
+    setSummary.rootDir,
+    setSummary.routesPath
+  );
+  if (!existsSync(routesPath)) {
+    return [];
+  }
+
+  return (await loadLinkedInFixtureSet(manifestPath, setName)).routes;
+}
+
+function mergeFixtureRoutes(
+  existingRoutes: LinkedInFixtureRoute[],
+  nextRoutes: LinkedInFixtureRoute[]
+): LinkedInFixtureRoute[] {
+  const merged = new Map<string, LinkedInFixtureRoute>();
+  for (const route of existingRoutes) {
+    merged.set(createFixtureRouteKey(route), route);
+  }
+  for (const route of nextRoutes) {
+    merged.set(createFixtureRouteKey(route), route);
+  }
+
+  return Array.from(merged.values()).sort((left, right) =>
+    createFixtureRouteKey(left).localeCompare(createFixtureRouteKey(right))
+  );
+}
+
+interface FixtureCaptureResponse {
+  body(): Promise<Buffer>;
+  headers(): Record<string, string>;
+  request(): {
+    method(): string;
+  };
+  status(): number;
+  url(): string;
+}
+
+async function withFixtureReplayDisabled<T>(callback: () => Promise<T>): Promise<T> {
+  const previousValues = new Map<string, string | undefined>();
+  for (const key of FIXTURE_REPLAY_ENV_KEYS) {
+    previousValues.set(key, process.env[key]);
+    delete process.env[key];
+  }
+
+  try {
+    return await callback();
+  } finally {
+    for (const [key, value] of previousValues.entries()) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
+
+async function captureFixtureResponse(
+  response: FixtureCaptureResponse,
+  setDir: string,
+  index: number
+): Promise<LinkedInFixtureRoute | null> {
+  const url = response.url();
+  if (!shouldCaptureFixtureResponse(url)) {
+    return null;
+  }
+
+  const method = response.request().method().toUpperCase();
+  const headers = normalizeFixtureRouteHeaders(response.headers());
+  const extension = guessFixtureResponseExtension(headers["content-type"], url);
+
+  let fileStem = `${String(index).padStart(4, "0")}`;
+  try {
+    const parsed = new URL(url);
+    const pathStem = sanitizeFixtureFileStem(
+      `${parsed.hostname}${parsed.pathname === "/" ? "/root" : parsed.pathname}`
+    );
+    fileStem = `${fileStem}-${pathStem}`;
+  } catch {
+    // Use the fallback sequence number stem.
+  }
+
+  const relativeBodyPath = path.join(FIXTURE_RESPONSE_DIR_NAME, `${fileStem}${extension}`);
+  const absoluteBodyPath = path.join(setDir, relativeBodyPath);
+  const bodyBuffer = await response.body().catch(() => Buffer.from(""));
+  await mkdir(path.dirname(absoluteBodyPath), { recursive: true });
+  await writeFile(absoluteBodyPath, bodyBuffer);
+
+  return {
+    method,
+    url,
+    status: response.status(),
+    headers,
+    bodyPath: relativeBodyPath
+  };
+}
+
+async function runFixturesCheck(input: {
+  manifestPath?: string;
+  maxAgeDays?: number;
+  setName?: string;
+}): Promise<void> {
+  const manifestPath = resolveFixtureManifestPath(input.manifestPath);
+  const maxAgeDays = input.maxAgeDays ?? DEFAULT_FIXTURE_STALENESS_DAYS;
+  const warnings = await checkLinkedInFixtureStaleness(manifestPath, {
+    maxAgeDays,
+    ...(input.setName ? { setName: input.setName } : {})
+  });
+
+  for (const warning of warnings) {
+    writeCliWarning(warning.message);
+  }
+
+  printJson({
+    manifest_path: manifestPath,
+    max_age_days: maxAgeDays,
+    set_name: input.setName ?? null,
+    stale: warnings.length > 0,
+    warning_count: warnings.length,
+    warnings
+  });
+}
+
+async function runFixturesRecord(input: FixtureRecordInput): Promise<void> {
+  if (!stdin.isTTY || !stdout.isTTY) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      "fixtures:record requires an interactive terminal because it pauses for manual navigation."
+    );
+  }
+
+  const manifestPath = resolveFixtureManifestPath(input.manifestPath);
+  const manifest = await loadFixtureManifestOrCreate(manifestPath);
+  const setName = input.setName;
+  const setRootDir = path.resolve(path.dirname(manifestPath), setName);
+  const pagesDir = path.join(setRootDir, FIXTURE_PAGES_DIR_NAME);
+  const harRelativePath = input.har ? "session.har" : undefined;
+  const harAbsolutePath = harRelativePath ? path.join(setRootDir, harRelativePath) : undefined;
+  const previousSetSummary = manifest.sets[setName];
+  const existingRoutes = await loadExistingFixtureRoutes(manifestPath, setName);
+  const capturedRoutes = new Map<string, LinkedInFixtureRoute>();
+  const captureJobs: Array<Promise<void>> = [];
+  const pageEntries: Partial<Record<LinkedInReplayPageType, LinkedInFixturePageEntry>> = {
+    ...(previousSetSummary?.pages ?? {})
+  };
+
+  await mkdir(path.dirname(manifestPath), { recursive: true });
+  await mkdir(setRootDir, { recursive: true });
+  await mkdir(pagesDir, { recursive: true });
+
+  const profileManager = new ProfileManager(resolveConfigPaths());
+  let captureLocale = previousSetSummary?.locale ?? "en-US";
+  let captureViewport: { width: number; height: number } = {
+    width: input.width,
+    height: input.height
+  };
+
+  await withFixtureReplayDisabled(async () => {
+    await profileManager.runWithPersistentContext(
+      input.profileName,
+      {
+        headless: false,
+        launchOptions: {
+          viewport: {
+            width: input.width,
+            height: input.height
+          },
+          ...(harAbsolutePath
+            ? {
+                recordHar: {
+                  path: harAbsolutePath
+                }
+              }
+            : {})
+        }
+      },
+      async (context) => {
+        let responseIndex = existingRoutes.length;
+      context.on("response", (response) => {
+        const captureJob = captureFixtureResponse(response, setRootDir, responseIndex + 1)
+          .then((capturedRoute) => {
+            responseIndex += 1;
+            if (!capturedRoute) {
+              return;
+            }
+
+            capturedRoutes.set(createFixtureRouteKey(capturedRoute), capturedRoute);
+          })
+          .catch(() => undefined);
+        captureJobs.push(captureJob);
+      });
+
+      const page = context.pages()[0] ?? (await context.newPage());
+      const prompt = createInterface({
+        input: stdin,
+        output: stdout
+      });
+
+      try {
+        for (const pageType of input.pageTypes) {
+          const suggestedUrl = FIXTURE_CAPTURE_URLS[pageType];
+          if (suggestedUrl) {
+            await page.goto(suggestedUrl, { waitUntil: "domcontentloaded" }).catch(() => undefined);
+          }
+
+          writeCliNotice(
+            `Navigate the browser to the LinkedIn ${pageType} page you want to capture.`
+          );
+          await prompt.question(
+            `Press Enter to capture ${pageType} (current page: ${page.url() || suggestedUrl}). `
+          );
+
+          const htmlRelativePath = path.join(FIXTURE_PAGES_DIR_NAME, `${pageType}.html`);
+          const htmlAbsolutePath = path.join(setRootDir, htmlRelativePath);
+          await writeFile(htmlAbsolutePath, `${await page.content()}\n`, "utf8");
+
+          const currentUrl = page.url();
+          const pageTitle = await page.title().catch(() => undefined);
+          const pageLocale = await page.evaluate(() => navigator.language).catch(() => undefined);
+          const viewport = page.viewportSize();
+          captureLocale = typeof pageLocale === "string" && pageLocale.trim().length > 0
+            ? pageLocale.trim()
+            : captureLocale;
+          if (viewport) {
+            captureViewport = viewport;
+          }
+
+          pageEntries[pageType] = {
+            pageType,
+            url: currentUrl || suggestedUrl,
+            htmlPath: htmlRelativePath,
+            recordedAt: new Date().toISOString(),
+            ...(typeof pageTitle === "string" && pageTitle.trim().length > 0
+              ? { title: pageTitle.trim() }
+              : {})
+          };
+        }
+
+        await page.waitForTimeout(750);
+      } finally {
+        prompt.close();
+      }
+      }
+    );
+  });
+
+  await Promise.allSettled(captureJobs);
+
+  const mergedRoutes = mergeFixtureRoutes(existingRoutes, [...capturedRoutes.values()]);
+  await writeFile(
+    path.join(setRootDir, FIXTURE_ROUTE_FILE_NAME),
+    `${JSON.stringify(
+      {
+        format: 1,
+        setName,
+        routes: mergedRoutes
+      },
+      null,
+      2
+    )}\n`,
+    "utf8"
+  );
+
+  const capturedAt = new Date().toISOString();
+  const setSummary: LinkedInFixtureSetSummary = {
+    setName,
+    rootDir: path.relative(path.dirname(manifestPath), setRootDir),
+    locale: captureLocale,
+    capturedAt,
+    viewport: captureViewport,
+    routesPath: FIXTURE_ROUTE_FILE_NAME,
+    ...(harRelativePath ? { harPath: harRelativePath } : {}),
+    description:
+      previousSetSummary?.description ??
+      "Recorded manually through the LinkedIn fixture replay workflow.",
+    pages: pageEntries
+  };
+
+  manifest.sets[setName] = setSummary;
+  if (!manifest.defaultSetName) {
+    manifest.defaultSetName = setName;
+  }
+
+  await writeLinkedInFixtureManifest(manifestPath, manifest);
+
+  printJson({
+    manifest_path: manifestPath,
+    set_name: setName,
+    captured_at: capturedAt,
+    locale: captureLocale,
+    viewport: captureViewport,
+    pages: pageEntries,
+    routes_path: path.join(setSummary.rootDir, FIXTURE_ROUTE_FILE_NAME),
+    route_count: mergedRoutes.length,
+    ...(harRelativePath ? { har_path: path.join(setSummary.rootDir, harRelativePath) } : {})
+  });
 }
 
 interface KeepAliveState {
@@ -3426,7 +3915,7 @@ export function createCliProgram(): Command {
               options.intervalSeconds,
               "interval-seconds"
             ),
-            jitterSeconds: coercePositiveInt(
+            jitterSeconds: coerceNonNegativeInt(
               options.jitterSeconds,
               "jitter-seconds"
             ),
@@ -3701,6 +4190,130 @@ export function createCliProgram(): Command {
         }
       }
     );
+
+  const runFixtureRecordCommand = async (options: {
+    har: boolean;
+    height: string;
+    manifest?: string;
+    page: LinkedInReplayPageType[];
+    profile: string;
+    set: string;
+    width: string;
+  }) => {
+    const pageTypes = uniqueFixtureReplayPageTypes(
+      options.page.length > 0 ? options.page : [...LINKEDIN_REPLAY_PAGE_TYPES]
+    );
+
+    await runFixturesRecord({
+      har: options.har,
+      height: coercePositiveInt(options.height, "height"),
+      ...(options.manifest ? { manifestPath: options.manifest } : {}),
+      pageTypes,
+      profileName: coerceProfileName(options.profile),
+      setName: coerceProfileName(options.set, "set"),
+      width: coercePositiveInt(options.width, "width")
+    });
+  };
+
+  const runFixtureCheckCommand = async (options: {
+    manifest?: string;
+    maxAgeDays: string;
+    set?: string;
+  }) => {
+    await runFixturesCheck({
+      ...(options.manifest ? { manifestPath: options.manifest } : {}),
+      maxAgeDays: coercePositiveInt(options.maxAgeDays, "max-age-days"),
+      ...(options.set ? { setName: coerceProfileName(options.set, "set") } : {})
+    });
+  };
+
+  const configureFixtureRecordCommand = (command: Command): Command =>
+    command
+      .description(
+        "Launch a manual Playwright capture flow and update a LinkedIn replay fixture set"
+      )
+      .option(
+        "-p, --profile <profile>",
+        "Profile name used for the manual LinkedIn browser session",
+        DEFAULT_FIXTURE_RECORD_PROFILE
+      )
+      .option(
+        "-s, --set <name>",
+        "Fixture set name stored under test/fixtures/",
+        DEFAULT_FIXTURE_RECORD_SET
+      )
+      .option(
+        "--page <type>",
+        `Repeat or comma-separate page types (${LINKEDIN_REPLAY_PAGE_TYPES.join(", ")})`,
+        collectFixtureReplayPageTypes,
+        [] as LinkedInReplayPageType[]
+      )
+      .option(
+        "--manifest <path>",
+        `Fixture manifest path (default: ${resolveFixtureManifestPath()})`
+      )
+      .option(
+        "--width <px>",
+        "Viewport width in pixels",
+        String(DEFAULT_FIXTURE_VIEWPORT.width)
+      )
+      .option(
+        "--height <px>",
+        "Viewport height in pixels",
+        String(DEFAULT_FIXTURE_VIEWPORT.height)
+      )
+      .option("--no-har", "Skip HAR capture and only save HTML snapshots + replay routes")
+      .addHelpText(
+        "after",
+        [
+          "",
+          "Capture flow:",
+          "  - launches a persistent Playwright browser for manual LinkedIn navigation",
+          "  - records only linkedin.com / licdn.com responses into the selected fixture set",
+          "  - rewrites the requested pages while preserving untouched page entries and routes",
+          "",
+          "Examples:",
+          "  linkedin fixtures record --page feed --page messaging",
+          "  owa fixtures:record --set da-dk --page feed,notifications --no-har"
+        ].join("\n")
+      )
+      .action(runFixtureRecordCommand);
+
+  const configureFixtureCheckCommand = (command: Command): Command =>
+    command
+      .description("Validate replay fixture freshness and print staleness warnings")
+      .option(
+        "-s, --set <name>",
+        "Only validate one fixture set from the manifest"
+      )
+      .option(
+        "--manifest <path>",
+        `Fixture manifest path (default: ${resolveFixtureManifestPath()})`
+      )
+      .option(
+        "--max-age-days <days>",
+        "Warn when captured pages are older than this many days",
+        String(DEFAULT_FIXTURE_STALENESS_DAYS)
+      )
+      .addHelpText(
+        "after",
+        [
+          "",
+          "Examples:",
+          "  linkedin fixtures check",
+          "  owa fixtures:check --set ci --max-age-days 14"
+        ].join("\n")
+      )
+      .action(runFixtureCheckCommand);
+
+  const fixturesCommand = program
+    .command("fixtures")
+    .description("Record and validate LinkedIn replay fixture sets");
+
+  configureFixtureRecordCommand(fixturesCommand.command("record"));
+  configureFixtureCheckCommand(fixturesCommand.command("check"));
+  configureFixtureRecordCommand(program.command("fixtures:record", { hidden: true }));
+  configureFixtureCheckCommand(program.command("fixtures:check", { hidden: true }));
 
   program
     .command("search")
