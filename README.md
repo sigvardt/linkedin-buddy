@@ -128,6 +128,46 @@ Live write-validation account registry:
 - Use `linkedin accounts add` or `linkedin accounts:add` to create and update
   these entries instead of editing JSON manually when possible.
 
+## Human-like Typing Simulation
+
+The core `humanize(page, options?)` wrapper includes a typing simulation layer
+for high-signal text entry. It is used for credential entry during login and
+for composer-based flows that call `HumanizedPage.type()`, such as replies,
+follow-ups, and posts.
+
+The simulation layer:
+
+- types one grapheme at a time with profile-based speed, jitter, and
+  word-boundary timing
+- inserts short thinking pauses, longer sentence-break pauses, Shift lead time,
+  and occasional adjacent-key typos with automatic correction
+- emits `humanize.typing.*` diagnostics and degrades to direct input when text
+  is too long for safe simulation or a typing safety timeout is hit
+
+Configuration surface:
+
+- `typingProfile`: choose `careful` (default), `casual`, or `fast`
+- `typingProfileOverrides`: fine-tune delay, jitter, typo, and pause settings
+- `typingDelay` / `typingJitter`: legacy per-character overrides for coarse
+  speed tuning
+- per-call `HumanizedTypingOptions.profile`, `profileOverrides`, and
+  `fieldLabel`
+- built-in presets are exported as `TYPING_PROFILES`
+
+Basic usage:
+
+```ts
+import { humanize } from "@linkedin-assistant/core";
+
+const hp = humanize(page, { typingProfile: "careful" });
+await hp.type('[role="textbox"]', "Thanks for sharing this update.", {
+  fieldLabel: "message composer"
+});
+```
+
+See `packages/core/README.md` for more profile examples and
+`docs/human-typing-architecture.md` for the underlying design.
+
 ## Selector Locale Support
 
 Locale-aware selectors let the runtime prefer localized LinkedIn UI phrases
@@ -409,6 +449,10 @@ npm exec -w @linkedin-assistant/cli -- linkedin test live --write-validation --a
 - The harness runs the fixed five-action suite: `post.create`,
   `connections.send_invitation`, `send_message`,
   `network.followup_after_accept`, and `feed.like_post`.
+- Text-entry actions (`post.create`, `send_message`, and
+  `network.followup_after_accept`) use the human-like typing simulation layer
+  during composition and still verify the final text if they degrade to direct
+  input.
 - Registered accounts live in `LINKEDIN_ASSISTANT_HOME/config.json` under
   `writeValidation.accounts`; use `linkedin accounts add` or
   `linkedin accounts:add` to manage them.
@@ -474,6 +518,9 @@ npm exec -w @linkedin-assistant/cli -- linkedin inbox list --profile default --l
 npm exec -w @linkedin-assistant/cli -- linkedin inbox show --profile default --thread <thread_id_or_url> --limit 20
 npm exec -w @linkedin-assistant/cli -- linkedin inbox prepare-reply --profile default --thread <thread_id_or_url> --text "Hi there"
 ```
+
+Prepared replies, follow-ups, and posts use the same human-like typing layer at
+confirm time. `linkedin login` also uses it when entering credentials.
 
 Follow-up flow after accepted invitations:
 
@@ -567,7 +614,7 @@ The read-only MCP tool descriptions reference this diagnostic path.
 2. Confirm send:
    - `linkedin actions confirm --token ct_...`
    - resolves action by `confirm_token_hash`
-   - executes `send_message` with target validation
+   - executes `send_message` with target validation and human-like composer typing
    - consumes send rate limit on confirm only
    - captures post-send screenshot + Playwright trace zip
 
