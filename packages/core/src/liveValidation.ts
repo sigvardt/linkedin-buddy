@@ -181,6 +181,7 @@ export interface RunReadOnlyValidationOptions {
 const DEFAULT_OPERATION_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_REQUESTS = 20;
 const DEFAULT_MIN_INTERVAL_MS = 5_000;
+const READ_ONLY_DOM_SETTLE_TIMEOUT_MS = 5_000;
 const READ_ONLY_REPORT_DIR = "live-readonly";
 const READ_ONLY_LATEST_REPORT_NAME = "latest-report.json";
 const ALLOWED_LINKEDIN_HOST_SUFFIXES = ["linkedin.com", "licdn.com"] as const;
@@ -325,6 +326,11 @@ const INBOX_OPERATION: ReadOnlyOperationDefinition = {
   ]
 };
 
+const READ_ONLY_OPERATION_MAP = new Map<
+  LinkedInReadOnlyValidationOperationId,
+  ReadOnlyOperationDefinition
+>([...READ_ONLY_OPERATION_REGISTRY, INBOX_OPERATION].map((definition) => [definition.id, definition]));
+
 function withPlaywrightInstallHint(error: unknown): Error {
   if (error instanceof Error && error.message.includes("Executable doesn't exist")) {
     return new Error(
@@ -375,11 +381,7 @@ async function readJsonFile<T>(filePath: string): Promise<T | null> {
   try {
     const raw = await readFile(filePath, "utf8");
     return JSON.parse(raw) as T;
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return null;
-    }
-
+  } catch {
     return null;
   }
 }
@@ -415,13 +417,7 @@ export function isAllowedLinkedInReadOnlyRequest(
 function getOperationDefinition(
   operationId: LinkedInReadOnlyValidationOperationId
 ): ReadOnlyOperationDefinition {
-  if (operationId === "inbox") {
-    return INBOX_OPERATION;
-  }
-
-  const definition = READ_ONLY_OPERATION_REGISTRY.find(
-    (candidate) => candidate.id === operationId
-  );
+  const definition = READ_ONLY_OPERATION_MAP.get(operationId);
 
   if (!definition) {
     throw new LinkedInAssistantError(
@@ -435,11 +431,8 @@ function getOperationDefinition(
 
 async function getOrCreatePage(context: BrowserContext): Promise<Page> {
   const existingPage = context.pages()[0];
-  if (existingPage) {
-    return existingPage;
-  }
 
-  return context.newPage();
+  return existingPage ?? context.newPage();
 }
 
 async function assertHealthyStoredSession(
@@ -530,15 +523,10 @@ async function resolveSelectorResult(
     }
   }
 
-  return {
-    description: selectorDefinition.description,
-    error: `No selector candidate matched ${selectorDefinition.key}.`,
-    matched_candidate_key: null,
-    matched_candidate_rank: null,
-    matched_selector: null,
-    selector_key: selectorDefinition.key,
-    status: "fail"
-  };
+  return createFailedSelectorResult(
+    selectorDefinition,
+    `No selector candidate matched ${selectorDefinition.key}.`
+  );
 }
 
 async function resolveSelectorResults(
@@ -546,13 +534,26 @@ async function resolveSelectorResults(
   selectorDefinitions: readonly ReadOnlySelectorDefinition[],
   timeoutMs: number
 ): Promise<ReadOnlyValidationSelectorResult[]> {
-  const results: ReadOnlyValidationSelectorResult[] = [];
+  return Promise.all(
+    selectorDefinitions.map((selectorDefinition) =>
+      resolveSelectorResult(page, selectorDefinition, timeoutMs)
+    )
+  );
+}
 
-  for (const selectorDefinition of selectorDefinitions) {
-    results.push(await resolveSelectorResult(page, selectorDefinition, timeoutMs));
-  }
-
-  return results;
+function createFailedSelectorResult(
+  selectorDefinition: Pick<ReadOnlySelectorDefinition, "description" | "key">,
+  error: string
+): ReadOnlyValidationSelectorResult {
+  return {
+    description: selectorDefinition.description,
+    error,
+    matched_candidate_key: null,
+    matched_candidate_rank: null,
+    matched_selector: null,
+    selector_key: selectorDefinition.key,
+    status: "fail"
+  };
 }
 
 function buildBlockedRequest(
@@ -721,15 +722,25 @@ function buildSelectorIndex(
 
   for (const operation of report.operations) {
     for (const selectorResult of operation.selector_results) {
-      index.set(`${operation.operation}:${selectorResult.selector_key}`, {
-        matchedCandidateKey: selectorResult.matched_candidate_key,
-        matchedCandidateRank: selectorResult.matched_candidate_rank,
-        status: selectorResult.status
-      });
+      index.set(
+        getSelectorResultKey(operation.operation, selectorResult.selector_key),
+        {
+          matchedCandidateKey: selectorResult.matched_candidate_key,
+          matchedCandidateRank: selectorResult.matched_candidate_rank,
+          status: selectorResult.status
+        }
+      );
     }
   }
 
   return index;
+}
+
+function getSelectorResultKey(
+  operationId: LinkedInReadOnlyValidationOperationId,
+  selectorKey: string
+): string {
+  return `${operationId}:${selectorKey}`;
 }
 
 function isReadOnlyValidationReport(value: unknown): value is ReadOnlyValidationReport {
@@ -765,7 +776,10 @@ export function computeReadOnlyValidationDiff(
 
   for (const operation of currentReport.operations) {
     for (const selectorResult of operation.selector_results) {
-      const entryKey = `${operation.operation}:${selectorResult.selector_key}`;
+      const entryKey = getSelectorResultKey(
+        operation.operation,
+        selectorResult.selector_key
+      );
       const previousEntry = previousIndex.get(entryKey);
       if (!previousEntry) {
         unchangedCount += 1;
@@ -835,23 +849,32 @@ async function runGenericOperation(
   sessionName: string,
   timeoutMs: number
 ): Promise<ReadOnlyOperationExecutionResult> {
-  await page.goto(definition.url, {
-    timeout: timeoutMs,
-    waitUntil: "domcontentloaded"
-  });
-  await waitForNetworkIdleBestEffort(page, Math.min(timeoutMs, 5_000));
-  await assertHealthyStoredSession(page, sessionName, definition.id);
-  assertExpectedOperationUrl(page.url(), definition);
+  const selectorTimeoutMs = Math.min(timeoutMs, READ_ONLY_DOM_SETTLE_TIMEOUT_MS);
+  await loadValidatedOperationPage(page, definition, sessionName, timeoutMs);
 
   return {
     additionalWarnings: [],
     finalUrl: page.url(),
-    selectorResults: await resolveSelectorResults(
-      page,
-      definition.selectors,
-      Math.min(timeoutMs, 5_000)
-    )
+    selectorResults: await resolveSelectorResults(page, definition.selectors, selectorTimeoutMs)
   };
+}
+
+async function loadValidatedOperationPage(
+  page: Page,
+  definition: ReadOnlyOperationDefinition,
+  sessionName: string,
+  timeoutMs: number
+): Promise<void> {
+  await page.goto(definition.url, {
+    timeout: timeoutMs,
+    waitUntil: "domcontentloaded"
+  });
+  await waitForNetworkIdleBestEffort(
+    page,
+    Math.min(timeoutMs, READ_ONLY_DOM_SETTLE_TIMEOUT_MS)
+  );
+  await assertHealthyStoredSession(page, sessionName, definition.id);
+  assertExpectedOperationUrl(page.url(), definition);
 }
 
 async function clickFirstVisibleThreadLink(page: Page, timeoutMs: number): Promise<boolean> {
@@ -879,13 +902,7 @@ async function runInboxOperation(
   sessionName: string,
   timeoutMs: number
 ): Promise<ReadOnlyOperationExecutionResult> {
-  await page.goto(INBOX_OPERATION.url, {
-    timeout: timeoutMs,
-    waitUntil: "domcontentloaded"
-  });
-  await waitForNetworkIdleBestEffort(page, Math.min(timeoutMs, 5_000));
-  await assertHealthyStoredSession(page, sessionName, INBOX_OPERATION.id);
-  assertExpectedOperationUrl(page.url(), INBOX_OPERATION);
+  await loadValidatedOperationPage(page, INBOX_OPERATION, sessionName, timeoutMs);
 
   const conversationSelectorDefinition = INBOX_OPERATION.selectors[0];
   const messageSelectorDefinition = INBOX_OPERATION.selectors[1];
@@ -896,7 +913,7 @@ async function runInboxOperation(
     );
   }
 
-  const selectorTimeoutMs = Math.min(timeoutMs, 5_000);
+  const selectorTimeoutMs = Math.min(timeoutMs, READ_ONLY_DOM_SETTLE_TIMEOUT_MS);
   const conversationSelector = await resolveSelectorResult(
     page,
     conversationSelectorDefinition,
@@ -907,7 +924,7 @@ async function runInboxOperation(
   const threadClicked = await clickFirstVisibleThreadLink(page, selectorTimeoutMs);
   let threadUrl: string | undefined;
   if (threadClicked) {
-    await waitForNetworkIdleBestEffort(page, Math.min(timeoutMs, 5_000));
+    await waitForNetworkIdleBestEffort(page, selectorTimeoutMs);
     await assertHealthyStoredSession(page, sessionName, INBOX_OPERATION.id);
     assertExpectedOperationUrl(page.url(), INBOX_OPERATION);
     threadUrl = page.url();
@@ -919,15 +936,10 @@ async function runInboxOperation(
 
   const messageSelector = threadClicked
     ? await resolveSelectorResult(page, messageSelectorDefinition, selectorTimeoutMs)
-    : {
-        description: messageSelectorDefinition.description,
-        error: "No inbox thread was available to validate message-thread selectors.",
-        matched_candidate_key: null,
-        matched_candidate_rank: null,
-        matched_selector: null,
-        selector_key: messageSelectorDefinition.key,
-        status: "fail" as const
-      };
+    : createFailedSelectorResult(
+        messageSelectorDefinition,
+        "No inbox thread was available to validate message-thread selectors."
+      );
 
   return {
     additionalWarnings: warnings,
