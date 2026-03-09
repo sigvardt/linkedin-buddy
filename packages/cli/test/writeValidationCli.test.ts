@@ -1,4 +1,5 @@
 import { stdin, stdout } from "node:process";
+import { stripVTControlCharacters } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const writeValidationCliMocks = vi.hoisted(() => ({
@@ -211,9 +212,11 @@ describe("write validation CLI", () => {
       "--yes"
     ]);
 
+    const stderrOutput = stripVTControlCharacters(stderrChunks.join(""));
+
     expect(process.exitCode).toBe(2);
-    expect(stderrChunks.join("")).toContain("Write validation failed [ACTION_PRECONDITION_FAILED]");
-    expect(stderrChunks.join("")).toContain('Remove "--yes" and rerun');
+    expect(stderrOutput).toContain("Write validation failed [ACTION_PRECONDITION_FAILED]");
+    expect(stderrOutput).toContain('Remove "--yes" and rerun');
   });
 
   it("prompts per action and runs the write-validation harness", async () => {
