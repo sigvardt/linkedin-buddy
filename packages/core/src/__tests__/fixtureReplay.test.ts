@@ -320,6 +320,14 @@ describe("fixtureReplay manifests and staleness", () => {
     expect(loadedSet.routes[1]?.bodyText).toBe('{"ok":true}');
   });
 
+  it("validates externally managed replay server URLs before startup", async () => {
+    process.env.LINKEDIN_E2E_FIXTURE_SERVER_URL = "not-a-url";
+
+    expect(() => getFixtureReplayEnvironment()).toThrow(
+      "LINKEDIN_E2E_FIXTURE_SERVER_URL must be an absolute http(s) URL."
+    );
+  });
+
   it("rejects empty and corrupt fixture manifests", async () => {
     const tempDir = await createTempDir("linkedin-fixture-empty-");
     const emptyManifestPath = path.join(tempDir, "empty-manifest.json");
@@ -563,7 +571,9 @@ describe("fixtureReplay manifests and staleness", () => {
         setName: "missing",
         maxAgeDays: 30
       })
-    ).rejects.toThrow(`Fixture set missing is not defined in ${emptyFixtureSet.manifestPath}.`);
+    ).rejects.toThrow(
+      `Fixture set missing is not defined in ${emptyFixtureSet.manifestPath}. Available fixture sets: ${emptyFixtureSet.setName}.`
+    );
   });
 });
 

@@ -62,6 +62,10 @@ function parseFixtureFlag(argument) {
   return value;
 }
 
+function isOptionLikeArgument(value) {
+  return value === "--" || /^-/.test(value);
+}
+
 /**
  * Parses runner-specific flags while preserving any remaining arguments for
  * direct Vitest forwarding.
@@ -103,6 +107,12 @@ export function parseRunnerOptions(argv, env = process.env) {
         typeof nextArgument === "string" ? nextArgument.trim() : "";
       if (resolvedPath.length === 0) {
         throw new Error("--fixtures requires a file path argument.");
+      }
+      if (isOptionLikeArgument(resolvedPath)) {
+        throw new Error(
+          `--fixtures requires a file path argument, not another flag (${resolvedPath}). ` +
+            "If the path really starts with '-', pass --fixtures=<file>."
+        );
       }
 
       fixtureFile = resolvedPath;
@@ -161,8 +171,8 @@ export function formatRunnerConfiguration(options, env = process.env) {
     `Profile: ${profileName}`,
     `Session policy: ${options.requireSession ? "required" : "skip when unavailable"}`,
     options.fixtureFile === undefined
-      ? `Coverage fixtures: ${fixtureFile}`
-      : `Coverage fixtures: ${fixtureFile}${
+      ? `Discovery fixtures: ${fixtureFile}`
+      : `Discovery fixtures: ${fixtureFile}${
           options.refreshFixtures ? " (refresh enabled)" : ""
         }`,
     `Opt-in confirms: ${enabledWrites.length > 0 ? enabledWrites.join(", ") : "none"}`,
@@ -185,18 +195,21 @@ export function getRunnerHelpText() {
     "Runner options:",
     "  --help                 Show this help text.",
     "  --require-session      Fail instead of skipping when CDP/auth is unavailable.",
-    "  --fixtures <file>      Read or record CLI/MCP coverage fixtures at <file>.",
-    "  --refresh-fixtures     Re-discover fixtures and overwrite the fixture file.",
+    "  --fixtures <file>      Read or record saved CLI/MCP discovery targets at <file>.",
+    "  --refresh-fixtures     Re-discover live CLI/MCP targets and overwrite that file.",
     "",
     "Safe defaults:",
     "  Default runs stay read-only, preview-only, or use test.echo confirms.",
     "  Real outbound confirms stay opt-in behind dedicated environment flags.",
     "",
+    "Replay lane:",
+    "  Use npm run test:e2e:fixtures for the full replay-manifest lane backed by test/fixtures/manifest.json.",
+    "",
     "Vitest examples:",
     "  npm run test:e2e -- packages/core/src/__tests__/e2e/cli.e2e.test.ts",
     "  npm run test:e2e -- --reporter=verbose packages/core/src/__tests__/e2e/error-paths.e2e.test.ts",
     "",
-    "Fixture replay examples:",
+    "Discovery fixture examples:",
     "  npm run test:e2e -- --fixtures .tmp/e2e-fixtures.json packages/core/src/__tests__/e2e/cli.e2e.test.ts",
     "  npm run test:e2e -- --fixtures .tmp/e2e-fixtures.json --refresh-fixtures packages/core/src/__tests__/e2e/mcp.e2e.test.ts",
     "",
@@ -204,7 +217,7 @@ export function getRunnerHelpText() {
     "  LINKEDIN_CDP_URL              CDP endpoint to probe (default: http://localhost:18800)",
     "  LINKEDIN_E2E_PROFILE          Logical profile name used by the E2E helpers",
     "  LINKEDIN_E2E_REQUIRE_SESSION  Same as --require-session when set to 1/true",
-    "  LINKEDIN_E2E_FIXTURE_FILE     Same as --fixtures <file>",
+    "  LINKEDIN_E2E_FIXTURE_FILE     Same as --fixtures <file> for saved CLI/MCP discovery targets",
     "  LINKEDIN_E2E_REFRESH_FIXTURES Same as --refresh-fixtures when set to 1/true",
     "  LINKEDIN_E2E_JOB_QUERY        Job query used for live fixture discovery",
     "  LINKEDIN_E2E_JOB_LOCATION     Job location used for live fixture discovery",

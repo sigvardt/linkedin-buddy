@@ -429,6 +429,9 @@ The live runner skips cleanly when no authenticated CDP session is available.
 The replay runner does not need credentials and uses `test/fixtures/manifest.json`
 plus the committed `ci` fixture set.
 
+Set `LINKEDIN_E2E_FIXTURE_SET=<name>` when you want `npm run test:e2e:fixtures`
+to replay a non-default recorded set.
+
 ### Fixture workflow
 
 Record or refresh replay fixtures manually:
@@ -448,6 +451,17 @@ owa fixtures:check --set ci --max-age-days 14
 Replay fixtures are stored under `test/fixtures/`. The manifest and committed
 `ci` set stay in git for deterministic CI coverage; other local fixture sets,
 HAR files, and bulky response captures stay ignored by default.
+
+The typical loop is:
+
+```bash
+linkedin fixtures record --set manual --page feed --page messaging
+linkedin fixtures check --set manual
+LINKEDIN_E2E_FIXTURE_SET=manual npm run test:e2e:fixtures -- packages/core/src/__tests__/e2e/inbox.e2e.test.ts
+```
+
+The live runner's `--fixtures` flag is separate: it stores the small CLI/MCP
+discovery target file used for live contract reruns, not the replay manifest.
 
 ### Coverage lanes
 
