@@ -13,6 +13,7 @@ import {
 } from "./errors.js";
 import type { PreparedActionResult } from "./twoPhaseCommit.js";
 import { resolveWriteValidationAccount } from "./writeValidationAccounts.js";
+import { renderWriteValidationReportHtml } from "./writeValidationReportHtml.js";
 import type { WriteValidationProfileManager } from "./writeValidationRuntime.js";
 import { createWriteValidationRuntime } from "./writeValidationRuntime.js";
 import {
@@ -112,6 +113,7 @@ interface ValidatedWriteValidationOptions {
   baseDir?: string;
   cooldownMs: number;
   maxRetries: number;
+  onLog?: RunLinkedInWriteValidationOptions["onLog"];
   onBeforeAction?: RunLinkedInWriteValidationOptions["onBeforeAction"];
   retryBaseDelayMs: number;
   retryMaxDelayMs: number;
@@ -143,6 +145,43 @@ function readPreparedArtifacts(prepared: PreparedActionResult): PreparedArtifact
   return {
     previewArtifacts,
     beforeScreenshotPaths: previewArtifacts.filter(isScreenshotPath)
+  };
+}
+
+function calculateIsoDurationMs(startedAt: string, completedAt: string): number {
+  const startedAtMs = Date.parse(startedAt);
+  const completedAtMs = Date.parse(completedAt);
+
+  if (!Number.isFinite(startedAtMs) || !Number.isFinite(completedAtMs)) {
+    return 0;
+  }
+
+  return Math.max(0, completedAtMs - startedAtMs);
+}
+
+function createCompletedTiming(startedAt: string): {
+  completedAt: string;
+  durationMs: number;
+} {
+  const completedAt = new Date().toISOString();
+  return {
+    completedAt,
+    durationMs: calculateIsoDurationMs(startedAt, completedAt)
+  };
+}
+
+function attachWriteValidationLogObserver(
+  logger: WriteValidationLogger,
+  onLog: NonNullable<RunLinkedInWriteValidationOptions["onLog"]>
+): void {
+  const originalLog = logger.log.bind(logger) as (
+    ...args: Parameters<WriteValidationLogger["log"]>
+  ) => ReturnType<WriteValidationLogger["log"]>;
+
+  logger.log = (...args: Parameters<WriteValidationLogger["log"]>) => {
+    const entry = originalLog(...args);
+    onLog(entry);
+    return entry;
   };
 }
 
@@ -352,8 +391,8 @@ function normalizeWriteValidationError(input: {
     return new LinkedInAssistantError(
       authCode,
       authCode === "CAPTCHA_OR_CHALLENGE"
-        ? `Stored session "${input.sessionName}" triggered a LinkedIn challenge while ${describeActionStage(input.stage)} for ${input.actionType}. Capture a fresh session with "owa auth:session --session ${input.sessionName}" and rerun the harness.`
-        : `Stored session "${input.sessionName}" is no longer authenticated while ${describeActionStage(input.stage)} for ${input.actionType}. Capture a fresh session with "owa auth:session --session ${input.sessionName}" and rerun the harness.`,
+        ? `Stored session "${input.sessionName}" triggered a LinkedIn challenge while ${describeActionStage(input.stage)} for ${input.actionType}. Capture a fresh session with "linkedin auth session --session ${input.sessionName}" and rerun the harness.`
+        : `Stored session "${input.sessionName}" is no longer authenticated while ${describeActionStage(input.stage)} for ${input.actionType}. Capture a fresh session with "linkedin auth session --session ${input.sessionName}" and rerun the harness.`,
       {
         ...details,
         raw_error: rawMessage
@@ -495,6 +534,13 @@ export function validateWriteValidationOptions(
     );
   }
 
+  if (typeof options.onLog !== "undefined" && typeof options.onLog !== "function") {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      "onLog must be a function when provided."
+    );
+  }
+
   if (typeof options.interactive !== "undefined" && typeof options.interactive !== "boolean") {
     throw new LinkedInAssistantError(
       "ACTION_PRECONDITION_FAILED",
@@ -552,6 +598,7 @@ export function validateWriteValidationOptions(
     ...(typeof options.baseDir === "string" ? { baseDir: options.baseDir } : {}),
     cooldownMs,
     maxRetries,
+    ...(options.onLog ? { onLog: options.onLog } : {}),
     ...(options.onBeforeAction ? { onBeforeAction: options.onBeforeAction } : {}),
     retryBaseDelayMs,
     retryMaxDelayMs,
@@ -1026,6 +1073,8 @@ function buildCancelledActionResult(input: {
   errorMessage?: string;
   warnings?: string[];
 }): WriteValidationActionResult {
+  const timing = createCompletedTiming(input.startedAt);
+
   return {
     action_type: input.scenario.actionType,
     after_screenshot_paths: [],
@@ -1035,8 +1084,9 @@ function buildCancelledActionResult(input: {
     }),
     before_screenshot_paths: input.preparedArtifacts.beforeScreenshotPaths,
     cleanup_guidance: input.cleanupGuidance,
-    completed_at: new Date().toISOString(),
+    completed_at: timing.completedAt,
     confirm_artifacts: [],
+    duration_ms: timing.durationMs,
     ...(input.errorCode ? { error_code: input.errorCode } : {}),
     ...(input.errorDetails ? { error_details: input.errorDetails } : {}),
     ...(input.errorMessage ? { error_message: input.errorMessage } : {}),
@@ -1069,6 +1119,8 @@ function buildCompletedActionResult(input: {
   verification: WriteValidationVerificationResult;
   warnings?: string[];
 }): WriteValidationActionResult {
+  const timing = createCompletedTiming(input.startedAt);
+
   return {
     action_type: input.scenario.actionType,
     after_screenshot_paths: input.afterScreenshotPaths,
@@ -1080,8 +1132,9 @@ function buildCompletedActionResult(input: {
     }),
     before_screenshot_paths: input.beforeScreenshotPaths,
     cleanup_guidance: input.cleanupGuidance,
-    completed_at: new Date().toISOString(),
+    completed_at: timing.completedAt,
     confirm_artifacts: input.confirmArtifacts,
+    duration_ms: timing.durationMs,
     expected_outcome: input.scenario.expectedOutcome,
     linkedin_response: input.linkedinResponse,
     prepared_action_id: input.prepared.preparedActionId,
@@ -1119,6 +1172,8 @@ function buildFailedActionResult(input: {
     warnings.unshift(retryWarning);
   }
 
+  const timing = createCompletedTiming(input.startedAt);
+
   return {
     action_type: input.scenario.actionType,
     after_screenshot_paths: input.partial.afterScreenshotPaths,
@@ -1132,8 +1187,9 @@ function buildFailedActionResult(input: {
     }),
     before_screenshot_paths: input.partial.beforeScreenshotPaths,
     cleanup_guidance: input.partial.cleanupGuidance,
-    completed_at: new Date().toISOString(),
+    completed_at: timing.completedAt,
     confirm_artifacts: input.partial.confirmArtifacts,
+    duration_ms: timing.durationMs,
     error_code: input.error.code,
     error_details: input.error.details,
     error_message: input.error.message,
@@ -1162,7 +1218,7 @@ function buildRemainingScenarioSkipMessage(input: {
 }): string {
   switch (input.blockingCode) {
     case "AUTH_REQUIRED":
-      return `Skipped because the stored session expired during ${input.blockedByActionType}. Capture a fresh session with "owa auth:session --session ${input.sessionName}" before rerunning the remaining write-validation actions.`;
+      return `Skipped because the stored session expired during ${input.blockedByActionType}. Capture a fresh session with "linkedin auth session --session ${input.sessionName}" before rerunning the remaining write-validation actions.`;
     case "CAPTCHA_OR_CHALLENGE":
       return `Skipped because LinkedIn triggered a checkpoint challenge during ${input.blockedByActionType}. Resolve the challenge and capture a fresh session before rerunning the remaining write-validation actions.`;
     case "RATE_LIMITED":
@@ -1178,14 +1234,18 @@ function buildSkippedActionResult(input: {
   scenario: WriteValidationScenarioDefinition;
   sessionName: string;
 }): WriteValidationActionResult {
+  const startedAt = new Date().toISOString();
+  const timing = createCompletedTiming(startedAt);
+
   return {
     action_type: input.scenario.actionType,
     after_screenshot_paths: [],
     artifact_paths: [],
     before_screenshot_paths: [],
     cleanup_guidance: [],
-    completed_at: new Date().toISOString(),
+    completed_at: timing.completedAt,
     confirm_artifacts: [],
+    duration_ms: timing.durationMs,
     error_code: input.blockingCode,
     error_details: {
       blocked_by_action_type: input.blockedByActionType,
@@ -1198,7 +1258,7 @@ function buildSkippedActionResult(input: {
     }),
     expected_outcome: input.scenario.expectedOutcome,
     risk_class: input.scenario.riskClass,
-    started_at: new Date().toISOString(),
+    started_at: startedAt,
     state_synced: null,
     status: "cancelled",
     summary: input.scenario.summary
@@ -1507,6 +1567,7 @@ function buildWriteValidationReport(input: {
   actions: WriteValidationActionResult[];
   cooldownMs: number;
   latestReportPath: string;
+  startedAt: string;
   runtime: WriteValidationRuntime;
 }): WriteValidationReport {
   const counts = countActionStatuses(input.actions);
@@ -1530,6 +1591,7 @@ function buildWriteValidationReport(input: {
     audit_log_path: input.runtime.logger.getEventsPath(),
     checked_at: checkedAt,
     cooldown_ms: input.cooldownMs,
+    duration_ms: calculateIsoDurationMs(input.startedAt, checkedAt),
     fail_count: counts.failCount,
     latest_report_path: input.latestReportPath,
     outcome,
@@ -1538,6 +1600,7 @@ function buildWriteValidationReport(input: {
     recommended_actions: [],
     report_path: reportPath,
     run_id: input.runtime.runId,
+    started_at: input.startedAt,
     summary,
     warning: WRITE_VALIDATION_WARNING
   };
@@ -1639,6 +1702,7 @@ export async function runLinkedInWriteValidation(
   options: RunLinkedInWriteValidationOptions
 ): Promise<WriteValidationReport> {
   const validatedOptions = validateWriteValidationOptions(options);
+  const startedAt = new Date().toISOString();
   assertInteractiveWriteValidation(options);
 
   const account = resolveWriteValidationAccount(
@@ -1662,6 +1726,10 @@ export async function runLinkedInWriteValidation(
       ...(validatedOptions.baseDir ? { baseDir: validatedOptions.baseDir } : {}),
       timeoutMs: validatedOptions.timeoutMs
     });
+
+    if (validatedOptions.onLog) {
+      attachWriteValidationLogObserver(runtimeHandle.runtime.logger, validatedOptions.onLog);
+    }
 
     const { runtime, profileManager } = runtimeHandle;
     const latestReportPath = path.join(
@@ -1744,8 +1812,39 @@ export async function runLinkedInWriteValidation(
       actions,
       cooldownMs: validatedOptions.cooldownMs,
       latestReportPath,
+      startedAt,
       runtime
     });
+
+    const htmlReportPath = runtime.artifacts.resolve(
+      `${WRITE_VALIDATION_REPORT_DIR}/report.html`
+    );
+
+    try {
+      runtime.artifacts.writeText(
+        `${WRITE_VALIDATION_REPORT_DIR}/report.html`,
+        renderWriteValidationReportHtml({
+          ...report,
+          html_report_path: htmlReportPath
+        }),
+        "text/html",
+        {
+          account_id: account.id,
+          action_count: actions.length,
+          outcome: report.outcome
+        }
+      );
+      report.html_report_path = htmlReportPath;
+      report.recommended_actions.unshift(
+        `Open ${htmlReportPath} in a browser for the color-coded validation report.`
+      );
+    } catch (error) {
+      runtime.logger.log("warn", "write_validation.html_report_persist.failed", {
+        account_id: account.id,
+        error: getErrorMessage(error),
+        html_report_path: htmlReportPath
+      });
+    }
 
     try {
       runtime.artifacts.writeJson(`${WRITE_VALIDATION_REPORT_DIR}/report.json`, report, {

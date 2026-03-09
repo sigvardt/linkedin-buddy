@@ -51,6 +51,7 @@ interface MockRuntimeBundle {
   runtime: {
     artifacts: {
       resolve: (relativePath: string) => string;
+      writeText: ReturnType<typeof vi.fn>;
       writeJson: ReturnType<typeof vi.fn>;
     };
     close: ReturnType<typeof vi.fn>;
@@ -133,6 +134,7 @@ function createRuntimeBundle(baseDir: string): MockRuntimeBundle {
   const runtime: MockRuntimeBundle["runtime"] = {
     artifacts: {
       resolve: (relativePath) => path.join(baseDir, relativePath),
+      writeText: vi.fn(),
       writeJson: vi.fn()
     },
     close: vi.fn(),
@@ -281,10 +283,21 @@ describe("runLinkedInWriteValidation execution flow", () => {
     });
     expect(bundle.runtime.twoPhaseCommit.confirmByToken).toHaveBeenCalledTimes(1);
     expect(bundle.profileManager.capturePageScreenshot).toHaveBeenCalledTimes(2);
+    expect(bundle.runtime.artifacts.writeText).toHaveBeenCalledWith(
+      "live-write-validation/report.html",
+      expect.stringContaining("<!doctype html>"),
+      "text/html",
+      expect.objectContaining({
+        account_id: "secondary",
+        action_count: 2,
+        outcome: "fail"
+      })
+    );
     expect(bundle.runtime.artifacts.writeJson).toHaveBeenCalledWith(
       "live-write-validation/report.json",
       expect.objectContaining({
         action_count: 2,
+        html_report_path: path.join(baseDir, "live-write-validation", "report.html"),
         outcome: "fail"
       }),
       expect.objectContaining({

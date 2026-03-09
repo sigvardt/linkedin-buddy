@@ -9,6 +9,7 @@ import {
 import { FOLLOWUP_AFTER_ACCEPT_ACTION_TYPE } from "./linkedinFollowups.js";
 import { CREATE_POST_ACTION_TYPE } from "./linkedinPosts.js";
 import type { LinkedInAssistantErrorCode } from "./errors.js";
+import type { JsonLogEntry } from "./logging.js";
 import type { CoreRuntime } from "./runtime.js";
 import type {
   ConfirmByTokenResult,
@@ -79,6 +80,7 @@ export interface WriteValidationActionResult {
   cleanup_guidance: string[];
   completed_at: string;
   confirm_artifacts: string[];
+  duration_ms: number;
   error_code?: LinkedInAssistantErrorCode;
   error_details?: Record<string, unknown>;
   error_message?: string;
@@ -114,7 +116,9 @@ export interface WriteValidationReport {
   audit_log_path: string;
   checked_at: string;
   cooldown_ms: number;
+  duration_ms: number;
   fail_count: number;
+  html_report_path?: string;
   latest_report_path: string;
   outcome: WriteValidationOutcome;
   pass_count: number;
@@ -122,6 +126,7 @@ export interface WriteValidationReport {
   recommended_actions: string[];
   report_path: string;
   run_id: string;
+  started_at: string;
   summary: string;
   warning: string;
 }
@@ -132,6 +137,7 @@ export interface RunLinkedInWriteValidationOptions {
   cooldownMs?: number;
   interactive?: boolean;
   maxRetries?: number;
+  onLog?: (entry: JsonLogEntry) => void;
   onBeforeAction?: (
     preview: WriteValidationActionPreview
   ) => Promise<boolean> | boolean;
@@ -300,7 +306,7 @@ export function buildRecommendedActions(
 
     if (action.error_code === "AUTH_REQUIRED" || action.error_code === "CAPTCHA_OR_CHALLENGE") {
       actions.push(
-        `Capture a fresh stored session with "owa auth:session --session ${report.account.session_name}" before rerunning write validation.`
+        `Capture a fresh stored session with "linkedin auth session --session ${report.account.session_name}" before rerunning write validation.`
       );
     }
 

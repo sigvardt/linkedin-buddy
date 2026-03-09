@@ -469,6 +469,12 @@ describe("linkedin live validation CLI", () => {
     expect(liveHelp).toContain(
       "interactive terminals default to a human-readable summary with per-step progress"
     );
+    expect(liveHelp).toContain("Write validation workflow:");
+    expect(liveHelp).toContain("requires --write-validation --account <id>");
+    expect(liveHelp).toContain("Write validation examples:");
+    expect(liveHelp).toContain("linkedin test live --write-validation --account secondary");
+    expect(liveHelp).toContain("--cooldown-seconds 20");
+    expect(liveHelp).toContain("docs/write-validation.md");
     expect(liveHelp).toContain("-s, --session <session>");
     expect(liveHelp).toMatch(/Stored session name captured by linkedin auth\s+session/);
     expect(liveHelp).toContain("LINKEDIN_ASSISTANT_HOME");

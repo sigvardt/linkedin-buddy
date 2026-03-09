@@ -37,6 +37,7 @@ import {
   LINKEDIN_FIXTURE_MANIFEST_FORMAT_VERSION,
   LINKEDIN_POST_VISIBILITY_TYPES,
   LINKEDIN_SELECTOR_LOCALES,
+  LINKEDIN_WRITE_VALIDATION_ACTIONS,
   LinkedInAssistantError,
   LinkedInSchedulerService,
   DEFAULT_FIXTURE_STALENESS_DAYS,
@@ -107,6 +108,7 @@ import {
   formatWriteValidationError,
   formatWriteValidationReport,
   resolveWriteValidationOutputMode,
+  WriteValidationProgressReporter,
   type WriteValidationOutputMode
 } from "../writeValidationOutput.js";
 import {
@@ -135,6 +137,7 @@ const LIVE_VALIDATION_FAIL_EXIT_CODE = 1;
 const LIVE_VALIDATION_ERROR_EXIT_CODE = 2;
 const WRITE_VALIDATION_DOC_PATH = "docs/write-validation.md";
 const WRITE_VALIDATION_WARNING = "This will perform REAL actions on LinkedIn";
+const TOTAL_WRITE_VALIDATION_ACTIONS = LINKEDIN_WRITE_VALIDATION_ACTIONS.length;
 let cliSelectorLocale: string | undefined;
 
 function writeCliWarning(message: string): void {
@@ -4208,7 +4211,7 @@ export function createCliProgram(): Command {
           "",
           "Examples:",
           "  owa accounts add secondary --designation secondary --session secondary-session --profile secondary",
-          "  owa accounts:add secondary --designation secondary --session secondary-session --message-thread /messaging/thread/abc/ --invite-profile https://www.linkedin.com/in/test-user/",
+          "  linkedin accounts add secondary --designation secondary --session secondary-session --message-thread /messaging/thread/abc/ --invite-profile https://www.linkedin.com/in/test-user/",
           "",
           "Notes:",
           "  - write validation refuses to run against accounts marked primary",
@@ -4337,19 +4340,27 @@ export function createCliProgram(): Command {
         "after",
         [
           "",
-          "Workflow:",
+          "Read-only workflow:",
           "  - capture or refresh a stored session first with linkedin auth session --session <name>",
           "  - the validator always runs this fixed suite in order: feed, profile, notifications, inbox, connections",
           "",
           "Output:",
           "  - interactive terminals default to a human-readable summary with per-step progress",
           "  - non-interactive terminals default to JSON",
-          "  - --json prints the structured report to stdout; prompts and progress stay on stderr",
+          "  - --json prints the structured report to stdout; progress stays on stderr",
           "  - there is no separate --verbose flag; human mode is already the most detailed built-in view",
+          "  - --no-progress hides the live progress stream for either validation mode",
           "",
           "Configuration:",
           "  - LINKEDIN_ASSISTANT_HOME stores the encrypted session, reports, and latest-report.json",
           "  - PLAYWRIGHT_EXECUTABLE_PATH overrides Chromium if Playwright cannot find one",
+          "",
+          "Write validation workflow:",
+          "  - requires --write-validation --account <id> and a registered secondary account",
+          "  - validates approved targets before the browser starts sending real actions",
+          "  - prompts before every action; --yes is rejected on purpose",
+          "  - human mode shows live progress on stderr while prompts stay interactive",
+          "  - --json keeps the structured report on stdout while prompts stay on stderr",
           "",
           "Exit codes:",
           "  - 0 all validation steps passed",
@@ -4363,12 +4374,23 @@ export function createCliProgram(): Command {
           "  - prompts before every step unless --yes is set",
           "  - returns partial results if a later step hits a blocking failure",
           "",
-          "Examples:",
+          "Write validation guardrails:",
+          "  - runs only against registered secondary accounts and approved targets",
+          "  - rejects --session overrides, --yes, and --cdp-url",
+          "  - requires an interactive terminal and a visible browser window",
+          "",
+          "Read-only examples:",
           "  linkedin auth session --session smoke",
           "  linkedin test live --read-only --session smoke",
           "  linkedin test live --read-only --session smoke --yes",
           "  linkedin test live --read-only --session smoke --yes --json",
           "  linkedin test live --read-only --session smoke --yes --json | jq '.operations[] | select(.operation == \"notifications\")'",
+          "",
+          "Write validation examples:",
+          "  linkedin accounts add secondary --designation secondary --session secondary-session --profile secondary --message-thread /messaging/thread/abc123/",
+          "  linkedin test live --write-validation --account secondary",
+          "  linkedin test live --write-validation --account secondary --cooldown-seconds 20",
+          "  linkedin test live --write-validation --account secondary --json",
           "",
           "Docs:",
           "  - docs/live-validation.md",
@@ -4402,6 +4424,7 @@ export function createCliProgram(): Command {
                   "cooldown-seconds"
                 ),
                 json: options.json,
+                progress: options.progress,
                 readOnly: options.readOnly,
                 session: options.session,
                 timeoutSeconds: coercePositiveInt(
@@ -5612,10 +5635,12 @@ function resolveLiveWriteValidationAccountId(input: {
 }
 
 function formatWriteValidationPrompt(
-  preview: WriteValidationActionPreview
+  preview: WriteValidationActionPreview,
+  actionIndex: number
 ): string[] {
   return [
-    `Action: ${preview.action_type}`,
+    `Action ${actionIndex}/${TOTAL_WRITE_VALIDATION_ACTIONS}: ${preview.action_type}`,
+    `Summary: ${preview.summary}`,
     `Risk: ${preview.risk_class}`,
     `Target: ${JSON.stringify(preview.target)}`,
     `Payload: ${JSON.stringify(preview.outbound)}`,
@@ -5626,10 +5651,19 @@ function formatWriteValidationPrompt(
 function createWriteValidationPrompter(
   output: typeof stdout | typeof process.stderr
 ): (preview: WriteValidationActionPreview) => Promise<boolean> {
+  let nextActionIndex = 1;
+  let firstPrompt = true;
+
   return async (preview) => {
-    for (const line of formatWriteValidationPrompt(preview)) {
+    if (!firstPrompt) {
+      output.write("\n");
+    }
+    firstPrompt = false;
+
+    for (const line of formatWriteValidationPrompt(preview, nextActionIndex)) {
       output.write(`${line}\n`);
     }
+    nextActionIndex += 1;
 
     return promptYesNo("Execute this action?", output);
   };
@@ -5697,6 +5731,7 @@ async function runLiveWriteValidation(input: {
   accountId?: string | undefined;
   cooldownSeconds: number;
   json: boolean;
+  progress: boolean;
   readOnly: boolean;
   session: string;
   timeoutSeconds: number;
@@ -5707,6 +5742,11 @@ async function runLiveWriteValidation(input: {
     Boolean(stdout.isTTY)
   );
   const promptOutput = outputMode === "json" ? process.stderr : stdout;
+  const progressEnabled =
+    outputMode === "human" && input.progress && Boolean(process.stderr.isTTY);
+  const progressReporter = new WriteValidationProgressReporter({
+    enabled: progressEnabled
+  });
 
   try {
     const accountId = resolveLiveWriteValidationAccountId({
@@ -5721,11 +5761,21 @@ async function runLiveWriteValidation(input: {
     writeCliNotice(
       `Running write validation against account "${accountId}". See ${WRITE_VALIDATION_DOC_PATH} for account setup and approved targets.`
     );
+    writeCliNotice(
+      "Preparing the stored session, validating approved targets, and opening the interactive harness."
+    );
 
     const report = await runLinkedInWriteValidation({
       accountId: coerceProfileName(accountId, "account"),
       cooldownMs: input.cooldownSeconds * 1_000,
       interactive: Boolean(stdin.isTTY && stdout.isTTY),
+      ...(progressEnabled
+        ? {
+            onLog: (entry) => {
+              progressReporter.handleLog(entry);
+            }
+          }
+        : {}),
       onBeforeAction: createWriteValidationPrompter(promptOutput),
       timeoutMs: input.timeoutSeconds * 1_000
     });
