@@ -5,27 +5,79 @@ import {
   HumanizedPage,
   QWERTY_KEY_ADJACENCY_MAP,
   getAdjacentTypoCandidates,
-  humanize
+  humanize,
+  pickAdjacentTypoCharacter,
+  TYPING_PROFILES
 } from "../humanize.js";
 
-function createPageMock() {
+interface MockBoundingBox {
+  height: number;
+  width: number;
+  x: number;
+  y: number;
+}
+
+function createPageMock(options?: { boundingBox?: MockBoundingBox | null }) {
   const operations: string[] = [];
   const waitForTimeout = vi.fn(async (delay: number) => {
     operations.push(`wait:${delay}`);
   });
+  const goto = vi.fn(
+    async (
+      url: string,
+      gotoOptions?: { waitUntil?: "domcontentloaded" | "networkidle" | "load" }
+    ) => {
+      operations.push(`goto:${url}:${gotoOptions?.waitUntil ?? "domcontentloaded"}`);
+    }
+  );
+  const waitForLoadState = vi.fn(async (state: string) => {
+    operations.push(`load:${state}`);
+  });
   const scrollIntoViewIfNeeded = vi.fn(async () => {
     operations.push("scroll");
   });
+  const boundingBox = vi.fn(async () => options?.boundingBox ?? null);
   const click = vi.fn(async () => {
     operations.push("click");
   });
 
   const locator = {
+    boundingBox,
     click,
     first: vi.fn(),
     scrollIntoViewIfNeeded
   };
   locator.first.mockReturnValue(locator);
+
+  const evaluate = vi.fn(async (callback: unknown, scrollAmount: number) => {
+    if (typeof callback === "function") {
+      const originalScrollBy = globalThis.scrollBy;
+      const scrollBy = vi.fn();
+      Object.defineProperty(globalThis, "scrollBy", {
+        configurable: true,
+        value: scrollBy,
+        writable: true
+      });
+
+      try {
+        (callback as (scrollAmount: number) => void)(scrollAmount);
+      } finally {
+        Object.defineProperty(globalThis, "scrollBy", {
+          configurable: true,
+          value: originalScrollBy,
+          writable: true
+        });
+      }
+    }
+
+    operations.push(`evaluate:${scrollAmount}`);
+  });
+
+  const mouse = {
+    move: vi.fn(async (x: number, y: number, moveOptions?: { steps?: number }) => {
+      operations.push(`move:${x}:${y}:${moveOptions?.steps ?? 0}`);
+    })
+  };
 
   const keyboard = {
     down: vi.fn(async (key: string) => {
@@ -43,15 +95,24 @@ function createPageMock() {
   };
 
   const page = {
+    evaluate,
+    goto,
     keyboard,
     locator: vi.fn(() => locator),
+    mouse,
+    waitForLoadState,
     waitForTimeout
   } as unknown as Page;
 
   return {
+    boundingBox,
+    evaluate,
+    goto,
     keyboard,
+    mouse,
     operations,
     page,
+    waitForLoadState,
     waitForTimeout
   };
 }
@@ -70,6 +131,12 @@ function getWaitCalls(waitForTimeout: ReturnType<typeof vi.fn>): number[] {
   );
 }
 
+function getTypedCharacters(keyboard: ReturnType<typeof createPageMock>["keyboard"]): string[] {
+  return keyboard.type.mock.calls.flatMap(([value]) =>
+    typeof value === "string" ? [value] : []
+  );
+}
+
 function getInternalOptions(humanizedPage: HumanizedPage) {
   return Reflect.get(humanizedPage, "options") as {
     baseDelay: number;
@@ -80,6 +147,36 @@ function getInternalOptions(humanizedPage: HumanizedPage) {
     typingProfile: string;
     typingProfileOverrides: Partial<TypingProfile>;
   };
+}
+
+function getResolvedTypingProfile(
+  humanizedPage: HumanizedPage,
+  options?: {
+    profile?: "casual" | "careful" | "fast";
+    profileOverrides?: Partial<TypingProfile>;
+  }
+): TypingProfile {
+  const resolveTypingProfile = Reflect.get(humanizedPage, "resolveTypingProfile") as (
+    options?: {
+      profile?: "casual" | "careful" | "fast";
+      profileOverrides?: Partial<TypingProfile>;
+    }
+  ) => TypingProfile;
+
+  return resolveTypingProfile.call(humanizedPage, options);
+}
+
+async function typeLiteralCharacter(
+  humanizedPage: HumanizedPage,
+  character: string,
+  profile: TypingProfile
+): Promise<void> {
+  const typeLiteralCharacterInternal = Reflect.get(humanizedPage, "typeLiteralCharacter") as (
+    character: string,
+    profile: TypingProfile
+  ) => Promise<void>;
+
+  await typeLiteralCharacterInternal.call(humanizedPage, character, profile);
 }
 
 function createStableTypingOptions(overrides: Partial<TypingProfile> = {}) {
@@ -169,6 +266,35 @@ describe("HumanizedPage options", () => {
       typingProfileOverrides: {}
     });
   });
+
+  it("resolves typing profile precedence across constructor and call overrides", () => {
+    const { page } = createPageMock();
+    const humanizedPage = new HumanizedPage(page, {
+      typingDelay: 80,
+      typingJitter: 12,
+      typingProfile: "casual",
+      typingProfileOverrides: {
+        punctuationMultiplier: 1.9,
+        wordBoundaryMultiplier: 1.5
+      }
+    });
+
+    const resolved = getResolvedTypingProfile(humanizedPage, {
+      profile: "fast",
+      profileOverrides: {
+        whitespaceMultiplier: 2.25
+      }
+    });
+
+    expect(resolved).toMatchObject({
+      baseCharDelayMs: 80,
+      charDelayJitterMs: 12,
+      punctuationMultiplier: 1.9,
+      typoRate: TYPING_PROFILES.fast.typoRate,
+      whitespaceMultiplier: 2.25,
+      wordBoundaryMultiplier: 1.5
+    });
+  });
 });
 
 describe("QWERTY adjacency", () => {
@@ -192,9 +318,38 @@ describe("QWERTY adjacency", () => {
     expect(crossHand?.weight).toBeGreaterThan(0);
     expect(sameFinger?.weight).toBeGreaterThan(crossHand?.weight ?? 0);
   });
+
+  it("returns no typo candidates for unsupported characters", () => {
+    expect(getAdjacentTypoCandidates("!")).toEqual([]);
+    expect(getAdjacentTypoCandidates("ø")).toEqual([]);
+    expect(pickAdjacentTypoCharacter("👋")).toBeNull();
+  });
+
+  it("preserves uppercase typos and falls back to the last candidate", () => {
+    const candidates = getAdjacentTypoCandidates("t");
+    const firstCandidate = candidates[0]?.key;
+    const lastCandidate = candidates.at(-1)?.key;
+
+    expect(firstCandidate).toBeTruthy();
+    expect(lastCandidate).toBeTruthy();
+    expect(pickAdjacentTypoCharacter("T", 0)).toBe(firstCandidate?.toUpperCase());
+    expect(pickAdjacentTypoCharacter("T", Number.NaN)).toBe(lastCandidate?.toUpperCase());
+  });
 });
 
 describe("HumanizedPage.type", () => {
+  it("handles empty strings without issuing keyboard events", async () => {
+    const { keyboard, page, waitForTimeout } = createPageMock();
+    const humanizedPage = new HumanizedPage(page, { baseDelay: 200, jitterRange: 0 });
+
+    await humanizedPage.type("#composer", "", createStableTypingOptions());
+
+    expect(keyboard.type).not.toHaveBeenCalled();
+    expect(keyboard.press).not.toHaveBeenCalled();
+    expect(keyboard.down).not.toHaveBeenCalled();
+    expect(getWaitCalls(waitForTimeout)).toEqual([200, 150, 200]);
+  });
+
   it("inserts and corrects adjacent typos naturally", async () => {
     const { keyboard, page, operations, waitForTimeout } = createPageMock();
     vi.spyOn(Math, "random").mockReturnValue(0);
@@ -258,6 +413,234 @@ describe("HumanizedPage.type", () => {
     expect(operations).toContain("down:Shift");
     expect(operations).toContain("press:a");
     expect(operations).toContain("up:Shift");
+  });
+
+  it("types unicode and special characters without splitting code points", async () => {
+    const { keyboard, page } = createPageMock();
+    const humanizedPage = new HumanizedPage(page, { baseDelay: 200, jitterRange: 0 });
+    const text = "👋éß\n#!";
+
+    await humanizedPage.type(
+      "#composer",
+      text,
+      createStableTypingOptions({
+        typoRate: 1
+      })
+    );
+
+    expect(getTypedCharacters(keyboard)).toEqual(Array.from(text));
+    expect(keyboard.press).not.toHaveBeenCalledWith("Backspace");
+  });
+
+  it("produces non-uniform delays across realistic typing contexts", async () => {
+    const { page, waitForTimeout } = createPageMock();
+    const humanizedPage = new HumanizedPage(page, { baseDelay: 200, jitterRange: 0 });
+    const text = "a zoo. go!";
+
+    await humanizedPage.type("#composer", text, createStableTypingOptions());
+
+    const charCount = Array.from(text).length;
+    const charDelays = getWaitCalls(waitForTimeout).slice(2, 2 + charCount);
+
+    expect(charDelays).toHaveLength(charCount);
+    expect(new Set(charDelays.map((delay) => delay.toFixed(2))).size).toBeGreaterThan(4);
+    expect(charDelays[6]).toBeGreaterThan(charDelays[1] ?? 0);
+    expect(charDelays[7]).toBeGreaterThan(charDelays[2] ?? 0);
+  });
+
+  it("adds thinking and long pauses at eligible word boundaries", async () => {
+    const { page, waitForTimeout } = createPageMock();
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    const humanizedPage = new HumanizedPage(page, { baseDelay: 200, jitterRange: 0 });
+
+    await humanizedPage.type(
+      "#composer",
+      "hello world. again there",
+      createStableTypingOptions({
+        longPauseChance: 1,
+        longPauseRange: { minMs: 700, maxMs: 900 },
+        thinkingPauseChance: 1,
+        thinkingPauseRange: { minMs: 200, maxMs: 260 }
+      })
+    );
+
+    expect(getWaitCalls(waitForTimeout)).toContain(230);
+    expect(getWaitCalls(waitForTimeout)).toContain(800);
+  });
+
+  it("waits before uppercase characters when shift lead time is configured", async () => {
+    const { page, waitForTimeout } = createPageMock();
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    const humanizedPage = new HumanizedPage(page, { baseDelay: 200, jitterRange: 0 });
+
+    await humanizedPage.type(
+      "#composer",
+      "A",
+      createStableTypingOptions({
+        shiftLeadRange: { minMs: 20, maxMs: 40 }
+      })
+    );
+
+    expect(getWaitCalls(waitForTimeout)).toContain(30);
+  });
+
+  it("supports very long strings without introducing correction artifacts", async () => {
+    const { keyboard, page, waitForTimeout } = createPageMock();
+    const humanizedPage = new HumanizedPage(page, { baseDelay: 200, jitterRange: 0 });
+    const text = "lorem ipsum dolor sit amet ".repeat(12).trim();
+
+    await humanizedPage.type("#composer", text, createStableTypingOptions());
+
+    expect(getTypedCharacters(keyboard)).toHaveLength(Array.from(text).length);
+    expect(keyboard.press).not.toHaveBeenCalledWith("Backspace");
+    expect(getWaitCalls(waitForTimeout)).toHaveLength(Array.from(text).length + 3);
+  });
+
+  it("keeps rapid sequential calls independent", async () => {
+    const { keyboard, page, waitForTimeout } = createPageMock();
+    const humanizedPage = new HumanizedPage(page, { baseDelay: 200, jitterRange: 0 });
+
+    await humanizedPage.type("#composer", "go", createStableTypingOptions());
+    await humanizedPage.type("#composer", "ok", createStableTypingOptions());
+
+    expect(getTypedCharacters(keyboard)).toEqual(["g", "o", "o", "k"]);
+    expect(keyboard.press).not.toHaveBeenCalledWith("Backspace");
+    expect(getWaitCalls(waitForTimeout)).toHaveLength(10);
+  });
+
+  it("skips characters when typing contexts are unavailable", async () => {
+    const { keyboard, page, waitForTimeout } = createPageMock();
+    const humanizedPage = new HumanizedPage(page, { baseDelay: 200, jitterRange: 0 });
+
+    vi.spyOn(
+      HumanizedPage.prototype as unknown as {
+        buildTypingContexts: (characters: readonly string[]) => [];
+      },
+      "buildTypingContexts"
+    ).mockReturnValue([]);
+
+    await humanizedPage.type("#composer", "abc", createStableTypingOptions());
+
+    expect(keyboard.type).not.toHaveBeenCalled();
+    expect(keyboard.press).not.toHaveBeenCalled();
+    expect(getWaitCalls(waitForTimeout)).toEqual([200, 150, 200]);
+  });
+});
+
+describe("HumanizedPage helpers", () => {
+  it("navigates with default and custom wait targets", async () => {
+    const { goto, page, waitForTimeout } = createPageMock();
+    const humanizedPage = new HumanizedPage(page, { baseDelay: 200, jitterRange: 0 });
+
+    await humanizedPage.navigate("https://example.com");
+    await humanizedPage.navigate("https://example.com/feed", { waitUntil: "load" });
+
+    expect(goto).toHaveBeenNthCalledWith(1, "https://example.com", {
+      waitUntil: "domcontentloaded"
+    });
+    expect(goto).toHaveBeenNthCalledWith(2, "https://example.com/feed", {
+      waitUntil: "load"
+    });
+    expect(getWaitCalls(waitForTimeout)).toEqual([300, 600, 300, 600]);
+  });
+
+  it("scrolls elements into view and waits afterwards", async () => {
+    const { page, waitForTimeout } = createPageMock();
+    const humanizedPage = new HumanizedPage(page, { baseDelay: 200, jitterRange: 0 });
+
+    await humanizedPage.scrollIntoView("#composer");
+
+    expect(page.locator).toHaveBeenCalledWith("#composer");
+    expect(getWaitCalls(waitForTimeout)).toEqual([200]);
+  });
+
+  it("scrolls down with generated and explicit distances", async () => {
+    const { evaluate, page, waitForTimeout } = createPageMock();
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    const humanizedPage = new HumanizedPage(page, { baseDelay: 200, jitterRange: 0 });
+
+    await humanizedPage.scrollDown();
+    await humanizedPage.scrollDown(420);
+
+    expect(evaluate.mock.calls[0]?.[1]).toBe(550);
+    expect(evaluate.mock.calls[1]?.[1]).toBe(420);
+    expect(getWaitCalls(waitForTimeout)).toEqual([400, 400]);
+  });
+
+  it("moves the mouse near a target with light randomness", async () => {
+    const { mouse, page, waitForTimeout } = createPageMock();
+    const randomValues = [0.9, 0.1, 0.6];
+    let randomIndex = 0;
+    vi.spyOn(Math, "random").mockImplementation(() => randomValues[randomIndex++] ?? 0);
+    const humanizedPage = new HumanizedPage(page, { baseDelay: 200, jitterRange: 0 });
+
+    await humanizedPage.moveMouseNear(100, 200);
+
+    expect(mouse.move).toHaveBeenCalledWith(104, 196, { steps: 6 });
+    expect(getWaitCalls(waitForTimeout)).toEqual([150]);
+  });
+
+  it("clicks with cursor movement when a bounding box is available", async () => {
+    const { mouse, page, waitForTimeout } = createPageMock({
+      boundingBox: { height: 20, width: 80, x: 100, y: 200 }
+    });
+    const randomValues = [0.75, 0.25, 0.5];
+    let randomIndex = 0;
+    vi.spyOn(Math, "random").mockImplementation(() => randomValues[randomIndex++] ?? 0);
+    const humanizedPage = new HumanizedPage(page, { baseDelay: 200, jitterRange: 0 });
+
+    await humanizedPage.click("#composer");
+
+    const moveCall = mouse.move.mock.calls[0];
+    expect(moveCall?.[0]).toBeCloseTo(146);
+    expect(moveCall?.[1]).toBeCloseTo(208.5);
+    expect(moveCall?.[2]).toEqual({ steps: 5 });
+    expect(getWaitCalls(waitForTimeout)).toEqual([200, 100, 300]);
+  });
+
+  it("clicks directly when an element has no bounding box", async () => {
+    const { mouse, page, waitForTimeout } = createPageMock();
+    const humanizedPage = new HumanizedPage(page, { baseDelay: 200, jitterRange: 0 });
+
+    await humanizedPage.click("#composer");
+
+    expect(mouse.move).not.toHaveBeenCalled();
+    expect(getWaitCalls(waitForTimeout)).toEqual([200, 300]);
+  });
+
+  it("waits for the page load state with a human pause", async () => {
+    const { page, waitForLoadState, waitForTimeout } = createPageMock();
+    const humanizedPage = new HumanizedPage(page, { baseDelay: 200, jitterRange: 0 });
+
+    await humanizedPage.waitForPageLoad();
+
+    expect(waitForLoadState).toHaveBeenCalledWith("domcontentloaded");
+    expect(getWaitCalls(waitForTimeout)).toEqual([400]);
+  });
+
+  it("idles with different ranges in slow and fast modes", async () => {
+    const slowMock = createPageMock();
+    const fastMock = createPageMock();
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    const slowPage = new HumanizedPage(slowMock.page);
+    const fastPage = new HumanizedPage(fastMock.page, { fast: true });
+
+    await slowPage.idle();
+    await fastPage.idle();
+
+    expect(getWaitCalls(slowMock.waitForTimeout)).toEqual([2500]);
+    expect(getWaitCalls(fastMock.waitForTimeout)).toEqual([350]);
+  });
+
+  it("treats empty literal characters as no-ops internally", async () => {
+    const { keyboard, page } = createPageMock();
+    const humanizedPage = new HumanizedPage(page, { baseDelay: 200, jitterRange: 0 });
+
+    await typeLiteralCharacter(humanizedPage, "", TYPING_PROFILES.careful);
+
+    expect(keyboard.type).not.toHaveBeenCalled();
+    expect(keyboard.press).not.toHaveBeenCalled();
+    expect(keyboard.down).not.toHaveBeenCalled();
   });
 });
 
