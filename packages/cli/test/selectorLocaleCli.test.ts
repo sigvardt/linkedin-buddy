@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -120,6 +120,82 @@ describe("CLI selector locale messaging", () => {
     );
     expect(cliSelectorLocaleMocks.spawn).toHaveBeenCalledTimes(1);
     expect(cliSelectorLocaleMocks.createCoreRuntime).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid keepalive profile names before touching daemon state", async () => {
+    await expect(
+      runCli(["node", "linkedin", "keepalive", "status", "--profile", "../bad"])
+    ).rejects.toThrow(
+      "profile must not contain path separators or relative path segments."
+    );
+
+    expect(cliSelectorLocaleMocks.spawn).not.toHaveBeenCalled();
+    expect(cliSelectorLocaleMocks.createCoreRuntime).not.toHaveBeenCalled();
+  });
+
+  it("allows zero jitter for the hidden keepalive daemon runner", async () => {
+    cliSelectorLocaleMocks.createCoreRuntime.mockImplementation(() => ({
+      runId: "run-selector-locale-cli",
+      logger: { log: cliSelectorLocaleMocks.loggerLog },
+      healthCheck: vi.fn(async () => {
+        process.emit("SIGTERM");
+        return {
+          browser: {
+            healthy: true,
+            browserConnected: true,
+            pageResponsive: true,
+            checkedAt: "2026-03-09T00:00:00.000Z"
+          },
+          session: {
+            authenticated: true,
+            checkpointDetected: false,
+            cookieExpiringSoon: false,
+            currentUrl: "https://www.linkedin.com/feed/",
+            loginWallDetected: false,
+            nextCookieExpiryAt: null,
+            rateLimited: false,
+            reason: "LinkedIn session appears authenticated.",
+            checkedAt: "2026-03-09T00:00:00.000Z",
+            sessionCookieFingerprint: "selector-locale-keepalive-fingerprint",
+            sessionCookiePresent: true,
+            sessionCookies: []
+          }
+        };
+      }),
+      close: cliSelectorLocaleMocks.close
+    }));
+
+    await runCli([
+      "node",
+      "linkedin",
+      "keepalive",
+      "__run",
+      "--profile",
+      "default",
+      "--interval-seconds",
+      "1",
+      "--jitter-seconds",
+      "0",
+      "--max-consecutive-failures",
+      "5"
+    ]);
+
+    const statePath = path.join(
+      tempDir,
+      "assistant-home",
+      "keepalive",
+      "default.state.json"
+    );
+    const state = JSON.parse(
+      await readFile(statePath, "utf8")
+    ) as {
+      jitterMs: number;
+      status: string;
+    };
+
+    expect(state.jitterMs).toBe(0);
+    expect(state.status).toBe("stopped");
+    expect(cliSelectorLocaleMocks.close).toHaveBeenCalledTimes(1);
   });
 
   it("stays quiet for supported locales", async () => {
