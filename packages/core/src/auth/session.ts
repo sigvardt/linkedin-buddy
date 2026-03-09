@@ -81,10 +81,6 @@ async function getPage(context: BrowserContext): Promise<Page> {
   return context.newPage();
 }
 
-function isRateLimited(url: string): boolean {
-  return isRateLimitedChallengeUrl(url);
-}
-
 async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -100,8 +96,6 @@ export class LinkedInAuthService {
   ) {}
 
   async status(options: SessionOptions = {}): Promise<SessionStatus> {
-    const cooldown = await isInRateLimitCooldown();
-
     const profileName = options.profileName ?? "default";
     const cdpUrl = options.cdpUrl ?? this.cdpUrl;
 
@@ -126,7 +120,12 @@ export class LinkedInAuthService {
       }
     );
 
-    if (!status.authenticated && cooldown.active && cooldown.state) {
+    if (status.authenticated) {
+      return status;
+    }
+
+    const cooldown = await isInRateLimitCooldown();
+    if (cooldown.active && cooldown.state) {
       return {
         ...status,
         reason: `${status.reason} Rate-limit cooldown is active until ${cooldown.state.rateLimitedUntil}.`,
@@ -187,29 +186,22 @@ export class LinkedInAuthService {
     const maxRetries = options.maxRetries ?? 3;
     const retryBaseDelayMs = options.retryBaseDelayMs ?? 30_000;
 
-    let lastResult: HeadlessLoginResult | undefined;
+    let result = await this.performHeadlessLogin(options);
+    if (!retryOnRateLimit || result.checkpointType !== "rate_limited") {
+      return result;
+    }
 
-    const attempts = retryOnRateLimit ? maxRetries + 1 : 1;
+    for (let attempt = 1; attempt <= maxRetries; attempt += 1) {
+      const backoffMs = retryBaseDelayMs * 2 ** (attempt - 1) + Math.random() * 5_000;
+      await sleep(backoffMs);
 
-    for (let attempt = 0; attempt < attempts; attempt++) {
-      if (attempt > 0 && lastResult?.checkpointType === "rate_limited") {
-        const backoffMs =
-          retryBaseDelayMs * Math.pow(2, attempt - 1) +
-          Math.random() * 5_000;
-        await sleep(backoffMs);
-      }
-
-      lastResult = await this.performHeadlessLogin(options);
-
-      if (
-        lastResult.checkpointType !== "rate_limited" ||
-        !retryOnRateLimit
-      ) {
-        return lastResult;
+      result = await this.performHeadlessLogin(options);
+      if (result.checkpointType !== "rate_limited") {
+        return result;
       }
     }
 
-    return lastResult!;
+    return result;
   }
 
   private async performHeadlessLogin(
@@ -248,17 +240,9 @@ export class LinkedInAuthService {
         }
 
         // Human-like typing for credentials
-        const hp = humanize(page, { fast: false });
-        await hp.type(
-          "input[name='session_key'], input#username",
-          options.email,
-          { profile: "careful" }
-        );
-        await hp.type(
-          "input[name='session_password'], input#password",
-          options.password,
-          { profile: "careful" }
-        );
+        const hp = humanize(page);
+        await hp.type("input[name='session_key'], input#username", options.email);
+        await hp.type("input[name='session_password'], input#password", options.password);
 
         const signInButton = page.locator(
           "button[type='submit'][data-litms-control-urn='login-submit'], button[type='submit']:has-text('Sign in')"
@@ -290,7 +274,7 @@ export class LinkedInAuthService {
 
           if (isCheckpoint) {
             // Rate limit detection — check before other checkpoint types
-            if (isRateLimited(page.url())) {
+            if (isRateLimitedChallengeUrl(page.url())) {
               const rateLimitState = await recordRateLimit();
               return {
                 authenticated: false,

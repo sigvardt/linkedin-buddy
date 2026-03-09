@@ -107,10 +107,6 @@ interface ResolvedHumanizeOptions {
   typingProfileOverrides: Partial<TypingProfile>;
 }
 
-interface ResolvedTypingProfile extends TypingProfile {
-  name: TypingProfileName;
-}
-
 interface KeyboardKeyGeometry {
   key: string;
   x: number;
@@ -120,10 +116,7 @@ interface KeyboardKeyGeometry {
 }
 
 interface TypingContext {
-  current: string;
-  previous: string | null;
   previousMeaningful: string | null;
-  next: string | null;
   isBurstWord: boolean;
   isRepeatedCharacter: boolean;
   isSentenceRestart: boolean;
@@ -236,6 +229,7 @@ export const TYPING_PROFILES = {
 } satisfies Record<TypingProfileName, TypingProfile>;
 
 const KEYBOARD_GEOMETRY = createKeyboardGeometry();
+const KEYBOARD_KEYS = Object.values(KEYBOARD_GEOMETRY);
 
 export const QWERTY_KEY_ADJACENCY_MAP = createQwertyAdjacencyMap();
 
@@ -269,21 +263,24 @@ function getKeyDistance(source: KeyboardKeyGeometry, target: KeyboardKeyGeometry
   return Math.hypot(source.x - target.x, source.y - target.y);
 }
 
+function getAdjacentKeyboardKeys(source: KeyboardKeyGeometry): KeyboardKeyGeometry[] {
+  return KEYBOARD_KEYS
+    .filter(
+      (target) =>
+        target.key !== source.key &&
+        Math.abs(source.x - target.x) <= ADJACENCY_HORIZONTAL_THRESHOLD &&
+        Math.abs(source.y - target.y) <= ADJACENCY_VERTICAL_THRESHOLD
+    )
+    .sort(
+      (left, right) =>
+        getKeyDistance(source, left) - getKeyDistance(source, right) ||
+        left.key.localeCompare(right.key)
+    );
+}
+
 function createQwertyAdjacencyMap(): Readonly<Record<string, readonly string[]>> {
   const entries = Object.values(KEYBOARD_GEOMETRY).map((source) => {
-    const adjacent = Object.values(KEYBOARD_GEOMETRY)
-      .filter(
-        (target) =>
-          target.key !== source.key &&
-          Math.abs(source.x - target.x) <= ADJACENCY_HORIZONTAL_THRESHOLD &&
-          Math.abs(source.y - target.y) <= ADJACENCY_VERTICAL_THRESHOLD
-      )
-      .sort(
-        (left, right) =>
-          getKeyDistance(source, left) - getKeyDistance(source, right) ||
-          left.key.localeCompare(right.key)
-      )
-      .map((target) => target.key);
+    const adjacent = getAdjacentKeyboardKeys(source).map((target) => target.key);
 
     return [source.key, Object.freeze(adjacent)] as const;
   });
@@ -312,24 +309,16 @@ function createWeightedCandidate(
 function createWeightedQwertyAdjacencyMap(): Readonly<
   Record<string, readonly AdjacentTypoCandidate[]>
 > {
-  const entries = Object.entries(QWERTY_KEY_ADJACENCY_MAP).map(([key, adjacent]) => {
-    const source = KEYBOARD_GEOMETRY[key];
-    if (!source) {
-      return [key, Object.freeze([])] as const;
-    }
-
-    const weighted = adjacent
-      .flatMap((adjacentKey) => {
-        const target = KEYBOARD_GEOMETRY[adjacentKey];
-        return target ? [createWeightedCandidate(source, target)] : [];
-      })
+  const entries = Object.values(KEYBOARD_GEOMETRY).map((source) => {
+    const weighted = getAdjacentKeyboardKeys(source)
+      .map((target) => createWeightedCandidate(source, target))
       .sort(
         (left, right) =>
           right.weight - left.weight ||
           left.key.localeCompare(right.key)
       );
 
-    return [key, Object.freeze(weighted)] as const;
+    return [source.key, Object.freeze(weighted)] as const;
   });
 
   return Object.freeze(
@@ -390,12 +379,7 @@ export function pickAdjacentTypoCharacter(
     }
   }
 
-  const fallbackCandidate = candidates[candidates.length - 1];
-  if (!fallbackCandidate) {
-    return null;
-  }
-
-  return applyCharacterCase(fallbackCandidate.key, character);
+  return applyCharacterCase(candidates[candidates.length - 1]!.key, character);
 }
 
 export class HumanizedPage {
@@ -509,23 +493,21 @@ export class HumanizedPage {
         continue;
       }
 
-      await this.maybePauseBeforeCharacter(characters.length, context, profile);
+      await this.maybePauseBeforeCharacter(characters.length, index, context, profile);
 
-      if (this.shouldMissShift(character, profile)) {
-        await this.typeLiteralCharacter(character.toLowerCase(), profile);
-        await this.correctCharacter(character, previousCommittedCharacter, profile, {
-          allowDoubleBackspace: false
-        });
+      const missedShift =
+        isUppercaseLetter(character) && this.shouldTrigger(profile.shiftMissRate);
+      const mistypedCharacter = missedShift
+        ? character.toLowerCase()
+        : this.chooseTypoCharacter(character, profile);
+
+      if (mistypedCharacter === null) {
+        await this.typeLiteralCharacter(character, profile);
       } else {
-        const typoCharacter = this.chooseTypoCharacter(character, profile);
-        if (typoCharacter !== null) {
-          await this.typeLiteralCharacter(typoCharacter, profile);
-          await this.correctCharacter(character, previousCommittedCharacter, profile, {
-            allowDoubleBackspace: true
-          });
-        } else {
-          await this.typeLiteralCharacter(character, profile);
-        }
+        await this.typeLiteralCharacter(mistypedCharacter, profile);
+        await this.correctCharacter(character, previousCommittedCharacter, profile, {
+          allowDoubleBackspace: !missedShift
+        });
       }
 
       previousCommittedCharacter = character;
@@ -543,21 +525,17 @@ export class HumanizedPage {
 
   /** Randomly idle — used between major operations */
   async idle(): Promise<void> {
-    const idleTime = 1000 + Math.random() * 3000;
-    if (this.options.fast) {
-      await this.page.waitForTimeout(200 + Math.random() * 300);
-      return;
-    }
-
+    const idleTime = this.options.fast
+      ? 200 + Math.random() * 300
+      : 1000 + Math.random() * 3000;
     await this.page.waitForTimeout(idleTime);
   }
 
-  private resolveTypingProfile(options?: HumanizedTypingOptions): ResolvedTypingProfile {
+  private resolveTypingProfile(options?: HumanizedTypingOptions): TypingProfile {
     const name = options?.profile ?? this.options.typingProfile;
     const baseProfile = TYPING_PROFILES[name];
 
     return {
-      name,
       ...baseProfile,
       ...(this.options.typingDelayOverride === null
         ? {}
@@ -582,15 +560,9 @@ export class HumanizedPage {
       const currentIsWordCharacter = normalizedCurrent !== null;
 
       return {
-        current,
-        previous,
         previousMeaningful,
-        next,
         isBurstWord: burstWordIndexes.has(index),
-        isRepeatedCharacter:
-          currentIsWordCharacter &&
-          normalizedCurrent !== null &&
-          normalizedCurrent === normalizedPrevious,
+        isRepeatedCharacter: currentIsWordCharacter && normalizedCurrent === normalizedPrevious,
         isSentenceRestart:
           previousMeaningful !== null && /[.!?]/u.test(previousMeaningful),
         isWhitespace: isWhitespaceCharacter(current),
@@ -649,7 +621,7 @@ export class HumanizedPage {
 
   private computeCharacterDelay(
     context: TypingContext,
-    profile: ResolvedTypingProfile
+    profile: TypingProfile
   ): number {
     const jitter = profile.charDelayJitterMs > 0 ? Math.random() * profile.charDelayJitterMs : 0;
     let delay = profile.baseCharDelayMs + jitter;
@@ -679,13 +651,9 @@ export class HumanizedPage {
     return Math.max(0, delay);
   }
 
-  private shouldMissShift(character: string, profile: ResolvedTypingProfile): boolean {
-    return isUppercaseLetter(character) && this.shouldTrigger(profile.shiftMissRate);
-  }
-
   private chooseTypoCharacter(
     character: string,
-    profile: ResolvedTypingProfile
+    profile: TypingProfile
   ): string | null {
     if (normalizeTypingCharacter(character) === null || !this.shouldTrigger(profile.typoRate)) {
       return null;
@@ -696,10 +664,11 @@ export class HumanizedPage {
 
   private async maybePauseBeforeCharacter(
     totalCharacters: number,
+    characterIndex: number,
     context: TypingContext,
-    profile: ResolvedTypingProfile
+    profile: TypingProfile
   ): Promise<void> {
-    if (totalCharacters < 5 || !context.isWordStart || context.previous === null) {
+    if (totalCharacters < 5 || characterIndex === 0 || !context.isWordStart) {
       return;
     }
 
@@ -720,7 +689,7 @@ export class HumanizedPage {
   private async correctCharacter(
     intendedCharacter: string,
     previousCommittedCharacter: string | null,
-    profile: ResolvedTypingProfile,
+    profile: TypingProfile,
     options: { allowDoubleBackspace: boolean }
   ): Promise<void> {
     await this.page.waitForTimeout(this.sampleRange(profile.correctionPauseRange));
@@ -747,7 +716,7 @@ export class HumanizedPage {
 
   private async typeLiteralCharacter(
     character: string,
-    profile: ResolvedTypingProfile
+    profile: TypingProfile
   ): Promise<void> {
     if (character.length === 0) {
       return;
