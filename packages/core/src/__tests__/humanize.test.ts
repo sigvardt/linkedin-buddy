@@ -49,11 +49,9 @@ function createPageMock() {
   } as unknown as Page;
 
   return {
-    click,
     keyboard,
     operations,
     page,
-    scrollIntoViewIfNeeded,
     waitForTimeout
   };
 }
@@ -70,6 +68,18 @@ function getWaitCalls(waitForTimeout: ReturnType<typeof vi.fn>): number[] {
   return waitForTimeout.mock.calls.flatMap(([value]) =>
     typeof value === "number" ? [value] : []
   );
+}
+
+function getInternalOptions(humanizedPage: HumanizedPage) {
+  return Reflect.get(humanizedPage, "options") as {
+    baseDelay: number;
+    fast: boolean;
+    jitterRange: number;
+    typingDelayOverride: number | null;
+    typingJitterOverride: number | null;
+    typingProfile: string;
+    typingProfileOverrides: Partial<TypingProfile>;
+  };
 }
 
 function createStableTypingOptions(overrides: Partial<TypingProfile> = {}) {
@@ -148,19 +158,8 @@ describe("HumanizedPage options", () => {
   it("merges provided options with defaults", () => {
     const { page } = createPageMock();
     const humanizedPage = new HumanizedPage(page, { baseDelay: 950 });
-    const internal = humanizedPage as unknown as {
-      options: {
-        baseDelay: number;
-        fast: boolean;
-        jitterRange: number;
-        typingDelayOverride: number | null;
-        typingJitterOverride: number | null;
-        typingProfile: string;
-        typingProfileOverrides: Partial<TypingProfile>;
-      };
-    };
 
-    expect(internal.options).toEqual({
+    expect(getInternalOptions(humanizedPage)).toEqual({
       baseDelay: 950,
       fast: false,
       jitterRange: 1500,
