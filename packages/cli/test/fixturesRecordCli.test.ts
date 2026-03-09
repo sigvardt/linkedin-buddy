@@ -27,6 +27,7 @@ import { runCli } from "../src/bin/linkedin.js";
 
 interface Deferred<T> {
   promise: Promise<T>;
+  reject: (error: Error) => void;
   resolve: (value: T) => void;
 }
 
@@ -47,31 +48,44 @@ interface TestFixtureCaptureResponse {
   url(): string;
 }
 
+const originalReplayEnabled = process.env.LINKEDIN_E2E_REPLAY;
+const originalFixtureManifest = process.env.LINKEDIN_E2E_FIXTURE_MANIFEST;
+const originalFixtureSet = process.env.LINKEDIN_E2E_FIXTURE_SET;
+const originalFixtureServerUrl = process.env.LINKEDIN_E2E_FIXTURE_SERVER_URL;
+
 function createDeferred<T>(): Deferred<T> {
   let resolveFn: ((value: T) => void) | undefined;
-  const promise = new Promise<T>((resolve) => {
+  let rejectFn: ((error: Error) => void) | undefined;
+  const promise = new Promise<T>((resolve, reject) => {
     resolveFn = resolve;
+    rejectFn = (error: Error) => {
+      reject(error);
+    };
   });
 
-  if (!resolveFn) {
-    throw new Error("Deferred promise did not initialize its resolver.");
+  promise.catch(() => undefined);
+
+  if (!resolveFn || !rejectFn) {
+    throw new Error("Deferred promise did not initialize its resolvers.");
   }
 
   return {
     promise,
+    reject: rejectFn,
     resolve: resolveFn
   };
 }
 
 function createFixtureResponse(
   url: string,
-  body: Promise<Buffer>
+  body: Promise<Buffer>,
+  contentType: string = "application/json; charset=utf-8"
 ): TestFixtureCaptureResponse {
   return {
     body: async () => await body,
     headers: () => ({
       "Content-Length": "15",
-      "Content-Type": "application/json; charset=utf-8"
+      "Content-Type": contentType
     }),
     request: () => ({
       method: () => "GET"
@@ -96,6 +110,32 @@ function setInteractiveMode(inputIsTty: boolean, outputIsTty: boolean): void {
   });
 }
 
+function restoreFixtureReplayEnvironment(): void {
+  if (originalReplayEnabled === undefined) {
+    delete process.env.LINKEDIN_E2E_REPLAY;
+  } else {
+    process.env.LINKEDIN_E2E_REPLAY = originalReplayEnabled;
+  }
+
+  if (originalFixtureManifest === undefined) {
+    delete process.env.LINKEDIN_E2E_FIXTURE_MANIFEST;
+  } else {
+    process.env.LINKEDIN_E2E_FIXTURE_MANIFEST = originalFixtureManifest;
+  }
+
+  if (originalFixtureSet === undefined) {
+    delete process.env.LINKEDIN_E2E_FIXTURE_SET;
+  } else {
+    process.env.LINKEDIN_E2E_FIXTURE_SET = originalFixtureSet;
+  }
+
+  if (originalFixtureServerUrl === undefined) {
+    delete process.env.LINKEDIN_E2E_FIXTURE_SERVER_URL;
+  } else {
+    process.env.LINKEDIN_E2E_FIXTURE_SERVER_URL = originalFixtureServerUrl;
+  }
+}
+
 describe("linkedin fixtures record", () => {
   let consoleLogSpy: ReturnType<typeof vi.spyOn>;
   let tempDir = "";
@@ -115,6 +155,8 @@ describe("linkedin fixtures record", () => {
   afterEach(async () => {
     consoleLogSpy.mockRestore();
     process.exitCode = undefined;
+    restoreFixtureReplayEnvironment();
+    core.shutdownSharedFixtureReplayServer();
     await rm(tempDir, { recursive: true, force: true });
   });
 
@@ -201,5 +243,219 @@ describe("linkedin fixtures record", () => {
       "responses/0001-www.linkedin.com-voyager-api-graphql.json",
       "responses/0002-www.linkedin.com-voyager-api-graphql.json"
     ]);
+  });
+
+  it("restores replay environment variables when manual capture fails", async () => {
+    const manifestPath = path.join(tempDir, "manifest.json");
+    process.env.LINKEDIN_E2E_REPLAY = "1";
+    process.env.LINKEDIN_E2E_FIXTURE_MANIFEST = "/tmp/original-manifest.json";
+    process.env.LINKEDIN_E2E_FIXTURE_SET = "original-set";
+    process.env.LINKEDIN_E2E_FIXTURE_SERVER_URL = "http://127.0.0.1:45555";
+
+    const runWithPersistentContextSpy = vi
+      .spyOn(core.ProfileManager.prototype, "runWithPersistentContext")
+      .mockImplementation(async () => {
+        expect(process.env.LINKEDIN_E2E_REPLAY).toBeUndefined();
+        expect(process.env.LINKEDIN_E2E_FIXTURE_MANIFEST).toBeUndefined();
+        expect(process.env.LINKEDIN_E2E_FIXTURE_SET).toBeUndefined();
+        expect(process.env.LINKEDIN_E2E_FIXTURE_SERVER_URL).toBeUndefined();
+        throw new Error("capture failed");
+      });
+
+    try {
+      await expect(
+        runCli([
+          "node",
+          "linkedin",
+          "fixtures",
+          "record",
+          "--manifest",
+          manifestPath,
+          "--set",
+          "manual",
+          "--page",
+          "feed",
+          "--no-har"
+        ])
+      ).rejects.toThrow("capture failed");
+    } finally {
+      runWithPersistentContextSpy.mockRestore();
+    }
+
+    expect(process.env.LINKEDIN_E2E_REPLAY).toBe("1");
+    expect(process.env.LINKEDIN_E2E_FIXTURE_MANIFEST).toBe("/tmp/original-manifest.json");
+    expect(process.env.LINKEDIN_E2E_FIXTURE_SET).toBe("original-set");
+    expect(process.env.LINKEDIN_E2E_FIXTURE_SERVER_URL).toBe("http://127.0.0.1:45555");
+  });
+
+  it("writes empty fallback bodies and ignores non-linkedin responses", async () => {
+    const manifestPath = path.join(tempDir, "manifest.json");
+    let responseHandler:
+      | ((response: TestFixtureCaptureResponse) => void)
+      | undefined;
+
+    const failingBody = createDeferred<Buffer>();
+    const fakePage = {
+      content: vi.fn(async () => "<html><body>Fixture</body></html>"),
+      evaluate: vi.fn(async () => "en-US"),
+      goto: vi.fn(async () => {
+        responseHandler?.(
+          createFixtureResponse(
+            "https://example.com/not-captured.json",
+            Promise.resolve(Buffer.from('{"ignore":true}', "utf8"))
+          )
+        );
+        responseHandler?.(
+          createFixtureResponse(
+            "https://www.linkedin.com/voyager/api/graphql?queryId=feed.partial&variables=%7B%22start%22%3A0%7D",
+            failingBody.promise
+          )
+        );
+        failingBody.reject(new Error("socket hang up"));
+      }),
+      title: vi.fn(async () => "Feed"),
+      url: vi.fn(() => "https://www.linkedin.com/feed/"),
+      viewportSize: vi.fn(() => ({
+        height: 900,
+        width: 1440
+      })),
+      waitForTimeout: vi.fn(async () => undefined)
+    };
+    const fakeContext = {
+      addInitScript: vi.fn(),
+      newPage: vi.fn(async () => fakePage),
+      on: vi.fn((event: string, handler: (response: TestFixtureCaptureResponse) => void) => {
+        if (event === "response") {
+          responseHandler = handler;
+        }
+      }),
+      pages: vi.fn(() => [fakePage]),
+      route: vi.fn()
+    };
+    const runWithPersistentContextSpy = vi
+      .spyOn(core.ProfileManager.prototype, "runWithPersistentContext")
+      .mockImplementation(async (_profileName, _options, callback) => {
+        return await callback(fakeContext as unknown as BrowserContext);
+      });
+
+    try {
+      await runCli([
+        "node",
+        "linkedin",
+        "fixtures",
+        "record",
+        "--manifest",
+        manifestPath,
+        "--set",
+        "manual",
+        "--page",
+        "feed",
+        "--no-har"
+      ]);
+    } finally {
+      runWithPersistentContextSpy.mockRestore();
+    }
+
+    const routeFile = JSON.parse(
+      await readFile(path.join(tempDir, "manual", "routes.json"), "utf8")
+    ) as FixtureRecordRouteFile;
+    const savedBodyPath = routeFile.routes[0]?.bodyPath;
+
+    expect(routeFile.routes).toHaveLength(1);
+    expect(routeFile.routes[0]?.url).toBe(
+      "https://www.linkedin.com/voyager/api/graphql?queryId=feed.partial&variables=%7B%22start%22%3A0%7D"
+    );
+    if (!savedBodyPath) {
+      throw new Error("Expected a recorded response body path.");
+    }
+
+    const savedBody = await readFile(path.join(tempDir, "manual", savedBodyPath));
+    expect(savedBody).toHaveLength(0);
+  });
+
+  it("records fixtures that can be replayed end-to-end", async () => {
+    const manifestPath = path.join(tempDir, "manifest.json");
+    const setName = "manual ø";
+    const feedHtml = "<html><body>Recorded feed</body></html>";
+    let responseHandler:
+      | ((response: TestFixtureCaptureResponse) => void)
+      | undefined;
+
+    const fakePage = {
+      content: vi.fn(async () => feedHtml),
+      evaluate: vi.fn(async () => "da-DK"),
+      goto: vi.fn(async () => {
+        responseHandler?.(
+          createFixtureResponse(
+            "https://www.linkedin.com/feed/",
+            Promise.resolve(Buffer.from(feedHtml, "utf8")),
+            "text/html; charset=utf-8"
+          )
+        );
+      }),
+      title: vi.fn(async () => "Feed"),
+      url: vi.fn(() => "https://www.linkedin.com/feed/"),
+      viewportSize: vi.fn(() => ({
+        height: 900,
+        width: 1440
+      })),
+      waitForTimeout: vi.fn(async () => undefined)
+    };
+    const fakeContext = {
+      addInitScript: vi.fn(),
+      newPage: vi.fn(async () => fakePage),
+      on: vi.fn((event: string, handler: (response: TestFixtureCaptureResponse) => void) => {
+        if (event === "response") {
+          responseHandler = handler;
+        }
+      }),
+      pages: vi.fn(() => [fakePage]),
+      route: vi.fn()
+    };
+    const runWithPersistentContextSpy = vi
+      .spyOn(core.ProfileManager.prototype, "runWithPersistentContext")
+      .mockImplementation(async (_profileName, _options, callback) => {
+        return await callback(fakeContext as unknown as BrowserContext);
+      });
+
+    try {
+      await runCli([
+        "node",
+        "linkedin",
+        "fixtures",
+        "record",
+        "--manifest",
+        manifestPath,
+        "--set",
+        setName,
+        "--page",
+        "feed",
+        "--no-har"
+      ]);
+    } finally {
+      runWithPersistentContextSpy.mockRestore();
+    }
+
+    process.env.LINKEDIN_E2E_REPLAY = "1";
+    process.env.LINKEDIN_E2E_FIXTURE_MANIFEST = manifestPath;
+    process.env.LINKEDIN_E2E_FIXTURE_SET = setName;
+
+    const replayServer = await core.ensureSharedFixtureReplayServer();
+    const response = await fetch(`${replayServer?.baseUrl}${core.REPLAY_ROUTE_PATH}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        method: "GET",
+        url: "https://www.linkedin.com/feed/"
+      })
+    });
+
+    expect(replayServer).toMatchObject({
+      setName
+    });
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain("Recorded feed");
   });
 });

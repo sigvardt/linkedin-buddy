@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { stdin, stdout } from "node:process";
+import type { LinkedInReplayPageType } from "@linkedin-assistant/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@linkedin-assistant/core", async () =>
@@ -9,6 +10,14 @@ vi.mock("@linkedin-assistant/core", async () =>
 );
 
 import { runCli } from "../src/bin/linkedin.js";
+
+interface ReplayManifestPageEntry {
+  htmlPath: string;
+  pageType: LinkedInReplayPageType;
+  recordedAt: string;
+  title?: string;
+  url: string;
+}
 
 function setInteractiveMode(inputIsTty: boolean, outputIsTty: boolean): void {
   Object.defineProperty(stdin, "isTTY", {
@@ -29,7 +38,19 @@ async function writeJsonFixture(filePath: string, value: unknown): Promise<void>
   await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
-function createReplayManifest(recordedAt: string, setName: string = "ci"): Record<string, unknown> {
+function createReplayManifest(
+  recordedAt: string,
+  setName: string = "ci",
+  pages: Partial<Record<LinkedInReplayPageType, ReplayManifestPageEntry>> = {
+    feed: {
+      pageType: "feed",
+      url: "https://www.linkedin.com/feed/",
+      htmlPath: "pages/app.html",
+      recordedAt,
+      title: "Feed"
+    }
+  }
+): Record<string, unknown> {
   return {
     format: 1,
     updatedAt: recordedAt,
@@ -45,15 +66,7 @@ function createReplayManifest(recordedAt: string, setName: string = "ci"): Recor
           height: 900
         },
         routesPath: "routes.json",
-        pages: {
-          feed: {
-            pageType: "feed",
-            url: "https://www.linkedin.com/feed/",
-            htmlPath: "pages/app.html",
-            recordedAt,
-            title: "Feed"
-          }
-        }
+        pages
       }
     }
   };
@@ -114,6 +127,33 @@ describe("linkedin fixtures commands", () => {
     expect(stderrChunks.join("\n")).toContain("Fixture page ci/feed was recorded");
   });
 
+  it("warns when a stale fixture set has no captured page entries", async () => {
+    const manifestPath = path.join(tempDir, "manifest.json");
+    await writeJsonFixture(
+      manifestPath,
+      createReplayManifest("2025-01-01T00:00:00.000Z", "manual", {})
+    );
+
+    await runCli([
+      "node",
+      "linkedin",
+      "fixtures",
+      "check",
+      "--manifest",
+      manifestPath,
+      "--set",
+      "manual"
+    ]);
+
+    expect(getLastJsonOutput()).toMatchObject({
+      manifest_path: path.resolve(manifestPath),
+      stale: true,
+      warning_count: 1,
+      set_name: "manual"
+    });
+    expect(stderrChunks.join("\n")).toContain("Fixture set manual was captured");
+  });
+
   it("supports the fixtures:check alias and scoped set validation", async () => {
     const manifestPath = path.join(tempDir, "manifest.json");
     await writeJsonFixture(manifestPath, createReplayManifest("2026-03-08T00:00:00.000Z", "manual"));
@@ -136,6 +176,24 @@ describe("linkedin fixtures commands", () => {
       warning_count: 0,
       set_name: "manual"
     });
+  });
+
+  it("fails fast when fixtures check targets an unknown set", async () => {
+    const manifestPath = path.join(tempDir, "manifest.json");
+    await writeJsonFixture(manifestPath, createReplayManifest("2026-03-08T00:00:00.000Z", "manual"));
+
+    await expect(
+      runCli([
+        "node",
+        "linkedin",
+        "fixtures",
+        "check",
+        "--manifest",
+        manifestPath,
+        "--set",
+        "missing"
+      ])
+    ).rejects.toThrow(`Fixture set missing is not defined in ${path.resolve(manifestPath)}.`);
   });
 
   it("requires an interactive terminal for fixture recording", async () => {

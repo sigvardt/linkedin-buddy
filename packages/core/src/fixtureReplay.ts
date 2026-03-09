@@ -346,9 +346,12 @@ export function isLinkedInFixtureReplayUrl(url: string): boolean {
       return false;
     }
 
+    const hostname = parsed.hostname.toLowerCase();
     return (
-      parsed.hostname.endsWith("linkedin.com") ||
-      parsed.hostname.endsWith("licdn.com")
+      hostname === "linkedin.com" ||
+      hostname.endsWith(".linkedin.com") ||
+      hostname === "licdn.com" ||
+      hostname.endsWith(".licdn.com")
     );
   } catch {
     return false;
@@ -444,6 +447,24 @@ function writeServerResponse(
   response.end(body);
 }
 
+function resolveFixtureBodyPath(baseDir: string, bodyPath: string): string {
+  const normalizedBaseDir = path.resolve(baseDir);
+  const resolvedPath = path.resolve(normalizedBaseDir, bodyPath);
+  const relativePath = path.relative(normalizedBaseDir, resolvedPath);
+
+  if (
+    path.isAbsolute(bodyPath) ||
+    relativePath.startsWith("..") ||
+    path.isAbsolute(relativePath)
+  ) {
+    throw new Error(
+      `Fixture route bodyPath ${bodyPath} must stay within ${normalizedBaseDir}.`
+    );
+  }
+
+  return resolvedPath;
+}
+
 async function buildReplayLookup(
   baseDir: string,
   routes: LinkedInFixtureRoute[]
@@ -452,7 +473,7 @@ async function buildReplayLookup(
 
   for (const route of routes) {
     const body = route.bodyPath
-      ? await readFile(path.resolve(baseDir, route.bodyPath))
+      ? await readFile(resolveFixtureBodyPath(baseDir, route.bodyPath))
       : Buffer.from(route.bodyText ?? "", "utf8");
     lookup.set(buildFixtureRouteKey(route), {
       body,
@@ -636,6 +657,11 @@ export async function checkLinkedInFixtureStaleness(
 ): Promise<FixtureStalenessWarning[]> {
   const manifest = await readLinkedInFixtureManifest(manifestPath);
   const maxAgeDays = options.maxAgeDays ?? DEFAULT_FIXTURE_STALENESS_DAYS;
+
+  if (options.setName && manifest.sets[options.setName] === undefined) {
+    throw new Error(`Fixture set ${options.setName} is not defined in ${manifestPath}.`);
+  }
+
   const entries = options.setName
     ? [[options.setName, manifest.sets[options.setName]] as const]
     : (Object.entries(manifest.sets) as Array<[string, LinkedInFixtureSetSummary]>);
