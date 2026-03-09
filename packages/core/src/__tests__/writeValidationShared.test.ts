@@ -74,6 +74,7 @@ function createActionResult(
     cleanup_guidance: [],
     completed_at: "2026-03-09T10:00:05.000Z",
     confirm_artifacts: [],
+    duration_ms: 5_000,
     expected_outcome: "The outbound message is echoed in the approved conversation thread.",
     preview: {
       action_type: SEND_MESSAGE_ACTION_TYPE,

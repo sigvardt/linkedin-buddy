@@ -74,6 +74,7 @@ function createWriteValidationReport(
         cleanup_guidance: [],
         completed_at: "2026-03-09T10:00:05.000Z",
         confirm_artifacts: ["live-write-validation/send-message-after.png"],
+        duration_ms: 5_000,
         expected_outcome: "The outbound message is echoed in the approved conversation thread.",
         linkedin_response: {
           sent: true
@@ -110,13 +111,16 @@ function createWriteValidationReport(
     cancelled_count: outcome === "cancelled" ? 1 : 0,
     checked_at: "2026-03-09T10:00:06.000Z",
     cooldown_ms: 10_000,
+    duration_ms: 6_000,
     fail_count: outcome === "fail" ? 1 : 0,
+    html_report_path: "/tmp/report.html",
     latest_report_path: "/tmp/latest-report.json",
     outcome,
     pass_count: outcome === "pass" ? 1 : 0,
     recommended_actions: ["Review /tmp/report.json"],
     report_path: "/tmp/report.json",
     run_id: "run_write_validation_test",
+    started_at: "2026-03-09T10:00:00.000Z",
     summary: "Checked 1 write-validation actions. 1 passed. 0 failed. 0 cancelled. Overall outcome: pass.",
     warning: "This will perform REAL actions on LinkedIn."
   };
@@ -410,9 +414,113 @@ describe("write validation CLI", () => {
 
     expect(writeValidationCliMocks.runLinkedInWriteValidation).toHaveBeenCalledTimes(1);
     expect(stderrChunks.join("")).toContain("This will perform REAL actions on LinkedIn.");
-    expect(stdoutChunks.join("")).toContain("Action: send_message");
+    expect(stdoutChunks.join("")).toContain("Action 1/5: send_message");
     expect(stdoutChunks.join("")).toContain("Execute this action?");
     expect(String(consoleLogSpy.mock.calls.at(-1)?.[0] ?? "")).toContain("Write Validation");
+  });
+
+  it("streams write-validation progress to stderr in human mode", async () => {
+    writeValidationCliMocks.answers = ["yes"];
+    writeValidationCliMocks.runLinkedInWriteValidation.mockImplementation(
+      async (input: {
+        onBeforeAction?: (preview: {
+          action_type: string;
+          expected_outcome: string;
+          outbound: Record<string, unknown>;
+          risk_class: string;
+          summary: string;
+          target: Record<string, unknown>;
+        }) => Promise<boolean>;
+        onLog?: (entry: { event: string; payload: Record<string, unknown> }) => void;
+      }) => {
+        input.onLog?.({
+          event: "write_validation.start",
+          payload: {
+            account_id: "secondary",
+            cooldown_ms: 10_000,
+            timeout_ms: 30_000
+          }
+        });
+        input.onLog?.({
+          event: "write_validation.action.start",
+          payload: {
+            action_type: "send_message"
+          }
+        });
+        input.onLog?.({
+          event: "write_validation.action.attempt",
+          payload: {
+            action_type: "send_message",
+            attempt: 1,
+            stage: "prepare"
+          }
+        });
+        input.onLog?.({
+          event: "write_validation.action.prepared",
+          payload: {
+            action_type: "send_message",
+            retry_count: 0
+          }
+        });
+
+        await input.onBeforeAction?.({
+          action_type: "send_message",
+          expected_outcome:
+            "The outbound message is echoed in the approved conversation thread.",
+          outbound: {
+            text: "Quick validation ping • 2026-03-09T10:00:00.000Z"
+          },
+          risk_class: "private",
+          summary:
+            "Send a message in the approved thread and verify the outbound message appears.",
+          target: {
+            thread_id: "abc123"
+          }
+        });
+
+        input.onLog?.({
+          event: "write_validation.action.completed",
+          payload: {
+            action_type: "send_message",
+            status: "pass",
+            verified: true,
+            warnings: []
+          }
+        });
+        input.onLog?.({
+          event: "write_validation.completed",
+          payload: {
+            cancelled_count: 0,
+            fail_count: 0,
+            pass_count: 1,
+            report_path: "/tmp/report.json"
+          }
+        });
+
+        return createWriteValidationReport("pass");
+      }
+    );
+
+    await runCli([
+      "node",
+      "linkedin",
+      "test:live",
+      "--write-validation",
+      "--account",
+      "secondary"
+    ]);
+
+    const stderrOutput = stripVTControlCharacters(stderrChunks.join(""));
+
+    expect(stderrOutput).toContain(
+      "Starting write validation for account secondary (5 actions, cooldown 10s, timeout 30s)."
+    );
+    expect(stderrOutput).toContain(
+      "Running 3/5: send_message — Send a message in the approved thread and verify the outbound message appears."
+    );
+    expect(stderrOutput).toContain(
+      "Write validation finished — 1 passed, 0 failed, 0 cancelled. Report: /tmp/report.json"
+    );
   });
 
   it("writes prompts to stderr and emits JSON when --json is selected", async () => {
@@ -458,7 +566,7 @@ describe("write validation CLI", () => {
       "--json"
     ]);
 
-    expect(stderrChunks.join(" ")).toContain("Action: send_message");
+    expect(stderrChunks.join(" ")).toContain("Action 1/5: send_message");
     expect(stderrChunks.join(" ")).toContain("Execute this action?");
     expect(stdoutChunks).toEqual([]);
     expect(

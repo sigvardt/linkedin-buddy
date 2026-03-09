@@ -4,6 +4,7 @@ import type {
 } from "@linkedin-assistant/core";
 import { describe, expect, it } from "vitest";
 import {
+  WriteValidationProgressReporter,
   formatWriteValidationError,
   formatWriteValidationReport,
   resolveWriteValidationOutputMode
@@ -36,6 +37,7 @@ function createReportFixture(
         cleanup_guidance: [],
         completed_at: "2026-03-09T10:00:05.000Z",
         confirm_artifacts: [],
+        duration_ms: 5_000,
         ...(status === "fail"
           ? {
               error_code: "ACTION_PRECONDITION_FAILED",
@@ -84,13 +86,19 @@ function createReportFixture(
     cancelled_count: cancelledCount,
     checked_at: "2026-03-09T10:00:06.000Z",
     cooldown_ms: 10_000,
+    duration_ms: 6_000,
     fail_count: failCount,
+    html_report_path: "/tmp/report.html",
     latest_report_path: "/tmp/latest-report.json",
     outcome,
     pass_count: passCount,
-    recommended_actions: ["Review /tmp/report.json"],
+    recommended_actions: [
+      "Open /tmp/report.html in a browser for the color-coded validation report.",
+      "Review /tmp/report.json"
+    ],
     report_path: "/tmp/report.json",
     run_id: "run_write_validation_test",
+    started_at: "2026-03-09T10:00:00.000Z",
     summary:
       `Checked 1 write-validation actions. ${passCount} passed. ${failCount} failed. ${cancelledCount} cancelled. Overall outcome: ${outcome}.`,
     warning: "This will perform REAL actions on LinkedIn."
@@ -102,30 +110,49 @@ describe("write validation output", () => {
     const output = formatWriteValidationReport(createReportFixture("fail"));
 
     expect(output).toContain("Write Validation FAIL");
+    expect(output).toContain("Overview");
+    expect(output).toContain("Reports");
     expect(output).toContain("Actions");
     expect(output).toContain("send_message");
     expect(output).toContain("error: The approved thread could not be verified.");
+    expect(output).toContain("Report HTML: /tmp/report.html");
     expect(output).toContain("Recommendations");
   });
 
   it("matches the full human-readable write-validation report snapshot", () => {
     expect(formatWriteValidationReport(createReportFixture("fail"))).toMatchInlineSnapshot(`
       "Write Validation FAIL
-      - Account: secondary (secondary)
-      - Warning: This will perform REAL actions on LinkedIn.
-      - Summary: Checked 1 write-validation actions. 0 passed. 1 failed. 0 cancelled. Overall outcome: fail.
+      Account: Secondary [secondary / secondary]
+      Summary: Checked 1 write-validation actions. 0 passed. 1 failed. 0 cancelled. Overall outcome: fail.
+      Run: run_write_validation_test | Started 2026-03-09T10:00:00.000Z | Finished 2026-03-09T10:00:06.000Z | Duration 6.0s
+      Warning: This will perform REAL actions on LinkedIn.
+      
+      Overview
+      - Actions: 0 passed actions | 1 failed action | 0 cancelled actions
+      - Timing: 6.0s total | cooldown 10s
+      - Side effects: 0 actions need cleanup | 1 artifact | 0 warnings
+      - Snapshot: latest /tmp/latest-report.json
+      
+      Reports
+      - Report JSON: /tmp/report.json
+      - Report HTML: /tmp/report.html
       - Audit log: /tmp/events.jsonl
-      - Report: /tmp/report.json
-
+      - Latest snapshot: /tmp/latest-report.json
+      
       Actions
-      - FAIL send_message | unverified | state=n/a | 1 artifact | ACTION_PRECONDITION_FAILED
+      - 1/1 FAIL send_message | private | unverified | state=n/a | 5.0s | 1 artifact | ACTION_PRECONDITION_FAILED
+        summary: Send a message in the approved thread and verify the outbound message appears.
+        expected: The outbound message is echoed in the approved conversation thread.
         target: {"thread_id":"abc123"}
         outbound: {"text":"Quick validation ping • 2026-03-09T10:00:00.000Z"}
-        expected: The outbound message is echoed in the approved conversation thread.
+        started: 2026-03-09T10:00:00.000Z
+        completed: 2026-03-09T10:00:05.000Z
         error: The approved thread could not be verified.
+        artifacts: live-write-validation/send-message-before.png
         before: live-write-validation/send-message-before.png
-
+      
       Recommendations
+      - Open /tmp/report.html in a browser for the color-coded validation report.
       - Review /tmp/report.json"
     `);
   });
@@ -148,7 +175,7 @@ describe("write validation output", () => {
     );
   });
 
-  it("formats validation errors with details and help guidance", () => {
+  it("formats validation errors with details, suggestions, and help guidance", () => {
     const error: LinkedInAssistantErrorPayload = {
       code: "ACTION_PRECONDITION_FAILED",
       details: {
@@ -164,7 +191,9 @@ describe("write validation output", () => {
     expect(output).toContain(
       "Write validation failed [ACTION_PRECONDITION_FAILED]"
     );
+    expect(output).toContain("Suggested fix:");
     expect(output).toContain("account: secondary");
+    expect(output).toContain("docs/write-validation.md");
     expect(output).toContain("linkedin test live --help");
   });
 
@@ -186,15 +215,84 @@ describe("write validation output", () => {
     ).toMatchInlineSnapshot(`
       "Write validation failed [ACTION_PRECONDITION_FAILED]
       Write validation requires typing "yes" for every action.
-
+      Suggested fix: Keep per-action confirmations enabled. The harness intentionally requires typing yes for each real action.
+      
       Details
       - account: secondary
       - prompt: yes
       - reason: operator-declined
-
+      
       Help
-      - Re-run linkedin test live --help for usage and safety guidance."
+      - Re-run linkedin test live --help for usage, safety guidance, and examples.
+      - Review docs/write-validation.md for account setup, approved-target examples, and report details.
+      - Rerun with --json if you need the structured error payload for automation or debugging."
     `);
+  });
+
+  it("renders stable progress updates for long-running write scenarios", () => {
+    const lines: string[] = [];
+    const reporter = new WriteValidationProgressReporter({
+      writeLine(line) {
+        lines.push(line);
+      }
+    });
+
+    reporter.handleLog({
+      event: "write_validation.start",
+      payload: {
+        account_id: "secondary",
+        cooldown_ms: 10_000,
+        timeout_ms: 30_000
+      }
+    });
+    reporter.handleLog({
+      event: "write_validation.action.start",
+      payload: {
+        action_type: "send_message"
+      }
+    });
+    reporter.handleLog({
+      event: "write_validation.action.attempt",
+      payload: {
+        action_type: "send_message",
+        attempt: 1,
+        stage: "prepare"
+      }
+    });
+    reporter.handleLog({
+      event: "write_validation.action.prepared",
+      payload: {
+        action_type: "send_message",
+        retry_count: 0
+      }
+    });
+    reporter.handleLog({
+      event: "write_validation.action.completed",
+      payload: {
+        action_type: "send_message",
+        status: "pass",
+        verified: true,
+        warnings: []
+      }
+    });
+    reporter.handleLog({
+      event: "write_validation.completed",
+      payload: {
+        cancelled_count: 0,
+        fail_count: 0,
+        pass_count: 1,
+        report_path: "/tmp/report.json"
+      }
+    });
+
+    expect(lines).toEqual([
+      "Starting write validation for account secondary (5 actions, cooldown 10s, timeout 30s).",
+      "Running 3/5: send_message — Send a message in the approved thread and verify the outbound message appears.",
+      "3/5 send_message — preparing the approved action...",
+      "Ready 3/5: send_message — preview shown; waiting for yes.",
+      "Finished 3/5: send_message — PASS | verified",
+      "Write validation finished — 1 passed, 0 failed, 0 cancelled. Report: /tmp/report.json"
+    ]);
   });
 
   it("resolves json mode for explicit json and non-tty stdout", () => {

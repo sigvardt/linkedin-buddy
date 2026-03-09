@@ -604,7 +604,7 @@ export function resolveWriteValidationAccount(
 
   throw new LinkedInAssistantError(
     "ACTION_PRECONDITION_FAILED",
-    `No write-validation account named "${normalizedAccountId}" was found. Register it with "owa accounts:add ${normalizedAccountId} --designation secondary --session ${normalizedAccountId}" or update ${registry.configPath}.`,
+    `No write-validation account named "${normalizedAccountId}" was found. Register it with "linkedin accounts add ${normalizedAccountId} --designation secondary --session ${normalizedAccountId}" or update ${registry.configPath}.`,
     {
       account_id: normalizedAccountId,
       config_path: registry.configPath
