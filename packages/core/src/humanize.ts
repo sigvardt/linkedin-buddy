@@ -1,9 +1,22 @@
-import type { Page } from "playwright-core";
+import type { Locator, Page } from "playwright-core";
 
 const QWERTY_KEYBOARD_ROWS = ["1234567890", "qwertyuiop", "asdfghjkl", "zxcvbnm"] as const;
 const QWERTY_ROW_OFFSETS = [0, 0.5, 0.85, 1.35] as const;
 const ADJACENCY_HORIZONTAL_THRESHOLD = 1.1;
 const ADJACENCY_VERTICAL_THRESHOLD = 1.05;
+const DIRECT_INPUT_TIMEOUT_MS = 10_000;
+const FAST_TYPING_TIMEOUT_MS = 20_000;
+const HUMANIZE_LOGGER_KEY = "__linkedinAssistantLogger";
+const MAX_HUMANIZED_DELAY_MS = 10_000;
+const MAX_HUMANIZED_MULTIPLIER = 10;
+const MAX_MOUSE_COORDINATE_ABS = 100_000;
+const MAX_SCROLL_DISTANCE_PX = 20_000;
+const MAX_SELECTOR_LENGTH = 2_048;
+const MAX_SIMULATED_TYPING_GRAPHEMES = 500;
+const MAX_TEXT_GRAPHEMES = 20_000;
+const MAX_TYPING_TIMEOUT_MS = 60_000;
+const MAX_URL_LENGTH = 8_192;
+const MIN_TYPING_TIMEOUT_MS = 5_000;
 const COMMON_BURST_WORDS = new Set([
   "a",
   "an",
@@ -28,6 +41,11 @@ const COMMON_BURST_WORDS = new Set([
   "we",
   "you"
 ]);
+
+const GRAPHEME_SEGMENTER =
+  typeof Intl.Segmenter === "function"
+    ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
+    : null;
 
 export type KeyboardHand = "left" | "right";
 export type KeyboardFinger =
@@ -97,6 +115,8 @@ export interface AdjacentTypoCandidate {
   finger: KeyboardFinger;
 }
 
+type HumanizeLogLevel = "debug" | "info" | "warn" | "error";
+
 interface ResolvedHumanizeOptions {
   baseDelay: number;
   jitterRange: number;
@@ -124,6 +144,25 @@ interface TypingContext {
   isWordCharacter: boolean;
   isWordEnd: boolean;
   isWordStart: boolean;
+}
+
+interface LoggerLike {
+  log(level: HumanizeLogLevel, event: string, payload?: Record<string, unknown>): void;
+}
+
+interface TypingSimulationState {
+  consumedDelayMs: number;
+  maxDurationMs: number;
+  shiftPressed: boolean;
+  timedOut: boolean;
+  timeoutHandle: ReturnType<typeof setTimeout>;
+}
+
+class HumanizeTypingTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "HumanizeTypingTimeoutError";
+  }
 }
 
 const KEY_FINGER_BY_CHARACTER = {
@@ -228,6 +267,343 @@ export const TYPING_PROFILES = {
   }
 } satisfies Record<TypingProfileName, TypingProfile>;
 
+const TYPING_PROFILE_NAMES = Object.keys(TYPING_PROFILES) as TypingProfileName[];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function summarizeError(error: unknown): Record<string, unknown> {
+  if (error instanceof Error) {
+    return {
+      message: error.message,
+      name: error.name
+    };
+  }
+
+  return {
+    value: String(error)
+  };
+}
+
+function getPageLogger(page: Page): LoggerLike | null {
+  const logger = Reflect.get(page as object, HUMANIZE_LOGGER_KEY);
+  if (!isRecord(logger) || typeof logger.log !== "function") {
+    return null;
+  }
+
+  return logger as unknown as LoggerLike;
+}
+
+function logHumanizeEvent(
+  page: Page,
+  level: HumanizeLogLevel,
+  event: string,
+  payload: Record<string, unknown> = {}
+): void {
+  const logger = getPageLogger(page);
+  if (logger) {
+    logger.log(level, event, payload);
+    return;
+  }
+
+  const consoleMethod =
+    level === "error"
+      ? console.error
+      : level === "warn"
+        ? console.warn
+        : level === "info"
+          ? console.info
+          : console.debug;
+
+  consoleMethod(
+    JSON.stringify({
+      component: "humanize",
+      event,
+      level,
+      payload,
+      ts: new Date().toISOString()
+    })
+  );
+}
+
+function assertNonNegativeFiniteNumber(
+  value: unknown,
+  name: string,
+  options?: { max?: number }
+): asserts value is number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new TypeError(`${name} must be a finite number.`);
+  }
+
+  if (value < 0) {
+    throw new RangeError(`${name} must be greater than or equal to 0.`);
+  }
+
+  if (options?.max !== undefined && value > options.max) {
+    throw new RangeError(`${name} must be less than or equal to ${options.max}.`);
+  }
+}
+
+function assertNumberInRange(
+  value: unknown,
+  name: string,
+  min: number,
+  max: number
+): asserts value is number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new TypeError(`${name} must be a finite number.`);
+  }
+
+  if (value < min || value > max) {
+    throw new RangeError(`${name} must be between ${min} and ${max}.`);
+  }
+}
+
+function assertBoolean(value: unknown, name: string): asserts value is boolean {
+  if (typeof value !== "boolean") {
+    throw new TypeError(`${name} must be a boolean.`);
+  }
+}
+
+function assertString(
+  value: unknown,
+  name: string,
+  options?: { allowEmpty?: boolean; maxLength?: number }
+): asserts value is string {
+  if (typeof value !== "string") {
+    throw new TypeError(`${name} must be a string.`);
+  }
+
+  if (!options?.allowEmpty && value.trim().length === 0) {
+    throw new RangeError(`${name} must not be empty.`);
+  }
+
+  if (options?.maxLength !== undefined && value.length > options.maxLength) {
+    throw new RangeError(
+      `${name} must be at most ${options.maxLength} characters long.`
+    );
+  }
+}
+
+function validateDelayRangeValue(value: unknown, name: string): void {
+  if (!isRecord(value)) {
+    throw new TypeError(`${name} must be an object with minMs and maxMs.`);
+  }
+
+  const minMs = value.minMs;
+  const maxMs = value.maxMs;
+  assertNonNegativeFiniteNumber(minMs, `${name}.minMs`, { max: MAX_HUMANIZED_DELAY_MS });
+  assertNonNegativeFiniteNumber(maxMs, `${name}.maxMs`, { max: MAX_HUMANIZED_DELAY_MS });
+
+  if (minMs > maxMs) {
+    throw new RangeError(`${name}.minMs must be less than or equal to ${name}.maxMs.`);
+  }
+}
+
+function validateTypingProfileOverrides(
+  value: unknown,
+  name: string
+): asserts value is Partial<TypingProfile> {
+  if (value === undefined) {
+    return;
+  }
+
+  if (!isRecord(value)) {
+    throw new TypeError(`${name} must be an object.`);
+  }
+
+  const chanceKeys = [
+    "doubleBackspaceRate",
+    "longPauseChance",
+    "shiftMissRate",
+    "thinkingPauseChance",
+    "typoRate"
+  ] as const;
+  for (const key of chanceKeys) {
+    const entry = value[key];
+    if (entry !== undefined) {
+      assertNumberInRange(entry, `${name}.${key}`, 0, 1);
+    }
+  }
+
+  const delayKeys = ["baseCharDelayMs", "charDelayJitterMs"] as const;
+  for (const key of delayKeys) {
+    const entry = value[key];
+    if (entry !== undefined) {
+      assertNonNegativeFiniteNumber(entry, `${name}.${key}`, {
+        max: MAX_HUMANIZED_DELAY_MS
+      });
+    }
+  }
+
+  const multiplierKeys = [
+    "burstWordMultiplier",
+    "midWordMultiplier",
+    "punctuationMultiplier",
+    "repeatedCharacterMultiplier",
+    "whitespaceMultiplier",
+    "wordBoundaryMultiplier"
+  ] as const;
+  for (const key of multiplierKeys) {
+    const entry = value[key];
+    if (entry !== undefined) {
+      assertNonNegativeFiniteNumber(entry, `${name}.${key}`, {
+        max: MAX_HUMANIZED_MULTIPLIER
+      });
+    }
+  }
+
+  const rangeKeys = [
+    "correctionPauseRange",
+    "correctionResumeRange",
+    "longPauseRange",
+    "shiftLeadRange",
+    "thinkingPauseRange"
+  ] as const;
+  for (const key of rangeKeys) {
+    const entry = value[key];
+    if (entry !== undefined) {
+      validateDelayRangeValue(entry, `${name}.${key}`);
+    }
+  }
+}
+
+function validateHumanizeOptionsValue(options: unknown): asserts options is HumanizeOptions {
+  if (options === undefined) {
+    return;
+  }
+
+  if (!isRecord(options)) {
+    throw new TypeError("options must be an object.");
+  }
+
+  if (options.baseDelay !== undefined) {
+    assertNonNegativeFiniteNumber(options.baseDelay, "options.baseDelay", {
+      max: MAX_HUMANIZED_DELAY_MS
+    });
+  }
+
+  if (options.fast !== undefined) {
+    assertBoolean(options.fast, "options.fast");
+  }
+
+  if (options.jitterRange !== undefined) {
+    assertNonNegativeFiniteNumber(options.jitterRange, "options.jitterRange", {
+      max: MAX_HUMANIZED_DELAY_MS
+    });
+  }
+
+  if (options.typingDelay !== undefined) {
+    assertNonNegativeFiniteNumber(options.typingDelay, "options.typingDelay", {
+      max: MAX_HUMANIZED_DELAY_MS
+    });
+  }
+
+  if (options.typingJitter !== undefined) {
+    assertNonNegativeFiniteNumber(options.typingJitter, "options.typingJitter", {
+      max: MAX_HUMANIZED_DELAY_MS
+    });
+  }
+
+  if (
+    options.typingProfile !== undefined &&
+    (typeof options.typingProfile !== "string" ||
+      !TYPING_PROFILE_NAMES.includes(options.typingProfile as TypingProfileName))
+  ) {
+    throw new RangeError(
+      `options.typingProfile must be one of: ${TYPING_PROFILE_NAMES.join(", ")}.`
+    );
+  }
+
+  validateTypingProfileOverrides(
+    options.typingProfileOverrides,
+    "options.typingProfileOverrides"
+  );
+}
+
+function validateHumanizedTypingOptionsValue(
+  options: unknown
+): asserts options is HumanizedTypingOptions {
+  if (options === undefined) {
+    return;
+  }
+
+  if (!isRecord(options)) {
+    throw new TypeError("typing options must be an object.");
+  }
+
+  if (options.profile !== undefined &&
+    (typeof options.profile !== "string" ||
+      !TYPING_PROFILE_NAMES.includes(options.profile as TypingProfileName))) {
+    throw new RangeError(
+      `typing options.profile must be one of: ${TYPING_PROFILE_NAMES.join(", ")}.`
+    );
+  }
+
+  validateTypingProfileOverrides(options.profileOverrides, "typing options.profileOverrides");
+}
+
+function assertPageLike(page: unknown): asserts page is Page {
+  if (!isRecord(page)) {
+    throw new TypeError("page must be a Playwright Page instance.");
+  }
+
+  const requiredFunctions = [
+    "evaluate",
+    "goto",
+    "locator",
+    "waitForLoadState",
+    "waitForTimeout"
+  ] as const;
+  for (const key of requiredFunctions) {
+    if (typeof page[key] !== "function") {
+      throw new TypeError("page must be a Playwright Page instance.");
+    }
+  }
+
+  if (!isRecord(page.keyboard) || !isRecord(page.mouse)) {
+    throw new TypeError("page must provide keyboard and mouse controls.");
+  }
+
+  const keyboardFunctions = ["down", "press", "type", "up"] as const;
+  for (const key of keyboardFunctions) {
+    if (typeof page.keyboard[key] !== "function") {
+      throw new TypeError(`page.keyboard.${key} must be a function.`);
+    }
+  }
+
+  if (typeof page.mouse.move !== "function") {
+    throw new TypeError("page.mouse.move must be a function.");
+  }
+}
+
+function splitTypingCharacters(text: string): string[] {
+  if (text.length === 0) {
+    return [];
+  }
+
+  if (GRAPHEME_SEGMENTER === null) {
+    return Array.from(text);
+  }
+
+  return Array.from(GRAPHEME_SEGMENTER.segment(text), (segment) => segment.segment);
+}
+
+function containsUnicodeCharacters(text: string): boolean {
+  return Array.from(text).some((character) => (character.codePointAt(0) ?? 0) > 0x7f);
+}
+
+function buildTypingLogPayload(text: string, characters: readonly string[]): Record<string, unknown> {
+  return {
+    containsEmoji: /\p{Extended_Pictographic}/u.test(text),
+    containsRtlScript: /[\u0590-\u08FF]/u.test(text),
+    containsUnicode: containsUnicodeCharacters(text),
+    graphemeCount: characters.length,
+    textLength: text.length
+  };
+}
+
 const KEYBOARD_GEOMETRY = createKeyboardGeometry();
 const KEYBOARD_KEYS = Object.values(KEYBOARD_GEOMETRY);
 
@@ -327,11 +703,19 @@ function createWeightedQwertyAdjacencyMap(): Readonly<
 }
 
 function isUppercaseLetter(character: string): boolean {
-  return /^[A-Z]$/.test(character);
+  return /^[A-Z]$/u.test(character);
 }
 
 function isWhitespaceCharacter(character: string | null): boolean {
   return character !== null && /^\s$/u.test(character);
+}
+
+function normalizeContextCharacter(character: string | null): string | null {
+  if (character === null || !isWordCharacter(character)) {
+    return null;
+  }
+
+  return character.normalize("NFC").toLocaleLowerCase();
 }
 
 function normalizeTypingCharacter(character: string | null): string | null {
@@ -343,7 +727,7 @@ function normalizeTypingCharacter(character: string | null): string | null {
 }
 
 function isWordCharacter(character: string | null): boolean {
-  return normalizeTypingCharacter(character) !== null;
+  return character !== null && /[\p{L}\p{N}]/u.test(character);
 }
 
 function applyCharacterCase(candidate: string, intendedCharacter: string): string {
@@ -351,7 +735,13 @@ function applyCharacterCase(candidate: string, intendedCharacter: string): strin
 }
 
 export function getAdjacentTypoCandidates(character: string): readonly AdjacentTypoCandidate[] {
-  const normalizedCharacter = normalizeTypingCharacter(character);
+  assertString(character, "character", { allowEmpty: true });
+  const characters = splitTypingCharacters(character);
+  if (characters.length !== 1) {
+    return [];
+  }
+
+  const normalizedCharacter = normalizeTypingCharacter(characters[0] ?? null);
   if (normalizedCharacter === null) {
     return [];
   }
@@ -363,13 +753,18 @@ export function pickAdjacentTypoCharacter(
   character: string,
   randomValue = Math.random()
 ): string | null {
+  assertString(character, "character", { allowEmpty: true });
   const candidates = getAdjacentTypoCandidates(character);
   if (candidates.length === 0) {
     return null;
   }
 
   const totalWeight = candidates.reduce((sum, candidate) => sum + candidate.weight, 0);
-  const clampedRandom = Math.max(0, Math.min(randomValue, 0.999999));
+  const normalizedRandomValue =
+    typeof randomValue === "number" && Number.isFinite(randomValue)
+      ? randomValue
+      : 0.999999;
+  const clampedRandom = Math.max(0, Math.min(normalizedRandomValue, 0.999999));
   let remainingWeight = clampedRandom * totalWeight;
 
   for (const candidate of candidates) {
@@ -387,6 +782,9 @@ export class HumanizedPage {
   private readonly options: ResolvedHumanizeOptions;
 
   constructor(page: Page, options?: HumanizeOptions) {
+    assertPageLike(page);
+    validateHumanizeOptionsValue(options);
+
     const fast = options?.fast ?? false;
     this.page = page;
     this.options = {
@@ -407,9 +805,15 @@ export class HumanizedPage {
 
   /** Random delay with jitter */
   async delay(baseMs?: number): Promise<void> {
+    if (baseMs !== undefined) {
+      assertNonNegativeFiniteNumber(baseMs, "baseMs", {
+        max: MAX_HUMANIZED_DELAY_MS
+      });
+    }
+
     const base = baseMs ?? this.options.baseDelay;
     const jitter = this.options.jitterRange > 0 ? Math.random() * this.options.jitterRange : 0;
-    await this.page.waitForTimeout(base + jitter);
+    await this.waitForDelay(base + jitter, "humanize.delay");
   }
 
   /** Navigate to URL with human-like pre/post delays */
@@ -417,6 +821,19 @@ export class HumanizedPage {
     url: string,
     options?: { waitUntil?: "domcontentloaded" | "networkidle" | "load" }
   ): Promise<void> {
+    assertString(url, "url", { maxLength: MAX_URL_LENGTH });
+    if (options !== undefined && !isRecord(options)) {
+      throw new TypeError("options must be an object.");
+    }
+    if (
+      options?.waitUntil !== undefined &&
+      !["domcontentloaded", "networkidle", "load"].includes(options.waitUntil)
+    ) {
+      throw new RangeError(
+        "options.waitUntil must be one of: domcontentloaded, networkidle, load."
+      );
+    }
+
     await this.delay(300);
     await this.page.goto(url, { waitUntil: options?.waitUntil ?? "domcontentloaded" });
     await this.delay(600);
@@ -424,6 +841,7 @@ export class HumanizedPage {
 
   /** Scroll element into view with smooth scrolling */
   async scrollIntoView(selector: string): Promise<void> {
+    this.validateSelector(selector);
     const element = this.page.locator(selector).first();
     await element.scrollIntoViewIfNeeded();
     await this.delay(200);
@@ -431,6 +849,10 @@ export class HumanizedPage {
 
   /** Smooth scroll down by a random amount */
   async scrollDown(pixels?: number): Promise<void> {
+    if (pixels !== undefined) {
+      assertNonNegativeFiniteNumber(pixels, "pixels", { max: MAX_SCROLL_DISTANCE_PX });
+    }
+
     const amount = pixels ?? (300 + Math.random() * 500);
     await this.page.evaluate((scrollAmount) => {
       globalThis.scrollBy({ top: scrollAmount, behavior: "smooth" });
@@ -440,6 +862,9 @@ export class HumanizedPage {
 
   /** Move mouse toward a position with slight randomness, then pause */
   async moveMouseNear(x: number, y: number): Promise<void> {
+    assertNumberInRange(x, "x", -MAX_MOUSE_COORDINATE_ABS, MAX_MOUSE_COORDINATE_ABS);
+    assertNumberInRange(y, "y", -MAX_MOUSE_COORDINATE_ABS, MAX_MOUSE_COORDINATE_ABS);
+
     const offsetX = (Math.random() - 0.5) * 10;
     const offsetY = (Math.random() - 0.5) * 10;
     await this.page.mouse.move(x + offsetX, y + offsetY, {
@@ -450,6 +875,7 @@ export class HumanizedPage {
 
   /** Click a selector with human-like behavior: scroll into view, brief pause, click */
   async click(selector: string): Promise<void> {
+    this.validateSelector(selector);
     const element = this.page.locator(selector).first();
     await element.scrollIntoViewIfNeeded();
     await this.delay(200);
@@ -476,45 +902,109 @@ export class HumanizedPage {
     text: string,
     options?: HumanizedTypingOptions
   ): Promise<void> {
-    const element = this.page.locator(selector).first();
-    await element.scrollIntoViewIfNeeded();
-    await this.delay(200);
-    await element.click();
-    await this.delay(150);
+    this.validateSelector(selector);
+    assertString(text, "text", { allowEmpty: true });
+    validateHumanizedTypingOptionsValue(options);
 
-    const characters = Array.from(text);
-    const contexts = this.buildTypingContexts(characters);
-    const profile = this.resolveTypingProfile(options);
-    let previousCommittedCharacter: string | null = null;
-
-    for (const [index, character] of characters.entries()) {
-      const context = contexts[index];
-      if (!context) {
-        continue;
-      }
-
-      await this.maybePauseBeforeCharacter(characters.length, index, context, profile);
-
-      const missedShift =
-        isUppercaseLetter(character) && this.shouldTrigger(profile.shiftMissRate);
-      const mistypedCharacter = missedShift
-        ? character.toLowerCase()
-        : this.chooseTypoCharacter(character, profile);
-
-      if (mistypedCharacter === null) {
-        await this.typeLiteralCharacter(character, profile);
-      } else {
-        await this.typeLiteralCharacter(mistypedCharacter, profile);
-        await this.correctCharacter(character, previousCommittedCharacter, profile, {
-          allowDoubleBackspace: !missedShift
-        });
-      }
-
-      previousCommittedCharacter = character;
-      await this.page.waitForTimeout(this.computeCharacterDelay(context, profile));
+    const characters = splitTypingCharacters(text);
+    if (characters.length > MAX_TEXT_GRAPHEMES) {
+      throw new RangeError(
+        `text must be at most ${MAX_TEXT_GRAPHEMES} Unicode graphemes long.`
+      );
     }
 
-    await this.delay(200);
+    const element = this.page.locator(selector).first();
+    const profile = this.resolveTypingProfile(options);
+
+    try {
+      await element.scrollIntoViewIfNeeded();
+      await this.delay(200);
+      await element.click();
+      await this.delay(150);
+
+      if (characters.length === 0) {
+        await this.delay(200);
+        return;
+      }
+
+      if (characters.length > MAX_SIMULATED_TYPING_GRAPHEMES) {
+        const degraded = await this.tryDirectInput(
+          element,
+          text,
+          characters,
+          "text_too_long"
+        );
+        if (!degraded) {
+          throw new HumanizeTypingTimeoutError(
+            "Typing simulation exceeded the maximum safe text length and direct input fallback failed."
+          );
+        }
+
+        await this.delay(200);
+        return;
+      }
+
+      const contexts = this.buildTypingContexts(characters);
+      const state = this.createTypingSimulationState(characters.length);
+      let previousCommittedCharacter: string | null = null;
+
+      try {
+        for (const [index, character] of characters.entries()) {
+          const context = contexts[index];
+          if (!context) {
+            continue;
+          }
+
+          await this.maybePauseBeforeCharacter(
+            characters.length,
+            index,
+            context,
+            profile,
+            state
+          );
+
+          const missedShift =
+            isUppercaseLetter(character) && this.shouldTrigger(profile.shiftMissRate);
+          const mistypedCharacter = missedShift
+            ? character.toLowerCase()
+            : this.chooseTypoCharacter(character, profile);
+
+          if (mistypedCharacter === null) {
+            await this.typeLiteralCharacter(character, profile, state);
+          } else {
+            await this.typeLiteralCharacter(mistypedCharacter, profile, state);
+            await this.correctCharacter(character, previousCommittedCharacter, profile, state, {
+              allowDoubleBackspace: !missedShift
+            });
+          }
+
+          previousCommittedCharacter = character;
+          await this.waitForTypingDelay(
+            this.computeCharacterDelay(context, profile),
+            state,
+            "humanize.typing.inter_character"
+          );
+        }
+      } finally {
+        await this.clearTypingSimulationState(state);
+      }
+
+      await this.delay(200);
+    } catch (error) {
+      const degraded = await this.tryDirectInput(
+        element,
+        text,
+        characters,
+        error instanceof HumanizeTypingTimeoutError ? "timeout" : "simulation_failed",
+        error
+      );
+      if (degraded) {
+        await this.delay(200);
+        return;
+      }
+
+      throw error;
+    }
   }
 
   /** Wait for load with human-like additional delay after DOM is ready */
@@ -528,7 +1018,163 @@ export class HumanizedPage {
     const idleTime = this.options.fast
       ? 200 + Math.random() * 300
       : 1000 + Math.random() * 3000;
-    await this.page.waitForTimeout(idleTime);
+    await this.waitForDelay(idleTime, "humanize.idle");
+  }
+
+  private validateSelector(selector: string): void {
+    assertString(selector, "selector", { maxLength: MAX_SELECTOR_LENGTH });
+  }
+
+  private clampDelay(delayMs: number, event: string): number {
+    if (!Number.isFinite(delayMs) || delayMs <= 0) {
+      return 0;
+    }
+
+    if (delayMs > MAX_HUMANIZED_DELAY_MS) {
+      logHumanizeEvent(this.page, "warn", "humanize.delay.clamped", {
+        clampedToMs: MAX_HUMANIZED_DELAY_MS,
+        delayMs,
+        event
+      });
+      return MAX_HUMANIZED_DELAY_MS;
+    }
+
+    return delayMs;
+  }
+
+  private async waitForDelay(delayMs: number, event: string): Promise<void> {
+    const boundedDelayMs = this.clampDelay(delayMs, event);
+    if (boundedDelayMs > 0) {
+      await this.page.waitForTimeout(boundedDelayMs);
+    }
+  }
+
+  private getTypingTimeoutMs(totalCharacters: number): number {
+    const perCharacterBudgetMs = this.options.fast ? 80 : 180;
+    const computedTimeoutMs = Math.max(
+      MIN_TYPING_TIMEOUT_MS,
+      totalCharacters * perCharacterBudgetMs
+    );
+
+    return Math.min(
+      this.options.fast ? FAST_TYPING_TIMEOUT_MS : MAX_TYPING_TIMEOUT_MS,
+      computedTimeoutMs
+    );
+  }
+
+  private createTypingSimulationState(totalCharacters: number): TypingSimulationState {
+    const maxDurationMs = this.getTypingTimeoutMs(totalCharacters);
+    const state: TypingSimulationState = {
+      consumedDelayMs: 0,
+      maxDurationMs,
+      shiftPressed: false,
+      timedOut: false,
+      timeoutHandle: setTimeout(() => {
+        state.timedOut = true;
+      }, maxDurationMs)
+    };
+    state.timeoutHandle.unref?.();
+
+    return state;
+  }
+
+  private async clearTypingSimulationState(state: TypingSimulationState): Promise<void> {
+    clearTimeout(state.timeoutHandle);
+
+    if (!state.shiftPressed) {
+      return;
+    }
+
+    try {
+      await this.page.keyboard.up("Shift");
+    } catch (error) {
+      logHumanizeEvent(this.page, "warn", "humanize.typing.cleanup_failed", {
+        error: summarizeError(error)
+      });
+    } finally {
+      state.shiftPressed = false;
+    }
+  }
+
+  private assertTypingWithinBounds(state: TypingSimulationState): void {
+    if (!state.timedOut && state.consumedDelayMs <= state.maxDurationMs) {
+      return;
+    }
+
+    throw new HumanizeTypingTimeoutError(
+      `Typing simulation exceeded the ${state.maxDurationMs}ms safety budget.`
+    );
+  }
+
+  private async waitForTypingDelay(
+    delayMs: number,
+    state: TypingSimulationState,
+    event: string
+  ): Promise<void> {
+    const boundedDelayMs = this.clampDelay(delayMs, event);
+    this.assertTypingWithinBounds(state);
+
+    if (state.consumedDelayMs + boundedDelayMs > state.maxDurationMs) {
+      throw new HumanizeTypingTimeoutError(
+        `Typing simulation exceeded the ${state.maxDurationMs}ms safety budget.`
+      );
+    }
+
+    state.consumedDelayMs += boundedDelayMs;
+    if (boundedDelayMs > 0) {
+      await this.page.waitForTimeout(boundedDelayMs);
+    }
+    this.assertTypingWithinBounds(state);
+  }
+
+  private async applyDirectInput(element: Locator, text: string): Promise<string> {
+    if (typeof element.fill === "function") {
+      await element.fill(text, { timeout: DIRECT_INPUT_TIMEOUT_MS });
+      return "fill";
+    }
+
+    try {
+      await this.page.keyboard.press("ControlOrMeta+A");
+    } catch {
+      // Best-effort selection for non-fill fallbacks.
+    }
+
+    if (typeof this.page.keyboard.insertText === "function") {
+      await this.page.keyboard.insertText(text);
+      return "insertText";
+    }
+
+    await this.page.keyboard.type(text, { delay: 0 });
+    return "type";
+  }
+
+  private async tryDirectInput(
+    element: Locator,
+    text: string,
+    characters: readonly string[],
+    reason: string,
+    error?: unknown
+  ): Promise<boolean> {
+    const payload = {
+      ...buildTypingLogPayload(text, characters),
+      ...(error === undefined ? {} : { error: summarizeError(error) }),
+      reason
+    };
+
+    try {
+      const method = await this.applyDirectInput(element, text);
+      logHumanizeEvent(this.page, "warn", "humanize.typing.degraded", {
+        ...payload,
+        method
+      });
+      return true;
+    } catch (fallbackError) {
+      logHumanizeEvent(this.page, "error", "humanize.typing.fallback_failed", {
+        ...payload,
+        fallbackError: summarizeError(fallbackError)
+      });
+      return false;
+    }
   }
 
   private resolveTypingProfile(options?: HumanizedTypingOptions): TypingProfile {
@@ -555,8 +1201,8 @@ export class HumanizedPage {
       const previous = index > 0 ? characters[index - 1] ?? null : null;
       const previousMeaningful = this.findPreviousMeaningfulCharacter(characters, index - 1);
       const next = index < characters.length - 1 ? characters[index + 1] ?? null : null;
-      const normalizedCurrent = normalizeTypingCharacter(current);
-      const normalizedPrevious = normalizeTypingCharacter(previous);
+      const normalizedCurrent = normalizeContextCharacter(current);
+      const normalizedPrevious = normalizeContextCharacter(previous);
       const currentIsWordCharacter = normalizedCurrent !== null;
 
       return {
@@ -666,7 +1312,8 @@ export class HumanizedPage {
     totalCharacters: number,
     characterIndex: number,
     context: TypingContext,
-    profile: TypingProfile
+    profile: TypingProfile,
+    state: TypingSimulationState
   ): Promise<void> {
     if (totalCharacters < 5 || characterIndex === 0 || !context.isWordStart) {
       return;
@@ -674,7 +1321,11 @@ export class HumanizedPage {
 
     const longPauseEligible = totalCharacters >= 15 && context.isSentenceRestart;
     if (longPauseEligible && this.shouldTrigger(profile.longPauseChance)) {
-      await this.page.waitForTimeout(this.sampleRange(profile.longPauseRange));
+      await this.waitForTypingDelay(
+        this.sampleRange(profile.longPauseRange),
+        state,
+        "humanize.typing.long_pause"
+      );
       return;
     }
 
@@ -682,7 +1333,11 @@ export class HumanizedPage {
     const chanceBoost = previousCharacter !== null && /[,;:]/u.test(previousCharacter) ? 1.35 : 1;
     const pauseChance = Math.min(1, profile.thinkingPauseChance * chanceBoost);
     if (this.shouldTrigger(pauseChance)) {
-      await this.page.waitForTimeout(this.sampleRange(profile.thinkingPauseRange));
+      await this.waitForTypingDelay(
+        this.sampleRange(profile.thinkingPauseRange),
+        state,
+        "humanize.typing.thinking_pause"
+      );
     }
   }
 
@@ -690,9 +1345,14 @@ export class HumanizedPage {
     intendedCharacter: string,
     previousCommittedCharacter: string | null,
     profile: TypingProfile,
+    state: TypingSimulationState,
     options: { allowDoubleBackspace: boolean }
   ): Promise<void> {
-    await this.page.waitForTimeout(this.sampleRange(profile.correctionPauseRange));
+    await this.waitForTypingDelay(
+      this.sampleRange(profile.correctionPauseRange),
+      state,
+      "humanize.typing.correction_pause"
+    );
     await this.page.keyboard.press("Backspace");
 
     const shouldDoubleBackspace =
@@ -705,18 +1365,23 @@ export class HumanizedPage {
       await this.page.keyboard.press("Backspace");
     }
 
-    await this.page.waitForTimeout(this.sampleRange(profile.correctionResumeRange));
+    await this.waitForTypingDelay(
+      this.sampleRange(profile.correctionResumeRange),
+      state,
+      "humanize.typing.correction_resume"
+    );
 
     if (shouldDoubleBackspace && previousCommittedCharacter !== null) {
-      await this.typeLiteralCharacter(previousCommittedCharacter, profile);
+      await this.typeLiteralCharacter(previousCommittedCharacter, profile, state);
     }
 
-    await this.typeLiteralCharacter(intendedCharacter, profile);
+    await this.typeLiteralCharacter(intendedCharacter, profile, state);
   }
 
   private async typeLiteralCharacter(
     character: string,
-    profile: TypingProfile
+    profile: TypingProfile,
+    state?: TypingSimulationState
   ): Promise<void> {
     if (character.length === 0) {
       return;
@@ -725,12 +1390,29 @@ export class HumanizedPage {
     if (isUppercaseLetter(character)) {
       const shiftLeadDelay = this.sampleRange(profile.shiftLeadRange);
       if (shiftLeadDelay > 0) {
-        await this.page.waitForTimeout(shiftLeadDelay);
+        if (state) {
+          await this.waitForTypingDelay(
+            shiftLeadDelay,
+            state,
+            "humanize.typing.shift_lead"
+          );
+        } else {
+          await this.waitForDelay(shiftLeadDelay, "humanize.typing.shift_lead");
+        }
       }
 
       await this.page.keyboard.down("Shift");
-      await this.page.keyboard.press(character.toLowerCase());
-      await this.page.keyboard.up("Shift");
+      if (state) {
+        state.shiftPressed = true;
+      }
+      try {
+        await this.page.keyboard.press(character.toLowerCase());
+      } finally {
+        await this.page.keyboard.up("Shift");
+        if (state) {
+          state.shiftPressed = false;
+        }
+      }
       return;
     }
 
