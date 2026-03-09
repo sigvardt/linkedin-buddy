@@ -1,7 +1,13 @@
 import type { LinkedInAssistantErrorPayload } from "@linkedin-assistant/core";
 
+/**
+ * Output mode used by the keepalive CLI formatters.
+ */
 export type KeepAliveOutputMode = "human" | "json";
 
+/**
+ * Saved keepalive daemon state as read from the profile state file.
+ */
 export interface KeepAliveStateView {
   pid: number;
   profileName: string;
@@ -25,11 +31,17 @@ export interface KeepAliveStateView {
   stoppedAt?: string;
 }
 
+/**
+ * Recent keepalive event-log entry surfaced in status output.
+ */
 export interface KeepAliveRecentEvent extends Record<string, unknown> {
   ts: string;
   event: string;
 }
 
+/**
+ * Normalized payload rendered by `linkedin keepalive status`.
+ */
 export interface KeepAliveStatusReport {
   profile_name: string;
   running: boolean;
@@ -41,6 +53,9 @@ export interface KeepAliveStatusReport {
   recent_events: KeepAliveRecentEvent[];
 }
 
+/**
+ * Normalized payload rendered by `linkedin keepalive start`.
+ */
 export interface KeepAliveStartReport {
   started: boolean;
   reason?: string;
@@ -52,6 +67,9 @@ export interface KeepAliveStartReport {
   recovered_stale_pid?: boolean;
 }
 
+/**
+ * Normalized payload rendered by `linkedin keepalive stop`.
+ */
 export interface KeepAliveStopReport {
   stopped: boolean;
   profile_name: string;
@@ -63,6 +81,9 @@ export interface KeepAliveStopReport {
   log_path: string;
 }
 
+/**
+ * Formatting toggles for human-readable keepalive output.
+ */
 export interface KeepAliveFormatOptions {
   quiet?: boolean;
   verbose?: boolean;
@@ -428,6 +449,10 @@ function formatErrorNextSteps(error: LinkedInAssistantErrorPayload): string[] {
   }
 }
 
+/**
+ * Chooses human-readable output on interactive terminals unless JSON is
+ * requested explicitly.
+ */
 export function resolveKeepAliveOutputMode(
   input: { json?: boolean },
   interactiveTerminal: boolean
@@ -439,6 +464,10 @@ export function resolveKeepAliveOutputMode(
   return interactiveTerminal ? "human" : "json";
 }
 
+/**
+ * Formats a keepalive status report for either operator-facing CLI output or
+ * structured automation output.
+ */
 export function formatKeepAliveStatusReport(
   report: KeepAliveStatusReport,
   options: KeepAliveFormatOptions = {}
@@ -546,6 +575,9 @@ export function formatKeepAliveStatusReport(
   return lines.join("\n");
 }
 
+/**
+ * Formats the result of a keepalive daemon start attempt.
+ */
 export function formatKeepAliveStartReport(
   report: KeepAliveStartReport,
   options: KeepAliveFormatOptions = {}
@@ -612,6 +644,9 @@ export function formatKeepAliveStartReport(
   return lines.join("\n");
 }
 
+/**
+ * Formats the result of a keepalive daemon stop attempt.
+ */
 export function formatKeepAliveStopReport(
   report: KeepAliveStopReport,
   options: KeepAliveFormatOptions = {}
@@ -659,6 +694,10 @@ export function formatKeepAliveStopReport(
   return lines.join("\n");
 }
 
+/**
+ * Formats a keepalive CLI error with operator guidance for human-readable
+ * output.
+ */
 export function formatKeepAliveError(
   error: LinkedInAssistantErrorPayload,
   options: Pick<KeepAliveFormatOptions, "quiet"> = {}

@@ -19,6 +19,9 @@ import {
   type LinkedInSessionInspection
 } from "./sessionInspection.js";
 
+/**
+ * Playwright storage-state snapshot used for LinkedIn session persistence.
+ */
 export type LinkedInBrowserStorageState = Awaited<
   ReturnType<BrowserContext["storageState"]>
 >;
@@ -39,6 +42,10 @@ const LINKEDIN_AUTH_COOKIE_NAMES = new Set([
 
 type StorageStateCookie = LinkedInBrowserStorageState["cookies"][number];
 
+/**
+ * Redacted metadata describing the LinkedIn authentication cookies present in a
+ * captured storage-state snapshot.
+ */
 export interface LinkedInSessionCookieMetadata {
   name: string;
   domain: string;
@@ -74,6 +81,10 @@ function toCookieExpiresAt(expires: number): string | null {
   return new Date(expires * 1_000).toISOString();
 }
 
+/**
+ * Extracts the LinkedIn authentication cookies from a storage-state snapshot
+ * and returns them ordered by expiry.
+ */
 export function summarizeLinkedInSessionCookies(
   cookies: readonly StorageStateCookie[],
   options: { nowMs?: number } = {}
@@ -110,6 +121,10 @@ export function summarizeLinkedInSessionCookies(
     });
 }
 
+/**
+ * Computes a stable fingerprint for the LinkedIn authentication cookies in a
+ * storage-state snapshot.
+ */
 export function getLinkedInSessionFingerprint(
   storageState: Pick<LinkedInBrowserStorageState, "cookies">
 ): string {
@@ -136,6 +151,10 @@ export function getLinkedInSessionFingerprint(
     .digest("hex");
 }
 
+/**
+ * Restores the LinkedIn cookies from a storage-state snapshot into an existing
+ * Playwright browser context.
+ */
 export async function restoreLinkedInSessionCookies(
   context: BrowserContext,
   storageState: LinkedInBrowserStorageState
@@ -172,6 +191,9 @@ interface StoredLinkedInSessionMetadataRecord {
   sessionCookies?: LinkedInSessionCookieMetadata[];
 }
 
+/**
+ * Metadata returned when a stored LinkedIn session snapshot is saved or loaded.
+ */
 export interface StoredLinkedInSessionMetadata {
   capturedAt: string;
   cookieCount: number;
@@ -184,26 +206,41 @@ export interface StoredLinkedInSessionMetadata {
   sessionCookies?: LinkedInSessionCookieMetadata[];
 }
 
+/**
+ * Result returned by `LinkedInSessionStore.load()`.
+ */
 export interface LoadStoredLinkedInSessionResult {
   metadata: StoredLinkedInSessionMetadata;
   storageState: LinkedInBrowserStorageState;
 }
 
+/**
+ * Options for snapshot rotation when saving a LinkedIn session.
+ */
 export interface SaveStoredLinkedInSessionOptions {
   maxBackups?: number;
 }
 
+/**
+ * Options controlling restore fallback behavior.
+ */
 export interface RestoreStoredLinkedInSessionOptions {
   allowExpired?: boolean;
   maxBackups?: number;
 }
 
+/**
+ * Result returned when a stored LinkedIn session snapshot is restored.
+ */
 export interface RestoreStoredLinkedInSessionResult
   extends LoadStoredLinkedInSessionResult {
   restoredFromBackup: boolean;
   restoredSessionName: string;
 }
 
+/**
+ * Options for the interactive manual-login capture helper.
+ */
 export interface CaptureLinkedInSessionOptions {
   baseDir?: string;
   pollIntervalMs?: number;
@@ -211,6 +248,10 @@ export interface CaptureLinkedInSessionOptions {
   timeoutMs?: number;
 }
 
+/**
+ * Result returned by `captureLinkedInSession()` after a successful manual login
+ * capture.
+ */
 export interface CaptureLinkedInSessionResult
   extends StoredLinkedInSessionMetadata {
   authenticated: true;
@@ -566,10 +607,16 @@ function validateStorageState(
   return value as LinkedInBrowserStorageState;
 }
 
+/**
+ * Resolves the directory that stores encrypted LinkedIn session snapshots.
+ */
 export function resolveLinkedInSessionStoreDir(baseDir?: string): string {
   return path.join(resolveConfigPaths(baseDir).profilesDir, "stored-sessions");
 }
 
+/**
+ * Resolves the encrypted on-disk file path for a named stored LinkedIn session.
+ */
 export function resolveStoredLinkedInSessionPath(
   sessionName: string = "default",
   baseDir?: string
@@ -581,13 +628,27 @@ export function resolveStoredLinkedInSessionPath(
   );
 }
 
+/**
+ * Encrypts, rotates, loads, and restores named LinkedIn session snapshots.
+ */
 export class LinkedInSessionStore {
+  /**
+   * Creates a session store rooted in the default tool home or a custom base
+   * directory.
+   */
   constructor(private readonly baseDir?: string) {}
 
+  /**
+   * Returns the encrypted session file path for the provided session name.
+   */
   getSessionPath(sessionName: string = "default"): string {
     return resolveStoredLinkedInSessionPath(sessionName, this.baseDir);
   }
 
+  /**
+   * Saves the provided storage-state snapshot as the primary encrypted session
+   * file for `sessionName`.
+   */
   async save(
     sessionName: string,
     storageState: LinkedInBrowserStorageState
@@ -629,6 +690,10 @@ export class LinkedInSessionStore {
     return metadata;
   }
 
+  /**
+   * Saves a session snapshot and rotates older copies into numbered backup
+   * slots.
+   */
   async saveWithBackups(
     sessionName: string,
     storageState: LinkedInBrowserStorageState,
@@ -667,6 +732,9 @@ export class LinkedInSessionStore {
     return this.save(normalizedSessionName, storageState);
   }
 
+  /**
+   * Returns whether an encrypted session snapshot exists for `sessionName`.
+   */
   async exists(sessionName: string = "default"): Promise<boolean> {
     try {
       await readFile(this.getSessionPath(sessionName), "utf8");
@@ -679,6 +747,9 @@ export class LinkedInSessionStore {
     }
   }
 
+  /**
+   * Loads and decrypts a named stored LinkedIn session snapshot.
+   */
   async load(sessionName: string = "default"): Promise<LoadStoredLinkedInSessionResult> {
     const normalizedSessionName = normalizeSessionName(sessionName);
     const filePath = this.getSessionPath(normalizedSessionName);
@@ -740,6 +811,10 @@ export class LinkedInSessionStore {
     };
   }
 
+  /**
+   * Loads the newest usable stored session, falling back through backups when
+   * needed.
+   */
   async loadLatestAvailable(
     sessionName: string = "default",
     options: RestoreStoredLinkedInSessionOptions = {}
@@ -794,6 +869,10 @@ export class LinkedInSessionStore {
     );
   }
 
+  /**
+   * Restores the latest usable stored session snapshot into an existing
+   * Playwright browser context.
+   */
   async restoreToContext(
     context: BrowserContext,
     sessionName: string = "default",
@@ -874,6 +953,10 @@ async function waitForManualLogin(
   return lastStatus;
 }
 
+/**
+ * Opens a visible Chromium browser, waits for a manual LinkedIn login, and
+ * persists the resulting authenticated session snapshot.
+ */
 export async function captureLinkedInSession(
   options: CaptureLinkedInSessionOptions = {}
 ): Promise<CaptureLinkedInSessionResult> {

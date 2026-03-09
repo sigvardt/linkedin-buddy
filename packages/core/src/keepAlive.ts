@@ -96,6 +96,10 @@ interface SessionRestoreAttempt {
   successMetadata: Record<string, unknown>;
 }
 
+/**
+ * Structured event kinds emitted by `SessionKeepAliveService` as it monitors
+ * and recovers a LinkedIn browser session.
+ */
 export type KeepAliveEventType =
   | "healthy"
   | "session-expired"
@@ -119,6 +123,9 @@ export type KeepAliveEventType =
   | "tab-cleanup"
   | "warmup";
 
+/**
+ * Structured keepalive event emitted on the `health-event` channel.
+ */
 export interface KeepAliveEvent {
   type: KeepAliveEventType;
   timestamp: string;
@@ -128,6 +135,9 @@ export interface KeepAliveEvent {
   metadata?: Record<string, unknown>;
 }
 
+/**
+ * Thresholds that raise operator-visible keepalive alerts.
+ */
 export interface KeepAliveAlertThresholds {
   cookieExpiringWithinMs?: number;
   reconnectsInWindow?: {
@@ -136,6 +146,9 @@ export interface KeepAliveAlertThresholds {
   };
 }
 
+/**
+ * Rolling health and recovery metrics exposed by `SessionKeepAliveService`.
+ */
 export interface KeepAliveMetrics {
   activeAlerts: string[];
   authenticated: boolean;
@@ -161,6 +174,27 @@ export interface KeepAliveMetrics {
   startedAt?: string;
 }
 
+/**
+ * Configuration for `SessionKeepAliveService`.
+ *
+ * Defaults:
+ * - `activityEveryHealthyTicks`: `3`
+ * - `activitySimulationEnabled`: `true`
+ * - `cookieRefreshLeadMs`: session-cookie warning threshold from
+ *   `checkFullHealth()`
+ * - `idleWarmupThresholdMs`: `14400000`
+ * - `intervalMs`: `300000`
+ * - `jitterMs`: `30000`
+ * - `maxBackupSessions`: `3`
+ * - `maxConsecutiveFailures`: `5`
+ * - `maxHealthLogEntries`: `200` (minimum `10`)
+ * - `networkGracePeriodMs`: `300000`
+ * - `networkRetryIntervalMs`: `30000`
+ * - `nightActivityEveryHealthyTicks`: `6`
+ * - `nightHours`: `00:00`-`06:00`
+ * - `sessionName`: `default`
+ * - `sessionRefreshEnabled`: `true`
+ */
 export interface KeepAliveOptions {
   activityEveryHealthyTicks?: number;
   activitySimulationEnabled?: boolean;
@@ -642,6 +676,14 @@ async function navigateToKeepAlivePage(page: Page, url: string): Promise<void> {
   await page.goto(url, KEEP_ALIVE_PAGE_GOTO_OPTIONS);
 }
 
+/**
+ * Coordinates periodic LinkedIn health checks, low-risk background activity,
+ * session snapshot persistence, and recovery attempts for a CDP-attached
+ * browser session.
+ *
+ * Emits high-level events such as `healthy`, `session-expired`,
+ * `browser-disconnected`, `health-event`, and `error`.
+ */
 export class SessionKeepAliveService extends EventEmitter {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private running = false;
@@ -767,6 +809,9 @@ export class SessionKeepAliveService extends EventEmitter {
     this.sessionStore = normalizeSessionStore(options.sessionStore);
   }
 
+  /**
+   * Starts the keepalive loop. Calling this while already running is a no-op.
+   */
   start(): void {
     if (this.running) {
       return;
@@ -789,24 +834,39 @@ export class SessionKeepAliveService extends EventEmitter {
     this.scheduleNextTick(this.generation);
   }
 
+  /**
+   * Stops future keepalive ticks and invalidates any in-flight generation.
+   */
   stop(): void {
     this.generation += 1;
     this.clearTimer();
     this.running = false;
   }
 
+  /**
+   * Returns whether the keepalive loop is currently running.
+   */
   isRunning(): boolean {
     return this.running;
   }
 
+  /**
+   * Returns the current consecutive-failure count.
+   */
   getConsecutiveFailures(): number {
     return this.consecutiveFailures;
   }
 
+  /**
+   * Returns a defensive copy of the in-memory health-event log.
+   */
   getHealthLog(): KeepAliveEvent[] {
     return [...this.eventLog];
   }
 
+  /**
+   * Returns the latest derived keepalive metrics and active alerts.
+   */
   getMetrics(): KeepAliveMetrics {
     void this.getRateLimitDelayMs();
 

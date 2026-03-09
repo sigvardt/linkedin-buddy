@@ -5810,16 +5810,17 @@ export function createCliProgram(): Command {
   const keepAliveCommand = program
     .command("keepalive")
     .description(
-      "Manage the local session keepalive daemon that records background LinkedIn health checks"
+      "Manage the local session keepalive daemon that records background LinkedIn health checks to disk"
     )
     .addHelpText(
       "after",
       [
         "",
-        "Interactive terminals default to human-readable keepalive summaries.",
+        "Interactive terminals default to human-readable keepalive summaries; non-interactive runs default to JSON.",
         "Use --json for automation or to inspect the structured daemon state directly.",
-        "Use --verbose for recent daemon events and extra session diagnostics.",
+        "Use --verbose for recent daemon events, saved diagnostics, and extra recovery context.",
         "Use --quiet for a concise human summary and to suppress progress notices.",
+        "Status keeps showing the last saved state after the daemon stops, so recovery stays inspectable.",
         "",
         "Examples:",
         "  linkedin keepalive start --profile default",
@@ -5857,7 +5858,9 @@ export function createCliProgram(): Command {
       "after",
       [
         "",
-        "The daemon writes PID, state, and event-log files under the keepalive directory.",
+        "Startup returns after the detached daemon writes PID, state, and event-log files under the keepalive directory.",
+        "Checks continue on the configured interval/jitter cadence and the saved state becomes degraded after the configured failure threshold.",
+        "If a stale PID file already exists for this profile, start removes it before launching the new daemon.",
         "Human output shows a startup summary and reminds you how to inspect the first background health checks.",
         "Use --quiet if you only need a compact confirmation message."
       ].join("\n")
@@ -5908,6 +5911,7 @@ export function createCliProgram(): Command {
       [
         "",
         "Status reads the daemon state and recent keepalive events saved for the selected profile.",
+        "Interactive terminals show a human summary with Next Steps and Action Needed guidance when recovery is needed.",
         "Use --verbose to include recent daemon events, timestamps, and extra session detail.",
         "Use --json for automation or to inspect the raw saved state."
       ].join("\n")
@@ -5939,7 +5943,8 @@ export function createCliProgram(): Command {
       [
         "",
         "Stopping the daemon preserves the last saved state file and event log for later inspection.",
-        "Use status after stopping if you want to confirm the daemon is idle or review the last recorded failure."
+        "Use status after stopping if you want to confirm the daemon is idle or review the last recorded failure.",
+        "If the daemon ignores SIGTERM for 5 seconds, stop force-kills it and records that in the saved state."
       ].join("\n")
     )
     .action(
