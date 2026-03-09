@@ -126,7 +126,7 @@ Environment variables:
 - `LINKEDIN_E2E_REPLAY` — optional, set to `1` or `true` to enable replay mode
 - `LINKEDIN_E2E_FIXTURE_MANIFEST` — optional manifest path for replay mode, defaults to `test/fixtures/manifest.json`
 - `LINKEDIN_E2E_FIXTURE_SET` — optional fixture set name override, defaults to the manifest default set
-- `LINKEDIN_E2E_FIXTURE_SERVER_URL` — optional externally managed replay server base URL
+- `LINKEDIN_E2E_FIXTURE_SERVER_URL` — optional externally managed replay server base URL; when set, replay mode is treated as enabled even if `LINKEDIN_E2E_REPLAY` is unset
 - `LINKEDIN_E2E_FIXTURE_FILE` — optional JSON file used to record or replay shared CLI/MCP discovery fixtures in the live lane
 - `LINKEDIN_E2E_REFRESH_FIXTURES` — optional, set to `1` or `true` to overwrite the live discovery fixture file
 - `LINKEDIN_E2E_JOB_QUERY` — optional job query override for live fixture discovery, defaults to `software engineer`
@@ -166,6 +166,28 @@ Supported page types:
 - `connections`
 - `jobs`
 
+Recorder options and defaults:
+
+- `--profile <name>` — persistent browser profile name, defaults to `fixtures`
+- `--set <name>` — fixture set name under `test/fixtures/`, defaults to `manual`
+- `--page <type>` — repeat or comma-separate page types; defaults to all supported page types when omitted
+- `--manifest <path>` — replay manifest path, defaults to `test/fixtures/manifest.json`
+- `--width <px>` / `--height <px>` — capture viewport, defaults to `1440x900`
+- `--no-har` — skip `session.har` when you only need HTML snapshots and replayable routes
+
+Example with custom profile, manifest path, and viewport:
+
+```bash
+linkedin fixtures record \
+  --profile fixtures \
+  --manifest .tmp/replay-manifest.json \
+  --set narrow \
+  --page feed,search \
+  --width 1280 \
+  --height 720 \
+  --no-har
+```
+
 The recorder:
 
 - launches a persistent Playwright browser for manual LinkedIn navigation
@@ -180,7 +202,20 @@ linkedin fixtures check
 owa fixtures:check --set ci --max-age-days 14
 ```
 
+Checker options and defaults:
+
+- `--set <name>` — limit validation to one recorded set
+- `--manifest <path>` — override the manifest path
+- `--max-age-days <days>` — warning threshold, defaults to `30`
+
 `fixtures check` warns when a set or page is older than the configured age.
+
+A focused stale-page refresh usually looks like this:
+
+```bash
+linkedin fixtures check --set manual --max-age-days 7
+linkedin fixtures record --set manual --page search
+```
 
 Typical record → validate → replay loop:
 
@@ -197,6 +232,47 @@ Storage rules:
 - other local fixture sets under `test/fixtures/<set>/` stay ignored by default
 - large captured HAR files and raw response bodies stay ignored unless you
   intentionally promote them
+
+### Sanitization and CI promotion
+
+Sanitization is currently a manual review step. Before you promote a locally
+recorded set into the committed `test/fixtures/ci/` fixture corpus:
+
+1. keep the set as small as possible and re-record only the page types needed
+   for the failing or newly added coverage
+2. review `pages/*.html`, `routes.json`, captured response bodies, and optional
+   HAR output for account-specific names, message text, URLs, ids, or other
+   sensitive data that should not ship in git
+3. prefer `--no-har` unless a HAR is specifically needed for debugging, because
+   the HAR is usually the bulkiest capture artifact
+4. copy or rewrite only the sanitized assets into `test/fixtures/ci/`, update
+   `test/fixtures/manifest.json`, and rerun `npm run test:e2e:fixtures` before
+   opening the PR
+5. keep exploratory or account-state-specific recordings in local set names and
+   leave them ignored by default
+
+### Replay lifecycle
+
+The end-to-end record → validate → replay lifecycle is:
+
+1. `linkedin fixtures record` clears replay-specific environment overrides,
+   opens a persistent Chromium profile, and listens for live LinkedIn/Licdn
+   responses while you navigate manually.
+2. Each captured response is keyed by `METHOD + normalized URL`. Query
+   parameters are normalized before deduplication, and the recorder assigns
+   response filenames when the response event fires so out-of-order body
+   resolution does not reshuffle files.
+3. The recorder preserves untouched pages and routes, then rewrites the
+   selected set's `routes.json`, `pages/<page>.html`, optional `session.har`,
+   and manifest summary metadata.
+4. `linkedin fixtures check` validates capture age against the manifest
+   timestamps so you can refresh stale pages before replay.
+5. `npm run test:e2e:fixtures` or `LINKEDIN_E2E_REPLAY=1` loads the selected
+   set, validates paths and assets, and then starts or reuses a replay server.
+6. `attachFixtureReplayToContext()` injects a lightweight LinkedIn session
+   cookie, proxies LinkedIn/Licdn requests through the replay server, and
+   aborts unrelated hosts so the lane fails closed instead of drifting back to
+   live traffic.
 
 ### Replay manifest format
 
@@ -243,6 +319,51 @@ Key path rules:
 - unknown set errors list the available set names so you can quickly rerun with
   `--set <name>` or `LINKEDIN_E2E_FIXTURE_SET=<name>`
 
+### Route file format
+
+Each fixture set stores replayable responses in a sibling `routes.json` file:
+
+```json
+{
+  "format": 1,
+  "setName": "ci",
+  "routes": [
+    {
+      "method": "GET",
+      "url": "https://www.linkedin.com/feed/",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8"
+      },
+      "bodyPath": "responses/0001-www.linkedin.com-feed.html",
+      "pageType": "feed"
+    }
+  ]
+}
+```
+
+Route file notes:
+
+- replay keys are built from upper-cased HTTP method plus normalized URL, so
+  two routes that differ only by query-parameter order are treated as duplicates
+- headers are normalized to lowercase and transport-specific values such as
+  `content-length`, `content-encoding`, and `transfer-encoding` are stripped
+  before persistence and replay
+- bodies may use `bodyPath` for file-backed payloads or `bodyText` for small
+  inline responses
+- every referenced body file is validated before replay starts, and files must
+  stay within the fixture set root
+
+### External replay servers
+
+Set `LINKEDIN_E2E_FIXTURE_SERVER_URL` when you want the browser context to use
+an already running replay server instead of booting the local in-process one.
+The value must be an absolute `http` or `https` URL. The harness still loads
+the selected manifest and set so tests keep the same summary metadata, route
+validation, and staleness checks. When replay is explicitly enabled, startup
+or connectivity failures fail fast rather than silently falling back to live
+traffic.
+
 ## Contract discovery fixtures
 
 The CLI and MCP contract suites also use a separate lightweight JSON fixture
@@ -279,6 +400,76 @@ Live discovery uses `LINKEDIN_E2E_MESSAGE_TARGET_PATTERN`,
 `LINKEDIN_E2E_JOB_QUERY`, `LINKEDIN_E2E_JOB_LOCATION`, and
 `LINKEDIN_E2E_CONNECTION_TARGET`. Once a discovery fixture file exists, the CLI
 and MCP contract suites can replay it without rediscovering those targets.
+
+## Troubleshooting
+
+### Manifest and startup validation
+
+- `Fixture manifest <path> does not define any sets.` — the manifest is valid
+  JSON but empty. Record a set first with `linkedin fixtures record --set <name>
+  --page feed`.
+- `Fixture set <name> is not defined in <manifest>. Available fixture sets: ...`
+  — the selected `--set` or `LINKEDIN_E2E_FIXTURE_SET` value does not exist in
+  the current manifest.
+- `Fixture manifest <path>.defaultSetName must reference a defined fixture set.`
+  — the manifest points at a stale default. Fix `defaultSetName` or record the
+  missing set again.
+- `Fixture manifest ... uses unsupported format <n>. Expected 1.` — the
+  manifest or route file was written by an incompatible version. Re-record or
+  update the file before replaying it.
+- `... valid ISO-8601 timestamp.` — one of `updatedAt`, `capturedAt`, or
+  `recordedAt` is malformed. Re-record the affected set or repair the timestamp
+  by hand.
+- `... must stay within <dir>.` — a `rootDir`, `routesPath`, `harPath`,
+  `htmlPath`, or `bodyPath` escaped the fixture set root. Keep all fixture
+  paths relative.
+- `Fixture route ... duplicates replay key <METHOD URL>.` — two routes collapse
+  to the same normalized request. Remove or merge the duplicate entries.
+- `Fixture response body ... does not exist.` — `routes.json` points at a body
+  file that is missing on disk. Re-record the page or restore the file.
+
+### Replay-time HTTP errors
+
+- `fixture_not_found` (`404`) — the selected set does not contain a recorded
+  response for that LinkedIn request. Re-record the affected page or choose the
+  correct set with `LINKEDIN_E2E_FIXTURE_SET`.
+- `fixture_replay_invalid_request` (`400`) — the replay endpoint received an
+  invalid method or URL payload. This usually points to a mismatched harness or
+  a broken external replay server.
+- `fixture_replay_method_not_allowed` (`405`) — only `GET` and `POST` are
+  supported when talking to the replay endpoint directly.
+- `fixture_replay_request_too_large` (`413`) — the request body sent to the
+  replay endpoint exceeded the safety limit. Keep custom tooling aligned with
+  the built-in request shape.
+- `fixture_replay_error` (`500`) — the replay server failed after startup while
+  loading a body or fulfilling a request. Check the selected set for missing or
+  malformed response assets.
+- `fixture_replay_unavailable` (`502`) — Playwright could not reach the local
+  or external replay server before the timeout expired. Verify
+  `LINKEDIN_E2E_FIXTURE_SERVER_URL`, rerun `npm run test:e2e:fixtures`, or
+  inspect any local process that should be serving replay traffic.
+
+### Recording and live-runner mistakes
+
+- `fixtures:record requires an interactive terminal because it pauses for manual
+  navigation.` — the recorder is intentionally manual and cannot run inside a
+  non-interactive CI shell.
+- `page must be one of: ...` — `linkedin fixtures record --page` only accepts
+  the documented replay page types.
+- `--fixtures requires a file path argument, not another flag (...)` — the live
+  runner's discovery fixture flag expects a path. If the path starts with `-`,
+  pass it as `--fixtures=<file>`.
+- `Could not load discovery fixtures from <file>. ... --refresh-fixtures` — the
+  saved live discovery file is malformed or incomplete. Delete it or rerun with
+  `--refresh-fixtures` (`LINKEDIN_E2E_REFRESH_FIXTURES=1`).
+- `Discovery fixture file <file> was captured for profile <name> but the current
+  E2E profile is <other>.` — either point the runner at the matching profile or
+  refresh the discovery file for the current `LINKEDIN_E2E_PROFILE`.
+- `LINKEDIN_E2E_FIXTURE_SERVER_URL must be an absolute http(s) URL.` — fix the
+  external replay server URL before enabling replay through that override.
+- If you expected `--fixtures` to change the replay set, use
+  `LINKEDIN_E2E_FIXTURE_SET` or `LINKEDIN_E2E_FIXTURE_MANIFEST` instead. The
+  `--fixtures` flag only controls the separate live discovery fixture file.
 
 ## Safe defaults
 
