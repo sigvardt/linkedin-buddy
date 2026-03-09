@@ -124,17 +124,28 @@ function createValidationReport(
 
 describe("linkedin live validation CLI", () => {
   let consoleLogSpy: ReturnType<typeof vi.spyOn>;
+  let stderrChunks: string[];
+  let stderrWriteSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     setInteractiveMode(true, true);
     process.exitCode = undefined;
     liveValidationCliMocks.answers = [];
     vi.clearAllMocks();
+    stderrChunks = [];
     consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    stderrWriteSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((...args: Parameters<typeof process.stderr.write>) => {
+        const [chunk] = args;
+        stderrChunks.push(String(chunk));
+        return true;
+      });
   });
 
   afterEach(() => {
     consoleLogSpy.mockRestore();
+    stderrWriteSpy.mockRestore();
     process.exitCode = undefined;
   });
 
@@ -202,6 +213,52 @@ describe("linkedin live validation CLI", () => {
     ).toMatchObject({
       outcome: "fail"
     });
+  });
+
+  it("prints a human-readable error and exits when the live validation is rate limited", async () => {
+    liveValidationCliMocks.runReadOnlyLinkedInLiveValidation.mockRejectedValue(
+      new LinkedInAssistantError(
+        "RATE_LIMITED",
+        "Read-only live validation reached the per-session request cap (20) before inbox.",
+        {
+          max_requests: 20,
+          operation: "inbox",
+          used_requests: 20
+        }
+      )
+    );
+
+    await runCli([
+      "node",
+      "linkedin",
+      "test:live",
+      "--read-only",
+      "--yes"
+    ]);
+
+    expect(process.exitCode).toBe(1);
+    expect(liveValidationCliMocks.captureLinkedInSession).not.toHaveBeenCalled();
+    expect(liveValidationCliMocks.runReadOnlyLinkedInLiveValidation).toHaveBeenCalledTimes(1);
+    expect(stderrChunks.join("")).toContain("Live validation failed [RATE_LIMITED]");
+    expect(stderrChunks.join("")).toContain("per-session request cap");
+  });
+
+  it("rejects cdp-url overrides for the visible test live command", async () => {
+    await expect(
+      runCli([
+        "node",
+        "linkedin",
+        "--cdp-url",
+        "http://127.0.0.1:18800",
+        "test",
+        "live",
+        "--read-only",
+        "--yes",
+        "--json"
+      ])
+    ).rejects.toThrow("do not support --cdp-url");
+
+    expect(liveValidationCliMocks.runReadOnlyLinkedInLiveValidation).not.toHaveBeenCalled();
   });
 
   it("prompts for re-auth, captures a fresh session, and retries once", async () => {

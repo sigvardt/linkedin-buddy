@@ -30,6 +30,42 @@ function createMockPage(options: {
 }
 
 describe("inspectLinkedInSession", () => {
+  it("treats missing cookies and missing auth selectors as unauthenticated", async () => {
+    const page = createMockPage({
+      url: "https://www.linkedin.com/feed/"
+    });
+
+    const status = await inspectLinkedInSession(page);
+
+    expect(status.authenticated).toBe(false);
+    expect(status.reason).toBe(
+      "Could not confirm an authenticated LinkedIn session."
+    );
+  });
+
+  it("marks the session unauthenticated when the login form is visible", async () => {
+    const page = createMockPage({
+      url: "https://www.linkedin.com/feed/",
+      isVisible: (selector) => selector.includes("input[name='session_key']")
+    });
+
+    const status = await inspectLinkedInSession(page);
+
+    expect(status.authenticated).toBe(false);
+    expect(status.reason).toBe("Login form is visible.");
+  });
+
+  it("detects LinkedIn rate-limit challenge URLs", async () => {
+    const page = createMockPage({
+      url: "https://www.linkedin.com/checkpoint/challenge?errorKey=challenge_global_internal_error"
+    });
+
+    const status = await inspectLinkedInSession(page);
+
+    expect(status.authenticated).toBe(false);
+    expect(status.reason).toBe("LinkedIn rate-limit challenge detected.");
+  });
+
   it("authenticates when the localized profile-menu aria label is visible", async () => {
     const page = createMockPage({
       url: "https://www.linkedin.com/feed/",
