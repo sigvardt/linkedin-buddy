@@ -67,6 +67,39 @@ describe("read-only live validation helpers", () => {
     ).toBe(false);
   });
 
+  it("counts every selector result as unchanged when no previous report exists", () => {
+    const currentReport = createReport(
+      [
+        createOperationResult("feed", [
+          {
+            description: "Feed content surface",
+            matched_candidate_key: "feed-main",
+            matched_candidate_rank: 2,
+            matched_selector: "main[role='main']",
+            selector_key: "feed_surface",
+            status: "pass"
+          },
+          {
+            description: "Authenticated global navigation",
+            error: "No selector candidate matched global_nav.",
+            matched_candidate_key: null,
+            matched_candidate_rank: null,
+            matched_selector: null,
+            selector_key: "global_nav",
+            status: "fail"
+          }
+        ])
+      ],
+      "/tmp/current.json"
+    );
+
+    expect(computeReadOnlyValidationDiff(currentReport, null)).toEqual({
+      recoveries: [],
+      regressions: [],
+      unchanged_count: 2
+    });
+  });
+
   it("enforces the per-session request cap and minimum interval", async () => {
     let currentTimeMs = 0;
     const sleepCalls: number[] = [];
@@ -89,6 +122,15 @@ describe("read-only live validation helpers", () => {
     await expect(limiter.waitTurn("notifications")).rejects.toMatchObject({
       code: "RATE_LIMITED"
     });
+  });
+
+  it("rejects non-positive rate-limiter configuration", () => {
+    expect(() => new ReadOnlyOperationRateLimiter(0, 5_000)).toThrow(
+      "maxRequests must be a positive number."
+    );
+    expect(() => new ReadOnlyOperationRateLimiter(2, 0)).toThrow(
+      "minIntervalMs must be a positive number."
+    );
   });
 
   it("reports new failures, fallback drift, and recoveries against the previous run", () => {

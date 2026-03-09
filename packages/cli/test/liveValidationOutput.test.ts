@@ -224,6 +224,43 @@ describe("live validation output helpers", () => {
     expect(output).toContain("Next Steps");
   });
 
+  it("matches the full human-readable report snapshot", () => {
+    expect(formatReadOnlyValidationReport(createReportFixture())).toMatchInlineSnapshot(`
+      "Live Validation: FAIL
+      Summary: Checked 2 read-only LinkedIn operations. 1 passed. 1 failed. 2 selector regressions detected versus the previous run.
+      Session: smoke (captured 2026-03-09T09:00:00.000Z)
+      Report JSON: /tmp/live-readonly/report.json
+      Events: /tmp/live-readonly/events.jsonl
+
+      Operations
+      - PASS feed: 2 matched, 0 failed, 1200ms
+      - FAIL notifications: 1 matched, 1 failed, 1600ms | 1 warning
+
+      Failures
+      - notifications/notification_surface — No selector candidate matched notification_surface.
+
+      Regressions
+      - Selector drift: feed/global_nav (global-nav → header-nav)
+      - New failure: notifications/notification_surface (notification-list → none)
+
+      Recoveries
+      - Recovered: profile/profile_header (none → profile-h1)
+
+      Blocked Requests
+      - 6 requests blocked by the read-only guard
+      - POST https://www.linkedin.com/voyager/api/graphql [non_get]
+      - GET https://example.com/tracker.js [non_linkedin_domain]
+      - POST https://www.linkedin.com/voyager/api/identity [non_get]
+      - GET https://analytics.example.net/pixel [non_linkedin_domain]
+      - POST https://www.linkedin.com/voyager/api/feed [non_get]
+
+      Next Steps
+      - Open /tmp/live-readonly/report.json to review selector matches.
+      - Compare with the previous report to confirm whether the regression is real.
+      "
+    `);
+  });
+
   it("formats friendly human-readable errors", () => {
     const error: LinkedInAssistantErrorPayload = {
       code: "ACTION_PRECONDITION_FAILED",
@@ -242,5 +279,19 @@ describe("live validation output helpers", () => {
       "Live validation is currently restricted to read-only mode."
     );
     expect(output).toContain('Details: {"option":"read-only"}');
+  });
+
+  it("matches the human-readable error snapshot", () => {
+    const error: LinkedInAssistantErrorPayload = {
+      code: "ACTION_PRECONDITION_FAILED",
+      message: "Live validation is currently restricted to read-only mode.",
+      details: {
+        option: "read-only"
+      }
+    };
+
+    expect(formatReadOnlyValidationError(error)).toMatchInlineSnapshot(
+      `"Live validation failed [ACTION_PRECONDITION_FAILED]\nLive validation is currently restricted to read-only mode.\nDetails: {"option":"read-only"}"`
+    );
   });
 });
