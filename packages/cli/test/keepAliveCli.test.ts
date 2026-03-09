@@ -97,13 +97,16 @@ async function seedKeepAliveEvents(
 describe("linkedin keepalive CLI UX", () => {
   let tempDir = "";
   let consoleLogSpy: ReturnType<typeof vi.spyOn>;
+  let stdoutWriteSpy: ReturnType<typeof vi.spyOn>;
   let stderrWriteSpy: ReturnType<typeof vi.spyOn>;
+  let stdoutChunks: string[] = [];
   let stderrChunks: string[] = [];
 
   beforeEach(async () => {
     tempDir = await mkdtemp(path.join(os.tmpdir(), "linkedin-cli-keepalive-"));
     process.env.LINKEDIN_ASSISTANT_HOME = path.join(tempDir, "assistant-home");
     process.exitCode = undefined;
+    stdoutChunks = [];
     stderrChunks = [];
     setInteractiveMode(true, true);
     vi.clearAllMocks();
@@ -112,6 +115,13 @@ describe("linkedin keepalive CLI UX", () => {
       unref: vi.fn()
     }));
     consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    stdoutWriteSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation((...args: Parameters<typeof process.stdout.write>) => {
+        const [chunk] = args;
+        stdoutChunks.push(String(chunk));
+        return true;
+      });
     stderrWriteSpy = vi
       .spyOn(process.stderr, "write")
       .mockImplementation((...args: Parameters<typeof process.stderr.write>) => {
@@ -123,6 +133,7 @@ describe("linkedin keepalive CLI UX", () => {
 
   afterEach(async () => {
     consoleLogSpy.mockRestore();
+    stdoutWriteSpy.mockRestore();
     stderrWriteSpy.mockRestore();
     process.exitCode = undefined;
     delete process.env.LINKEDIN_ASSISTANT_HOME;
@@ -347,19 +358,27 @@ describe("linkedin keepalive CLI UX", () => {
     );
 
     expect(keepAliveCommand?.description()).toContain(
-      "records background LinkedIn health checks"
+      "records background LinkedIn health checks to disk"
     );
-    expect(startCommand?.helpInformation() ?? "").toContain("--json");
-    expect(startCommand?.helpInformation() ?? "").toContain("--verbose");
-    expect(statusCommand?.helpInformation() ?? "").toContain("--quiet");
     expect(startCommand?.description() ?? "").toContain(
       "background session health checks"
     );
-    expect(statusCommand?.helpInformation() ?? "").toContain(
-      "recent daemon events"
-    );
-    expect(stopCommand?.description() ?? "").toContain(
-      "preserve the last saved health state"
-    );
+
+    startCommand?.outputHelp();
+    const startHelpOutput = stdoutChunks.join("");
+    expect(startHelpOutput).toContain("--json");
+    expect(startHelpOutput).toContain("--verbose");
+    expect(startHelpOutput).toContain("stale PID file");
+
+    stdoutChunks = [];
+    statusCommand?.outputHelp();
+    const statusHelpOutput = stdoutChunks.join("");
+    expect(statusHelpOutput).toContain("--quiet");
+    expect(statusHelpOutput).toContain("Action Needed guidance");
+
+    stdoutChunks = [];
+    stopCommand?.outputHelp();
+    const stopHelpOutput = stdoutChunks.join("");
+    expect(stopHelpOutput).toContain("force-kills it");
   });
 });

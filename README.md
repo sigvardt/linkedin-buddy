@@ -175,11 +175,17 @@ Session keepalive daemon (isolated profile):
 
 ```bash
 npm exec -w @linkedin-assistant/cli -- linkedin keepalive start --profile default
-npm exec -w @linkedin-assistant/cli -- linkedin keepalive status --profile default
+npm exec -w @linkedin-assistant/cli -- linkedin keepalive status --profile default --verbose
+npm exec -w @linkedin-assistant/cli -- linkedin keepalive status --profile default --json
 npm exec -w @linkedin-assistant/cli -- linkedin keepalive stop --profile default
 ```
 
-- Keepalive state/log files are stored under `~/.linkedin-assistant/linkedin-owa-agentools/keepalive/`.
+- `start` spawns a detached daemon and returns after it writes the profile PID file plus `*.state.json` and `*.events.jsonl` files under `~/.linkedin-assistant/linkedin-owa-agentools/keepalive/`.
+- `status` reads the saved daemon state instead of attaching to the browser directly. On interactive terminals it defaults to a human summary with `Summary`, `Session`, `Action Needed`, and `Next Steps` sections. Outside a TTY it defaults to JSON. Use `--quiet` for a one-line summary or `--verbose` for recent event history and extra diagnostics.
+- Health monitoring is persisted per profile: daemon status (`starting`, `running`, `degraded`, `stopped`), browser/session health, current LinkedIn URL and reason, last healthy tick, last error, and consecutive failure count all remain inspectable after the daemon stops.
+- Failure handling is operator-visible. Failed checks are recorded in the saved state and retried on the next scheduled interval. Once failures reach `--max-consecutive-failures`, the saved state flips to `degraded` until a later healthy check resets the counter.
+- Human-readable recovery guidance points operators to the right next step for login walls, checkpoints, rate limits, profile locks, and browser or `--cdp-url` connectivity issues. `start` and `stop` also clean up stale PID files automatically; `stop` escalates from `SIGTERM` to `SIGKILL` after 5 seconds if the daemon does not exit.
+- CLI defaults: `--profile default`, `--interval-seconds 300`, `--jitter-seconds 30`, and `--max-consecutive-failures 5`. Omitting `--cdp-url` keeps keepalive on a tool-owned Playwright profile; providing it attaches keepalive to an existing browser session.
 - See `docs/session-keepalive-hardening-architecture.md` for the hardening design and rollout plan.
 
 Scheduled follow-up daemon:

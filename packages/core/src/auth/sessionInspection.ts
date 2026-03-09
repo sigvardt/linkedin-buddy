@@ -5,6 +5,10 @@ import {
   type LinkedInSelectorLocale
 } from "../selectorLocale.js";
 
+/**
+ * Snapshot of whether a Playwright page currently appears authenticated to
+ * LinkedIn.
+ */
 export interface LinkedInSessionInspection {
   authenticated: boolean;
   checkedAt: string;
@@ -43,6 +47,9 @@ function isLoginUrl(url: string): boolean {
   );
 }
 
+/**
+ * Returns whether a LinkedIn challenge URL matches the known rate-limit flow.
+ */
 export function isRateLimitedChallengeUrl(url: string): boolean {
   return (
     url.includes("challenge_global_internal_error") ||
@@ -69,6 +76,10 @@ async function hasSessionCookie(page: Page): Promise<boolean> {
   }
 }
 
+/**
+ * Inspects the current LinkedIn page for authenticated-session, login-wall,
+ * checkpoint, and rate-limit signals.
+ */
 export async function inspectLinkedInSession(
   page: Page,
   options: { selectorLocale?: LinkedInSelectorLocale } = {}
