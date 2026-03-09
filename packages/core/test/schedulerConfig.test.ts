@@ -3,6 +3,7 @@ import { resolveSchedulerConfig } from "../src/index.js";
 
 const SCHEDULER_ENV_KEYS = [
   "LINKEDIN_ASSISTANT_SCHEDULER_TIMEZONE",
+  "LINKEDIN_ASSISTANT_SCHEDULER_ENABLED_LANES",
   "LINKEDIN_ASSISTANT_SCHEDULER_MAX_JOBS_PER_TICK",
   "LINKEDIN_ASSISTANT_SCHEDULER_MAX_ACTIVE_JOBS_PER_PROFILE"
 ] as const;
@@ -42,7 +43,16 @@ describe("resolveSchedulerConfig", () => {
     process.env.LINKEDIN_ASSISTANT_SCHEDULER_MAX_ACTIVE_JOBS_PER_PROFILE = "4";
 
     expect(() => resolveSchedulerConfig()).toThrowError(
-      /must not exceed the per-profile active job limit/i
+      /MAX_JOBS_PER_TICK.*MAX_ACTIVE_JOBS_PER_PROFILE/i
+    );
+  });
+
+  it("rejects unsupported scheduler lanes with supported lane guidance", () => {
+    process.env.LINKEDIN_ASSISTANT_SCHEDULER_ENABLED_LANES =
+      "followup_preparation,coffee_break";
+
+    expect(() => resolveSchedulerConfig()).toThrowError(
+      /comma-separated list of supported scheduler lanes/i
     );
   });
 

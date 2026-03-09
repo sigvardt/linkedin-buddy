@@ -182,10 +182,11 @@ function parseStrictBoolean(
   }
 
   throw invalidSchedulerConfig(
-    `${envName} must be one of: 1, 0, true, false, yes, no, on, off.`,
+    `${envName} must use a scheduler boolean value: 1, 0, true, false, yes, no, on, or off. Unset it to use the default value.`,
     {
       env: envName,
-      value
+      value,
+      allowed_values: ["1", "0", "true", "false", "yes", "no", "on", "off"]
     }
   );
 }
@@ -204,7 +205,7 @@ function parseStrictPositiveInteger(input: {
   const trimmed = rawValue.trim();
   if (!/^\d+$/.test(trimmed)) {
     throw invalidSchedulerConfig(
-      `${input.envName} must be a positive integer.`,
+      `${input.envName} must be a whole number greater than 0. Unset it to use the default value.`,
       {
         env: input.envName,
         value: rawValue
@@ -215,7 +216,7 @@ function parseStrictPositiveInteger(input: {
   const parsed = Number.parseInt(trimmed, 10);
   if (!Number.isSafeInteger(parsed) || parsed <= 0) {
     throw invalidSchedulerConfig(
-      `${input.envName} must be a positive integer.`,
+      `${input.envName} must be a whole number greater than 0. Unset it to use the default value.`,
       {
         env: input.envName,
         value: rawValue
@@ -225,7 +226,7 @@ function parseStrictPositiveInteger(input: {
 
   if (typeof input.min === "number" && parsed < input.min) {
     throw invalidSchedulerConfig(
-      `${input.envName} must be at least ${input.min}.`,
+      `${input.envName} must be at least ${input.min}. Unset it to use the default value.`,
       {
         env: input.envName,
         min: input.min,
@@ -236,7 +237,7 @@ function parseStrictPositiveInteger(input: {
 
   if (typeof input.max === "number" && parsed > input.max) {
     throw invalidSchedulerConfig(
-      `${input.envName} must be at most ${input.max}.`,
+      `${input.envName} must be at most ${input.max}. Unset it to use the default value.`,
       {
         env: input.envName,
         max: input.max,
@@ -260,7 +261,7 @@ function parseStrictClockTime(
   const normalized = normalizeClockTime(value, "");
   if (!normalized) {
     throw invalidSchedulerConfig(
-      `${envName} must use HH:MM 24-hour clock formatting.`,
+      `${envName} must use HH:MM 24-hour time, for example 09:00 or 17:30.`,
       {
         env: envName,
         value
@@ -289,7 +290,7 @@ function parseSchedulerEnabledLanes(value: string | undefined): SchedulerLane[] 
   const invalidEntries = rawEntries.filter((entry) => !supported.has(entry));
   if (invalidEntries.length > 0) {
     throw invalidSchedulerConfig(
-      "LINKEDIN_ASSISTANT_SCHEDULER_ENABLED_LANES contains unsupported scheduler lanes.",
+      "LINKEDIN_ASSISTANT_SCHEDULER_ENABLED_LANES must be a comma-separated list of supported scheduler lanes. Set it to an empty string to disable all lanes.",
       {
         env: "LINKEDIN_ASSISTANT_SCHEDULER_ENABLED_LANES",
         invalid_lanes: invalidEntries,
@@ -318,7 +319,7 @@ function resolveSchedulerBusinessHours(): SchedulerBusinessHoursConfig {
 
   if (!timeZone || !isValidTimeZone(timeZone)) {
     throw invalidSchedulerConfig(
-      "LINKEDIN_ASSISTANT_SCHEDULER_TIMEZONE must be a valid IANA timezone, such as UTC or Europe/Copenhagen.",
+      "LINKEDIN_ASSISTANT_SCHEDULER_TIMEZONE must be a valid IANA timezone, such as UTC or Europe/Copenhagen. Unset it to use the local system timezone.",
       {
         env: "LINKEDIN_ASSISTANT_SCHEDULER_TIMEZONE",
         value: rawTimeZone
@@ -328,7 +329,7 @@ function resolveSchedulerBusinessHours(): SchedulerBusinessHoursConfig {
 
   if (compareClockTimes(startTime, endTime) >= 0) {
     throw invalidSchedulerConfig(
-      "Scheduler business hours must end after they start on the same local day.",
+      "Scheduler business hours must end after they start on the same local day, for example 09:00 to 17:00.",
       {
         start_time: startTime,
         end_time: endTime,
@@ -503,8 +504,9 @@ export function resolveSchedulerConfig(): SchedulerConfig {
 
   if (maxJobsPerTick > maxActiveJobsPerProfile) {
     throw invalidSchedulerConfig(
-      "Scheduler max jobs per tick must not exceed the per-profile active job limit.",
+      "LINKEDIN_ASSISTANT_SCHEDULER_MAX_JOBS_PER_TICK must be less than or equal to LINKEDIN_ASSISTANT_SCHEDULER_MAX_ACTIVE_JOBS_PER_PROFILE.",
       {
+        env: "LINKEDIN_ASSISTANT_SCHEDULER_MAX_JOBS_PER_TICK",
         max_jobs_per_tick: maxJobsPerTick,
         max_active_jobs_per_profile: maxActiveJobsPerProfile
       }
@@ -513,8 +515,9 @@ export function resolveSchedulerConfig(): SchedulerConfig {
 
   if (retry.maxBackoffMs < retry.initialBackoffMs) {
     throw invalidSchedulerConfig(
-      "Scheduler max backoff must be greater than or equal to the initial backoff.",
+      "LINKEDIN_ASSISTANT_SCHEDULER_MAX_BACKOFF_SECONDS must be greater than or equal to LINKEDIN_ASSISTANT_SCHEDULER_INITIAL_BACKOFF_SECONDS.",
       {
+        env: "LINKEDIN_ASSISTANT_SCHEDULER_MAX_BACKOFF_SECONDS",
         initial_backoff_ms: retry.initialBackoffMs,
         max_backoff_ms: retry.maxBackoffMs
       }

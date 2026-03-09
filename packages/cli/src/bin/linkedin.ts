@@ -20,6 +20,8 @@ import { Command } from "commander";
 import {
   DEFAULT_FOLLOWUP_SINCE,
   LINKEDIN_ASSISTANT_SELECTOR_LOCALE_ENV,
+  AssistantDatabase,
+  alignToBusinessHours,
   asLinkedInAssistantError,
   clearRateLimitState,
   createLocalDataDeletionPlan,
@@ -49,6 +51,7 @@ import {
   type DraftQualityReport,
   type LocalDataDeletionFailure,
   type SchedulerConfig,
+  type SchedulerJobRow,
   type SchedulerTickResult,
   type SearchCategory,
   type SelectorAuditReport
@@ -65,6 +68,21 @@ import {
   resolveSelectorAuditOutputMode,
   SelectorAuditProgressReporter
 } from "../selectorAuditOutput.js";
+import {
+  formatSchedulerError,
+  formatSchedulerRunOnceReport,
+  formatSchedulerStartReport,
+  formatSchedulerStatusReport,
+  formatSchedulerStopReport,
+  resolveSchedulerOutputMode,
+  type SchedulerJobCounts,
+  type SchedulerJobPreview,
+  type SchedulerOutputMode,
+  type SchedulerRunOnceReport,
+  type SchedulerStartReport,
+  type SchedulerStatusReport,
+  type SchedulerStopReport
+} from "../schedulerOutput.js";
 
 const cliPrivacyConfig = resolvePrivacyConfig();
 const SELECTOR_AUDIT_DOC_PATH = "docs/selector-audit.md";
@@ -248,6 +266,7 @@ interface SchedulerState {
   lastTickAt?: string;
   lastSuccessfulTickAt?: string;
   lastPreparedAt?: string;
+  nextWindowStartAt?: string | null;
   lastSummary?: SchedulerStateSummary;
   lastError?: string;
   cdpUrl?: string;
@@ -262,6 +281,7 @@ interface SchedulerFiles {
 }
 
 const SCHEDULER_DAEMON_MAX_CONSECUTIVE_FAILURES = 5;
+const DEFAULT_SCHEDULER_STATUS_JOB_LIMIT = 5;
 
 function profileSlug(profileName: string): string {
   return profileName.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -1478,10 +1498,318 @@ function summarizeSchedulerTick(result: SchedulerTickResult): SchedulerStateSumm
   };
 }
 
+function writeSchedulerProgressNotice(
+  outputMode: SchedulerOutputMode,
+  message: string
+): void {
+  if (outputMode === "human" && process.stderr.isTTY) {
+    writeCliNotice(message);
+  }
+}
+
+function tryParseSchedulerJobTargetLabel(job: SchedulerJobRow): string | undefined {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(job.target_json) as unknown;
+  } catch {
+    return undefined;
+  }
+
+  if (!parsed || typeof parsed !== "object") {
+    return undefined;
+  }
+
+  const record = parsed as Record<string, unknown>;
+  const profileUrlKey = record.profile_url_key;
+  if (typeof profileUrlKey === "string" && profileUrlKey.trim().length > 0) {
+    return profileUrlKey.trim();
+  }
+
+  const profileName = record.profile_name;
+  if (typeof profileName === "string" && profileName.trim().length > 0) {
+    return profileName.trim();
+  }
+
+  return undefined;
+}
+
+function createSchedulerJobPreview(job: SchedulerJobRow): SchedulerJobPreview {
+  const targetLabel = tryParseSchedulerJobTargetLabel(job);
+
+  return {
+    id: job.id,
+    lane: job.lane,
+    status: job.status,
+    ...(targetLabel ? { targetLabel } : {}),
+    scheduledAt: new Date(job.scheduled_at).toISOString(),
+    updatedAt: new Date(job.updated_at).toISOString(),
+    attemptCount: job.attempt_count,
+    maxAttempts: job.max_attempts,
+    preparedActionId: job.prepared_action_id,
+    lastErrorCode: job.last_error_code,
+    lastErrorMessage: job.last_error_message
+  };
+}
+
+function createEmptySchedulerJobCounts(): SchedulerJobCounts {
+  return {
+    total: 0,
+    pending: 0,
+    pendingDueNow: 0,
+    pendingLater: 0,
+    leased: 0,
+    prepared: 0,
+    failed: 0,
+    cancelled: 0
+  };
+}
+
+async function listSchedulerJobRows(profileName: string): Promise<SchedulerJobRow[]> {
+  const { dbPath } = resolveConfigPaths();
+  if (!(await pathExists(dbPath))) {
+    return [];
+  }
+
+  const db = new AssistantDatabase(dbPath);
+  try {
+    return db.listSchedulerJobs({ profileName });
+  } finally {
+    db.close();
+  }
+}
+
+function summarizeSchedulerJobRows(input: {
+  jobs: SchedulerJobRow[];
+  nowMs: number;
+  jobLimit: number;
+}): Pick<SchedulerStatusReport, "job_counts" | "next_jobs" | "recent_jobs"> {
+  const jobCounts = createEmptySchedulerJobCounts();
+
+  for (const job of input.jobs) {
+    jobCounts.total += 1;
+    if (job.status === "pending") {
+      jobCounts.pending += 1;
+      if (job.scheduled_at <= input.nowMs) {
+        jobCounts.pendingDueNow += 1;
+      } else {
+        jobCounts.pendingLater += 1;
+      }
+      continue;
+    }
+
+    if (job.status === "leased") {
+      jobCounts.leased += 1;
+      continue;
+    }
+
+    if (job.status === "prepared") {
+      jobCounts.prepared += 1;
+      continue;
+    }
+
+    if (job.status === "failed") {
+      jobCounts.failed += 1;
+      continue;
+    }
+
+    if (job.status === "cancelled") {
+      jobCounts.cancelled += 1;
+    }
+  }
+
+  const next_jobs = input.jobs
+    .filter((job) => job.status === "pending" || job.status === "leased")
+    .sort((left, right) => left.scheduled_at - right.scheduled_at)
+    .slice(0, input.jobLimit)
+    .map((job) => createSchedulerJobPreview(job));
+  const recent_jobs = input.jobs
+    .filter(
+      (job) =>
+        job.status === "prepared" || job.status === "failed" || job.status === "cancelled"
+    )
+    .sort((left, right) => right.updated_at - left.updated_at)
+    .slice(0, input.jobLimit)
+    .map((job) => createSchedulerJobPreview(job));
+
+  return {
+    job_counts: jobCounts,
+    next_jobs,
+    recent_jobs
+  };
+}
+
+function resolveSchedulerStatusConfig(): Pick<
+  SchedulerStatusReport,
+  "scheduler_config" | "scheduler_config_error"
+> {
+  try {
+    return {
+      scheduler_config: resolveSchedulerConfig()
+    };
+  } catch (error) {
+    return {
+      scheduler_config_error: toLinkedInAssistantErrorPayload(error, cliPrivacyConfig)
+    };
+  }
+}
+
+function inferSchedulerNextWindowStartAt(
+  state: SchedulerState | null,
+  schedulerConfig?: SchedulerConfig
+): string | undefined {
+  if (!state) {
+    return undefined;
+  }
+
+  if (typeof state.nextWindowStartAt === "string" || state.nextWindowStartAt === null) {
+    return state.nextWindowStartAt ?? undefined;
+  }
+
+  const nowMs = Date.now();
+  const alignedAtMs = alignToBusinessHours(
+    nowMs,
+    schedulerConfig?.businessHours ?? state.businessHours
+  );
+  return alignedAtMs > nowMs ? new Date(alignedAtMs).toISOString() : undefined;
+}
+
+async function buildSchedulerStatusReport(
+  profileName: string,
+  jobLimit: number
+): Promise<SchedulerStatusReport> {
+  const pid = await readSchedulerPid(profileName);
+  const state = await readSchedulerState(profileName);
+  const running = typeof pid === "number" ? isProcessRunning(pid) : false;
+  const files = getSchedulerFiles(profileName);
+  const configInfo = resolveSchedulerStatusConfig();
+  const jobs = await listSchedulerJobRows(profileName);
+  const jobSummary = summarizeSchedulerJobRows({
+    jobs,
+    nowMs: Date.now(),
+    jobLimit
+  });
+
+  const nextWindowStartAt = inferSchedulerNextWindowStartAt(
+    state,
+    configInfo.scheduler_config
+  );
+
+  return {
+    profile_name: profileName,
+    running,
+    pid: typeof pid === "number" ? pid : null,
+    state:
+      state === null
+        ? null
+        : {
+            ...state,
+            ...(nextWindowStartAt !== undefined ? { nextWindowStartAt } : {})
+          },
+    stale_pid_file: Boolean(pid && !running),
+    state_path: files.statePath,
+    log_path: files.logPath,
+    ...configInfo,
+    ...jobSummary
+  };
+}
+
+function emitSchedulerStartReport(
+  report: SchedulerStartReport,
+  outputMode: SchedulerOutputMode
+): void {
+  if (outputMode === "json") {
+    printJson(report);
+    return;
+  }
+
+  console.log(
+    formatSchedulerStartReport(
+      redactStructuredValue(report, cliPrivacyConfig, "cli") as SchedulerStartReport
+    )
+  );
+}
+
+function emitSchedulerStatusReport(
+  report: SchedulerStatusReport,
+  outputMode: SchedulerOutputMode
+): void {
+  if (outputMode === "json") {
+    printJson(report);
+    return;
+  }
+
+  console.log(
+    formatSchedulerStatusReport(
+      redactStructuredValue(report, cliPrivacyConfig, "cli") as SchedulerStatusReport
+    )
+  );
+}
+
+function emitSchedulerStopReport(
+  report: SchedulerStopReport,
+  outputMode: SchedulerOutputMode
+): void {
+  if (outputMode === "json") {
+    printJson(report);
+    return;
+  }
+
+  console.log(
+    formatSchedulerStopReport(
+      redactStructuredValue(report, cliPrivacyConfig, "cli") as SchedulerStopReport
+    )
+  );
+}
+
+function emitSchedulerRunOnceReport(
+  report: SchedulerRunOnceReport,
+  outputMode: SchedulerOutputMode
+): void {
+  if (outputMode === "json") {
+    printJson(report);
+    return;
+  }
+
+  console.log(
+    formatSchedulerRunOnceReport(
+      redactStructuredValue(report, cliPrivacyConfig, "cli") as SchedulerRunOnceReport
+    )
+  );
+}
+
+async function runSchedulerCliAction(
+  input: { json?: boolean },
+  action: (outputMode: SchedulerOutputMode) => Promise<void>
+): Promise<void> {
+  const outputMode = resolveSchedulerOutputMode(input, Boolean(stdout.isTTY));
+
+  try {
+    await action(outputMode);
+  } catch (error) {
+    if (outputMode === "json") {
+      throw error;
+    }
+
+    process.stderr.write(
+      `${formatSchedulerError(
+        toLinkedInAssistantErrorPayload(error, cliPrivacyConfig)
+      )}\n`
+    );
+    process.exitCode = 1;
+  }
+}
+
 async function runSchedulerRunOnce(
   profileName: string,
+  outputMode: SchedulerOutputMode,
   cdpUrl?: string
 ): Promise<void> {
+  const normalizedProfileName = coerceProfileName(profileName);
+  writeSchedulerProgressNotice(
+    outputMode,
+    `Running one scheduler tick for profile ${normalizedProfileName}; this may take a moment.`
+  );
   const runtime = createRuntime(cdpUrl);
   const schedulerConfig = resolveSchedulerConfig();
 
@@ -1493,15 +1821,19 @@ async function runSchedulerRunOnce(
       schedulerConfig
     });
     const result = await scheduler.runTick({
-      profileName,
+      profileName: normalizedProfileName,
       workerId: `cli:${runtime.runId}`
     });
 
-    printJson({
+    if (result.failedJobs > 0) {
+      process.exitCode = 1;
+    }
+
+    emitSchedulerRunOnceReport({
       run_id: runtime.runId,
       scheduler_config: schedulerConfig,
       ...result
-    });
+    }, outputMode);
   } finally {
     runtime.close();
   }
@@ -1509,27 +1841,37 @@ async function runSchedulerRunOnce(
 
 async function runSchedulerStart(
   profileName: string,
+  outputMode: SchedulerOutputMode,
   cdpUrl?: string
 ): Promise<void> {
-  const existingPid = await readSchedulerPid(profileName);
+  const normalizedProfileName = coerceProfileName(profileName);
+  const files = getSchedulerFiles(normalizedProfileName);
+  const existingPid = await readSchedulerPid(normalizedProfileName);
   if (existingPid && isProcessRunning(existingPid)) {
-    const currentState = await readSchedulerState(profileName);
-    printJson({
+    const currentState = await readSchedulerState(normalizedProfileName);
+    emitSchedulerStartReport({
       started: false,
       reason: "Scheduler daemon is already running for this profile.",
-      profile_name: profileName,
+      profile_name: normalizedProfileName,
       pid: existingPid,
-      state: currentState
-    });
+      state: currentState,
+      state_path: files.statePath,
+      log_path: files.logPath,
+      ...resolveSchedulerStatusConfig()
+    }, outputMode);
     return;
   }
 
   if (existingPid && !isProcessRunning(existingPid)) {
-    await removeSchedulerPid(profileName);
+    await removeSchedulerPid(normalizedProfileName);
   }
 
   maybeWarnAboutSelectorLocaleConfig(cliSelectorLocale);
 
+  writeSchedulerProgressNotice(
+    outputMode,
+    `Starting scheduler daemon for profile ${normalizedProfileName}.`
+  );
   const schedulerConfig = resolveSchedulerConfig();
   const cliEntrypoint = resolveKeepAliveCliEntrypoint();
   if (!cliEntrypoint) {
@@ -1546,7 +1888,7 @@ async function runSchedulerStart(
   if (cliSelectorLocale) {
     daemonArgs.push("--selector-locale", cliSelectorLocale);
   }
-  daemonArgs.push("scheduler", "__run", "--profile", profileName);
+  daemonArgs.push("scheduler", "__run", "--profile", normalizedProfileName);
 
   const daemon = spawn(process.execPath, daemonArgs, {
     detached: true,
@@ -1565,7 +1907,7 @@ async function runSchedulerStart(
   const now = new Date().toISOString();
   const initialState: SchedulerState = {
     pid: daemon.pid,
-    profileName,
+    profileName: normalizedProfileName,
     startedAt: now,
     updatedAt: now,
     status: "starting",
@@ -1578,50 +1920,54 @@ async function runSchedulerStart(
     ...(cdpUrl ? { cdpUrl } : {})
   };
 
-  await writeSchedulerPid(profileName, daemon.pid);
-  await writeSchedulerState(profileName, initialState);
+  await writeSchedulerPid(normalizedProfileName, daemon.pid);
+  await writeSchedulerState(normalizedProfileName, initialState);
 
-  printJson({
+  emitSchedulerStartReport({
     started: true,
-    profile_name: profileName,
+    profile_name: normalizedProfileName,
     pid: daemon.pid,
-    state_path: getSchedulerFiles(profileName).statePath,
+    state_path: files.statePath,
+    log_path: files.logPath,
     scheduler_config: schedulerConfig
-  });
+  }, outputMode);
 }
 
-async function runSchedulerStatus(profileName: string): Promise<void> {
-  const pid = await readSchedulerPid(profileName);
-  const state = await readSchedulerState(profileName);
-  const running = typeof pid === "number" ? isProcessRunning(pid) : false;
-
-  printJson({
-    profile_name: profileName,
-    running,
-    pid,
-    state,
-    stale_pid_file: Boolean(pid && !running)
-  });
+async function runSchedulerStatus(
+  profileName: string,
+  outputMode: SchedulerOutputMode,
+  jobLimit: number
+): Promise<void> {
+  const normalizedProfileName = coerceProfileName(profileName);
+  const report = await buildSchedulerStatusReport(normalizedProfileName, jobLimit);
+  emitSchedulerStatusReport(report, outputMode);
 }
 
-async function runSchedulerStop(profileName: string): Promise<void> {
-  const pid = await readSchedulerPid(profileName);
-  const previousState = await readSchedulerState(profileName);
+async function runSchedulerStop(
+  profileName: string,
+  outputMode: SchedulerOutputMode
+): Promise<void> {
+  const normalizedProfileName = coerceProfileName(profileName);
+  const files = getSchedulerFiles(normalizedProfileName);
+  const pid = await readSchedulerPid(normalizedProfileName);
+  const previousState = await readSchedulerState(normalizedProfileName);
 
   if (!pid) {
-    printJson({
+    emitSchedulerStopReport({
       stopped: false,
-      profile_name: profileName,
-      reason: "No scheduler daemon pid file found."
-    });
+      profile_name: normalizedProfileName,
+      reason: "No scheduler daemon is currently running for this profile.",
+      state_path: files.statePath,
+      log_path: files.logPath
+    }, outputMode);
     return;
   }
 
   if (!isProcessRunning(pid)) {
-    await removeSchedulerPid(profileName);
+    await removeSchedulerPid(normalizedProfileName);
     const now = new Date().toISOString();
     if (previousState) {
-      await writeSchedulerState(profileName, {
+      await writeSchedulerState(normalizedProfileName, {
         ...previousState,
         status: "stopped",
         updatedAt: now,
@@ -1629,14 +1975,21 @@ async function runSchedulerStop(profileName: string): Promise<void> {
         lastError: "Recovered from stale pid file."
       });
     }
-    printJson({
+    emitSchedulerStopReport({
       stopped: true,
-      profile_name: profileName,
+      profile_name: normalizedProfileName,
       pid,
-      reason: "Recovered stale scheduler pid file."
-    });
+      reason: "Removed a stale scheduler PID file for this profile.",
+      state_path: files.statePath,
+      log_path: files.logPath
+    }, outputMode);
     return;
   }
+
+  writeSchedulerProgressNotice(
+    outputMode,
+    `Stopping scheduler daemon for profile ${normalizedProfileName}.`
+  );
 
   try {
     process.kill(pid, "SIGTERM");
@@ -1645,7 +1998,7 @@ async function runSchedulerStop(profileName: string): Promise<void> {
       "UNKNOWN",
       "Failed to send SIGTERM to scheduler daemon.",
       {
-        profile_name: profileName,
+        profile_name: normalizedProfileName,
         pid,
         cause: error instanceof Error ? error.message : String(error)
       }
@@ -1666,10 +2019,10 @@ async function runSchedulerStop(profileName: string): Promise<void> {
     process.kill(pid, "SIGKILL");
   }
 
-  await removeSchedulerPid(profileName);
+  await removeSchedulerPid(normalizedProfileName);
   const now = new Date().toISOString();
   if (previousState) {
-    await writeSchedulerState(profileName, {
+    await writeSchedulerState(normalizedProfileName, {
       ...previousState,
       status: "stopped",
       updatedAt: now,
@@ -1680,12 +2033,17 @@ async function runSchedulerStop(profileName: string): Promise<void> {
     });
   }
 
-  printJson({
+  emitSchedulerStopReport({
     stopped: true,
-    profile_name: profileName,
+    profile_name: normalizedProfileName,
     pid,
-    forced: running
-  });
+    forced: running,
+    reason: running
+      ? "Scheduler daemon did not exit after SIGTERM, so it was force-stopped."
+      : "Scheduler daemon exited cleanly.",
+    state_path: files.statePath,
+    log_path: files.logPath
+  }, outputMode);
 }
 
 async function runSchedulerDaemon(
@@ -1769,6 +2127,7 @@ async function runSchedulerDaemon(
             maxConsecutiveFailures: SCHEDULER_DAEMON_MAX_CONSECUTIVE_FAILURES,
             lastTickAt: tickAt,
             lastSuccessfulTickAt: tickAt,
+            nextWindowStartAt: result.nextWindowStartAt,
             lastSummary: summarizeSchedulerTick(result)
           };
           if (result.preparedJobs > 0) {
@@ -3137,38 +3496,94 @@ export function createCliProgram(): Command {
 
   const schedulerCommand = program
     .command("scheduler")
-    .description("Run and manage the local follow-up scheduler daemon");
+    .description(
+      "Manage the local follow-up scheduler daemon. The scheduler only prepares follow-ups near their due time, and prepared actions still require manual confirmation."
+    )
+    .addHelpText(
+      "afterAll",
+      [
+        "",
+        "Interactive terminals default to human-readable scheduler summaries.",
+        "Use --json for automation, piping, or to inspect the full structured payload.",
+        "The scheduler only prepares follow-ups; confirmation always remains manual.",
+        "",
+        "Examples:",
+        "  linkedin scheduler start --profile default",
+        "  linkedin scheduler status --profile default --jobs 10",
+        "  linkedin scheduler run-once --profile default --json",
+        "  linkedin scheduler stop --profile default"
+      ].join("\n")
+    );
 
   schedulerCommand
     .command("start")
-    .description("Start the scheduler daemon for a profile")
+    .description("Start the local scheduler daemon for a profile")
     .option("-p, --profile <profile>", "Profile name", "default")
-    .action(async (options: { profile: string }) => {
-      await runSchedulerStart(options.profile, readCdpUrl());
+    .option("--json", "Print the structured scheduler payload", false)
+    .action(async (options: { profile: string; json: boolean }) => {
+      await runSchedulerCliAction(options, async (outputMode) => {
+        await runSchedulerStart(options.profile, outputMode, readCdpUrl());
+      });
     });
 
   schedulerCommand
     .command("status")
-    .description("Show scheduler daemon status for a profile")
+    .description("Show daemon health, queue summary, and recent scheduler history")
     .option("-p, --profile <profile>", "Profile name", "default")
-    .action(async (options: { profile: string }) => {
-      await runSchedulerStatus(options.profile);
+    .option(
+      "--jobs <count>",
+      "Show up to this many queued and recent jobs in the status output",
+      String(DEFAULT_SCHEDULER_STATUS_JOB_LIMIT)
+    )
+    .option("--json", "Print the structured scheduler payload", false)
+    .addHelpText(
+      "after",
+      [
+        "",
+        "Status output previews queued jobs and recent history for the selected profile.",
+        "Use --jobs <count> to control how many queued and recent jobs are shown.",
+        "Use --json for automation or to inspect the full structured scheduler payload."
+      ].join("\n")
+    )
+    .action(async (options: { profile: string; jobs: string; json: boolean }) => {
+      await runSchedulerCliAction(options, async (outputMode) => {
+        await runSchedulerStatus(
+          options.profile,
+          outputMode,
+          coercePositiveInt(options.jobs, "jobs")
+        );
+      });
     });
 
   schedulerCommand
     .command("stop")
-    .description("Stop the scheduler daemon for a profile")
+    .description("Stop the local scheduler daemon and clean up stale state")
     .option("-p, --profile <profile>", "Profile name", "default")
-    .action(async (options: { profile: string }) => {
-      await runSchedulerStop(options.profile);
+    .option("--json", "Print the structured scheduler payload", false)
+    .action(async (options: { profile: string; json: boolean }) => {
+      await runSchedulerCliAction(options, async (outputMode) => {
+        await runSchedulerStop(options.profile, outputMode);
+      });
     });
 
   schedulerCommand
     .command("run-once")
-    .description("Run one scheduler tick immediately")
+    .alias("tick")
+    .description("Run one scheduler tick immediately and summarize the result")
     .option("-p, --profile <profile>", "Profile name", "default")
-    .action(async (options: { profile: string }) => {
-      await runSchedulerRunOnce(options.profile, readCdpUrl());
+    .option("--json", "Print the structured scheduler payload", false)
+    .addHelpText(
+      "after",
+      [
+        "",
+        "Prepared actions still require manual confirmation after a successful tick.",
+        "Use this command when you want an immediate scheduler pass without starting the daemon."
+      ].join("\n")
+    )
+    .action(async (options: { profile: string; json: boolean }) => {
+      await runSchedulerCliAction(options, async (outputMode) => {
+        await runSchedulerRunOnce(options.profile, outputMode, readCdpUrl());
+      });
     });
 
   schedulerCommand
