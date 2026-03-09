@@ -35,6 +35,44 @@ import { checkFullHealth } from "../healthCheck.js";
 
 const mockedCheckFullHealth = vi.mocked(checkFullHealth);
 
+function createDeferred<T>(): {
+  promise: Promise<T>;
+  reject: (error?: unknown) => void;
+  resolve: (value: T) => void;
+} {
+  let resolve!: (value: T) => void;
+  let reject!: (error?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+
+  return {
+    promise,
+    reject,
+    resolve
+  };
+}
+
+function createMockPage(
+  currentUrl = "https://www.linkedin.com/feed/"
+): Page {
+  return {
+    close: vi.fn(async () => undefined),
+    evaluate: vi.fn(async () => undefined),
+    goto: vi.fn(async () => undefined),
+    url: vi.fn(() => currentUrl)
+  } as unknown as Page;
+}
+
+function getHealthEvents(onHealthEvent: ReturnType<typeof vi.fn>): KeepAliveEvent[] {
+  return onHealthEvent.mock.calls.map((call) => call[0] as KeepAliveEvent);
+}
+
+function getEventTypes(onHealthEvent: ReturnType<typeof vi.fn>): KeepAliveEvent["type"][] {
+  return getHealthEvents(onHealthEvent).map((event) => event.type);
+}
+
 function createStorageState(
   overrides?: Partial<LinkedInBrowserStorageState>
 ): LinkedInBrowserStorageState {
@@ -819,4 +857,692 @@ describe("SessionKeepAliveService", () => {
     expect(eventTypes).toContain("soft-reauth-success");
     expect(eventTypes).not.toContain("manual-login-required");
   });
+  it("applies jitter with a one-second minimum delay", () => {
+    const { pool } = createMockPool();
+    mockedCheckFullHealth.mockResolvedValue(createHealthStatus());
+
+    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+
+    const service = new SessionKeepAliveService(pool, {
+      cdpUrl: "http://127.0.0.1:18800",
+      intervalMs: 250,
+      jitterMs: 500
+    });
+
+    service.start();
+
+    const delays = setTimeoutSpy.mock.calls.map((call) => call[1] as number);
+    expect(delays).toContain(1_000);
+
+    service.stop();
+    setTimeoutSpy.mockRestore();
+    randomSpy.mockRestore();
+  });
+
+  it("stops rescheduling when stopped during an in-flight tick", async () => {
+    const { pool, acquire } = createMockPool();
+    const pendingHealthCheck = createDeferred<FullHealthStatus>();
+    const service = new SessionKeepAliveService(pool, {
+      cdpUrl: "http://127.0.0.1:18800",
+      intervalMs: 1_000,
+      jitterMs: 0,
+      sessionRefreshEnabled: false
+    });
+
+    mockedCheckFullHealth.mockImplementation(() => pendingHealthCheck.promise);
+
+    service.start();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(acquire).toHaveBeenCalledTimes(1);
+
+    service.stop();
+    pendingHealthCheck.resolve(createHealthStatus());
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(acquire).toHaveBeenCalledTimes(1);
+  });
+
+  it("switches to the retry cadence after a timed-out network interruption", async () => {
+    const acquire = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Timed out while connecting"))
+      .mockRejectedValueOnce(new Error("Timed out while reconnecting"));
+    const pool = {
+      acquire,
+      dispose: vi.fn(async () => undefined),
+      invalidate: vi.fn(async () => undefined)
+    } as unknown as CDPConnectionPool;
+    const service = new SessionKeepAliveService(pool, {
+      cdpUrl: "http://127.0.0.1:18800",
+      intervalMs: 5_000,
+      jitterMs: 0,
+      networkGracePeriodMs: 60_000,
+      networkRetryIntervalMs: 1_500
+    });
+    const onError = vi.fn();
+    const onHealthEvent = vi.fn();
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+
+    service.on("error", onError);
+    service.on("health-event", onHealthEvent);
+
+    service.start();
+    await vi.advanceTimersByTimeAsync(5_000);
+    service.stop();
+
+    const delays = setTimeoutSpy.mock.calls.map((call) => call[1] as number);
+    expect(delays).toEqual(expect.arrayContaining([5_000, 1_500]));
+    expect(getEventTypes(onHealthEvent)).toEqual(
+      expect.arrayContaining([
+        "network-interruption",
+        "reconnect-attempt",
+        "reconnect-failed"
+      ])
+    );
+    expect(onError).not.toHaveBeenCalled();
+    expect(service.getConsecutiveFailures()).toBe(0);
+
+    setTimeoutSpy.mockRestore();
+  });
+
+  it("normalizes non-transient thrown values into error events", async () => {
+    const { pool } = createMockPool();
+    const service = new SessionKeepAliveService(pool, {
+      cdpUrl: "http://127.0.0.1:18800",
+      intervalMs: 1_000,
+      jitterMs: 0,
+      sessionRefreshEnabled: false
+    });
+    const onError = vi.fn();
+    const onHealthEvent = vi.fn();
+
+    mockedCheckFullHealth.mockRejectedValue("HTTP 500");
+    service.on("error", onError);
+    service.on("health-event", onHealthEvent);
+
+    service.start();
+    await vi.advanceTimersByTimeAsync(1_000);
+    service.stop();
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0]?.[0]).toBeInstanceOf(Error);
+    expect((onError.mock.calls[0]?.[0] as Error).message).toBe("HTTP 500");
+    expect(service.getConsecutiveFailures()).toBe(1);
+    expect(getEventTypes(onHealthEvent)).not.toContain("reconnect-attempt");
+  });
+
+  it("records a failure when the browser stays connected but unhealthy", async () => {
+    const { pool } = createMockPool();
+    const service = new SessionKeepAliveService(pool, {
+      cdpUrl: "http://127.0.0.1:18800",
+      intervalMs: 1_000,
+      jitterMs: 0,
+      sessionRefreshEnabled: false
+    });
+    const onError = vi.fn();
+    const unhealthyStatus = createHealthStatus({
+      browser: {
+        healthy: false,
+        pageResponsive: false
+      }
+    });
+
+    mockedCheckFullHealth.mockResolvedValue(unhealthyStatus);
+    service.on("error", onError);
+
+    service.start();
+    await vi.advanceTimersByTimeAsync(1_000);
+    service.stop();
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect((onError.mock.calls[0]?.[0] as Error).message).toBe(
+      "Health check failed."
+    );
+    expect(service.getConsecutiveFailures()).toBe(1);
+  });
+
+  it("keeps the interruption active when reconnecting restores the browser but not auth", async () => {
+    const { mockContext, release } = createMockPool();
+    const acquire = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("ECONNREFUSED"))
+      .mockResolvedValueOnce({ context: mockContext, release });
+    const pool = {
+      acquire,
+      dispose: vi.fn(async () => undefined),
+      invalidate: vi.fn(async () => undefined)
+    } as unknown as CDPConnectionPool;
+    const service = new SessionKeepAliveService(pool, {
+      cdpUrl: "http://127.0.0.1:18800",
+      intervalMs: 1_000,
+      jitterMs: 0,
+      networkGracePeriodMs: 60_000,
+      networkRetryIntervalMs: 1_500
+    });
+    const onHealthEvent = vi.fn();
+
+    mockedCheckFullHealth.mockResolvedValue(
+      createHealthStatus({
+        session: {
+          authenticated: false,
+          reason: "Authentication required."
+        }
+      })
+    );
+    service.on("health-event", onHealthEvent);
+
+    service.start();
+    await vi.advanceTimersByTimeAsync(1_000);
+    service.stop();
+
+    const reconnectSuccess = getHealthEvents(onHealthEvent).find(
+      (event) => event.type === "reconnect-success"
+    );
+    expect(reconnectSuccess?.detail).toContain("session still needs recovery");
+    expect(service.getMetrics().networkInterruptedAt).toBeDefined();
+    expect(getEventTypes(onHealthEvent)).not.toContain("network-recovered");
+  });
+
+  it("recovers the live session with soft re-auth before manual login is required", async () => {
+    const { pool, mockPage } = createMockPool();
+    const service = new SessionKeepAliveService(pool, {
+      cdpUrl: "http://127.0.0.1:18800",
+      intervalMs: 1_000,
+      jitterMs: 0
+    });
+    const expiredStatus = createHealthStatus({
+      session: {
+        authenticated: false,
+        loginWallDetected: true,
+        reason: "LinkedIn login wall detected.",
+        sessionCookiePresent: true
+      }
+    });
+    const recoveredStatus = createHealthStatus({
+      session: {
+        sessionCookieFingerprint: "recovered-session-fingerprint"
+      }
+    });
+    const onHealthEvent = vi.fn();
+
+    mockedCheckFullHealth
+      .mockResolvedValueOnce(expiredStatus)
+      .mockResolvedValueOnce(recoveredStatus);
+    service.on("health-event", onHealthEvent);
+
+    service.start();
+    await vi.advanceTimersByTimeAsync(1_000);
+    service.stop();
+
+    expect(getEventTypes(onHealthEvent)).toEqual(
+      expect.arrayContaining([
+        "session-expired",
+        "login-wall-detected",
+        "soft-reauth-attempt",
+        "soft-reauth-success"
+      ])
+    );
+    expect(getEventTypes(onHealthEvent)).not.toContain("manual-login-required");
+    expect(mockPage.goto).toHaveBeenCalledWith(
+      "https://www.linkedin.com/feed/",
+      { waitUntil: "domcontentloaded" }
+    );
+    expect(service.getMetrics().lastCookieRefreshAt).toBeDefined();
+  });
+
+  it("requires manual login when a stored restore still leaves the session stale", async () => {
+    const { pool } = createMockPool();
+    const sessionStore = {
+      saveWithBackups: vi.fn(async () => undefined),
+      restoreToContext: vi.fn(async () => ({
+        metadata: {
+          capturedAt: "2026-03-09T09:00:00.000Z",
+          cookieCount: 1,
+          filePath: "/tmp/stale-session.backup-1.session.enc.json",
+          hasLinkedInAuthCookie: true,
+          liAtCookieExpiresAt: "2026-03-10T09:00:00.000Z",
+          originCount: 1,
+          sessionName: "stale-session.backup-1"
+        },
+        restoredFromBackup: true,
+        restoredSessionName: "stale-session.backup-1",
+        storageState: createStorageState()
+      }))
+    } as unknown as LinkedInSessionStore;
+    const service = new SessionKeepAliveService(pool, {
+      cdpUrl: "http://127.0.0.1:18800",
+      intervalMs: 1_000,
+      jitterMs: 0,
+      maxBackupSessions: 2,
+      sessionName: "stale-session",
+      sessionRefreshEnabled: false,
+      sessionStore
+    });
+    const expiredStatus = createHealthStatus({
+      session: {
+        authenticated: false,
+        reason: "LinkedIn session expired.",
+        sessionCookiePresent: false
+      }
+    });
+    const onHealthEvent = vi.fn();
+
+    mockedCheckFullHealth
+      .mockResolvedValueOnce(expiredStatus)
+      .mockResolvedValueOnce(expiredStatus);
+    service.on("health-event", onHealthEvent);
+
+    service.start();
+    await vi.advanceTimersByTimeAsync(1_000);
+    service.stop();
+
+    expect(sessionStore.restoreToContext).toHaveBeenCalledWith(
+      expect.anything(),
+      "stale-session",
+      {
+        allowExpired: false,
+        maxBackups: 2
+      }
+    );
+    expect(getEventTypes(onHealthEvent)).toContain("manual-login-required");
+    expect(getEventTypes(onHealthEvent)).not.toContain("soft-reauth-success");
+
+    const loginRequiredEvent = getHealthEvents(onHealthEvent).find(
+      (event) => event.type === "manual-login-required"
+    );
+    expect(loginRequiredEvent?.metadata?.whatWasHappening).toBe(
+      "session recovery after authentication loss"
+    );
+  });
+
+  it("falls back to in-memory backup sessions when the live session goes stale", async () => {
+    const backupStorageState = createStorageState({
+      cookies: [
+        {
+          ...createStorageState().cookies[0]!,
+          value: "backup-cookie"
+        }
+      ]
+    });
+    const { addCookies, pool } = createMockPool({
+      storageState: backupStorageState
+    });
+    const service = new SessionKeepAliveService(pool, {
+      cdpUrl: "http://127.0.0.1:18800",
+      intervalMs: 1_000,
+      jitterMs: 0,
+      sessionRefreshEnabled: false
+    });
+    const healthyStatus = createHealthStatus({
+      session: {
+        sessionCookieFingerprint: "backup-fingerprint"
+      }
+    });
+    const expiredStatus = createHealthStatus({
+      session: {
+        authenticated: false,
+        reason: "LinkedIn session expired."
+      }
+    });
+    const onHealthEvent = vi.fn();
+
+    mockedCheckFullHealth
+      .mockResolvedValueOnce(healthyStatus)
+      .mockResolvedValueOnce(expiredStatus)
+      .mockResolvedValueOnce(healthyStatus);
+    service.on("health-event", onHealthEvent);
+
+    service.start();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(1_000);
+    service.stop();
+
+    expect(addCookies).toHaveBeenCalledWith(backupStorageState.cookies);
+
+    const successEvent = getHealthEvents(onHealthEvent).find(
+      (event) =>
+        event.type === "soft-reauth-success" && event.metadata?.source === "memory"
+    );
+    expect(successEvent).toBeDefined();
+    expect(getEventTypes(onHealthEvent)).not.toContain("manual-login-required");
+  });
+
+  it("raises and clears cookie-expiry alerts from configured thresholds", async () => {
+    const { pool } = createMockPool();
+    const service = new SessionKeepAliveService(pool, {
+      alertThresholds: {
+        cookieExpiringWithinMs: 120_000,
+        reconnectsInWindow: {
+          count: 99,
+          windowMs: 60_000
+        }
+      },
+      cdpUrl: "http://127.0.0.1:18800",
+      intervalMs: 1_000,
+      jitterMs: 0,
+      sessionRefreshEnabled: false
+    });
+    const onHealthEvent = vi.fn();
+
+    mockedCheckFullHealth
+      .mockResolvedValueOnce(
+        createHealthStatus({
+          session: {
+            nextCookieExpiryAt: new Date(Date.now() + 60_000).toISOString()
+          }
+        })
+      )
+      .mockResolvedValueOnce(
+        createHealthStatus({
+          session: {
+            nextCookieExpiryAt: new Date(Date.now() + 10 * 60_000).toISOString()
+          }
+        })
+      );
+    service.on("health-event", onHealthEvent);
+
+    service.start();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(service.getMetrics().activeAlerts).toContain("cookie-expiry");
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    service.stop();
+
+    expect(service.getMetrics().activeAlerts).not.toContain("cookie-expiry");
+    expect(
+      getHealthEvents(onHealthEvent).filter(
+        (event) =>
+          event.type === "alert" && event.metadata?.alertKey === "cookie-expiry"
+      )
+    ).toHaveLength(1);
+  });
+
+  it("emits reconnect burst alerts and clears them once the window passes", async () => {
+    const { mockContext, release } = createMockPool();
+    const acquire = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("ECONNREFUSED"))
+      .mockResolvedValueOnce({ context: mockContext, release })
+      .mockRejectedValueOnce(new Error("ECONNREFUSED"))
+      .mockResolvedValueOnce({ context: mockContext, release })
+      .mockResolvedValueOnce({ context: mockContext, release });
+    const pool = {
+      acquire,
+      dispose: vi.fn(async () => undefined),
+      invalidate: vi.fn(async () => undefined)
+    } as unknown as CDPConnectionPool;
+    const service = new SessionKeepAliveService(pool, {
+      alertThresholds: {
+        cookieExpiringWithinMs: 0,
+        reconnectsInWindow: {
+          count: 2,
+          windowMs: 2_000
+        }
+      },
+      cdpUrl: "http://127.0.0.1:18800",
+      intervalMs: 1_001,
+      jitterMs: 0,
+      networkGracePeriodMs: 60_000
+    });
+    const onHealthEvent = vi.fn();
+
+    mockedCheckFullHealth.mockResolvedValue(createHealthStatus());
+    service.on("health-event", onHealthEvent);
+
+    service.start();
+    await vi.advanceTimersByTimeAsync(1_001);
+    await vi.advanceTimersByTimeAsync(1_001);
+    expect(service.getMetrics().activeAlerts).toContain("reconnect-burst");
+
+    await vi.advanceTimersByTimeAsync(1_001);
+    service.stop();
+
+    expect(service.getMetrics().activeAlerts).not.toContain("reconnect-burst");
+    expect(
+      getHealthEvents(onHealthEvent).filter(
+        (event) =>
+          event.type === "alert" && event.metadata?.alertKey === "reconnect-burst"
+      )
+    ).toHaveLength(1);
+  });
+
+  it("caps health logs and in-memory backups to the configured limits", async () => {
+    const storageStates = ["1", "2", "3", "4"].map((suffix) =>
+      createStorageState({
+        cookies: [
+          {
+            ...createStorageState().cookies[0]!,
+            value: `cookie-${suffix}`
+          }
+        ]
+      })
+    );
+    const { pool } = createMockPool({
+      storageStateCalls: storageStates
+    });
+    const service = new SessionKeepAliveService(pool, {
+      activitySimulationEnabled: false,
+      cdpUrl: "http://127.0.0.1:18800",
+      intervalMs: 1_000,
+      jitterMs: 0,
+      maxBackupSessions: 2,
+      maxHealthLogEntries: 5,
+      sessionRefreshEnabled: false
+    });
+    const healthQueue = [
+      "fp-1",
+      "fp-2",
+      "fp-3",
+      "fp-4",
+      "fp-4",
+      "fp-4",
+      "fp-4",
+      "fp-4",
+      "fp-4",
+      "fp-4",
+      "fp-4",
+      "fp-4"
+    ].map((fingerprint) =>
+      createHealthStatus({
+        session: {
+          sessionCookieFingerprint: fingerprint
+        }
+      })
+    );
+
+    mockedCheckFullHealth.mockImplementation(async () => {
+      return healthQueue.shift() ?? createHealthStatus();
+    });
+
+    service.start();
+    await vi.advanceTimersByTimeAsync(12_000);
+    service.stop();
+
+    const healthLog = service.getHealthLog();
+    expect(healthLog).toHaveLength(10);
+    expect(service.getMetrics().backupSessionCount).toBe(2);
+    expect(service.getMetrics().lastSessionFingerprint).toBeDefined();
+    expect(service.getMetrics().sessionUptimeMs).toBeGreaterThan(0);
+
+    healthLog.pop();
+    expect(service.getHealthLog()).toHaveLength(10);
+  });
+
+  it("warms the session after extended idle time before simulating activity", async () => {
+    const { pool } = createMockPool();
+    const service = new SessionKeepAliveService(pool, {
+      activityEveryHealthyTicks: 1,
+      cdpUrl: "http://127.0.0.1:18800",
+      idleWarmupThresholdMs: 500,
+      intervalMs: 1_000,
+      jitterMs: 0,
+      sessionRefreshEnabled: false
+    });
+    const onHealthEvent = vi.fn();
+
+    mockedCheckFullHealth.mockResolvedValue(createHealthStatus());
+    service.on("health-event", onHealthEvent);
+
+    service.start();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(1_000);
+    service.stop();
+
+    expect(getEventTypes(onHealthEvent)).toContain("warmup");
+    expect(service.getMetrics().lastWarmupAt).toBeDefined();
+  });
+
+  it("closes orphaned tabs during healthy ticks", async () => {
+    const primaryPage = createMockPage("https://www.linkedin.com/feed/");
+    const secondaryPage = createMockPage(
+      "https://www.linkedin.com/notifications/"
+    );
+    const blankPage = createMockPage("about:blank");
+    const errorPage = createMockPage("chrome-error://chromewebdata/");
+    const mockContext = {
+      addCookies: vi.fn(async () => undefined),
+      cookies: vi.fn(async () => createStorageState().cookies),
+      newPage: vi.fn(async () => primaryPage),
+      pages: vi.fn(() => [primaryPage, secondaryPage, blankPage, errorPage]),
+      storageState: vi.fn(async () => createStorageState())
+    } as unknown as BrowserContext;
+    const release = vi.fn();
+    const pool = {
+      acquire: vi.fn(async () => ({ context: mockContext, release })),
+      dispose: vi.fn(async () => undefined),
+      invalidate: vi.fn(async () => undefined)
+    } as unknown as CDPConnectionPool;
+    const service = new SessionKeepAliveService(pool, {
+      activitySimulationEnabled: false,
+      cdpUrl: "http://127.0.0.1:18800",
+      intervalMs: 1_000,
+      jitterMs: 0,
+      sessionRefreshEnabled: false
+    });
+    const onHealthEvent = vi.fn();
+
+    mockedCheckFullHealth.mockResolvedValue(createHealthStatus());
+    service.on("health-event", onHealthEvent);
+
+    service.start();
+    await vi.advanceTimersByTimeAsync(1_000);
+    service.stop();
+
+    expect(blankPage.close).toHaveBeenCalledOnce();
+    expect(errorPage.close).toHaveBeenCalledOnce();
+    expect(secondaryPage.close).not.toHaveBeenCalled();
+
+    const cleanupEvent = getHealthEvents(onHealthEvent).find(
+      (event) => event.type === "tab-cleanup"
+    );
+    expect(cleanupEvent?.metadata).toMatchObject({
+      closedCount: 2,
+      remainingPages: 2
+    });
+  });
+
+  it("uses the night activity cadence during configured quiet hours", async () => {
+    vi.setSystemTime(new Date("2026-03-09T01:00:00.000Z"));
+
+    const { pool } = createMockPool();
+    const service = new SessionKeepAliveService(pool, {
+      activityEveryHealthyTicks: 1,
+      cdpUrl: "http://127.0.0.1:18800",
+      intervalMs: 1_000,
+      jitterMs: 0,
+      nightActivityEveryHealthyTicks: 3,
+      nightHours: {
+        endHour: 6,
+        startHour: 0
+      },
+      sessionRefreshEnabled: false
+    });
+    const onHealthEvent = vi.fn();
+
+    mockedCheckFullHealth.mockResolvedValue(createHealthStatus());
+    service.on("health-event", onHealthEvent);
+
+    service.start();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(
+      getHealthEvents(onHealthEvent).filter((event) => event.type === "activity")
+    ).toHaveLength(0);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    service.stop();
+
+    expect(
+      getHealthEvents(onHealthEvent).filter((event) => event.type === "activity")
+    ).toHaveLength(1);
+  });
+
+  it("runs through a full keepalive lifecycle across healthy, reconnect, and recovery states", async () => {
+    const { addCookies, mockContext, release } = createMockPool();
+    const acquire = vi
+      .fn()
+      .mockResolvedValueOnce({ context: mockContext, release })
+      .mockRejectedValueOnce(new Error("ECONNREFUSED"))
+      .mockResolvedValueOnce({ context: mockContext, release })
+      .mockResolvedValueOnce({ context: mockContext, release });
+    const pool = {
+      acquire,
+      dispose: vi.fn(async () => undefined),
+      invalidate: vi.fn(async () => undefined)
+    } as unknown as CDPConnectionPool;
+    const service = new SessionKeepAliveService(pool, {
+      cdpUrl: "http://127.0.0.1:18800",
+      intervalMs: 1_000,
+      jitterMs: 0,
+      networkGracePeriodMs: 60_000,
+      sessionRefreshEnabled: false
+    });
+    const onHealthEvent = vi.fn();
+    const healthyStatus = createHealthStatus({
+      session: {
+        sessionCookieFingerprint: "lifecycle-fingerprint"
+      }
+    });
+    const expiredStatus = createHealthStatus({
+      session: {
+        authenticated: false,
+        reason: "LinkedIn session expired."
+      }
+    });
+
+    mockedCheckFullHealth
+      .mockResolvedValueOnce(healthyStatus)
+      .mockResolvedValueOnce(healthyStatus)
+      .mockResolvedValueOnce(expiredStatus)
+      .mockResolvedValueOnce(healthyStatus);
+    service.on("health-event", onHealthEvent);
+
+    service.start();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(1_000);
+    service.stop();
+
+    expect(getEventTypes(onHealthEvent)).toEqual(
+      expect.arrayContaining([
+        "healthy",
+        "network-interruption",
+        "reconnect-attempt",
+        "reconnect-success",
+        "network-recovered",
+        "session-expired",
+        "soft-reauth-attempt",
+        "soft-reauth-success"
+      ])
+    );
+    expect(addCookies).toHaveBeenCalled();
+    expect(service.getMetrics()).toMatchObject({
+      authenticated: true,
+      backupSessionCount: 1,
+      reconnectCount: 1
+    });
+    expect(service.getMetrics().lastLoginRequiredAt).toBeUndefined();
+  });
+
 });
