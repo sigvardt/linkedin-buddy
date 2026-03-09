@@ -1,594 +1,482 @@
 # LinkedIn activity webhooks architecture
 
-Research for GitHub issue #158 (parent issue #86).
-
-## Executive summary
-
-The repository already has most of the read-side primitives needed for a
-poll-based webhook system:
-
-- read-only LinkedIn services for inbox, notifications, connections, feed,
-  profile, search, and jobs
-- a local SQLite state store with migration support
-- a local daemon pattern for scheduler and keepalive workflows
-- structured logs, per-run artifacts, retry/backoff helpers, and profile-lock
-  safety
-
-The main gap is not browser automation. The main gap is a durable eventing
-layer between **LinkedIn reads** and **outbound webhook delivery**.
-
-The recommended design is a local, operator-visible daemon that:
-
-1. polls one or more durable **activity watches** using the existing read-only
-   service methods
-2. compares the current normalized state with the last-known persisted state
-3. records internal **activity events** in SQLite
-4. fans those events out to one or more **webhook subscriptions**
-5. delivers them over HTTP with signatures, retries, and delivery history
-
-This should stay separate from the existing two-phase commit system. Webhooks
-are read-side notifications only; they must not prepare or confirm outbound
-LinkedIn actions.
-
-## Current codebase findings
-
-### Existing read capabilities
-
-The current core runtime already exposes the read surfaces needed for phase 1:
-
-| Source | Current service | Returned identity/state | Poll suitability | Notes |
-| --- | --- | --- | --- | --- |
-| Inbox | `linkedinInbox.ts` → `listThreads()` and `getThread()` | `thread_id`, `unread_count`, `snippet`, thread URL, per-message author/time/text | High | Best source for new-message and thread-updated events |
-| Notifications | `linkedinNotifications.ts` → `listNotifications()` | `id`, `type`, `message`, `timestamp`, `link`, `is_read` | High | Good source for new-notification and read-state changes |
-| Pending invitations | `linkedinConnections.ts` → `listPendingInvitations()` | profile URL, vanity name, direction (`sent`/`received`) | Medium-high | Good source for invitation received/sent/withdrawn state changes |
-| Accepted invitations | `linkedinFollowups.ts` + `sent_invitation_state` | `profile_url_key`, `accepted_at_ms`, `accepted_detection`, follow-up status | Medium | Strongest current acceptance-tracking path, but only for invitations originally sent through the tool |
-| Connections list | `linkedinConnections.ts` → `listConnections()` | profile URL, name, headline, connected-since | Medium | Good fallback for connection-added diffs |
-| Profile watch | `linkedinProfile.ts` → `viewProfile()` | headline, location, about, experience, education | Medium | Good for targeted profile watches, not global account activity |
-| Feed | `linkedinFeed.ts` → `viewFeed()` and `viewPost()` | `post_id`, author, text, counts, post URL | Low-medium | Personalized ordering makes generic feed webhooks noisy |
-
-Other read features exist (`linkedinSearch.ts`, `linkedinJobs.ts`), but they are
-better treated as explicit queries than always-on activity sources.
-
-### Important constraints already visible in the codebase
-
-- The runtime is keyed primarily by `profileName`, not by a canonical
-  cross-surface account id.
-- Background work already follows a local-daemon pattern in the scheduler and
-  keepalive flows.
-- `ProfileManager` enforces a profile lock for persistent contexts, so any new
-  poller must treat lock contention as a normal retryable condition.
-- The existing scheduler already has durable leasing/retry concepts in
-  `scheduler_job`, but its current service implementation is intentionally
-  narrow and follow-up-specific.
-- There is already a diff-and-snapshot precedent in the read-only live
-  validation workflow, which persists a rolling report and computes diffs
-  against the previous snapshot.
-
-### What the repo does **not** have yet
-
-- no general event model for read-side changes
-- no durable subscription/watch registry for LinkedIn activity
-- no webhook signer or delivery queue
-- no persistent last-known state for inbox, notifications, feed, or watched
-  profiles
-- no reusable HTTP retry history for outbound webhook attempts
-- no current support for LinkedIn's separate “who viewed your profile” product;
-  the existing profile capability is page viewing, not viewer notifications
-
-## Recommended architecture
-
-### Design principles
-
-1. **Stay local and operator-visible.** Match the scheduler model: one local
-   daemon per profile, with `start`, `status`, `stop`, and `run-once` CLI
-   workflows.
-2. **Separate polling from delivery.** LinkedIn reads and webhook POSTs have
-   different failure modes and should not share the same in-memory transaction.
-3. **Poll once, fan out many.** LinkedIn polling is the expensive/risky part.
-   Multiple webhook endpoints should share the same polled watch state.
-4. **Persist normalized state, not just raw snapshots.** Fine-grained diffs need
-   stable entity keys and stable fingerprints.
-5. **Treat read-side false positives as a product risk.** Especially for feed
-   and profile watches, the change detector must be conservative.
-6. **Keep LinkedIn traffic read-only.** No webhook feature should rely on
-   prepare/confirm executors or any outbound LinkedIn mutation.
-
-### Recommended component model
-
-```text
-LinkedIn read services
-  -> activity watch poller
-  -> normalized entity snapshots
-  -> internal activity events
-  -> delivery fanout
-  -> webhook delivery worker
-```
-
-Concretely:
-
-- **Activity watch registry** defines *what* to poll on LinkedIn.
-- **Poll daemon** decides *when* to poll each watch.
-- **Change detector** compares current normalized entities with persisted prior
-  entities.
-- **Activity event store** records the internal events emitted by the diff.
-- **Webhook subscription registry** defines *where* matching events go.
-- **Delivery worker** signs, retries, and records outbound deliveries.
-
-## Subscription model
-
-### Why split watches from webhook subscriptions
-
-If three webhook consumers all want inbox events for the same profile, the tool
-should poll LinkedIn **once**, not three times. That strongly suggests a split
-between:
-
-- **activity watch**: the durable definition of one LinkedIn polling target
-- **webhook subscription**: one delivery destination interested in one or more
-  event types produced by that watch
-
-### Recommended watch kinds
-
-Phase 1 should support a small, conservative set:
-
-| Watch kind | Source | Scope |
-| --- | --- | --- |
-| `inbox_threads` | inbox thread list + thread detail | all threads on one profile |
-| `notifications` | notification list | all notifications on one profile |
-| `pending_invitations` | pending invites | sent, received, or both |
-| `accepted_invitations` | accepted sent invitations | invitations already tracked by the local DB |
-| `profile_watch` | one profile page | one explicit target profile URL |
-
-The feed should be opt-in and explicitly marked experimental until the eventing
-layer proves stable.
-
-### Recommended event types
-
-Phase 1 event types should be semantic, not page-specific:
-
-- `linkedin.inbox.thread.created`
-- `linkedin.inbox.thread.updated`
-- `linkedin.inbox.message.received`
-- `linkedin.notifications.item.created`
-- `linkedin.notifications.item.read_changed`
-- `linkedin.connections.invitation.received`
-- `linkedin.connections.invitation.sent_changed`
-- `linkedin.connections.invitation.accepted`
-- `linkedin.profile.snapshot.changed`
-
-Optional later event types:
-
-- `linkedin.feed.post.appeared`
-- `linkedin.feed.post.engagement_changed`
-- `linkedin.connections.connected`
-
-### Watch filters
-
-Each watch should support narrow filters so the poller can stay conservative:
-
-- inbox: unread-only vs all threads, max threads inspected
-- notifications: type allowlist, max items inspected
-- invitations: `sent`, `received`, or `all`
-- profile watch: one exact profile URL
-- feed: top-N only, optional author allowlist
-
-## Polling engine
-
-### Runtime model
-
-Use the same operational model as `docs/scheduler.md`:
-
-- CLI owns the daemon loop
-- each tick creates a fresh core runtime with `createCoreRuntime()`
-- each tick closes the runtime after work completes
-- profile-lock contention becomes a normal retryable poll result
-
-This avoids long-lived Playwright contexts and matches the codebase’s existing
-local-daemon expectations.
-
-### Polling cadence recommendations
-
-The safest default is **not** “as fast as possible”. The safest default is a
-small number of targeted reads with jitter, low page limits, and automatic
-backoff when LinkedIn looks slow or challenged.
-
-| Watch kind | Recommended default | Suggested floor | Notes |
-| --- | --- | --- | --- |
-| `inbox_threads` | 5 minutes | 2 minutes | Highest value source; use small thread limits and only fetch thread detail when the summary changed |
-| `notifications` | 10 minutes | 5 minutes | Strong phase-1 candidate; stable list surface and compact payload |
-| `pending_invitations` | 15 minutes | 10 minutes | Good signal with lower urgency than inbox |
-| `accepted_invitations` | 30 minutes | 15 minutes | More intrusive today because acceptance detection may require profile probing |
-| `profile_watch` | 6 hours | 1 hour | Best for explicit tracked profiles, not generic broad polling |
-| `feed` (experimental) | 20 minutes | 15 minutes | Personalized ordering makes aggressive polling hard to justify |
-
-Global polling guidance:
-
-- add **±20% jitter** to every watch interval
-- cap one tick to a **small number of due watches** per profile
-- keep top-level page limits small: for example 10 feed posts, 20 threads,
-  20 notifications
-- treat auth redirects, challenges, and profile-lock contention as backoff
-  signals
-- optionally restrict polling to local business hours for low-urgency watches
-
-### Recommended execution order inside one tick
-
-For a single profile, process due watches in this order:
-
-1. inbox
-2. notifications
-3. pending invitations
-4. accepted invitations
-5. profile watches
-6. feed watches
-
-That order aligns the most time-sensitive but lower-volume sources first.
-
-## Change detection
-
-### Recommended detection strategy
-
-For each watch:
-
-1. call the existing read-only core service
-2. normalize the result into stable entity records
-3. derive a deterministic `entity_key`
-4. derive a deterministic `fingerprint` from only the fields that matter for
-   webhook semantics
-5. compare against the persisted prior state
-6. emit semantic events only when the normalized meaning changed
-
-### Stable entity keys and fingerprints
-
-| Watch kind | Entity key | Fingerprint inputs | Detection notes |
-| --- | --- | --- | --- |
-| Inbox thread summary | `thread_id` | unread count, snippet, newest message hash | Only fetch full thread detail when summary fingerprint changes or when thread is new |
-| Inbox message | `thread_id` + message hash | author, sent_at, normalized text hash | Best event for `message.received` |
-| Notification | LinkedIn notification `id`, else fallback hash of link + message + timestamp | type, message, timestamp, link, read state | Prefer new-item and read-changed events; ignore disappearance |
-| Pending invitation | normalized `profile_url` + direction | headline + direction + pending state | Use state transitions instead of list position |
-| Accepted invitation | `profile_url_key` | accepted flag + accepted_at + detection path | Reuse `sent_invitation_state` whenever possible |
-| Profile watch | normalized target URL | headline, location, about, experience hash, education hash | Ignore trivial whitespace/order-only changes |
-| Feed post | `post_id`, else canonical post URL | author, text hash, counts bucket | Treat count-only changes as optional low-priority events |
-
-### Event suppression rules
-
-To keep webhook noise low:
-
-- do not emit delete events for disappearing feed or notification items
-- do not emit profile events for whitespace-only or section-order-only changes
-- do not emit inbox thread updates when only non-semantic UI metadata changed
-- do not emit repeated identical acceptance events for already-accepted invites
-- optionally bucket feed engagement counters instead of emitting on every raw
-  count change
-
-### State persistence options
-
-There are three realistic persistence strategies:
-
-| Option | Pros | Cons | Recommendation |
-| --- | --- | --- | --- |
-| One full snapshot blob per watch | Simple reads/writes | Expensive diffs, weak per-entity history, hard fanout dedupe | Not recommended |
-| Per-entity normalized state rows | Precise diffing, selective updates, stable keys | More schema work | **Recommended** |
-| Append-only raw poll history only | Great audit trail | Hard to compute current state efficiently | Useful only as a secondary audit layer |
-
-Recommended hybrid:
-
-- keep **current per-entity normalized state** in SQLite for diffing
-- keep **append-only activity events** for fanout and observability
-- optionally keep **run-scoped artifacts** when a poll or diff fails in a hard
-  way
-
-## Webhook delivery
-
-### Delivery contract
-
-Each emitted activity event should produce one delivery attempt per matching
-active webhook subscription.
-
-Recommended request shape:
-
-- method: `POST`
-- content type: `application/json`
-- timeout: short and bounded, for example 10 seconds
-- success: any `2xx`
-- permanent failure: most `4xx` except `408`, `409`, `425`, and `429`
-- retryable failure: network errors, timeouts, `429`, and `5xx`
-
-### Signature scheme
-
-Use an HMAC header similar to common webhook providers:
-
-- `X-LinkedIn-Assistant-Timestamp: <unix-seconds>`
-- `X-LinkedIn-Assistant-Signature-256: sha256=<hex>`
-- signature input: `<timestamp>.<raw-body>`
-
-This protects against tampering and supports replay-window checks on the
-receiver side.
-
-### Suggested headers
-
-- `User-Agent: linkedin-assistant-webhooks/1`
-- `X-LinkedIn-Assistant-Event: <event-type>`
-- `X-LinkedIn-Assistant-Delivery: <delivery-id>`
-- `X-LinkedIn-Assistant-Retry-Count: <n>`
-
-### Payload format
-
-```json
-{
-  "id": "evt_01J...",
-  "version": "2026-03-activity-v1",
-  "type": "linkedin.inbox.message.received",
-  "occurred_at": "2026-03-09T12:34:56.000Z",
-  "profile_name": "default",
-  "watch": {
-    "id": "watch_01J...",
-    "kind": "inbox_threads"
-  },
-  "entity": {
-    "key": "thread:abc123",
-    "url": "https://www.linkedin.com/messaging/thread/abc123/"
-  },
-  "change": {
-    "kind": "created",
-    "previous": null,
-    "current": {
-      "thread_id": "abc123",
-      "unread_count": 1,
-      "snippet": "Thanks — sounds good",
-      "messages": [
-        {
-          "author": "Simon Miller",
-          "sent_at": "2026-03-09T12:33:00Z",
-          "text": "Thanks — sounds good"
-        }
-      ]
-    }
-  },
-  "meta": {
-    "poll_started_at": "2026-03-09T12:34:00.000Z",
-    "poll_finished_at": "2026-03-09T12:34:08.000Z"
-  }
-}
-```
-
-### Retry policy
-
-Recommended defaults:
-
-- max attempts: 6
-- backoff: 1 minute → 5 minutes → 15 minutes → 1 hour → 6 hours → 24 hours
-- disable subscription automatically only after repeated permanent failures or
-  an explicit `410 Gone`
-- keep a durable attempt history for operator inspection
-
-## Data model
-
-### Recommended durable tables
-
-#### `activity_watch`
-
-The polling source definition.
-
-| Column | Purpose |
-| --- | --- |
-| `id` | Stable watch id |
-| `profile_name` | Current runtime/account anchor |
-| `kind` | `inbox_threads`, `notifications`, `pending_invitations`, `accepted_invitations`, `profile_watch`, `feed` |
-| `target_json` | Watch-specific target/filter config |
-| `status` | `active`, `paused`, `disabled` |
-| `poll_interval_ms` | Watch cadence |
-| `next_poll_at` | Next due time |
-| `last_polled_at` | Last attempted poll |
-| `last_success_at` | Last successful poll |
-| `consecutive_failures` | Poll health signal |
-| `last_error_code` / `last_error_message` | Recent failure summary |
-| `created_at` / `updated_at` | Audit timestamps |
-
-#### `activity_entity_state`
-
-The last-known normalized state per watch entity.
-
-| Column | Purpose |
-| --- | --- |
-| `watch_id` | Owning watch |
-| `entity_key` | Stable normalized key |
-| `entity_type` | `thread`, `message`, `notification`, `invitation`, `profile`, `post` |
-| `fingerprint` | Stable semantic hash |
-| `snapshot_json` | Canonical normalized entity payload |
-| `first_seen_at` / `last_seen_at` | State tracking |
-| `last_emitted_event_id` | Deduplication help |
-| `miss_count` | Optional disappearance suppression |
-
-Primary key should be `(watch_id, entity_key)`.
-
-#### `activity_event`
-
-Append-only internal event ledger.
-
-| Column | Purpose |
-| --- | --- |
-| `id` | Stable event id |
-| `watch_id` | Source watch |
-| `profile_name` | Denormalized for querying |
-| `event_type` | Semantic event type |
-| `entity_key` | Stable entity id |
-| `payload_json` | Full event envelope |
-| `fingerprint` | Event-level dedupe hash |
-| `occurred_at` | Semantic event time |
-| `created_at` | Insert time |
-
-#### `webhook_subscription`
-
-One delivery destination.
-
-| Column | Purpose |
-| --- | --- |
-| `id` | Stable subscription id |
-| `watch_id` | Source watch |
-| `status` | `active`, `paused`, `disabled` |
-| `event_types_json` | Allowlist of event types |
-| `delivery_url` | Destination URL |
-| `secret_ref` | Reference to env/config/keychain secret, not the raw secret |
-| `max_batch_size` | Future batching support |
-| `last_delivered_at` | Delivery health |
-| `last_error_code` / `last_error_message` | Recent failure summary |
-| `created_at` / `updated_at` | Audit timestamps |
-
-#### `webhook_delivery_attempt`
-
-Delivery history and retry state.
-
-| Column | Purpose |
-| --- | --- |
-| `id` | Delivery attempt id |
-| `subscription_id` | Destination |
-| `event_id` | Event being delivered |
-| `attempt_number` | Retry count |
-| `status` | `pending`, `delivered`, `retrying`, `failed`, `dead_letter` |
-| `response_status` | HTTP status if present |
-| `response_body_excerpt` | Short bounded diagnostic |
-| `next_attempt_at` | Retry schedule |
-| `last_attempt_at` | Most recent try |
-| `created_at` / `updated_at` | Audit timestamps |
-
-### Relationship to existing tables
-
-- `prepared_action` remains unchanged; webhook delivery is not a two-phase
-  commit action.
-- `sent_invitation_state` should remain the source of truth for accepted sent
-  invitation tracking until a broader event store exists.
-- `scheduler_job` is a reusable design reference for leasing and retry logic,
-  but phase 1 does **not** need to force the entire poller into the current
-  scheduler implementation.
-- `run_log` and `artifact_index` remain useful for per-run observability.
-
-## Integration points with the existing automation layer
-
-### Core
-
-Recommended new core modules:
-
-- `packages/core/src/activityWatches.ts`
-- `packages/core/src/activityPoller.ts`
-- `packages/core/src/activityDiff.ts`
-- `packages/core/src/webhookDelivery.ts`
-
-And a new runtime surface in `packages/core/src/runtime.ts`, for example:
+This document describes the **implemented** activity polling and webhook
+subscription system.
+
+Use `docs/activity-webhooks.md` for the operator guide. Use this document when
+you need the actual module map, tick lifecycle, storage model, or integration
+boundaries.
+
+## Module map
+
+The shipped implementation is split across these files:
+
+- `packages/core/src/activityTypes.ts`: watch kinds, event types, statuses, and
+  default schedules
+- `packages/core/src/activityWatches.ts`: watch CRUD, subscription CRUD, target
+  normalization, cron parsing, active-watch capacity checks, and history views
+- `packages/core/src/activityDiff.ts`: stable JSON normalization plus entity
+  fingerprint diffing
+- `packages/core/src/activityPoller.ts`: one-tick orchestration for due
+  deliveries, due watches, event emission, and retry scheduling
+- `packages/core/src/webhookDelivery.ts`: HTTP POST delivery, HMAC signing,
+  timeout handling, response classification, and backoff helpers
+- `packages/core/src/db/migrations.ts`: SQLite schema for watches, entity
+  state, events, subscriptions, and delivery attempts
+- `packages/core/src/runtime.ts`: wires `runtime.activityWatches` and
+  `runtime.activityPoller` into the core service graph
+- `packages/cli/src/bin/linkedin.ts`: CLI command wiring plus daemon start,
+  status, stop, and `run-once`
+- `packages/cli/src/activityOutput.ts`: human-readable activity summaries and
+  structured error rendering
+- `packages/mcp/src/bin/linkedin-mcp.ts`: activity watch, webhook, history, and
+  `run_once` MCP tools
+
+## Runtime shape
+
+`createCoreRuntime()` exposes two new activity surfaces:
 
 - `runtime.activityWatches`
 - `runtime.activityPoller`
-- `runtime.webhooks`
 
-### Existing services to reuse directly
+The poller intentionally reuses existing read-only services instead of building
+parallel selector logic:
 
-- `runtime.inbox.listThreads()`
-- `runtime.inbox.getThread()`
 - `runtime.notifications.listNotifications()`
 - `runtime.connections.listPendingInvitations()`
 - `runtime.connections.listConnections()`
 - `runtime.followups.listAcceptedConnections()`
 - `runtime.profile.viewProfile()`
-- `runtime.feed.viewFeed()` and `runtime.feed.viewPost()`
+- `runtime.feed.viewFeed()`
+- `runtime.inbox.listThreads()`
+- `runtime.inbox.getThread()`
 
-That reuse is important: the new system should start by consuming existing
-service outputs rather than building a second independent layer of selectors.
+That reuse keeps selector behavior, auth requirements, and browser/session
+handling consistent with the rest of the product.
+
+## One tick from start to finish
+
+One `ActivityPollerService.runTick()` call follows this order:
+
+```text
+runTick(profile)
+  -> claim due webhook deliveries
+  -> attempt delivery / retry / fail / dead-letter
+  -> promote deferred deliveries if queue space opened
+  -> if queued deliveries are below the queue cap, claim due watches
+  -> fetch current LinkedIn snapshots for each claimed watch
+  -> normalize entities and diff against activity_entity_state
+  -> append activity_event rows for semantic changes
+  -> enqueue webhook_delivery_attempt rows for active matching subscriptions
+  -> mark each watch succeeded or failed and compute the next schedule
+```
+
+Important details:
+
+- the poller processes **deliveries before watch polling** so backlogged webhook
+  traffic drains before new events are generated
+- an in-process per-profile lock prevents concurrent ticks from one process,
+  while SQLite leases protect watch and delivery claims across processes
+- if queued `pending` + `leased` deliveries have already reached
+  `LINKEDIN_ASSISTANT_ACTIVITY_MAX_EVENT_QUEUE_DEPTH`, the tick skips watch
+  claiming and only works on delivery drain
+
+## Watch execution model
+
+### Schedule resolution
+
+Watches are persisted with either:
+
+- `schedule_kind = 'interval'` and `poll_interval_ms`, or
+- `schedule_kind = 'cron'` and `cron_expression`
+
+The `activity_watch` table has a `CHECK` constraint that enforces this XOR.
+
+`activityWatches.ts` validates interval schedules against the effective minimum
+for the selected watch kind. Cron parsing supports five fields with numbers,
+ranges, lists, and step expressions.
+
+### Initial baseline behavior
+
+The first successful poll for one watch is treated as a **baseline**:
+
+- entity snapshots are written into `activity_entity_state`
+- `last_success_at` is recorded on the watch
+- no create-style events are emitted for items that already existed before the
+  watch was configured
+
+This avoids surprise webhook floods the first time a watch runs.
+
+### Success and failure handling
+
+On success:
+
+- `last_success_at` is updated
+- `consecutive_failures` resets to `0`
+- `last_error_code` and `last_error_message` are cleared
+- `next_poll_at` is computed from the interval or next cron occurrence
+
+On failure:
+
+- `consecutive_failures` increments
+- `last_error_code` and `last_error_message` are recorded
+- `next_poll_at` is pushed forward using exponential backoff
+- watch polling backoff reuses the same retry config used for deliveries:
+  `INITIAL_BACKOFF_SECONDS` and `MAX_BACKOFF_SECONDS`
+
+There is no watch-level max-attempt ceiling. Failed watches remain active and
+continue retrying with backoff until paused, removed, or successfully polled.
+
+## Entity normalization and event emission
+
+The poller converts each upstream LinkedIn payload into a normalized
+`ActivityEntityRecord` with:
+
+- `entityKey`: stable per-watch entity identifier
+- `entityType`: one of `thread`, `message`, `notification`, `invitation`,
+  `connection`, `profile`, or `post`
+- `fingerprint`: stable SHA-256 hash of the normalized snapshot
+- `snapshot`: canonical object stored in SQLite and reused in event payloads
+- `url`: optional operator-facing deep link
+
+### Watch-kind behavior
+
+| Watch kind | Source service | Stored entity types | Event behavior |
+| --- | --- | --- | --- |
+| `notifications` | `notifications.listNotifications()` | `notification` | emits `item.created` for new notifications and `read_changed` when `is_read` flips |
+| `pending_invitations` | `connections.listPendingInvitations()` | `invitation` | emits `invitation.received` for new received invites and `invitation.sent_changed` for new or updated sent invites |
+| `accepted_invitations` | `followups.listAcceptedConnections()` | `invitation` | emits `invitation.accepted` when a newly seen accepted connection enters the lookback window |
+| `connections` | `connections.listConnections()` | `connection` | emits `connections.connected` for newly seen connections |
+| `profile_watch` | `profile.viewProfile()` | `profile` | emits `profile.snapshot.changed` on any fingerprint change after baseline |
+| `feed` | `feed.viewFeed()` | `post` | emits `post.appeared` for new posts and `post.engagement_changed` when reactions, comments, or repost counts change |
+| `inbox_threads` | `inbox.listThreads()` plus `inbox.getThread()` | `thread`, `message` | emits `thread.created`, `thread.updated`, and `message.received`; after baseline it only fetches thread details for newly created or updated threads |
+
+### Diffing model
+
+`diffActivityEntities()` compares the current entity set against
+`activity_entity_state` rows by `entity_key` and `fingerprint`.
+
+This produces three buckets:
+
+- `created`
+- `updated`
+- `unchanged`
+
+The poller does **not** currently emit delete events when an entity disappears.
+That keeps the first production version conservative for noisy sources like feed
+or notifications.
+
+### Event payloads
+
+Inserted `activity_event` rows use the envelope shape documented in
+`docs/activity-webhooks.md`, including:
+
+- `id`
+- `version` (`2026-03-activity-v1`)
+- `type`
+- `occurred_at`
+- `profile_name`
+- `watch.id` and `watch.kind`
+- `entity.key`, `entity.type`, and optional `entity.url`
+- `change.kind`, `change.previous`, and `change.current`
+- `meta.correlation_id`, `meta.poll_started_at`, and `meta.poll_finished_at`
+
+Each event also gets a stable fingerprint derived from the watch id, event type,
+entity key, change kind, and the previous/current snapshots. That fingerprint is
+uniquely indexed in SQLite to suppress duplicate event inserts.
+
+## Delivery model
+
+### Subscription behavior
+
+Each `webhook_subscription` row is bound to one watch and contains:
+
+- an event allowlist in `event_types_json`
+- the destination `delivery_url`
+- the raw `signing_secret`
+- a per-subscription `max_attempts`
+- last-success and last-error summary fields for operator diagnostics
+
+When one event is emitted, the poller enqueues one `webhook_delivery_attempt`
+row per active subscription whose allowlist contains that event type.
+
+### Queue states
+
+Delivery attempts move through these statuses:
+
+- `deferred`: stored, but held back because queued pending work already hit the
+  queue-depth cap
+- `pending`: ready to be claimed and sent
+- `leased`: currently claimed by a worker
+- `retrying`: prior attempt failed retryably and a later retry row has been
+  inserted
+- `delivered`: final success
+- `failed`: final non-retryable failure
+- `dead_letter`: retry budget exhausted after a retryable failure
+
+### Delivery result handling
+
+`deliverWebhook()` sends a signed JSON `POST` request and classifies the result:
+
+- `2xx` -> `delivered`
+- network failure or timeout -> `retry`
+- `408`, `409`, `425`, `429`, `5xx` -> `retry`
+- other `4xx` -> `failed`
+- `410 Gone` -> `failed` and subscription is set to `disabled`
+
+When a retryable failure occurs and the current `attempt_number` is still below
+the subscription's `max_attempts`:
+
+1. the current attempt row is marked `retrying`
+2. a new `pending` attempt row is inserted with `attempt_number + 1`
+3. `next_attempt_at` is scheduled with exponential backoff
+
+If the retry budget is exhausted, the current leased row is finalized as
+`dead_letter`.
+
+### Backpressure
+
+`LINKEDIN_ASSISTANT_ACTIVITY_MAX_EVENT_QUEUE_DEPTH` applies to queued
+`pending` + `leased` attempts.
+
+When an event is emitted and no queue slot remains:
+
+- the delivery row is still inserted
+- it is inserted as `deferred`
+- a later tick promotes deferred rows back to `pending` once queue slots open
+
+When the queue is already full at the start of a tick, no watches are claimed
+that tick.
+
+## Local daemon model
+
+The background daemon is implemented in `packages/cli/src/bin/linkedin.ts`.
+
+### Process model
+
+- `linkedin activity start` spawns a detached `activity __run` process
+- the daemon writes a profile-scoped pid file, state file, and JSONL event log
+- each loop iteration creates a **fresh core runtime**, runs one tick, then
+  closes the runtime again
+- sleep between iterations uses `LINKEDIN_ASSISTANT_ACTIVITY_DAEMON_POLL_INTERVAL_SECONDS`
+
+Creating a fresh runtime on every loop keeps browser/session/resource cleanup
+behavior aligned with the rest of the CLI and avoids holding one long-lived
+runtime graph open indefinitely.
+
+### State model
+
+The daemon writes an `ActivityDaemonState` object containing:
+
+- pid and profile name
+- daemon status (`starting`, `running`, `idle`, `degraded`, `stopped`)
+- resolved daemon poll interval, per-tick watch cap, and per-tick delivery cap
+- consecutive failure counters
+- last tick timestamps and last summary
+- last error message when relevant
+- optional `cdpUrl` when attached to an external browser session
+
+The daemon becomes `degraded` when:
+
+- the last successful tick contained failed watches, failed deliveries, or dead
+  letters, or
+- the daemon loop hit the consecutive-failure threshold (`5`)
+
+`status` and `stop` also handle stale pid recovery. `stop` escalates to
+`SIGKILL` after 5 seconds if the daemon ignores `SIGTERM`.
+
+### Diagnostics and redaction
+
+Persisted daemon state and JSONL event-log entries are sanitized before they are
+written to disk. Secret-bearing CDP URLs have credentials, query tokens, and
+fragments removed so daemon diagnostics do not leak those secrets.
+
+## SQLite schema
+
+The activity system is stored in `state.sqlite` by default.
+
+### `activity_watch`
+
+Durable definition of one polling source.
+
+Key columns:
+
+- `id`
+- `profile_name`
+- `kind`
+- `target_json`
+- `schedule_kind`
+- `poll_interval_ms`
+- `cron_expression`
+- `status`
+- `next_poll_at`
+- `last_polled_at`
+- `last_success_at`
+- `consecutive_failures`
+- `last_error_code`
+- `last_error_message`
+- `lease_owner`, `leased_at`, `lease_expires_at`
+- `created_at`, `updated_at`
+
+Indexes:
+
+- `(profile_name, status, next_poll_at)`
+- `(status, next_poll_at)`
+
+### `activity_entity_state`
+
+Last-known normalized snapshot per watch entity.
+
+Key columns:
+
+- `watch_id`
+- `entity_key`
+- `entity_type`
+- `fingerprint`
+- `snapshot_json`
+- `first_seen_at`
+- `last_seen_at`
+- `last_emitted_event_id`
+- `updated_at`
+
+Constraints and indexes:
+
+- primary key: `(watch_id, entity_key)`
+- foreign key to `activity_watch(id)` with `ON DELETE CASCADE`
+- index: `(watch_id, entity_type)`
+
+### `activity_event`
+
+Append-only internal event ledger.
+
+Key columns:
+
+- `id`
+- `watch_id`
+- `profile_name`
+- `event_type`
+- `entity_key`
+- `payload_json`
+- `fingerprint`
+- `occurred_at`
+- `created_at`
+
+Constraints and indexes:
+
+- foreign key to `activity_watch(id)` with `ON DELETE CASCADE`
+- unique index on `fingerprint`
+- index: `(watch_id, created_at)`
+- index: `(profile_name, created_at)`
+
+### `webhook_subscription`
+
+One destination bound to one watch.
+
+Key columns:
+
+- `id`
+- `watch_id`
+- `status`
+- `event_types_json`
+- `delivery_url`
+- `signing_secret`
+- `max_attempts`
+- `last_delivered_at`
+- `last_error_code`
+- `last_error_message`
+- `created_at`, `updated_at`
+
+Constraints and indexes:
+
+- foreign key to `activity_watch(id)` with `ON DELETE CASCADE`
+- index: `(watch_id, status)`
+
+### `webhook_delivery_attempt`
+
+Durable per-attempt delivery history and retry queue.
+
+Key columns:
+
+- `id`
+- `watch_id`
+- `profile_name`
+- `subscription_id`
+- `event_id`
+- `event_type`
+- `delivery_url`
+- `payload_json`
+- `attempt_number`
+- `status`
+- `response_status`
+- `response_body_excerpt`
+- `next_attempt_at`
+- `lease_owner`, `leased_at`, `lease_expires_at`
+- `last_attempt_at`
+- `last_error_code`
+- `last_error_message`
+- `created_at`, `updated_at`
+
+Constraints and indexes:
+
+- unique key: `(subscription_id, event_id, attempt_number)`
+- foreign key to `activity_watch(id)` with `ON DELETE CASCADE`
+- foreign key to `webhook_subscription(id)` with `ON DELETE CASCADE`
+- foreign key to `activity_event(id)` with `ON DELETE CASCADE`
+- index: `(profile_name, status, next_attempt_at)`
+- index: `(subscription_id, created_at)`
+- index: `(event_id, attempt_number)`
+
+### Cascade implications
+
+Because the activity tables use foreign-key cascades:
+
+- removing one watch removes its entity-state rows, event rows, subscriptions,
+  and delivery attempts
+- removing one subscription removes its delivery attempts
+- deleting an event also deletes any delivery-attempt rows still referencing it
+
+## Public surfaces
 
 ### CLI
 
-The best match is the scheduler lifecycle pattern:
+The CLI owns:
 
-- `linkedin activity start --profile <profile>`
-- `linkedin activity status --profile <profile>`
-- `linkedin activity run-once --profile <profile>`
-- `linkedin activity stop --profile <profile>`
-- `linkedin activity watch add|list|remove`
-- `linkedin activity webhook add|list|pause|resume|remove`
-- `linkedin activity deliveries list|retry`
+- watch CRUD
+- webhook CRUD
+- event and delivery history
+- one-off polling with `run-once` / `tick`
+- daemon start, status, and stop
+- human-readable operator output
 
 ### MCP
 
-Phase 1 does not need an MCP daemon tool. MCP should focus on management and
-inspection:
+The MCP server exposes management and inspection tools, plus a one-off poll:
 
-- create/list/pause/remove watches
-- create/list/pause/remove subscriptions
-- inspect recent events and delivery failures
-- trigger a safe `run_once` for diagnostics
+- `linkedin.activity_watch.create`
+- `linkedin.activity_watch.list`
+- `linkedin.activity_watch.pause`
+- `linkedin.activity_watch.resume`
+- `linkedin.activity_watch.remove`
+- `linkedin.activity_webhook.create`
+- `linkedin.activity_webhook.list`
+- `linkedin.activity_webhook.pause`
+- `linkedin.activity_webhook.resume`
+- `linkedin.activity_webhook.remove`
+- `linkedin.activity_events.list`
+- `linkedin.activity_deliveries.list`
+- `linkedin.activity_poller.run_once`
 
-## Risk assessment
+Daemon lifecycle is intentionally **not** exposed over MCP.
 
-### Detection risk
+### Core API
 
-Highest-risk sources:
+Programmatic callers can use:
 
-1. accepted-invitation detection that requires profile probing
-2. frequent inbox polling
-3. home feed polling on a personalized ranked surface
+- `runtime.activityWatches.createWatch()`
+- `runtime.activityWatches.listWatches()`
+- `runtime.activityWatches.createWebhookSubscription()`
+- `runtime.activityWatches.listEvents()`
+- `runtime.activityWatches.listDeliveries()`
+- `runtime.activityPoller.runTick()`
 
-Mitigations:
-
-- conservative defaults and per-watch jitter
-- low item limits and incremental fetches
-- local business-hours gating for low-priority watches
-- back off aggressively on auth redirects, challenge pages, and lock contention
-- share one watch across many webhook subscriptions
-- prefer notification/inbox/profile watches before feed-heavy coverage
-
-### Reliability risk
-
-Main reliability concerns:
-
-- selector drift across localized UIs
-- missing or unstable notification ids
-- feed reorder churn causing false create/delete events
-- profile page formatting changes causing noisy diffs
-- webhook receiver downtime or repeated `429` responses
-
-Mitigations:
-
-- normalize aggressively and diff semantically, not by raw DOM order
-- reuse the existing selector-locale infrastructure
-- record run logs and artifacts on hard failures
-- keep delivery retries independent from poll success
-- start with event types that already have strong stable identifiers
-
-### Data-model and product edge cases
-
-- a message can change thread snippet without representing a meaningful new
-  inbound message
-- notifications can be marked read without any new LinkedIn activity
-- accepted connection detection is strongest only for invitations the tool
-  already tracked locally
-- profile diffs can be triggered by reordered experience entries or truncated
-  text
-- the current repo does not yet have a canonical account id shared across
-  profile-based and stored-session-based flows
-
-### Phase-1 scope recommendation
-
-Ship in this order:
-
-1. `notifications`
-2. `inbox_threads`
-3. `pending_invitations`
-4. `profile_watch`
-5. `accepted_invitations`
-6. `feed` only after the first five are stable
-
-That ordering balances user value with detection and false-positive risk.
-
-## Final recommendation
-
-For issue #86, the safest architecture is:
-
-- a **local daemon** per profile
-- a split between **activity watches** and **webhook subscriptions**
-- **normalized per-entity state** in SQLite for change detection
-- **append-only activity events** for fanout and observability
-- **signed webhook delivery with independent retries**
-- reuse of the existing read-only LinkedIn services instead of new selectors
-
-The most important non-obvious product choice is to treat polling as a shared
-watch layer, not as a property of each individual webhook destination. That is
-what keeps LinkedIn traffic low enough to stay compatible with the project’s
-safety-first posture.
+See `packages/core/README.md` for a compact usage example.

@@ -2,6 +2,55 @@
 
 Core runtime and automation library for LinkedIn Assistant.
 
+## Activity polling and webhooks
+
+`createCoreRuntime()` exposes durable activity watch management and one-off poll
+execution through:
+
+- `runtime.activityWatches`
+- `runtime.activityPoller`
+
+Minimal example:
+
+```ts
+import { createCoreRuntime } from "@linkedin-assistant/core";
+
+const runtime = createCoreRuntime();
+
+try {
+  const watch = runtime.activityWatches.createWatch({
+    kind: "notifications",
+    profileName: "default",
+    intervalSeconds: 600
+  });
+
+  runtime.activityWatches.createWebhookSubscription({
+    watchId: watch.id,
+    deliveryUrl: "https://example.com/hooks/linkedin"
+  });
+
+  const result = await runtime.activityPoller.runTick({
+    profileName: "default"
+  });
+
+  console.log(result);
+} finally {
+  runtime.close();
+}
+```
+
+Important behavior:
+
+- the first successful poll establishes baseline entity state and does not emit
+  create-style events for already-existing items
+- `ActivityPollerService` runs one tick; background daemon lifecycle remains a
+  CLI concern
+- watch CRUD, event history, and delivery history all persist in the shared
+  SQLite database
+
+See `../../docs/activity-webhooks.md` for operator workflows and
+`../../docs/activity-webhooks-architecture.md` for schema and engine details.
+
 ## Human-like typing simulation
 
 `packages/core/src/humanize.ts` exports the humanized Playwright wrapper used

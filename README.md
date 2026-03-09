@@ -50,16 +50,17 @@ Scheduler / scheduled follow-up configuration:
 Activity webhook / polling configuration:
 
 - `LINKEDIN_ASSISTANT_ACTIVITY_ENABLED=true|false` toggles local activity polling and webhook delivery work (defaults to `true`)
-- `LINKEDIN_ASSISTANT_ACTIVITY_DAEMON_POLL_INTERVAL_SECONDS=300` controls daemon wake-up cadence
-- `LINKEDIN_ASSISTANT_ACTIVITY_MAX_WATCHES_PER_TICK=10` bounds LinkedIn polling work per tick
+- `LINKEDIN_ASSISTANT_ACTIVITY_DAEMON_POLL_INTERVAL_SECONDS=60` controls daemon wake-up cadence
+- `LINKEDIN_ASSISTANT_ACTIVITY_MAX_WATCHES_PER_TICK=4` bounds LinkedIn polling work per tick
 - `LINKEDIN_ASSISTANT_ACTIVITY_MAX_CONCURRENT_WATCHES=20` caps active watches per profile
 - `LINKEDIN_ASSISTANT_ACTIVITY_MIN_POLL_INTERVAL_SECONDS=60` sets the minimum interval schedule accepted for activity watches
-- `LINKEDIN_ASSISTANT_ACTIVITY_MAX_DELIVERIES_PER_TICK=50` bounds webhook delivery work per tick
-- `LINKEDIN_ASSISTANT_ACTIVITY_MAX_EVENT_QUEUE_DEPTH=250` bounds locally buffered pending/deferred webhook deliveries
-- `LINKEDIN_ASSISTANT_ACTIVITY_WATCH_LEASE_SECONDS=120`, `LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_LEASE_SECONDS=120`, and `LINKEDIN_ASSISTANT_ACTIVITY_CLOCK_SKEW_SECONDS=5` control lease recovery under clock skew
-- `LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_TIMEOUT_SECONDS=15` caps one webhook POST attempt
-- `LINKEDIN_ASSISTANT_ACTIVITY_MAX_DELIVERY_ATTEMPTS=5` sets the retry ceiling per subscription delivery
-- See `docs/activity-webhooks.md` for quickstart steps, webhook headers, CLI usage, and every activity env var
+- `LINKEDIN_ASSISTANT_ACTIVITY_MAX_DELIVERIES_PER_TICK=12` bounds webhook delivery work per tick
+- `LINKEDIN_ASSISTANT_ACTIVITY_MAX_EVENT_QUEUE_DEPTH=250` bounds queued `pending` + `leased` webhook deliveries before new watch polling backs off
+- `LINKEDIN_ASSISTANT_ACTIVITY_WATCH_LEASE_SECONDS=120`, `LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_LEASE_SECONDS=60`, and `LINKEDIN_ASSISTANT_ACTIVITY_CLOCK_SKEW_SECONDS=5` control lease recovery under clock skew
+- `LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_TIMEOUT_SECONDS=10` caps one webhook POST attempt
+- `LINKEDIN_ASSISTANT_ACTIVITY_MAX_DELIVERY_ATTEMPTS=6` sets the default retry ceiling per subscription delivery
+- `LINKEDIN_ASSISTANT_ACTIVITY_INITIAL_BACKOFF_SECONDS=60` and `LINKEDIN_ASSISTANT_ACTIVITY_MAX_BACKOFF_SECONDS=86400` control exponential backoff for retryable delivery failures and watch poll failures
+- See `docs/activity-webhooks.md` for quickstart steps, CLI workflows, diagnostics, and every activity env var
 
 Privacy / redaction controls:
 
@@ -251,17 +252,21 @@ Activity webhook daemon:
 
 ```bash
 npm exec -w @linkedin-assistant/cli -- linkedin activity watch add --profile default --kind notifications --interval-seconds 600
+npm exec -w @linkedin-assistant/cli -- linkedin activity watch list --profile default
 npm exec -w @linkedin-assistant/cli -- linkedin activity webhook add --watch <watch-id> --url https://example.com/hooks/linkedin
 npm exec -w @linkedin-assistant/cli -- linkedin activity run-once --profile default
+npm exec -w @linkedin-assistant/cli -- linkedin activity events --profile default --limit 20
+npm exec -w @linkedin-assistant/cli -- linkedin activity deliveries --profile default --limit 20
 npm exec -w @linkedin-assistant/cli -- linkedin activity start --profile default
 npm exec -w @linkedin-assistant/cli -- linkedin activity status --profile default
 npm exec -w @linkedin-assistant/cli -- linkedin activity stop --profile default
 ```
 
 - The activity daemon is a local CLI daemon backed by persistent watch, event, and delivery state in SQLite.
+- `run-once` has a `tick` alias when you want an immediate poll without leaving the daemon running.
 - MCP exposes watch/webhook CRUD plus `linkedin.activity_poller.run_once`, but daemon lifecycle stays in the CLI.
-- Activity state/log files are stored under `~/.linkedin-assistant/linkedin-owa-agentools/activity/`.
-- See `docs/activity-webhooks.md` for watch targets, event types, webhook headers, and retry configuration.
+- Activity state/log files are stored under `~/.linkedin-assistant/linkedin-owa-agentools/activity/`, and durable rows live in `~/.linkedin-assistant/linkedin-owa-agentools/state.sqlite`.
+- See `docs/activity-webhooks.md` for watch targets, event types, output diagnostics, and configuration, and `docs/activity-webhooks-architecture.md` for the polling-engine and schema details.
 
 Delete local tool state:
 
