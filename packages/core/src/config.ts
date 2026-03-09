@@ -91,6 +91,24 @@ export const DEFAULT_SCHEDULER_MAX_BACKOFF_MS = 6 * 60 * 60 * 1000;
 export const DEFAULT_SCHEDULER_BUSINESS_START = "09:00";
 /** Default local business-hours end used by the scheduler. */
 export const DEFAULT_SCHEDULER_BUSINESS_END = "17:00";
+/** Default wake-up interval for the activity webhook daemon loop. */
+export const DEFAULT_ACTIVITY_DAEMON_POLL_INTERVAL_MS = 60 * 1000;
+/** Default number of due activity watches processed during one tick. */
+export const DEFAULT_ACTIVITY_MAX_WATCHES_PER_TICK = 4;
+/** Default lease TTL for claimed activity watches. */
+export const DEFAULT_ACTIVITY_WATCH_LEASE_TTL_MS = 2 * 60 * 1000;
+/** Default number of webhook deliveries attempted during one tick. */
+export const DEFAULT_ACTIVITY_MAX_DELIVERIES_PER_TICK = 12;
+/** Default lease TTL for claimed webhook delivery attempts. */
+export const DEFAULT_ACTIVITY_DELIVERY_LEASE_TTL_MS = 60 * 1000;
+/** Default request timeout applied to outbound webhook delivery. */
+export const DEFAULT_ACTIVITY_DELIVERY_TIMEOUT_MS = 10 * 1000;
+/** Default maximum number of webhook delivery attempts. */
+export const DEFAULT_ACTIVITY_MAX_DELIVERY_ATTEMPTS = 6;
+/** Default initial backoff after a retryable webhook delivery failure. */
+export const DEFAULT_ACTIVITY_INITIAL_BACKOFF_MS = 60 * 1000;
+/** Default maximum backoff used for retryable webhook delivery failures. */
+export const DEFAULT_ACTIVITY_MAX_BACKOFF_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Business-hours window applied before the scheduler may prepare due work.
@@ -140,6 +158,40 @@ export interface SchedulerConfig {
   followupLookbackMs: number;
   /** Retry policy for retryable scheduler failures. */
   retry: SchedulerRetryConfig;
+}
+
+/**
+ * Retry policy applied when outbound webhook deliveries fail.
+ */
+export interface ActivityWebhookRetryConfig {
+  /** Maximum attempts before a delivery is marked dead-letter. */
+  maxAttempts: number;
+  /** Initial retry delay used for the first retryable delivery failure. */
+  initialBackoffMs: number;
+  /** Upper bound for webhook delivery retry backoff growth. */
+  maxBackoffMs: number;
+}
+
+/**
+ * Resolved configuration shared by the activity watch daemon and core poller.
+ */
+export interface ActivityWebhookConfig {
+  /** Master on/off switch for activity watch polling and delivery. */
+  enabled: boolean;
+  /** Delay between daemon wake-ups that claim due work. */
+  daemonPollIntervalMs: number;
+  /** Maximum number of due watches processed during one tick. */
+  maxWatchesPerTick: number;
+  /** Lease TTL for claimed activity watches. */
+  watchLeaseTtlMs: number;
+  /** Maximum number of due deliveries processed during one tick. */
+  maxDeliveriesPerTick: number;
+  /** Lease TTL for claimed delivery attempts. */
+  deliveryLeaseTtlMs: number;
+  /** HTTP timeout for one outbound webhook request. */
+  deliveryTimeoutMs: number;
+  /** Retry policy for retryable webhook delivery failures. */
+  retry: ActivityWebhookRetryConfig;
 }
 
 function isValidTimeZone(value: string | undefined): value is string {
@@ -202,6 +254,17 @@ function compareClockTimes(left: string, right: string): number {
 }
 
 function invalidSchedulerConfig(
+  message: string,
+  details: Record<string, unknown>
+): LinkedInAssistantError {
+  return new LinkedInAssistantError(
+    "ACTION_PRECONDITION_FAILED",
+    message,
+    details
+  );
+}
+
+function invalidActivityWebhookConfig(
   message: string,
   details: Record<string, unknown>
 ): LinkedInAssistantError {
@@ -595,6 +658,92 @@ export function resolveSchedulerConfig(): SchedulerConfig {
     businessHours,
     followupDelayMs,
     followupLookbackMs,
+    retry
+  };
+}
+
+/**
+ * Resolves activity watch daemon and webhook delivery settings from
+ * environment variables.
+ */
+export function resolveActivityWebhookConfig(): ActivityWebhookConfig {
+  const daemonPollIntervalMs =
+    parseStrictPositiveInteger({
+      envName: "LINKEDIN_ASSISTANT_ACTIVITY_DAEMON_POLL_INTERVAL_SECONDS",
+      fallback: DEFAULT_ACTIVITY_DAEMON_POLL_INTERVAL_MS / 1_000,
+      max: 24 * 60 * 60
+    }) * 1_000;
+  const maxWatchesPerTick = parseStrictPositiveInteger({
+    envName: "LINKEDIN_ASSISTANT_ACTIVITY_MAX_WATCHES_PER_TICK",
+    fallback: DEFAULT_ACTIVITY_MAX_WATCHES_PER_TICK,
+    max: 100
+  });
+  const watchLeaseTtlMs =
+    parseStrictPositiveInteger({
+      envName: "LINKEDIN_ASSISTANT_ACTIVITY_WATCH_LEASE_SECONDS",
+      fallback: DEFAULT_ACTIVITY_WATCH_LEASE_TTL_MS / 1_000,
+      max: 24 * 60 * 60
+    }) * 1_000;
+  const maxDeliveriesPerTick = parseStrictPositiveInteger({
+    envName: "LINKEDIN_ASSISTANT_ACTIVITY_MAX_DELIVERIES_PER_TICK",
+    fallback: DEFAULT_ACTIVITY_MAX_DELIVERIES_PER_TICK,
+    max: 1_000
+  });
+  const deliveryLeaseTtlMs =
+    parseStrictPositiveInteger({
+      envName: "LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_LEASE_SECONDS",
+      fallback: DEFAULT_ACTIVITY_DELIVERY_LEASE_TTL_MS / 1_000,
+      max: 24 * 60 * 60
+    }) * 1_000;
+  const deliveryTimeoutMs =
+    parseStrictPositiveInteger({
+      envName: "LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_TIMEOUT_SECONDS",
+      fallback: DEFAULT_ACTIVITY_DELIVERY_TIMEOUT_MS / 1_000,
+      max: 5 * 60
+    }) * 1_000;
+  const retry: ActivityWebhookRetryConfig = {
+    maxAttempts: parseStrictPositiveInteger({
+      envName: "LINKEDIN_ASSISTANT_ACTIVITY_MAX_DELIVERY_ATTEMPTS",
+      fallback: DEFAULT_ACTIVITY_MAX_DELIVERY_ATTEMPTS,
+      max: 25
+    }),
+    initialBackoffMs:
+      parseStrictPositiveInteger({
+        envName: "LINKEDIN_ASSISTANT_ACTIVITY_INITIAL_BACKOFF_SECONDS",
+        fallback: DEFAULT_ACTIVITY_INITIAL_BACKOFF_MS / 1_000,
+        max: 24 * 60 * 60
+      }) * 1_000,
+    maxBackoffMs:
+      parseStrictPositiveInteger({
+        envName: "LINKEDIN_ASSISTANT_ACTIVITY_MAX_BACKOFF_SECONDS",
+        fallback: DEFAULT_ACTIVITY_MAX_BACKOFF_MS / 1_000,
+        max: 7 * 24 * 60 * 60
+      }) * 1_000
+  };
+
+  if (retry.maxBackoffMs < retry.initialBackoffMs) {
+    throw invalidActivityWebhookConfig(
+      "LINKEDIN_ASSISTANT_ACTIVITY_MAX_BACKOFF_SECONDS must be greater than or equal to LINKEDIN_ASSISTANT_ACTIVITY_INITIAL_BACKOFF_SECONDS.",
+      {
+        env: "LINKEDIN_ASSISTANT_ACTIVITY_MAX_BACKOFF_SECONDS",
+        initial_backoff_ms: retry.initialBackoffMs,
+        max_backoff_ms: retry.maxBackoffMs
+      }
+    );
+  }
+
+  return {
+    enabled: parseStrictBoolean(
+      process.env.LINKEDIN_ASSISTANT_ACTIVITY_ENABLED,
+      true,
+      "LINKEDIN_ASSISTANT_ACTIVITY_ENABLED"
+    ),
+    daemonPollIntervalMs,
+    maxWatchesPerTick,
+    watchLeaseTtlMs,
+    maxDeliveriesPerTick,
+    deliveryLeaseTtlMs,
+    deliveryTimeoutMs,
     retry
   };
 }

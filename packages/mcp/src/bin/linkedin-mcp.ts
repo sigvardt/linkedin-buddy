@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import { pathToFileURL } from "node:url";
 import {
+  ACTIVITY_EVENT_TYPES,
+  ACTIVITY_WATCH_KINDS,
+  ACTIVITY_WATCH_STATUSES,
   DEFAULT_FOLLOWUP_SINCE,
   LINKEDIN_FEED_REACTION_TYPES,
   LINKEDIN_POST_VISIBILITY_TYPES,
@@ -13,7 +16,14 @@ import {
   redactStructuredValue,
   resolvePrivacyConfig,
   toLinkedInAssistantErrorPayload,
-  type SearchCategory
+  WEBHOOK_DELIVERY_ATTEMPT_STATUSES,
+  WEBHOOK_SUBSCRIPTION_STATUSES,
+  type ActivityEventType,
+  type ActivityWatchKind,
+  type ActivityWatchStatus,
+  type SearchCategory,
+  type WebhookDeliveryAttemptStatus,
+  type WebhookSubscriptionStatus
 } from "@linkedin-assistant/core";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -24,6 +34,19 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import {
   LINKEDIN_ACTIONS_CONFIRM_TOOL,
+  LINKEDIN_ACTIVITY_DELIVERIES_LIST_TOOL,
+  LINKEDIN_ACTIVITY_EVENTS_LIST_TOOL,
+  LINKEDIN_ACTIVITY_POLLER_RUN_ONCE_TOOL,
+  LINKEDIN_ACTIVITY_WATCH_CREATE_TOOL,
+  LINKEDIN_ACTIVITY_WATCH_LIST_TOOL,
+  LINKEDIN_ACTIVITY_WATCH_PAUSE_TOOL,
+  LINKEDIN_ACTIVITY_WATCH_REMOVE_TOOL,
+  LINKEDIN_ACTIVITY_WATCH_RESUME_TOOL,
+  LINKEDIN_ACTIVITY_WEBHOOK_CREATE_TOOL,
+  LINKEDIN_ACTIVITY_WEBHOOK_LIST_TOOL,
+  LINKEDIN_ACTIVITY_WEBHOOK_PAUSE_TOOL,
+  LINKEDIN_ACTIVITY_WEBHOOK_REMOVE_TOOL,
+  LINKEDIN_ACTIVITY_WEBHOOK_RESUME_TOOL,
   LINKEDIN_CONNECTIONS_ACCEPT_TOOL,
   LINKEDIN_CONNECTIONS_INVITE_TOOL,
   LINKEDIN_CONNECTIONS_LIST_TOOL,
@@ -107,6 +130,146 @@ function readBoolean(args: ToolArgs, key: string, fallback: boolean): boolean {
   const value = args[key];
   return typeof value === "boolean" ? value : fallback;
 }
+
+function readOptionalPositiveNumber(
+  args: ToolArgs,
+  key: string
+): number | undefined {
+  if (!(key in args) || args[key] === undefined) {
+    return undefined;
+  }
+
+  return readPositiveNumber(args, key, 1);
+}
+
+function readStringArray(args: ToolArgs, key: string): string[] | undefined {
+  const value = args[key];
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === "string" && value.trim().length > 0) {
+    return [value.trim()];
+  }
+
+  if (Array.isArray(value)) {
+    const items = value
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+    return items.length > 0 ? items : undefined;
+  }
+
+  throw new LinkedInAssistantError(
+    "ACTION_PRECONDITION_FAILED",
+    `${key} must be a string or array of strings.`
+  );
+}
+
+function readObject(
+  args: ToolArgs,
+  key: string
+): Record<string, unknown> | undefined {
+  const value = args[key];
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+
+  throw new LinkedInAssistantError(
+    "ACTION_PRECONDITION_FAILED",
+    `${key} must be an object.`
+  );
+}
+
+function coerceEnumValue<T extends string>(
+  value: string,
+  allowed: readonly T[],
+  label: string
+): T {
+  if ((allowed as readonly string[]).includes(value)) {
+    return value as T;
+  }
+
+  throw new LinkedInAssistantError(
+    "ACTION_PRECONDITION_FAILED",
+    `${label} must be one of: ${allowed.join(", ")}.`
+  );
+}
+
+function readActivityWatchKind(args: ToolArgs, key: string): ActivityWatchKind {
+  return coerceEnumValue(
+    readRequiredString(args, key),
+    ACTIVITY_WATCH_KINDS,
+    key
+  );
+}
+
+function readOptionalActivityWatchStatus(
+  args: ToolArgs,
+  key: string
+): ActivityWatchStatus | undefined {
+  const value = args[key];
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return undefined;
+  }
+
+  return coerceEnumValue(
+    value.trim(),
+    ACTIVITY_WATCH_STATUSES,
+    key
+  );
+}
+
+function readOptionalWebhookSubscriptionStatus(
+  args: ToolArgs,
+  key: string
+): WebhookSubscriptionStatus | undefined {
+  const value = args[key];
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return undefined;
+  }
+
+  return coerceEnumValue(
+    value.trim(),
+    WEBHOOK_SUBSCRIPTION_STATUSES,
+    key
+  );
+}
+
+function readOptionalWebhookDeliveryStatus(
+  args: ToolArgs,
+  key: string
+): WebhookDeliveryAttemptStatus | undefined {
+  const value = args[key];
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return undefined;
+  }
+
+  return coerceEnumValue(
+    value.trim(),
+    WEBHOOK_DELIVERY_ATTEMPT_STATUSES,
+    key
+  );
+}
+
+function readActivityEventTypes(
+  args: ToolArgs,
+  key: string
+): ActivityEventType[] | undefined {
+  const values = readStringArray(args, key);
+  if (!values) {
+    return undefined;
+  }
+
+  return values.map((value) =>
+    coerceEnumValue(value, ACTIVITY_EVENT_TYPES, key)
+  );
+}
+
 
 function readSearchCategory(
   args: ToolArgs,
@@ -982,6 +1145,321 @@ async function handlePostPrepareCreate(args: ToolArgs): Promise<ToolResult> {
   }
 }
 
+async function handleActivityWatchCreate(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const kind = readActivityWatchKind(args, "kind");
+    const target = readObject(args, "target");
+    const intervalSeconds = readOptionalPositiveNumber(args, "intervalSeconds");
+    const cron = readString(args, "cron", "");
+
+    runtime.logger.log("info", "mcp.activity_watch.create.start", {
+      profileName,
+      kind
+    });
+
+    const watch = runtime.activityWatches.createWatch({
+      profileName,
+      kind,
+      ...(target ? { target } : {}),
+      ...(typeof intervalSeconds === "number" ? { intervalSeconds } : {}),
+      ...(cron ? { cron } : {})
+    });
+
+    runtime.logger.log("info", "mcp.activity_watch.create.done", {
+      profileName,
+      watchId: watch.id,
+      kind: watch.kind
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      watch
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleActivityWatchList(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const status = readOptionalActivityWatchStatus(args, "status");
+
+    runtime.logger.log("info", "mcp.activity_watch.list.start", {
+      profileName,
+      status: status ?? null
+    });
+
+    const watches = runtime.activityWatches.listWatches({
+      profileName,
+      ...(status ? { status } : {})
+    });
+
+    runtime.logger.log("info", "mcp.activity_watch.list.done", {
+      profileName,
+      count: watches.length
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      count: watches.length,
+      watches
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleActivityWatchPause(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const watchId = readRequiredString(args, "watchId");
+    const watch = runtime.activityWatches.pauseWatch(watchId);
+    return toToolResult({
+      run_id: runtime.runId,
+      watch
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleActivityWatchResume(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const watchId = readRequiredString(args, "watchId");
+    const watch = runtime.activityWatches.resumeWatch(watchId);
+    return toToolResult({
+      run_id: runtime.runId,
+      watch
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleActivityWatchRemove(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const watchId = readRequiredString(args, "watchId");
+    const removed = runtime.activityWatches.removeWatch(watchId);
+    return toToolResult({
+      run_id: runtime.runId,
+      watch_id: watchId,
+      removed
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleActivityWebhookCreate(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const watchId = readRequiredString(args, "watchId");
+    const deliveryUrl = readRequiredString(args, "deliveryUrl");
+    const eventTypes = readActivityEventTypes(args, "eventTypes");
+    const signingSecret = readString(args, "signingSecret", "");
+    const maxAttempts = readOptionalPositiveNumber(args, "maxAttempts");
+
+    runtime.logger.log("info", "mcp.activity_webhook.create.start", {
+      watchId,
+      eventTypeCount: eventTypes?.length ?? 0
+    });
+
+    const subscription = runtime.activityWatches.createWebhookSubscription({
+      watchId,
+      deliveryUrl,
+      ...(eventTypes ? { eventTypes } : {}),
+      ...(signingSecret ? { signingSecret } : {}),
+      ...(typeof maxAttempts === "number" ? { maxAttempts } : {})
+    });
+
+    runtime.logger.log("info", "mcp.activity_webhook.create.done", {
+      watchId,
+      subscriptionId: subscription.id
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      subscription
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleActivityWebhookList(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const watchId = readString(args, "watchId", "");
+    const status = readOptionalWebhookSubscriptionStatus(args, "status");
+
+    const subscriptions = runtime.activityWatches.listWebhookSubscriptions({
+      profileName,
+      ...(watchId ? { watchId } : {}),
+      ...(status ? { status } : {})
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      count: subscriptions.length,
+      subscriptions
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleActivityWebhookPause(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const subscriptionId = readRequiredString(args, "subscriptionId");
+    const subscription = runtime.activityWatches.pauseWebhookSubscription(
+      subscriptionId
+    );
+    return toToolResult({
+      run_id: runtime.runId,
+      subscription
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleActivityWebhookResume(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const subscriptionId = readRequiredString(args, "subscriptionId");
+    const subscription = runtime.activityWatches.resumeWebhookSubscription(
+      subscriptionId
+    );
+    return toToolResult({
+      run_id: runtime.runId,
+      subscription
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleActivityWebhookRemove(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const subscriptionId = readRequiredString(args, "subscriptionId");
+    const removed = runtime.activityWatches.removeWebhookSubscription(
+      subscriptionId
+    );
+    return toToolResult({
+      run_id: runtime.runId,
+      subscription_id: subscriptionId,
+      removed
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleActivityEventsList(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const watchId = readString(args, "watchId", "");
+    const limit = readPositiveNumber(args, "limit", 20);
+    const events = runtime.activityWatches.listEvents({
+      profileName,
+      ...(watchId ? { watchId } : {}),
+      limit
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      count: events.length,
+      events
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleActivityDeliveriesList(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const watchId = readString(args, "watchId", "");
+    const subscriptionId = readString(args, "subscriptionId", "");
+    const status = readOptionalWebhookDeliveryStatus(args, "status");
+    const limit = readPositiveNumber(args, "limit", 20);
+    const deliveries = runtime.activityWatches.listDeliveries({
+      profileName,
+      ...(watchId ? { watchId } : {}),
+      ...(subscriptionId ? { subscriptionId } : {}),
+      ...(status ? { status } : {}),
+      limit
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      count: deliveries.length,
+      deliveries
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleActivityPollerRunOnce(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+
+    runtime.logger.log("info", "mcp.activity_poller.run_once.start", {
+      profileName
+    });
+
+    const result = await runtime.activityPoller.runTick({
+      profileName,
+      workerId: `mcp:${runtime.runId}`
+    });
+
+    runtime.logger.log("info", "mcp.activity_poller.run_once.done", {
+      profileName,
+      emittedEvents: result.emittedEvents,
+      deliveredAttempts: result.deliveredAttempts
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      result
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 async function handleConfirm(args: ToolArgs): Promise<ToolResult> {
   const runtime = createRuntime(args);
 
@@ -1582,6 +2060,280 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
+        name: LINKEDIN_ACTIVITY_WATCH_CREATE_TOOL,
+        description:
+          "Create a durable poll-based LinkedIn activity watch for one profile and activity source.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["kind"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            kind: {
+              type: "string",
+              enum: [...ACTIVITY_WATCH_KINDS],
+              description: "Activity watch kind."
+            },
+            target: {
+              type: "object",
+              description: "Optional watch target object for profile/feed/inbox filters."
+            },
+            intervalSeconds: {
+              type: "number",
+              description: "Optional polling interval in seconds."
+            },
+            cron: {
+              type: "string",
+              description: "Optional cron schedule expression."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_ACTIVITY_WATCH_LIST_TOOL,
+        description: "List configured LinkedIn activity watches for a profile.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            status: {
+              type: "string",
+              enum: [...ACTIVITY_WATCH_STATUSES],
+              description: "Optional watch status filter."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_ACTIVITY_WATCH_PAUSE_TOOL,
+        description: "Pause one activity watch by id.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["watchId"],
+          properties: withCdpSchemaProperties({
+            watchId: {
+              type: "string",
+              description: "Activity watch id."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_ACTIVITY_WATCH_RESUME_TOOL,
+        description: "Resume one activity watch by id and make it due immediately.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["watchId"],
+          properties: withCdpSchemaProperties({
+            watchId: {
+              type: "string",
+              description: "Activity watch id."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_ACTIVITY_WATCH_REMOVE_TOOL,
+        description: "Remove one activity watch by id.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["watchId"],
+          properties: withCdpSchemaProperties({
+            watchId: {
+              type: "string",
+              description: "Activity watch id."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_ACTIVITY_WEBHOOK_CREATE_TOOL,
+        description: "Create a webhook subscription for one activity watch.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["watchId", "deliveryUrl"],
+          properties: withCdpSchemaProperties({
+            watchId: {
+              type: "string",
+              description: "Activity watch id."
+            },
+            deliveryUrl: {
+              type: "string",
+              description: "Webhook delivery URL."
+            },
+            eventTypes: {
+              type: "array",
+              items: {
+                type: "string",
+                enum: [...ACTIVITY_EVENT_TYPES]
+              },
+              description: "Optional event filters for this subscription."
+            },
+            signingSecret: {
+              type: "string",
+              description: "Optional pre-shared signing secret."
+            },
+            maxAttempts: {
+              type: "number",
+              description: "Optional maximum delivery attempts."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_ACTIVITY_WEBHOOK_LIST_TOOL,
+        description: "List webhook subscriptions for activity watches.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            watchId: {
+              type: "string",
+              description: "Optional watch id filter."
+            },
+            status: {
+              type: "string",
+              enum: [...WEBHOOK_SUBSCRIPTION_STATUSES],
+              description: "Optional webhook subscription status filter."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_ACTIVITY_WEBHOOK_PAUSE_TOOL,
+        description: "Pause one activity webhook subscription by id.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["subscriptionId"],
+          properties: withCdpSchemaProperties({
+            subscriptionId: {
+              type: "string",
+              description: "Webhook subscription id."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_ACTIVITY_WEBHOOK_RESUME_TOOL,
+        description: "Resume one activity webhook subscription by id.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["subscriptionId"],
+          properties: withCdpSchemaProperties({
+            subscriptionId: {
+              type: "string",
+              description: "Webhook subscription id."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_ACTIVITY_WEBHOOK_REMOVE_TOOL,
+        description: "Remove one activity webhook subscription by id.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["subscriptionId"],
+          properties: withCdpSchemaProperties({
+            subscriptionId: {
+              type: "string",
+              description: "Webhook subscription id."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_ACTIVITY_EVENTS_LIST_TOOL,
+        description: "List emitted LinkedIn activity events from local persistent state.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            watchId: {
+              type: "string",
+              description: "Optional watch id filter."
+            },
+            limit: {
+              type: "number",
+              description: "Maximum number of events to return. Defaults to 20."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_ACTIVITY_DELIVERIES_LIST_TOOL,
+        description: "List webhook delivery attempts from local persistent state.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            watchId: {
+              type: "string",
+              description: "Optional watch id filter."
+            },
+            subscriptionId: {
+              type: "string",
+              description: "Optional webhook subscription id filter."
+            },
+            status: {
+              type: "string",
+              enum: [...WEBHOOK_DELIVERY_ATTEMPT_STATUSES],
+              description: "Optional delivery status filter."
+            },
+            limit: {
+              type: "number",
+              description: "Maximum number of delivery attempts to return. Defaults to 20."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_ACTIVITY_POLLER_RUN_ONCE_TOOL,
+        description:
+          "Run one local activity polling tick now and return the watch and delivery summary.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            }
+          })
+        }
+      },
+      {
         name: LINKEDIN_ACTIONS_CONFIRM_TOOL,
         description: "Confirm and execute a prepared action by confirm token.",
         inputSchema: {
@@ -1627,6 +2379,19 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   [LINKEDIN_NOTIFICATIONS_LIST_TOOL]: handleNotificationsList,
   [LINKEDIN_JOBS_SEARCH_TOOL]: handleJobsSearch,
   [LINKEDIN_JOBS_VIEW_TOOL]: handleJobsView,
+  [LINKEDIN_ACTIVITY_WATCH_CREATE_TOOL]: handleActivityWatchCreate,
+  [LINKEDIN_ACTIVITY_WATCH_LIST_TOOL]: handleActivityWatchList,
+  [LINKEDIN_ACTIVITY_WATCH_PAUSE_TOOL]: handleActivityWatchPause,
+  [LINKEDIN_ACTIVITY_WATCH_RESUME_TOOL]: handleActivityWatchResume,
+  [LINKEDIN_ACTIVITY_WATCH_REMOVE_TOOL]: handleActivityWatchRemove,
+  [LINKEDIN_ACTIVITY_WEBHOOK_CREATE_TOOL]: handleActivityWebhookCreate,
+  [LINKEDIN_ACTIVITY_WEBHOOK_LIST_TOOL]: handleActivityWebhookList,
+  [LINKEDIN_ACTIVITY_WEBHOOK_PAUSE_TOOL]: handleActivityWebhookPause,
+  [LINKEDIN_ACTIVITY_WEBHOOK_RESUME_TOOL]: handleActivityWebhookResume,
+  [LINKEDIN_ACTIVITY_WEBHOOK_REMOVE_TOOL]: handleActivityWebhookRemove,
+  [LINKEDIN_ACTIVITY_EVENTS_LIST_TOOL]: handleActivityEventsList,
+  [LINKEDIN_ACTIVITY_DELIVERIES_LIST_TOOL]: handleActivityDeliveriesList,
+  [LINKEDIN_ACTIVITY_POLLER_RUN_ONCE_TOOL]: handleActivityPollerRunOnce,
   [LINKEDIN_ACTIONS_CONFIRM_TOOL]: handleConfirm
 };
 

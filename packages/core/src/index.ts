@@ -1,4 +1,8 @@
 export * from "./artifacts.js";
+export * from "./activityDiff.js";
+export * from "./activityPoller.js";
+export * from "./activityTypes.js";
+export * from "./activityWatches.js";
 export * from "./auth/rateLimitState.js";
 export * from "./auth/session.js";
 export * from "./auth/sessionStore.js";
@@ -34,5 +38,6 @@ export * from "./scheduler.js";
 export * from "./selectorAudit.js";
 export * from "./selectorLocale.js";
 export * from "./writeValidation.js";
+export * from "./webhookDelivery.js";
 export * from "./writeValidationAccounts.js";
 export * from "./twoPhaseCommit.js";

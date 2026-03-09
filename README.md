@@ -47,6 +47,16 @@ Scheduler / scheduled follow-up configuration:
 - `LINKEDIN_ASSISTANT_SCHEDULER_FOLLOWUP_DELAY_MINUTES=15` delays follow-up preparation after acceptance is detected
 - See `docs/scheduler.md` for the full scheduler guide, architecture notes, and every scheduler env var
 
+Activity webhook / polling configuration:
+
+- `LINKEDIN_ASSISTANT_ACTIVITY_ENABLED=true|false` toggles local activity polling and webhook delivery work (defaults to `true`)
+- `LINKEDIN_ASSISTANT_ACTIVITY_DAEMON_POLL_INTERVAL_SECONDS=300` controls daemon wake-up cadence
+- `LINKEDIN_ASSISTANT_ACTIVITY_MAX_WATCHES_PER_TICK=10` bounds LinkedIn polling work per tick
+- `LINKEDIN_ASSISTANT_ACTIVITY_MAX_DELIVERIES_PER_TICK=50` bounds webhook delivery work per tick
+- `LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_TIMEOUT_SECONDS=15` caps one webhook POST attempt
+- `LINKEDIN_ASSISTANT_ACTIVITY_MAX_DELIVERY_ATTEMPTS=5` sets the retry ceiling per subscription delivery
+- See `docs/activity-webhooks.md` for quickstart steps, webhook headers, CLI usage, and every activity env var
+
 Privacy / redaction controls:
 
 - `LINKEDIN_ASSISTANT_REDACTION_MODE=off|partial|full`
@@ -186,6 +196,22 @@ npm exec -w @linkedin-assistant/cli -- linkedin scheduler stop --profile default
 - Default behavior is to poll every 5 minutes, wait 15 minutes after acceptance, and only prepare follow-ups during local 09:00-17:00 business hours.
 - Scheduler state/log files are stored under `~/.linkedin-assistant/linkedin-owa-agentools/scheduler/`.
 - See `docs/scheduler.md` for quickstart steps, config details, and subsystem architecture.
+
+Activity webhook daemon:
+
+```bash
+npm exec -w @linkedin-assistant/cli -- linkedin activity watch add --profile default --kind notifications --interval-seconds 600
+npm exec -w @linkedin-assistant/cli -- linkedin activity webhook add --watch <watch-id> --url https://example.com/hooks/linkedin
+npm exec -w @linkedin-assistant/cli -- linkedin activity run-once --profile default
+npm exec -w @linkedin-assistant/cli -- linkedin activity start --profile default
+npm exec -w @linkedin-assistant/cli -- linkedin activity status --profile default
+npm exec -w @linkedin-assistant/cli -- linkedin activity stop --profile default
+```
+
+- The activity daemon is a local CLI daemon backed by persistent watch, event, and delivery state in SQLite.
+- MCP exposes watch/webhook CRUD plus `linkedin.activity_poller.run_once`, but daemon lifecycle stays in the CLI.
+- Activity state/log files are stored under `~/.linkedin-assistant/linkedin-owa-agentools/activity/`.
+- See `docs/activity-webhooks.md` for watch targets, event types, webhook headers, and retry configuration.
 
 Delete local tool state:
 
