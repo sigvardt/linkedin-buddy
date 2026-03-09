@@ -86,6 +86,7 @@ import {
   resolveDraftQualityOutputMode
 } from "../draftQualityOutput.js";
 import {
+  ReadOnlyValidationProgressReporter,
   formatReadOnlyValidationError,
   formatReadOnlyValidationReport,
   resolveReadOnlyValidationOutputMode,
@@ -118,6 +119,9 @@ const SELECTOR_AUDIT_DOC_PATH = "docs/selector-audit.md";
 const SELECTOR_AUDIT_DOC_REFERENCE =
   `See ${SELECTOR_AUDIT_DOC_PATH} for sample output, configuration, and troubleshooting.`;
 const MAX_JSON_INPUT_BYTES = 10 * 1024 * 1024;
+const LIVE_VALIDATION_HELP_COMMAND = "linkedin test live --help";
+const LIVE_VALIDATION_FAIL_EXIT_CODE = 1;
+const LIVE_VALIDATION_ERROR_EXIT_CODE = 2;
 let cliSelectorLocale: string | undefined;
 
 function writeCliWarning(message: string): void {
@@ -1088,10 +1092,13 @@ async function sleep(ms: number): Promise<void> {
   });
 }
 
-async function promptYesNo(question: string): Promise<boolean> {
+async function promptYesNo(
+  question: string,
+  output: typeof stdout | typeof process.stderr = stdout
+): Promise<boolean> {
   const readline = createInterface({
     input: stdin,
-    output: stdout
+    output
   });
 
   try {
@@ -1100,6 +1107,17 @@ async function promptYesNo(question: string): Promise<boolean> {
   } finally {
     readline.close();
   }
+}
+
+function shouldUseAnsiColor(
+  stream: { isTTY?: boolean }
+): boolean {
+  return (
+    Boolean(stream.isTTY) &&
+    typeof process.env.NO_COLOR === "undefined" &&
+    process.env.NODE_DISABLE_COLORS !== "1" &&
+    process.env.TERM !== "dumb"
+  );
 }
 
 function assertInteractiveTerminal(operation: string): void {
@@ -1655,16 +1673,22 @@ async function maybeRefreshStoredSession(
     timeoutMinutes: number;
     yes: boolean;
   },
-  error: unknown
+  error: unknown,
+  promptOutput: typeof stdout | typeof process.stderr
 ): Promise<boolean> {
   if (input.yes || !stdin.isTTY || !stdout.isTTY || !isStoredSessionRefreshError(error)) {
     return false;
   }
 
   const errorPayload = toLinkedInAssistantErrorPayload(error, cliPrivacyConfig);
-  process.stderr.write(`${formatReadOnlyValidationError(errorPayload)}\n`);
+  writeCliNotice(
+    errorPayload.code === "CAPTCHA_OR_CHALLENGE"
+      ? "LinkedIn requested extra verification before the validation could continue."
+      : `Stored session "${input.sessionName}" needs to be refreshed before the validation can continue.`
+  );
   const confirmed = await promptYesNo(
-    `Capture a fresh stored session named "${input.sessionName}" now?`
+    `Capture a fresh stored session named "${input.sessionName}" now?`,
+    promptOutput
   );
   if (!confirmed) {
     return false;
@@ -1678,11 +1702,12 @@ async function maybeRefreshStoredSession(
 }
 
 function createReadOnlyValidationPrompter(
-  sessionName: string
+  sessionName: string,
+  promptOutput: typeof stdout | typeof process.stderr
 ): (operation: LinkedInReadOnlyValidationOperation) => Promise<void> {
   return async (operation) => {
-    console.log(`Read-only step: ${operation.summary}`);
-    const confirmed = await promptYesNo("Continue with this step?");
+    promptOutput.write(`Read-only step: ${operation.summary}\n`);
+    const confirmed = await promptYesNo("Continue with this step?", promptOutput);
     if (!confirmed) {
       throw new LinkedInAssistantError(
         "ACTION_PRECONDITION_FAILED",
@@ -1708,11 +1733,15 @@ function emitReadOnlyValidationResult(
       cliPrivacyConfig,
       "cli"
     ) as typeof report;
-    console.log(formatReadOnlyValidationReport(redactedReport));
+    console.log(
+      formatReadOnlyValidationReport(redactedReport, {
+        color: shouldUseAnsiColor(stdout)
+      })
+    );
   }
 
   if (report.outcome === "fail") {
-    process.exitCode = 1;
+    process.exitCode = LIVE_VALIDATION_FAIL_EXIT_CODE;
   }
 }
 
@@ -1720,13 +1749,19 @@ function emitReadOnlyValidationFailure(
   error: unknown,
   outputMode: ReadOnlyValidationOutputMode
 ): void {
+  process.exitCode = LIVE_VALIDATION_ERROR_EXIT_CODE;
+
   if (outputMode === "json") {
     throw error;
   }
 
   const errorPayload = toLinkedInAssistantErrorPayload(error, cliPrivacyConfig);
-  process.stderr.write(`${formatReadOnlyValidationError(errorPayload)}\n`);
-  process.exitCode = 1;
+  process.stderr.write(
+    `${formatReadOnlyValidationError(errorPayload, {
+      color: shouldUseAnsiColor(process.stderr),
+      helpCommand: LIVE_VALIDATION_HELP_COMMAND
+    })}\n`
+  );
 }
 
 function validateReadOnlyValidationCliInput(input: {
@@ -1750,6 +1785,7 @@ async function runLiveReadOnlyValidation(input: {
   maxRequests: number;
   maxRetries: number;
   minIntervalMs: number;
+  progress: boolean;
   readOnly: boolean;
   retryBaseDelayMs: number;
   retryMaxDelayMs: number;
@@ -1757,64 +1793,83 @@ async function runLiveReadOnlyValidation(input: {
   timeoutSeconds: number;
   yes: boolean;
 }, cdpUrl?: string): Promise<void> {
-  assertNoExternalSessionOverrideForStoredSession(cdpUrl);
-  validateReadOnlyValidationCliInput(input);
-
-  if (!input.readOnly) {
-    throw new LinkedInAssistantError(
-      "ACTION_PRECONDITION_FAILED",
-      'Live validation is currently restricted to read-only mode. Rerun the command with "--read-only".'
-    );
-  }
-
-  if (!input.yes) {
-    assertInteractiveTerminal("run interactive live validation without --yes");
-  }
-
   const outputMode = resolveReadOnlyValidationOutputMode(
     { json: input.json },
     Boolean(stdout.isTTY)
   );
-  const runValidation = async () => {
-    const onBeforeOperation = input.yes
-      ? undefined
-      : createReadOnlyValidationPrompter(input.sessionName);
-
-    return runReadOnlyLinkedInLiveValidation({
-      maxRequests: input.maxRequests,
-      maxRetries: input.maxRetries,
-      minIntervalMs: input.minIntervalMs,
-      sessionName: input.sessionName,
-      ...(onBeforeOperation ? { onBeforeOperation } : {}),
-      retryBaseDelayMs: input.retryBaseDelayMs,
-      retryMaxDelayMs: input.retryMaxDelayMs,
-      timeoutMs: input.timeoutSeconds * 1_000
-    });
-  };
+  const promptOutput = outputMode === "json" ? process.stderr : stdout;
+  const progressEnabled =
+    outputMode === "human" && input.progress && Boolean(process.stderr.isTTY);
+  const progressReporter = new ReadOnlyValidationProgressReporter({
+    enabled: progressEnabled
+  });
 
   try {
-    const report = await runValidation();
-    emitReadOnlyValidationResult(report, outputMode);
-  } catch (error) {
-    const refreshed = await maybeRefreshStoredSession(
-      {
-        sessionName: input.sessionName,
-        timeoutMinutes: Math.max(1, Math.ceil(input.timeoutSeconds / 60)),
-        yes: input.yes
-      },
-      error
-    );
+    assertNoExternalSessionOverrideForStoredSession(cdpUrl);
+    validateReadOnlyValidationCliInput(input);
 
-    if (refreshed) {
-      try {
-        const report = await runValidation();
-        emitReadOnlyValidationResult(report, outputMode);
-      } catch (retryError) {
-        emitReadOnlyValidationFailure(retryError, outputMode);
-      }
-      return;
+    if (!input.readOnly) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        'Live validation is currently restricted to read-only mode. Rerun the command with "--read-only".'
+      );
     }
 
+    if (!input.yes) {
+      assertInteractiveTerminal("run interactive live validation without --yes");
+    }
+
+    const runValidation = async () => {
+      const onBeforeOperation = input.yes
+        ? undefined
+        : createReadOnlyValidationPrompter(input.sessionName, promptOutput);
+
+      return runReadOnlyLinkedInLiveValidation({
+        maxRequests: input.maxRequests,
+        maxRetries: input.maxRetries,
+        minIntervalMs: input.minIntervalMs,
+        ...(progressEnabled
+          ? {
+              onLog: (entry) => {
+                progressReporter.handleLog(entry);
+              }
+            }
+          : {}),
+        sessionName: input.sessionName,
+        ...(onBeforeOperation ? { onBeforeOperation } : {}),
+        retryBaseDelayMs: input.retryBaseDelayMs,
+        retryMaxDelayMs: input.retryMaxDelayMs,
+        timeoutMs: input.timeoutSeconds * 1_000
+      });
+    };
+
+    try {
+      const report = await runValidation();
+      emitReadOnlyValidationResult(report, outputMode);
+    } catch (error) {
+      const refreshed = await maybeRefreshStoredSession(
+        {
+          sessionName: input.sessionName,
+          timeoutMinutes: Math.max(1, Math.ceil(input.timeoutSeconds / 60)),
+          yes: input.yes
+        },
+        error,
+        promptOutput
+      );
+
+      if (refreshed) {
+        try {
+          const report = await runValidation();
+          emitReadOnlyValidationResult(report, outputMode);
+        } catch (retryError) {
+          emitReadOnlyValidationFailure(retryError, outputMode);
+        }
+        return;
+      }
+
+      emitReadOnlyValidationFailure(error, outputMode);
+    }
+  } catch (error) {
     emitReadOnlyValidationFailure(error, outputMode);
   }
 }
@@ -4065,8 +4120,9 @@ export function createCliProgram(): Command {
           "  - never prints cookies or storage contents",
           "",
           "Examples:",
-          "  owa auth:session",
-          "  owa auth:session --session smoke --timeout-minutes 15"
+          "  linkedin auth session",
+          "  linkedin auth session --session smoke --timeout-minutes 15",
+          "  linkedin auth:session --session smoke"
         ].join("\n")
       )
       .action(
@@ -4131,11 +4187,32 @@ export function createCliProgram(): Command {
         "Maximum exponential backoff delay for transient retries",
         "10000"
       )
-      .option("-y, --yes", "Skip per-step confirmation prompts", false)
-      .option("--json", "Print the structured report JSON", false)
+      .option(
+        "--no-progress",
+        "Hide per-step progress updates in human-readable output"
+      )
+      .option(
+        "-y, --yes",
+        "Skip per-step confirmation prompts for unattended runs",
+        false
+      )
+      .option(
+        "--json",
+        "Print the structured report JSON (recommended for scripts)",
+        false
+      )
       .addHelpText(
         "after",
         [
+          "",
+          "Output:",
+          "  - interactive terminals default to a human-readable summary with per-step progress",
+          "  - --json prints only the structured report to stdout; prompts stay on stderr",
+          "",
+          "Exit codes:",
+          "  - 0 all validation steps passed",
+          "  - 1 one or more validation steps failed (including partial reports)",
+          "  - 2 the run could not complete because of a preflight, session, or runtime error",
           "",
           "Safety guardrails:",
           "  - requires --read-only",
@@ -4145,8 +4222,9 @@ export function createCliProgram(): Command {
           "  - returns partial results if a later step hits a blocking failure",
           "",
           "Examples:",
-          "  owa test:live --read-only",
-          "  owa test:live --read-only --yes --session smoke --max-retries 3 --json"
+          "  linkedin test live --read-only",
+          "  linkedin test live --read-only --yes --session smoke --max-retries 3",
+          "  linkedin test:live --read-only --yes --json"
         ].join("\n")
       )
       .action(
@@ -4155,6 +4233,7 @@ export function createCliProgram(): Command {
           maxRequests: string;
           maxRetries: string;
           minIntervalMs: string;
+          progress: boolean;
           readOnly: boolean;
           retryBaseDelayMs: string;
           retryMaxDelayMs: string;
@@ -4171,6 +4250,7 @@ export function createCliProgram(): Command {
                 options.minIntervalMs,
                 "min-interval-ms"
               ),
+              progress: options.progress,
               readOnly: options.readOnly,
               retryBaseDelayMs: coercePositiveInt(
                 options.retryBaseDelayMs,
@@ -5254,6 +5334,6 @@ if (isDirectExecution(import.meta.url)) {
   runCli().catch((error: unknown) => {
     const payload = toLinkedInAssistantErrorPayload(error, cliPrivacyConfig);
     console.error(JSON.stringify(payload, null, 2));
-    process.exit(1);
+    process.exit(process.exitCode ?? 1);
   });
 }

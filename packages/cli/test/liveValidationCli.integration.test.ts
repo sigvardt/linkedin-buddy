@@ -1139,7 +1139,7 @@ describe("linkedin live validation CLI integration", () => {
       "smoke"
     ]);
 
-    expect(process.exitCode).toBe(1);
+    expect(process.exitCode).toBe(2);
     expect(stderrChunks.join("")).toContain("Live validation failed [AUTH_REQUIRED]");
     expect(stderrChunks.join("")).toContain(
       'Stored LinkedIn session "smoke" is missing or expired while running feed.'

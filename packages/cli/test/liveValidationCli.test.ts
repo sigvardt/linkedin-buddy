@@ -1,3 +1,4 @@
+import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -180,9 +181,14 @@ describe("linkedin live validation CLI", () => {
   });
 
   it("requires --read-only for live validation", async () => {
-    await expect(
-      runCli(["node", "linkedin", "test:live", "--yes"])
-    ).rejects.toThrow("--read-only");
+    await runCli(["node", "linkedin", "test:live", "--yes"]);
+
+    expect(process.exitCode).toBe(2);
+    expect(stderrChunks.join("")).toContain(
+      "Live validation failed [ACTION_PRECONDITION_FAILED]"
+    );
+    expect(stderrChunks.join("")).toContain("--read-only");
+    expect(liveValidationCliMocks.runReadOnlyLinkedInLiveValidation).not.toHaveBeenCalled();
   });
 
   it("refuses interactive live validation when no TTY is available", async () => {
@@ -191,6 +197,8 @@ describe("linkedin live validation CLI", () => {
     await expect(
       runCli(["node", "linkedin", "test:live", "--read-only"])
     ).rejects.toThrow("non-interactive mode");
+
+    expect(process.exitCode).toBe(2);
   });
 
   it("prints JSON and sets exit code when the validation report fails", async () => {
@@ -273,28 +281,29 @@ describe("linkedin live validation CLI", () => {
       "--yes"
     ]);
 
-    expect(process.exitCode).toBe(1);
+    expect(process.exitCode).toBe(2);
     expect(liveValidationCliMocks.captureLinkedInSession).not.toHaveBeenCalled();
     expect(liveValidationCliMocks.runReadOnlyLinkedInLiveValidation).toHaveBeenCalledTimes(1);
     expect(stderrChunks.join("")).toContain("Live validation failed [RATE_LIMITED]");
     expect(stderrChunks.join("")).toContain("per-session request cap");
+    expect(stderrChunks.join("")).toContain("Suggested fix:");
   });
 
   it("rejects retry windows where the max delay is smaller than the base delay", async () => {
-    await expect(
-      runCli([
-        "node",
-        "linkedin",
-        "test:live",
-        "--read-only",
-        "--yes",
-        "--retry-base-delay-ms",
-        "2000",
-        "--retry-max-delay-ms",
-        "1000"
-      ])
-    ).rejects.toThrow("retry-max-delay-ms");
+    await runCli([
+      "node",
+      "linkedin",
+      "test:live",
+      "--read-only",
+      "--yes",
+      "--retry-base-delay-ms",
+      "2000",
+      "--retry-max-delay-ms",
+      "1000"
+    ]);
 
+    expect(process.exitCode).toBe(2);
+    expect(stderrChunks.join("")).toContain("retry-max-delay-ms");
     expect(liveValidationCliMocks.runReadOnlyLinkedInLiveValidation).not.toHaveBeenCalled();
   });
 
@@ -313,6 +322,7 @@ describe("linkedin live validation CLI", () => {
       ])
     ).rejects.toThrow("do not support --cdp-url");
 
+    expect(process.exitCode).toBe(2);
     expect(liveValidationCliMocks.runReadOnlyLinkedInLiveValidation).not.toHaveBeenCalled();
   });
 
@@ -357,6 +367,7 @@ describe("linkedin live validation CLI", () => {
         session_name: "smoke"
       }
     });
+    expect(vi.mocked(createInterface).mock.calls.at(-1)?.[0]?.output).toBe(process.stderr);
   });
 
   it("formats a second failure cleanly after refreshing the stored session", async () => {
@@ -399,10 +410,68 @@ describe("linkedin live validation CLI", () => {
       "smoke"
     ]);
 
-    expect(process.exitCode).toBe(1);
+    expect(process.exitCode).toBe(2);
     expect(stderrChunks.join(""))
       .toContain("Live validation failed [RATE_LIMITED]");
     expect(liveValidationCliMocks.captureLinkedInSession).toHaveBeenCalledTimes(1);
     expect(liveValidationCliMocks.runReadOnlyLinkedInLiveValidation).toHaveBeenCalledTimes(2);
+  });
+
+  it("documents live validation help with progress controls and exit codes", async () => {
+    const readHelpOutput = async (argv: string[]): Promise<string> => {
+      const stdoutChunks: string[] = [];
+      const stdoutWriteSpy = vi
+        .spyOn(stdout, "write")
+        .mockImplementation((...args: Parameters<typeof stdout.write>) => {
+          const [chunk] = args;
+          stdoutChunks.push(String(chunk));
+          return true;
+        });
+      const exitSpy = vi
+        .spyOn(process, "exit")
+        .mockImplementation((((code?: Parameters<typeof process.exit>[0]) => {
+          throw new Error(`process.exit:${String(code ?? 0)}`);
+        }) as typeof process.exit));
+
+      try {
+        await expect(runCli(argv)).rejects.toThrow("process.exit:0");
+      } finally {
+        stdoutWriteSpy.mockRestore();
+        exitSpy.mockRestore();
+      }
+
+      return stdoutChunks.join("");
+    };
+
+    const liveHelp = await readHelpOutput([
+      "node",
+      "linkedin",
+      "test",
+      "live",
+      "--help"
+    ]);
+    const aliasHelp = await readHelpOutput([
+      "node",
+      "linkedin",
+      "test:live",
+      "--help"
+    ]);
+    const authHelp = await readHelpOutput([
+      "node",
+      "linkedin",
+      "auth",
+      "session",
+      "--help"
+    ]);
+
+    expect(liveHelp).toContain("--no-progress");
+    expect(liveHelp).toContain("Exit codes:");
+    expect(liveHelp).toContain(
+      "interactive terminals default to a human-readable summary with per-step progress"
+    );
+    expect(liveHelp).toContain("linkedin test live --read-only");
+    expect(aliasHelp).toContain("--no-progress");
+    expect(authHelp).toContain("linkedin auth session");
+    expect(authHelp).toContain("linkedin auth:session");
   });
 });
