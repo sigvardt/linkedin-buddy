@@ -38,6 +38,15 @@ Default tool-owned state home (profiles, DB, artifacts):
 - Confirm-failure trace size cap: `LINKEDIN_ASSISTANT_CONFIRM_TRACE_MAX_BYTES` (defaults to `26214400`)
 - Selector locale for UI-text fallbacks: `LINKEDIN_ASSISTANT_SELECTOR_LOCALE` (defaults to `en`; supports `en`, `da`; region tags like `da-DK` normalize to `da`; unsupported values fall back to `en` with a warning; see `docs/selector-locale.md`)
 
+Scheduler / scheduled follow-up configuration:
+
+- `LINKEDIN_ASSISTANT_SCHEDULER_ENABLED=true|false` toggles local scheduler work (defaults to `true`)
+- `LINKEDIN_ASSISTANT_SCHEDULER_ENABLED_LANES=followup_preparation` controls enabled lanes; set it to an empty string to disable all lanes
+- `LINKEDIN_ASSISTANT_SCHEDULER_POLL_INTERVAL_SECONDS=300` controls daemon polling cadence
+- `LINKEDIN_ASSISTANT_SCHEDULER_BUSINESS_START=09:00`, `LINKEDIN_ASSISTANT_SCHEDULER_BUSINESS_END=17:00`, and `LINKEDIN_ASSISTANT_SCHEDULER_TIMEZONE=<IANA zone>` define the business-hours review window
+- `LINKEDIN_ASSISTANT_SCHEDULER_FOLLOWUP_DELAY_MINUTES=15` delays follow-up preparation after acceptance is detected
+- See `docs/scheduler.md` for the full scheduler guide, architecture notes, and every scheduler env var
+
 Privacy / redaction controls:
 
 - `LINKEDIN_ASSISTANT_REDACTION_MODE=off|partial|full`
@@ -121,6 +130,21 @@ npm exec -w @linkedin-assistant/cli -- linkedin keepalive stop --profile default
 ```
 
 - Keepalive state/log files are stored under `~/.linkedin-assistant/linkedin-owa-agentools/keepalive/`.
+
+Scheduled follow-up daemon:
+
+```bash
+npm exec -w @linkedin-assistant/cli -- linkedin scheduler start --profile default
+npm exec -w @linkedin-assistant/cli -- linkedin scheduler status --profile default --jobs 10
+npm exec -w @linkedin-assistant/cli -- linkedin scheduler run-once --profile default
+npm exec -w @linkedin-assistant/cli -- linkedin scheduler stop --profile default
+```
+
+- The scheduler is a local CLI daemon; there is no dedicated MCP scheduler tool.
+- It detects newly accepted sent invitations, queues due follow-up preparation jobs, and never auto-confirms prepared actions.
+- Default behavior is to poll every 5 minutes, wait 15 minutes after acceptance, and only prepare follow-ups during local 09:00-17:00 business hours.
+- Scheduler state/log files are stored under `~/.linkedin-assistant/linkedin-owa-agentools/scheduler/`.
+- See `docs/scheduler.md` for quickstart steps, config details, and subsystem architecture.
 
 Delete local tool state:
 
@@ -270,7 +294,12 @@ Follow-up flow after accepted invitations:
 ```bash
 npm exec -w @linkedin-assistant/cli -- linkedin followups list --profile default --since 7d
 npm exec -w @linkedin-assistant/cli -- linkedin followups prepare --profile default --since 7d
+npm exec -w @linkedin-assistant/cli -- linkedin scheduler run-once --profile default --json
 ```
+
+- `followups prepare` is the manual, operator-invoked batch workflow.
+- `scheduler run-once` and `scheduler start` reuse the same prepare-only safety model, but queue work near its due time instead of preparing everything immediately.
+- Successful scheduler ticks still leave follow-up work in the prepared state; nothing is sent automatically.
 
 Confirm prepared actions by token:
 

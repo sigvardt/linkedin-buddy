@@ -50,6 +50,9 @@ interface SchedulerFollowupService {
   ): Promise<PreparedAcceptedConnectionFollowup | null>;
 }
 
+/**
+ * Minimal runtime contract required by {@link LinkedInSchedulerService}.
+ */
 export interface LinkedInSchedulerRuntime {
   db: AssistantDatabase;
   logger: JsonEventLogger;
@@ -57,6 +60,9 @@ export interface LinkedInSchedulerRuntime {
   schedulerConfig?: SchedulerConfig;
 }
 
+/**
+ * Outcome recorded for one claimed job processed during a scheduler tick.
+ */
 export interface SchedulerTickJobResult {
   jobId: string;
   lane: SchedulerLane;
@@ -67,12 +73,18 @@ export interface SchedulerTickJobResult {
   scheduledAtMs?: number;
 }
 
+/**
+ * Reason a scheduler tick returned before claiming any jobs.
+ */
 export type SchedulerTickSkippedReason =
   | "disabled"
   | "outside_business_hours"
   | "profile_busy"
   | null;
 
+/**
+ * High-level summary returned from a single scheduler tick.
+ */
 export interface SchedulerTickResult {
   profileName: string;
   workerId: string;
@@ -203,6 +215,10 @@ function getLocalMinutesSinceMidnight(
   return parts.hour * 60 + parts.minute;
 }
 
+/**
+ * Returns whether a UTC timestamp falls inside the configured local business
+ * hours window.
+ */
 export function isWithinBusinessHours(
   utcMs: number,
   businessHours: SchedulerBusinessHoursConfig
@@ -214,6 +230,12 @@ export function isWithinBusinessHours(
   return currentMinutes >= startMinutes && currentMinutes < endMinutes;
 }
 
+/**
+ * Moves a UTC timestamp forward to the next valid business-hours window.
+ *
+ * @remarks
+ * Values that are already inside the configured window are returned unchanged.
+ */
 export function alignToBusinessHours(
   utcMs: number,
   businessHours: SchedulerBusinessHoursConfig
@@ -243,6 +265,9 @@ export function alignToBusinessHours(
   );
 }
 
+/**
+ * Calculates capped exponential backoff for retryable scheduler failures.
+ */
 export function calculateSchedulerBackoffMs(
   failureCount: number,
   retry: SchedulerConfig["retry"]
@@ -251,6 +276,10 @@ export function calculateSchedulerBackoffMs(
   return Math.min(retry.maxBackoffMs, retry.initialBackoffMs * 2 ** exponent);
 }
 
+/**
+ * Computes the due time for an accepted-connection follow-up job and aligns it
+ * to business hours.
+ */
 export function scheduleAcceptedConnectionFollowupAtMs(input: {
   connection: LinkedInAcceptedConnection;
   nowMs: number;
@@ -437,6 +466,10 @@ function toIsoStringOrNull(utcMs: number | null): string | null {
   return utcMs === null ? null : new Date(utcMs).toISOString();
 }
 
+/**
+ * Local scheduler that discovers accepted invitations, syncs queue state, and
+ * prepares due follow-ups without auto-confirming them.
+ */
 export class LinkedInSchedulerService {
   private readonly config: SchedulerConfig;
 
@@ -444,6 +477,9 @@ export class LinkedInSchedulerService {
     this.config = runtime.schedulerConfig ?? resolveSchedulerConfig();
   }
 
+  /**
+   * Runs one discovery, queue-sync, lease, and prepare cycle for a profile.
+   */
   async runTick(input: {
     profileName?: string;
     nowMs?: number;

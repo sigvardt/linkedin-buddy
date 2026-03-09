@@ -3517,9 +3517,20 @@ export function createCliProgram(): Command {
 
   schedulerCommand
     .command("start")
-    .description("Start the local scheduler daemon for a profile")
+    .description(
+      "Start the local scheduler daemon for a profile using the current poll interval and business-hours settings"
+    )
     .option("-p, --profile <profile>", "Profile name", "default")
     .option("--json", "Print the structured scheduler payload", false)
+    .addHelpText(
+      "after",
+      [
+        "",
+        "The daemon wakes up on the configured poll interval and respects scheduler business hours.",
+        "It only prepares due follow-ups; confirmation always remains manual.",
+        "Use `linkedin scheduler status` to inspect queue counts, recent history, and state/log paths."
+      ].join("\n")
+    )
     .action(async (options: { profile: string; json: boolean }) => {
       await runSchedulerCliAction(options, async (outputMode) => {
         await runSchedulerStart(options.profile, outputMode, readCdpUrl());
@@ -3557,9 +3568,19 @@ export function createCliProgram(): Command {
 
   schedulerCommand
     .command("stop")
-    .description("Stop the local scheduler daemon and clean up stale state")
+    .description(
+      "Stop the local scheduler daemon and clean up stale state without deleting queued jobs"
+    )
     .option("-p, --profile <profile>", "Profile name", "default")
     .option("--json", "Print the structured scheduler payload", false)
+    .addHelpText(
+      "after",
+      [
+        "",
+        "Stopping the daemon does not delete queued jobs or prepared follow-up actions.",
+        "Use `linkedin scheduler status` after stopping if you want to confirm the daemon is idle."
+      ].join("\n")
+    )
     .action(async (options: { profile: string; json: boolean }) => {
       await runSchedulerCliAction(options, async (outputMode) => {
         await runSchedulerStop(options.profile, outputMode);
@@ -3569,13 +3590,16 @@ export function createCliProgram(): Command {
   schedulerCommand
     .command("run-once")
     .alias("tick")
-    .description("Run one scheduler tick immediately and summarize the result")
+    .description(
+      "Run one scheduler tick immediately, refresh queue state, and summarize the result"
+    )
     .option("-p, --profile <profile>", "Profile name", "default")
     .option("--json", "Print the structured scheduler payload", false)
     .addHelpText(
       "after",
       [
         "",
+        "A tick refreshes accepted invitations, syncs queue state, and prepares any due follow-ups.",
         "Prepared actions still require manual confirmation after a successful tick.",
         "Use this command when you want an immediate scheduler pass without starting the daemon."
       ].join("\n")
