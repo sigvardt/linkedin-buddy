@@ -120,6 +120,8 @@ export function parseRunnerOptions(argv, env = process.env) {
       continue;
     }
 
+    // Forward any unrecognized flag directly to Vitest so focused reruns keep
+    // the same CLI shape as raw `vitest run`.
     vitestArgs.push(argument);
   }
 
@@ -160,6 +162,8 @@ function getEnabledOptInLabels(env = process.env) {
 export function formatRunnerConfiguration(options, env = process.env) {
   const profileName = readTrimmedEnv("LINKEDIN_E2E_PROFILE", env) ?? "default";
   const cdpUrl = readTrimmedEnv("LINKEDIN_CDP_URL", env) ?? DEFAULT_CDP_URL;
+  // `--fixtures` refers to the lightweight discovery cache used by the live
+  // CLI/MCP contract tests. The replay-manifest lane has its own npm script.
   const fixtureFile =
     options.fixtureFile === undefined
       ? "live discovery"
@@ -382,6 +386,8 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
         ...env,
         LINKEDIN_E2E: env.LINKEDIN_E2E ?? "1",
         LINKEDIN_CDP_URL: cdpUrl,
+        // Only pass the discovery-fixture overrides through this live runner.
+        // The replay lane is owned by `npm run test:e2e:fixtures`.
         ...(options.fixtureFile
           ? {
               LINKEDIN_E2E_FIXTURE_FILE: options.fixtureFile

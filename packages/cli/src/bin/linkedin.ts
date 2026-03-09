@@ -392,6 +392,8 @@ function mergeFixtureRoutes(
   for (const route of existingRoutes) {
     merged.set(buildFixtureRouteKey(route), route);
   }
+  // Let freshly captured routes replace older normalized keys so partial
+  // re-records only touch the requested pages and keep the rest intact.
   for (const route of nextRoutes) {
     merged.set(buildFixtureRouteKey(route), route);
   }
@@ -413,6 +415,8 @@ interface FixtureCaptureResponse {
 
 async function withFixtureReplayDisabled<T>(callback: () => Promise<T>): Promise<T> {
   const previousValues = new Map<string, string | undefined>();
+  // Recording must always talk to live LinkedIn, even if the caller currently
+  // has replay mode enabled in the shell.
   for (const key of FIXTURE_REPLAY_ENV_KEYS) {
     previousValues.set(key, process.env[key]);
     delete process.env[key];
@@ -445,6 +449,8 @@ async function captureFixtureResponse(
   const headers = normalizeFixtureRouteHeaders(response.headers());
   const extension = guessFixtureResponseExtension(headers["content-type"], url);
 
+  // The sequence number is allocated when the response event fires so file
+  // names stay stable even if body reads resolve out of order.
   let fileStem = `${String(index).padStart(4, "0")}`;
   try {
     const parsed = new URL(url);
@@ -560,6 +566,8 @@ async function runFixturesRecord(input: FixtureRecordInput): Promise<void> {
       async (context) => {
         let responseIndex = existingRoutes.length;
         context.on("response", (response) => {
+          // Increment synchronously before the async body write starts so the
+          // route file and response filenames stay deterministic.
           responseIndex += 1;
           const captureJob = captureFixtureResponse(response, setRootDir, responseIndex)
             .then((capturedRoute) => {
@@ -627,6 +635,7 @@ async function runFixturesRecord(input: FixtureRecordInput): Promise<void> {
     );
   });
 
+  // Finish any in-flight response writes before rewriting the route index.
   await Promise.allSettled(captureJobs);
 
   const mergedRoutes = mergeFixtureRoutes(existingRoutes, [...capturedRoutes.values()]);

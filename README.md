@@ -432,6 +432,18 @@ plus the committed `ci` fixture set.
 Set `LINKEDIN_E2E_FIXTURE_SET=<name>` when you want `npm run test:e2e:fixtures`
 to replay a non-default recorded set.
 
+### Replay configuration
+
+- `LINKEDIN_E2E_FIXTURE_MANIFEST` overrides the replay manifest path (defaults to
+  `test/fixtures/manifest.json`)
+- `LINKEDIN_E2E_FIXTURE_SET` selects a non-default recorded set from that
+  manifest
+- `LINKEDIN_E2E_FIXTURE_SERVER_URL` points the replay lane at an already
+  running replay server instead of starting the local one
+- `LINKEDIN_E2E_FIXTURE_FILE` and the live runner's `--fixtures` flag are a
+  different feature: they cache the lightweight CLI/MCP discovery target file
+  used by live contract reruns
+
 ### Fixture workflow
 
 Record or refresh replay fixtures manually:
@@ -439,6 +451,19 @@ Record or refresh replay fixtures manually:
 ```bash
 linkedin fixtures record --page feed --page messaging
 owa fixtures:record --set da-dk --page profile,notifications --no-har
+```
+
+Custom recording example with an alternate manifest, profile, and viewport:
+
+```bash
+linkedin fixtures record \
+  --profile fixtures \
+  --manifest .tmp/replay-manifest.json \
+  --set narrow \
+  --page feed,search \
+  --width 1280 \
+  --height 720 \
+  --no-har
 ```
 
 Check fixture freshness:
@@ -450,7 +475,10 @@ owa fixtures:check --set ci --max-age-days 14
 
 Replay fixtures are stored under `test/fixtures/`. The manifest and committed
 `ci` set stay in git for deterministic CI coverage; other local fixture sets,
-HAR files, and bulky response captures stay ignored by default.
+HAR files, and bulky response captures stay ignored by default. Sanitization is
+a manual review step before you promote anything into the committed `ci` set.
+Keep promoted fixture sets minimal, review captured HTML/response bodies for
+sensitive data, and prefer `--no-har` unless a HAR is truly needed.
 
 The typical loop is:
 
@@ -462,6 +490,41 @@ LINKEDIN_E2E_FIXTURE_SET=manual npm run test:e2e:fixtures -- packages/core/src/_
 
 The live runner's `--fixtures` flag is separate: it stores the small CLI/MCP
 discovery target file used for live contract reruns, not the replay manifest.
+
+### Replay lifecycle
+
+1. `linkedin fixtures record` opens a persistent Playwright browser and records
+   only `linkedin.com` / `licdn.com` traffic for the requested page types.
+2. The recorder updates `test/fixtures/manifest.json`, `<set>/routes.json`,
+   `pages/*.html`, optional `session.har`, and any captured response bodies.
+3. `linkedin fixtures check` warns when a set or page is stale (30 days by
+   default) before you replay it locally or in CI.
+4. `npm run test:e2e:fixtures` loads the manifest, validates fixture paths and
+   metadata, starts the replay server, and fulfills LinkedIn requests from the
+   recorded responses while aborting unrelated network traffic.
+
+You can also point replay at an already running server instead of the built-in
+one:
+
+```bash
+LINKEDIN_E2E_FIXTURE_SERVER_URL=http://127.0.0.1:45678 \
+LINKEDIN_E2E_FIXTURE_SET=manual \
+npm run test:e2e:fixtures -- packages/core/src/__tests__/e2e/feed.e2e.test.ts
+```
+
+### Common replay errors
+
+- `fixture_not_found` means the selected set is missing a recorded route for a
+  LinkedIn request; re-record the affected page or choose the correct set with
+  `LINKEDIN_E2E_FIXTURE_SET`.
+- `Fixture manifest ... does not define any sets.` means the replay manifest is
+  empty; record a set first with `linkedin fixtures record --set <name> --page
+  feed`.
+- `Fixture route ... duplicates replay key ...` means two routes normalize to
+  the same `METHOD + URL`; keep only one entry per normalized request.
+- `fixture_replay_unavailable` means the browser could not reach the local or
+  external replay server; verify `LINKEDIN_E2E_FIXTURE_SERVER_URL` or rerun the
+  replay lane.
 
 ### Coverage lanes
 
