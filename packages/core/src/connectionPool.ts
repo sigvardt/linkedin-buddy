@@ -6,8 +6,11 @@ import {
 
 interface PooledConnection {
   browser: Browser;
+  connectedAtMs: number;
   refCount: number;
   idleTimer: ReturnType<typeof setTimeout> | undefined;
+  lastAcquiredAtMs: number;
+  lastReleasedAtMs: number | undefined;
 }
 
 class AsyncLock {
@@ -28,13 +31,26 @@ export interface ConnectionLease {
   release: () => void;
 }
 
+export interface ConnectionPoolEntryStats {
+  ageMs: number;
+  cdpUrl: string;
+  connected: boolean;
+  connectedAt: string;
+  idleScheduled: boolean;
+  lastAcquiredAt: string;
+  lastReleasedAt?: string;
+  refCount: number;
+}
+
 export class CDPConnectionPool {
   private connections = new Map<string, PooledConnection>();
   private readonly idleTimeoutMs: number;
   private readonly lock = new AsyncLock();
+  private readonly maxConnectionAgeMs: number;
 
-  constructor(options?: { idleTimeoutMs?: number }) {
+  constructor(options?: { idleTimeoutMs?: number; maxConnectionAgeMs?: number }) {
     this.idleTimeoutMs = options?.idleTimeoutMs ?? 300_000;
+    this.maxConnectionAgeMs = options?.maxConnectionAgeMs ?? 30 * 60_000;
   }
 
   async acquire(cdpUrl: string): Promise<ConnectionLease> {
@@ -46,7 +62,13 @@ export class CDPConnectionPool {
         pooled.idleTimer = undefined;
       }
 
-      if (pooled && !pooled.browser.isConnected()) {
+      const nowMs = Date.now();
+
+      if (
+        pooled &&
+        (!pooled.browser.isConnected() ||
+          nowMs - pooled.connectedAtMs >= this.maxConnectionAgeMs)
+      ) {
         await this.closeConnection(cdpUrl, pooled);
         pooled = undefined;
       }
@@ -55,11 +77,16 @@ export class CDPConnectionPool {
         const browser = await chromium.connectOverCDP(cdpUrl);
         pooled = {
           browser,
+          connectedAtMs: nowMs,
           refCount: 0,
-          idleTimer: undefined
+          idleTimer: undefined,
+          lastAcquiredAtMs: nowMs,
+          lastReleasedAtMs: undefined
         };
         this.connections.set(cdpUrl, pooled);
       }
+
+      pooled.lastAcquiredAtMs = nowMs;
 
       const context = pooled.browser.contexts()[0];
       if (!context) {
@@ -83,6 +110,7 @@ export class CDPConnectionPool {
             }
 
             current.refCount = Math.max(0, current.refCount - 1);
+            current.lastReleasedAtMs = Date.now();
             if (current.refCount !== 0 || current.idleTimer) {
               return;
             }
@@ -136,6 +164,33 @@ export class CDPConnectionPool {
         })
       );
     });
+  }
+
+  async invalidate(cdpUrl: string): Promise<void> {
+    await this.lock.run(async () => {
+      const connection = this.connections.get(cdpUrl);
+      if (!connection) {
+        return;
+      }
+
+      await this.closeConnection(cdpUrl, connection);
+    });
+  }
+
+  getStats(): ConnectionPoolEntryStats[] {
+    const nowMs = Date.now();
+    return [...this.connections.entries()].map(([cdpUrl, connection]) => ({
+      ageMs: Math.max(0, nowMs - connection.connectedAtMs),
+      cdpUrl,
+      connected: connection.browser.isConnected(),
+      connectedAt: new Date(connection.connectedAtMs).toISOString(),
+      idleScheduled: connection.idleTimer !== undefined,
+      lastAcquiredAt: new Date(connection.lastAcquiredAtMs).toISOString(),
+      ...(typeof connection.lastReleasedAtMs === "number"
+        ? { lastReleasedAt: new Date(connection.lastReleasedAtMs).toISOString() }
+        : {}),
+      refCount: connection.refCount
+    }));
   }
 
   private async closeConnection(

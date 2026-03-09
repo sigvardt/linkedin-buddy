@@ -29,6 +29,124 @@ const SESSION_STORE_KEY_FILE_NAME = ".session-store.key";
 const SESSION_FILE_SUFFIX = ".session.enc.json";
 const SESSION_STORE_SCHEMA_VERSION = 1;
 const AES_GCM_IV_BYTES = 12;
+const LINKEDIN_AUTH_COOKIE_NAMES = new Set([
+  "li_at",
+  "JSESSIONID",
+  "liap",
+  "bscookie",
+  "bcookie"
+]);
+
+type StorageStateCookie = LinkedInBrowserStorageState["cookies"][number];
+
+export interface LinkedInSessionCookieMetadata {
+  name: string;
+  domain: string;
+  path: string;
+  expiresAt: string | null;
+  expiresInMs: number | null;
+  httpOnly: boolean;
+  secure: boolean;
+  sameSite: StorageStateCookie["sameSite"];
+}
+
+function isSupportedSameSite(
+  value: unknown
+): value is LinkedInSessionCookieMetadata["sameSite"] | undefined {
+  return (
+    value === undefined || value === "Lax" || value === "Strict" || value === "None"
+  );
+}
+
+function isLinkedInCookie(cookie: Pick<StorageStateCookie, "domain">): boolean {
+  return cookie.domain.toLowerCase().includes("linkedin.com");
+}
+
+function isLinkedInAuthCookie(cookie: Pick<StorageStateCookie, "name" | "domain">): boolean {
+  return isLinkedInCookie(cookie) && LINKEDIN_AUTH_COOKIE_NAMES.has(cookie.name);
+}
+
+function toCookieExpiresAt(expires: number): string | null {
+  if (!Number.isFinite(expires) || expires <= 0) {
+    return null;
+  }
+
+  return new Date(expires * 1_000).toISOString();
+}
+
+export function summarizeLinkedInSessionCookies(
+  cookies: readonly StorageStateCookie[],
+  options: { nowMs?: number } = {}
+): LinkedInSessionCookieMetadata[] {
+  const nowMs = options.nowMs ?? Date.now();
+
+  return cookies
+    .filter((cookie) => isLinkedInAuthCookie(cookie))
+    .map((cookie) => {
+      const expiresAt = toCookieExpiresAt(cookie.expires);
+      const expiresInMs =
+        expiresAt === null ? null : new Date(expiresAt).getTime() - nowMs;
+
+      return {
+        name: cookie.name,
+        domain: cookie.domain,
+        path: cookie.path,
+        expiresAt,
+        expiresInMs,
+        httpOnly: cookie.httpOnly,
+        secure: cookie.secure,
+        sameSite: cookie.sameSite
+      };
+    })
+    .sort((left, right) => {
+      const leftExpiry = left.expiresAt === null ? Number.POSITIVE_INFINITY : new Date(left.expiresAt).getTime();
+      const rightExpiry = right.expiresAt === null ? Number.POSITIVE_INFINITY : new Date(right.expiresAt).getTime();
+
+      if (leftExpiry !== rightExpiry) {
+        return leftExpiry - rightExpiry;
+      }
+
+      return left.name.localeCompare(right.name);
+    });
+}
+
+export function getLinkedInSessionFingerprint(
+  storageState: Pick<LinkedInBrowserStorageState, "cookies">
+): string {
+  const authCookiePayload = storageState.cookies
+    .filter((cookie) => isLinkedInAuthCookie(cookie))
+    .sort((left, right) => {
+      const leftKey = `${left.name}\u0000${left.domain}\u0000${left.path}`;
+      const rightKey = `${right.name}\u0000${right.domain}\u0000${right.path}`;
+      return leftKey.localeCompare(rightKey);
+    })
+    .map((cookie) => ({
+      name: cookie.name,
+      value: cookie.value,
+      domain: cookie.domain,
+      path: cookie.path,
+      expires: cookie.expires,
+      httpOnly: cookie.httpOnly,
+      secure: cookie.secure,
+      sameSite: cookie.sameSite
+    }));
+
+  return createHash("sha256")
+    .update(JSON.stringify(authCookiePayload))
+    .digest("hex");
+}
+
+export async function restoreLinkedInSessionCookies(
+  context: BrowserContext,
+  storageState: LinkedInBrowserStorageState
+): Promise<void> {
+  const cookiesToRestore = storageState.cookies.filter((cookie) => isLinkedInCookie(cookie));
+  if (cookiesToRestore.length === 0) {
+    return;
+  }
+
+  await context.addCookies(cookiesToRestore);
+}
 
 function isNotFoundError(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
@@ -50,6 +168,8 @@ interface StoredLinkedInSessionMetadataRecord {
   liAtCookieExpiresAt: string | null;
   originCount: number;
   sessionName: string;
+  sessionCookieFingerprint?: string;
+  sessionCookies?: LinkedInSessionCookieMetadata[];
 }
 
 export interface StoredLinkedInSessionMetadata {
@@ -60,11 +180,28 @@ export interface StoredLinkedInSessionMetadata {
   liAtCookieExpiresAt: string | null;
   originCount: number;
   sessionName: string;
+  sessionCookieFingerprint?: string;
+  sessionCookies?: LinkedInSessionCookieMetadata[];
 }
 
 export interface LoadStoredLinkedInSessionResult {
   metadata: StoredLinkedInSessionMetadata;
   storageState: LinkedInBrowserStorageState;
+}
+
+export interface SaveStoredLinkedInSessionOptions {
+  maxBackups?: number;
+}
+
+export interface RestoreStoredLinkedInSessionOptions {
+  allowExpired?: boolean;
+  maxBackups?: number;
+}
+
+export interface RestoreStoredLinkedInSessionResult
+  extends LoadStoredLinkedInSessionResult {
+  restoredFromBackup: boolean;
+  restoredSessionName: string;
 }
 
 export interface CaptureLinkedInSessionOptions {
@@ -115,6 +252,47 @@ function normalizeSessionName(sessionName: string | undefined): string {
   }
 
   return normalized;
+}
+
+function getBackupSessionName(sessionName: string, index: number): string {
+  return `${normalizeSessionName(sessionName)}.backup-${index}`;
+}
+
+function getFallbackSessionNames(
+  sessionName: string,
+  maxBackups: number
+): string[] {
+  const normalizedSessionName = normalizeSessionName(sessionName);
+  return [
+    normalizedSessionName,
+    ...Array.from({ length: maxBackups }, (_, index) =>
+      getBackupSessionName(normalizedSessionName, index + 1)
+    )
+  ];
+}
+
+function getLinkedInAuthCookie(
+  storageState: LinkedInBrowserStorageState
+): LinkedInBrowserStorageState["cookies"][number] | undefined {
+  return storageState.cookies.find(
+    (cookie) => cookie.name === "li_at" && cookie.value.trim().length > 0
+  );
+}
+
+function isStoredSessionExpired(
+  storageState: LinkedInBrowserStorageState,
+  referenceTimeMs: number = Date.now()
+): boolean {
+  const authCookie = getLinkedInAuthCookie(storageState);
+  if (!authCookie) {
+    return true;
+  }
+
+  if (typeof authCookie.expires !== "number" || authCookie.expires <= 0) {
+    return false;
+  }
+
+  return authCookie.expires * 1_000 <= referenceTimeMs;
 }
 
 function createStoredSessionValidationError(
@@ -173,7 +351,7 @@ function getLinkedInAuthCookieExpiry(
     return null;
   }
 
-  return new Date(authCookie.expires * 1_000).toISOString();
+  return toCookieExpiresAt(authCookie.expires);
 }
 
 function createStoredSessionMetadata(
@@ -193,7 +371,11 @@ function createStoredSessionMetadata(
     hasLinkedInAuthCookie,
     liAtCookieExpiresAt: getLinkedInAuthCookieExpiry(storageState),
     originCount: storageState.origins.length,
-    sessionName
+    sessionName,
+    sessionCookieFingerprint: getLinkedInSessionFingerprint(storageState),
+    sessionCookies: summarizeLinkedInSessionCookies(storageState.cookies, {
+      nowMs: new Date(capturedAt).getTime()
+    })
   };
 }
 
@@ -206,7 +388,11 @@ function toStoredMetadataRecord(
     hasLinkedInAuthCookie: metadata.hasLinkedInAuthCookie,
     liAtCookieExpiresAt: metadata.liAtCookieExpiresAt,
     originCount: metadata.originCount,
-    sessionName: metadata.sessionName
+    sessionName: metadata.sessionName,
+    ...(metadata.sessionCookieFingerprint
+      ? { sessionCookieFingerprint: metadata.sessionCookieFingerprint }
+      : {}),
+    ...(metadata.sessionCookies ? { sessionCookies: metadata.sessionCookies } : {})
   };
 }
 
@@ -221,7 +407,11 @@ function toStoredMetadata(
     hasLinkedInAuthCookie: metadata.hasLinkedInAuthCookie,
     liAtCookieExpiresAt: metadata.liAtCookieExpiresAt,
     originCount: metadata.originCount,
-    sessionName: metadata.sessionName
+    sessionName: metadata.sessionName,
+    ...(metadata.sessionCookieFingerprint
+      ? { sessionCookieFingerprint: metadata.sessionCookieFingerprint }
+      : {}),
+    ...(metadata.sessionCookies ? { sessionCookies: metadata.sessionCookies } : {})
   };
 }
 
@@ -300,6 +490,27 @@ function validateEnvelope(
     typeof metadata.originCount !== "number" ||
     typeof metadata.hasLinkedInAuthCookie !== "boolean" ||
     !(
+      metadata.sessionCookieFingerprint === undefined ||
+      typeof metadata.sessionCookieFingerprint === "string"
+    ) ||
+    !(
+      metadata.sessionCookies === undefined ||
+      (Array.isArray(metadata.sessionCookies) &&
+        metadata.sessionCookies.every(
+          (cookie) =>
+            typeof cookie === "object" &&
+            cookie !== null &&
+            typeof cookie.name === "string" &&
+            typeof cookie.domain === "string" &&
+            typeof cookie.path === "string" &&
+            (cookie.expiresAt === null || typeof cookie.expiresAt === "string") &&
+            (cookie.expiresInMs === null || typeof cookie.expiresInMs === "number") &&
+            typeof cookie.httpOnly === "boolean" &&
+            typeof cookie.secure === "boolean" &&
+            isSupportedSameSite((cookie as { sameSite?: unknown }).sameSite)
+        ))
+    ) ||
+    !(
       metadata.liAtCookieExpiresAt === null ||
       typeof metadata.liAtCookieExpiresAt === "string"
     )
@@ -323,7 +534,11 @@ function validateEnvelope(
       hasLinkedInAuthCookie: metadata.hasLinkedInAuthCookie,
       liAtCookieExpiresAt: metadata.liAtCookieExpiresAt ?? null,
       originCount: metadata.originCount,
-      sessionName: metadata.sessionName
+      sessionName: metadata.sessionName,
+      ...(metadata.sessionCookieFingerprint
+        ? { sessionCookieFingerprint: metadata.sessionCookieFingerprint }
+        : {}),
+      ...(metadata.sessionCookies ? { sessionCookies: metadata.sessionCookies } : {})
     }
   };
 }
@@ -414,6 +629,44 @@ export class LinkedInSessionStore {
     return metadata;
   }
 
+  async saveWithBackups(
+    sessionName: string,
+    storageState: LinkedInBrowserStorageState,
+    options: SaveStoredLinkedInSessionOptions = {}
+  ): Promise<StoredLinkedInSessionMetadata> {
+    const normalizedSessionName = normalizeSessionName(sessionName);
+    const maxBackups = Math.max(0, options.maxBackups ?? 2);
+
+    if (maxBackups > 0) {
+      for (let backupIndex = maxBackups; backupIndex >= 2; backupIndex -= 1) {
+        const sourceBackupName = getBackupSessionName(
+          normalizedSessionName,
+          backupIndex - 1
+        );
+
+        if (!(await this.exists(sourceBackupName))) {
+          continue;
+        }
+
+        const sourceBackup = await this.load(sourceBackupName);
+        await this.save(
+          getBackupSessionName(normalizedSessionName, backupIndex),
+          sourceBackup.storageState
+        );
+      }
+
+      if (await this.exists(normalizedSessionName)) {
+        const previousPrimary = await this.load(normalizedSessionName);
+        await this.save(
+          getBackupSessionName(normalizedSessionName, 1),
+          previousPrimary.storageState
+        );
+      }
+    }
+
+    return this.save(normalizedSessionName, storageState);
+  }
+
   async exists(sessionName: string = "default"): Promise<boolean> {
     try {
       await readFile(this.getSessionPath(sessionName), "utf8");
@@ -486,12 +739,106 @@ export class LinkedInSessionStore {
       storageState
     };
   }
+
+  async loadLatestAvailable(
+    sessionName: string = "default",
+    options: RestoreStoredLinkedInSessionOptions = {}
+  ): Promise<RestoreStoredLinkedInSessionResult> {
+    const normalizedSessionName = normalizeSessionName(sessionName);
+    const maxBackups = Math.max(0, options.maxBackups ?? 2);
+    let lastValidationError: Error | undefined;
+
+    for (const candidateSessionName of getFallbackSessionNames(
+      normalizedSessionName,
+      maxBackups
+    )) {
+      try {
+        const loadedSession = await this.load(candidateSessionName);
+        if (
+          !options.allowExpired &&
+          isStoredSessionExpired(loadedSession.storageState)
+        ) {
+          continue;
+        }
+
+        return {
+          ...loadedSession,
+          restoredFromBackup: candidateSessionName !== normalizedSessionName,
+          restoredSessionName: candidateSessionName
+        };
+      } catch (error) {
+        if (
+          error instanceof LinkedInAssistantError &&
+          ["AUTH_REQUIRED", "ACTION_PRECONDITION_FAILED"].includes(error.code)
+        ) {
+          lastValidationError = error;
+          continue;
+        }
+
+        throw error;
+      }
+    }
+
+    throw new LinkedInAssistantError(
+      "AUTH_REQUIRED",
+      `No non-expired stored LinkedIn session named "${normalizedSessionName}" was found. Capture a fresh session and retry.`,
+      {
+        session_name: normalizedSessionName,
+        ...(lastValidationError instanceof Error
+          ? { cause: lastValidationError.message }
+          : {})
+      },
+      lastValidationError instanceof Error
+        ? { cause: lastValidationError }
+        : undefined
+    );
+  }
+
+  async restoreToContext(
+    context: BrowserContext,
+    sessionName: string = "default",
+    options: RestoreStoredLinkedInSessionOptions = {}
+  ): Promise<RestoreStoredLinkedInSessionResult> {
+    const restoredSession = await this.loadLatestAvailable(sessionName, options);
+
+    await context.addCookies(restoredSession.storageState.cookies);
+    await restoreOriginStorageToContext(context, restoredSession.storageState);
+
+    return restoredSession;
+  }
 }
 
 async function getOrCreatePage(context: BrowserContext) {
   const existingPage = context.pages()[0];
 
   return existingPage ?? context.newPage();
+}
+
+async function restoreOriginStorageToContext(
+  context: BrowserContext,
+  storageState: LinkedInBrowserStorageState
+): Promise<void> {
+  if (storageState.origins.length === 0) {
+    return;
+  }
+
+  const page = await getOrCreatePage(context);
+
+  for (const originState of storageState.origins) {
+    try {
+      await page.goto(originState.origin, {
+        waitUntil: "domcontentloaded"
+      });
+      await page.evaluate((localStorageEntries) => {
+        globalThis.localStorage.clear();
+        for (const entry of localStorageEntries) {
+          globalThis.localStorage.setItem(entry.name, entry.value);
+        }
+      }, originState.localStorage);
+    } catch {
+      // Restoring origin-scoped storage is best-effort; cookies are the critical part.
+    }
+  }
 }
 
 async function waitForManualLogin(

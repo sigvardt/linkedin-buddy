@@ -231,7 +231,9 @@ function toSessionStatus(inspection: LinkedInSessionInspection): SessionStatus {
   return {
     authenticated: inspection.authenticated,
     checkedAt: inspection.checkedAt,
+    checkpointDetected: inspection.checkpointDetected,
     currentUrl: inspection.currentUrl,
+    loginWallDetected: inspection.loginWallDetected,
     reason: inspection.reason
   };
 }

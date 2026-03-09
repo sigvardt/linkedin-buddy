@@ -35,6 +35,16 @@ function createMockPage(opts: {
 }
 
 function createMockContext(opts: {
+  cookies?: Array<{
+    domain: string;
+    expires: number;
+    httpOnly: boolean;
+    name: string;
+    path: string;
+    sameSite: "Lax" | "None" | "Strict";
+    secure: boolean;
+    value: string;
+  }>;
   connected: boolean;
   pages: Page[];
 }): BrowserContext {
@@ -44,6 +54,7 @@ function createMockContext(opts: {
 
   return {
     browser: vi.fn(() => mockBrowser),
+    cookies: vi.fn(async () => opts.cookies ?? []),
     pages: vi.fn(() => opts.pages),
     newPage: vi.fn(async () => {
       const [firstPage] = opts.pages;
@@ -122,8 +133,12 @@ describe("checkLinkedInSession", () => {
     const status = await checkLinkedInSession(context);
 
     expect(status.authenticated).toBe(true);
+    expect(status.checkpointDetected).toBe(false);
+    expect(status.cookieExpiringSoon).toBe(false);
     expect(status.currentUrl).toContain("/feed");
+    expect(status.loginWallDetected).toBe(false);
     expect(status.reason).toContain("authenticated");
+    expect(status.sessionCookiePresent).toBe(false);
   });
 
   it("is unauthenticated when login form is visible", async () => {
@@ -139,7 +154,41 @@ describe("checkLinkedInSession", () => {
     const status = await checkLinkedInSession(context);
 
     expect(status.authenticated).toBe(false);
+    expect(status.checkpointDetected).toBe(false);
+    expect(status.loginWallDetected).toBe(true);
     expect(status.currentUrl).toContain("/login");
     expect(status.reason).toContain("Login form");
+  });
+
+  it("surfaces cookie expiry metadata for proactive refresh decisions", async () => {
+    const page = createMockPage({
+      url: "https://www.linkedin.com/feed/",
+      isVisible: (selector) => selector === "nav.global-nav"
+    });
+    const context = createMockContext({
+      connected: true,
+      cookies: [
+        {
+          name: "li_at",
+          value: "token",
+          domain: ".linkedin.com",
+          path: "/",
+          expires: Math.floor((Date.now() + 30 * 60_000) / 1_000),
+          httpOnly: true,
+          secure: true,
+          sameSite: "Lax"
+        }
+      ],
+      pages: [page]
+    });
+
+    const status = await checkLinkedInSession(context);
+
+    expect(status.authenticated).toBe(true);
+    expect(status.cookieExpiringSoon).toBe(true);
+    expect(status.nextCookieExpiryAt).toContain("T");
+    expect(status.sessionCookieFingerprint).toMatch(/^[a-f0-9]{64}$/u);
+    expect(status.sessionCookiePresent).toBe(true);
+    expect(status.sessionCookies).toHaveLength(1);
   });
 });
