@@ -119,6 +119,22 @@ describe.sequential("CLI E2E", () => {
       }
     });
 
+    const inboxSearchRecipients = await runCliCommand([
+      "inbox",
+      "search-recipients",
+      "--profile",
+      profileName,
+      "--query",
+      "Simon Miller",
+      "--limit",
+      "5"
+    ]);
+    expect(inboxSearchRecipients.error).toBeUndefined();
+    expect(getLastJsonObject(inboxSearchRecipients.stdout)).toMatchObject({
+      profile_name: profileName,
+      recipients: expect.any(Array)
+    });
+
     const prepareReply = await runCliCommand([
       "inbox",
       "prepare-reply",
@@ -134,6 +150,39 @@ describe.sequential("CLI E2E", () => {
       profile_name: profileName,
       preparedActionId: expect.stringMatching(/^pa_/),
       confirmToken: expect.stringMatching(/^ct_/)
+    });
+
+    const prepareNewThread = await runCliCommand([
+      "inbox",
+      "prepare-new-thread",
+      "--profile",
+      profileName,
+      "--recipient",
+      fixtures.connectionTarget,
+      "--text",
+      `CLI new thread preview [${Date.now()}]`
+    ]);
+    expect(prepareNewThread.error).toBeUndefined();
+    expect(getLastJsonObject(prepareNewThread.stdout)).toMatchObject({
+      profile_name: profileName,
+      preparedActionId: expect.stringMatching(/^pa_/),
+      confirmToken: expect.stringMatching(/^ct_/)
+    });
+
+    const prepareAddRecipients = await runCliCommand([
+      "inbox",
+      "prepare-add-recipients",
+      "--profile",
+      profileName,
+      "--thread",
+      fixtures.threadId,
+      "--recipient",
+      fixtures.connectionTarget
+    ]);
+    expect(prepareAddRecipients.exitCode).toBe(1);
+    expect(getLastJsonObject(prepareAddRecipients.stderr)).toMatchObject({
+      code: "ACTION_PRECONDITION_FAILED",
+      message: "All requested recipients are already present in the thread."
     });
 
     const runtime = e2e.runtime();

@@ -18,6 +18,13 @@ import {
 } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
+import {
+  normalizeLinkedInProfileUrl,
+  resolveProfileUrl,
+  type LinkedInProfile,
+  type LinkedInProfileService
+} from "./linkedinProfile.js";
+import type { LinkedInSearchResult, LinkedInSearchService } from "./linkedinSearch.js";
 import type { ProfileManager } from "./profileManager.js";
 import type { RateLimiter, RateLimiterState } from "./rateLimiter.js";
 import type { LinkedInSelectorLocale } from "./selectorLocale.js";
@@ -34,9 +41,17 @@ import type {
 } from "./twoPhaseCommit.js";
 
 const LINKEDIN_MESSAGING_URL = "https://www.linkedin.com/messaging/";
-const SEND_MESSAGE_ACTION_TYPE = "send_message";
+const MAX_RECIPIENTS_PER_ACTION = 10;
+export const SEND_MESSAGE_ACTION_TYPE = "send_message";
+export const SEND_NEW_THREAD_ACTION_TYPE = "inbox.send_new_thread";
+export const ADD_RECIPIENTS_ACTION_TYPE = "inbox.add_recipients";
 export const SEND_MESSAGE_RATE_LIMIT_CONFIG = {
   counterKey: "linkedin.messaging.send_message",
+  windowSizeMs: 60 * 60 * 1000,
+  limit: 20
+} as const;
+export const ADD_RECIPIENTS_RATE_LIMIT_CONFIG = {
+  counterKey: "linkedin.messaging.add_recipients",
   windowSizeMs: 60 * 60 * 1000,
   limit: 20
 } as const;
@@ -81,6 +96,50 @@ interface SelectorCandidate {
   locatorFactory: (page: Page) => Locator;
 }
 
+type LocalizedInboxPhraseKey =
+  | "add_people"
+  | "finalize_recipients"
+  | "new_message"
+  | "type_a_name";
+
+const LOCALIZED_INBOX_PHRASES: Record<
+  LinkedInSelectorLocale,
+  Record<LocalizedInboxPhraseKey, readonly string[]>
+> = {
+  en: {
+    add_people: [
+      "Add people",
+      "Add participants",
+      "Add recipients",
+      "Create group",
+      "Create group conversation"
+    ],
+    finalize_recipients: ["Done", "Create", "Add", "Next"],
+    new_message: ["New message", "Compose message", "Compose"],
+    type_a_name: [
+      "Type a name",
+      "Type a name or names",
+      "Type a name or multiple names"
+    ]
+  },
+  da: {
+    add_people: [
+      "Tilføj personer",
+      "Tilføj deltagere",
+      "Tilføj modtagere",
+      "Opret gruppe",
+      "Opret gruppesamtale"
+    ],
+    finalize_recipients: ["Færdig", "Opret", "Tilføj", "Næste"],
+    new_message: ["Ny besked", "Ny meddelelse", "Skriv besked"],
+    type_a_name: [
+      "Skriv et navn",
+      "Skriv et navn eller flere navne",
+      "Indtast et navn"
+    ]
+  }
+};
+
 export interface LinkedInThreadSummary {
   thread_id: string;
   title: string;
@@ -104,6 +163,16 @@ export interface LinkedInThreadDetail {
   messages: LinkedInThreadMessage[];
 }
 
+export interface LinkedInInboxRecipient {
+  full_name: string;
+  headline: string;
+  location: string;
+  profile_url: string;
+  vanity_name: string | null;
+  connection_degree: string;
+  mutual_connections: string;
+}
+
 export interface ListThreadsInput {
   profileName?: string;
   limit?: number;
@@ -123,12 +192,41 @@ export interface PrepareReplyInput {
   operatorNote?: string;
 }
 
+export interface SearchRecipientsInput {
+  profileName?: string;
+  query: string;
+  limit?: number;
+}
+
+export interface SearchRecipientsResult {
+  query: string;
+  count: number;
+  recipients: LinkedInInboxRecipient[];
+}
+
+export interface PrepareNewThreadInput {
+  profileName?: string;
+  recipients: string[];
+  text: string;
+  operatorNote?: string;
+}
+
+export interface PrepareAddRecipientsInput {
+  profileName?: string;
+  thread: string;
+  recipients: string[];
+  operatorNote?: string;
+}
+
 export interface PrepareReplyResult {
   preparedActionId: string;
   confirmToken: string;
   expiresAtMs: number;
   preview: Record<string, unknown>;
 }
+
+export type PrepareNewThreadResult = PrepareReplyResult;
+export type PrepareAddRecipientsResult = PrepareReplyResult;
 
 export interface LinkedInMessagingRuntime {
   runId: string;
@@ -144,6 +242,8 @@ export interface LinkedInMessagingRuntime {
 }
 
 export interface LinkedInInboxRuntime extends LinkedInMessagingRuntime {
+  profile: Pick<LinkedInProfileService, "viewProfile">;
+  search: Pick<LinkedInSearchService, "search">;
   twoPhaseCommit: Pick<TwoPhaseCommitService<LinkedInMessagingRuntime>, "prepare">;
 }
 
@@ -553,6 +653,229 @@ function toThreadDetail(snapshot: ThreadDetailSnapshot): LinkedInThreadDetail {
       text: message.text
     }))
   };
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function getLocalizedInboxPhrases(
+  key: LocalizedInboxPhraseKey,
+  locale: LinkedInSelectorLocale
+): readonly string[] {
+  return LOCALIZED_INBOX_PHRASES[locale][key];
+}
+
+function buildLocalizedInboxPhraseRegex(
+  key: LocalizedInboxPhraseKey,
+  locale: LinkedInSelectorLocale,
+  options: { exact?: boolean } = {}
+): RegExp {
+  const phrases = getLocalizedInboxPhrases(key, locale)
+    .map((phrase) => normalizeText(phrase))
+    .filter((phrase) => phrase.length > 0);
+  const body = phrases.map((phrase) => escapeRegExp(phrase)).join("|");
+  const pattern = options.exact ? `^(?:${body})$` : `(?:${body})`;
+  return new RegExp(pattern, "i");
+}
+
+function formatLocalizedInboxPhraseRegexHint(
+  key: LocalizedInboxPhraseKey,
+  locale: LinkedInSelectorLocale,
+  options: { exact?: boolean } = {}
+): string {
+  const phrases = getLocalizedInboxPhrases(key, locale).map((phrase) =>
+    JSON.stringify(normalizeText(phrase))
+  );
+  return options.exact ? `exact ${phrases.join(" | ")}` : phrases.join(" | ");
+}
+
+function isLikelyProfileTarget(value: string): boolean {
+  return isAbsoluteUrl(value) || value.startsWith("/in/") || !/\s/u.test(value);
+}
+
+function normalizeRecipientTargets(values: string[]): string[] {
+  const normalizedTargets: string[] = [];
+  const seen = new Set<string>();
+
+  for (const value of values) {
+    const normalizedValue = normalizeText(value);
+    if (!normalizedValue) {
+      continue;
+    }
+
+    if (!isLikelyProfileTarget(normalizedValue)) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        "Recipients must be LinkedIn profile URLs, /in/ paths, or vanity names. Use linkedin.inbox.search_recipients to resolve free-text names.",
+        {
+          recipient: normalizedValue
+        }
+      );
+    }
+
+    const dedupeKey = isAbsoluteUrl(normalizedValue) || normalizedValue.startsWith("/in/")
+      ? normalizeLinkedInProfileUrl(resolveProfileUrl(normalizedValue))
+      : normalizedValue.toLowerCase();
+
+    if (seen.has(dedupeKey)) {
+      continue;
+    }
+
+    seen.add(dedupeKey);
+    normalizedTargets.push(normalizedValue);
+  }
+
+  if (normalizedTargets.length === 0) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      "At least one recipient is required."
+    );
+  }
+
+  if (normalizedTargets.length > MAX_RECIPIENTS_PER_ACTION) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `Recipients must contain no more than ${MAX_RECIPIENTS_PER_ACTION} entries.`,
+      {
+        recipient_count: normalizedTargets.length,
+        max_recipient_count: MAX_RECIPIENTS_PER_ACTION
+      }
+    );
+  }
+
+  return normalizedTargets;
+}
+
+function parseParticipantNames(title: string): string[] {
+  return title
+    .split(",")
+    .map((value) => normalizeText(value))
+    .filter((value) => value.length > 0);
+}
+
+function toInboxRecipientFromSearchResult(
+  result: LinkedInSearchResult
+): LinkedInInboxRecipient {
+  return {
+    full_name: normalizeText(result.name),
+    headline: normalizeText(result.headline),
+    location: normalizeText(result.location),
+    profile_url: normalizeText(result.profile_url),
+    vanity_name: result.vanity_name,
+    connection_degree: normalizeText(result.connection_degree),
+    mutual_connections: normalizeText(result.mutual_connections)
+  };
+}
+
+function toInboxRecipientFromProfile(
+  profile: LinkedInProfile
+): LinkedInInboxRecipient {
+  return {
+    full_name: normalizeText(profile.full_name),
+    headline: normalizeText(profile.headline),
+    location: normalizeText(profile.location),
+    profile_url: normalizeText(profile.profile_url),
+    vanity_name: profile.vanity_name,
+    connection_degree: normalizeText(profile.connection_degree),
+    mutual_connections: ""
+  };
+}
+
+function toRecipientPreviewRecord(
+  recipient: LinkedInInboxRecipient
+): Record<string, unknown> {
+  return {
+    full_name: recipient.full_name,
+    headline: recipient.headline,
+    location: recipient.location,
+    profile_url: recipient.profile_url,
+    vanity_name: recipient.vanity_name,
+    connection_degree: recipient.connection_degree,
+    mutual_connections: recipient.mutual_connections
+  };
+}
+
+function getRequiredRecordStringField(
+  source: Record<string, unknown>,
+  key: string,
+  actionId: string,
+  location: string
+): string {
+  const value = source[key];
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value.trim();
+  }
+
+  throw new LinkedInAssistantError(
+    "ACTION_PRECONDITION_FAILED",
+    `Prepared action ${actionId} is missing ${location}.${key}.`,
+    {
+      action_id: actionId,
+      key,
+      location
+    }
+  );
+}
+
+function getOptionalRecordStringField(
+  source: Record<string, unknown>,
+  key: string
+): string | null {
+  const value = source[key];
+  return typeof value === "string" ? normalizeText(value) || null : null;
+}
+
+function parsePreparedRecipient(
+  value: unknown,
+  actionId: string,
+  location: string
+): LinkedInInboxRecipient {
+  const record = asRecord(value);
+  if (!record) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `Prepared action ${actionId} has invalid ${location}.`,
+      {
+        action_id: actionId,
+        location
+      }
+    );
+  }
+
+  return {
+    full_name: getRequiredRecordStringField(record, "full_name", actionId, location),
+    headline: getOptionalRecordStringField(record, "headline") ?? "",
+    location: getOptionalRecordStringField(record, "location") ?? "",
+    profile_url: getRequiredRecordStringField(record, "profile_url", actionId, location),
+    vanity_name: getOptionalRecordStringField(record, "vanity_name"),
+    connection_degree: getOptionalRecordStringField(record, "connection_degree") ?? "",
+    mutual_connections: getOptionalRecordStringField(record, "mutual_connections") ?? ""
+  };
+}
+
+function getRequiredPreparedRecipients(
+  source: Record<string, unknown>,
+  key: string,
+  actionId: string,
+  location: "target" | "payload"
+): LinkedInInboxRecipient[] {
+  const value = source[key];
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `Prepared action ${actionId} is missing ${location}.${key}.`,
+      {
+        action_id: actionId,
+        key,
+        location
+      }
+    );
+  }
+
+  return value.map((item, index) =>
+    parsePreparedRecipient(item, actionId, `${location}.${key}[${index}]`)
+  );
 }
 
 function inferParticipantName(title: string): string {
@@ -1066,12 +1389,10 @@ async function waitForMessageEcho(page: Page, messageText: string): Promise<void
     .catch(() => undefined);
 }
 
-async function findVisibleLocatorOrThrow(
+async function findVisibleLocator(
   page: Page,
-  candidates: SelectorCandidate[],
-  selectorKey: string,
-  artifactPaths: string[]
-): Promise<{ locator: Locator; key: string }> {
+  candidates: SelectorCandidate[]
+): Promise<{ locator: Locator; key: string } | null> {
   for (const candidate of candidates) {
     const locator = candidate.locatorFactory(page).first();
     try {
@@ -1080,6 +1401,20 @@ async function findVisibleLocatorOrThrow(
     } catch {
       // Try the next selector candidate.
     }
+  }
+
+  return null;
+}
+
+async function findVisibleLocatorOrThrow(
+  page: Page,
+  candidates: SelectorCandidate[],
+  selectorKey: string,
+  artifactPaths: string[]
+): Promise<{ locator: Locator; key: string }> {
+  const visibleLocator = await findVisibleLocator(page, candidates);
+  if (visibleLocator) {
+    return visibleLocator;
   }
 
   throw new LinkedInAssistantError(
@@ -1092,6 +1427,584 @@ async function findVisibleLocatorOrThrow(
       artifact_paths: artifactPaths
     }
   );
+}
+
+function createMessageComposerSelectors(
+  runtime: LinkedInMessagingRuntime
+): SelectorCandidate[] {
+  const composerNameRegex = buildLinkedInSelectorPhraseRegex(
+    ["write_message", "message"],
+    runtime.selectorLocale
+  );
+  const composerNameRegexHint = formatLinkedInSelectorRegexHint(
+    ["write_message", "message"],
+    runtime.selectorLocale
+  );
+  const writeMessagePlaceholderRegex = buildLinkedInSelectorPhraseRegex(
+    "write_message",
+    runtime.selectorLocale
+  );
+  const writeMessagePlaceholderRegexHint = formatLinkedInSelectorRegexHint(
+    "write_message",
+    runtime.selectorLocale
+  );
+
+  return [
+    {
+      key: "role-textbox-write-message",
+      selectorHint: `getByRole(textbox, ${composerNameRegexHint})`,
+      locatorFactory: (targetPage) =>
+        targetPage.getByRole("textbox", {
+          name: composerNameRegex
+        })
+    },
+    {
+      key: "placeholder-write-message",
+      selectorHint: `getByPlaceholder(${writeMessagePlaceholderRegexHint})`,
+      locatorFactory: (targetPage) =>
+        targetPage.getByPlaceholder(writeMessagePlaceholderRegex)
+    },
+    {
+      key: "msg-contenteditable",
+      selectorHint: ".msg-form__contenteditable[contenteditable='true']",
+      locatorFactory: (targetPage) =>
+        targetPage.locator(".msg-form__contenteditable[contenteditable='true']")
+    },
+    {
+      key: "msg-form-contenteditable-fallback",
+      selectorHint: ".msg-form [contenteditable='true']",
+      locatorFactory: (targetPage) =>
+        targetPage.locator(".msg-form [contenteditable='true']")
+    }
+  ];
+}
+
+function createSendButtonSelectors(
+  runtime: LinkedInMessagingRuntime
+): SelectorCandidate[] {
+  const sendButtonRegex = buildLinkedInSelectorPhraseRegex(
+    "send",
+    runtime.selectorLocale,
+    { exact: true }
+  );
+  const sendButtonRegexHint = formatLinkedInSelectorRegexHint(
+    "send",
+    runtime.selectorLocale,
+    { exact: true }
+  );
+
+  return [
+    {
+      key: "role-button-send",
+      selectorHint: `getByRole(button, ${sendButtonRegexHint})`,
+      locatorFactory: (targetPage) =>
+        targetPage.getByRole("button", { name: sendButtonRegex })
+    },
+    {
+      key: "msg-form-send-button",
+      selectorHint: "button.msg-form__send-button",
+      locatorFactory: (targetPage) => targetPage.locator("button.msg-form__send-button")
+    },
+    {
+      key: "msg-form-send-button-fallback",
+      selectorHint: ".msg-form__send-button",
+      locatorFactory: (targetPage) => targetPage.locator(".msg-form__send-button")
+    }
+  ];
+}
+
+function createNewMessageButtonSelectors(
+  runtime: LinkedInMessagingRuntime
+): SelectorCandidate[] {
+  const newMessageRegex = buildLocalizedInboxPhraseRegex(
+    "new_message",
+    runtime.selectorLocale
+  );
+  const newMessageRegexHint = formatLocalizedInboxPhraseRegexHint(
+    "new_message",
+    runtime.selectorLocale
+  );
+
+  return [
+    {
+      key: "role-button-new-message",
+      selectorHint: `getByRole(button, ${newMessageRegexHint})`,
+      locatorFactory: (targetPage) =>
+        targetPage.getByRole("button", { name: newMessageRegex })
+    },
+    {
+      key: "button-text-new-message",
+      selectorHint: `button hasText ${newMessageRegexHint}`,
+      locatorFactory: (targetPage) =>
+        targetPage.locator("button").filter({ hasText: newMessageRegex })
+    },
+    {
+      key: "compose-data-control-name",
+      selectorHint: "button[data-control-name*='compose']",
+      locatorFactory: (targetPage) =>
+        targetPage.locator("button[data-control-name*='compose']")
+    }
+  ];
+}
+
+function createRecipientInputSelectors(
+  runtime: LinkedInMessagingRuntime
+): SelectorCandidate[] {
+  const typeANameRegex = buildLocalizedInboxPhraseRegex(
+    "type_a_name",
+    runtime.selectorLocale
+  );
+  const typeANameRegexHint = formatLocalizedInboxPhraseRegexHint(
+    "type_a_name",
+    runtime.selectorLocale
+  );
+
+  return [
+    {
+      key: "role-combobox-type-a-name",
+      selectorHint: `getByRole(combobox, ${typeANameRegexHint})`,
+      locatorFactory: (targetPage) =>
+        targetPage.getByRole("combobox", { name: typeANameRegex })
+    },
+    {
+      key: "role-textbox-type-a-name",
+      selectorHint: `getByRole(textbox, ${typeANameRegexHint})`,
+      locatorFactory: (targetPage) =>
+        targetPage.getByRole("textbox", { name: typeANameRegex })
+    },
+    {
+      key: "placeholder-type-a-name",
+      selectorHint: `getByPlaceholder(${typeANameRegexHint})`,
+      locatorFactory: (targetPage) => targetPage.getByPlaceholder(typeANameRegex)
+    },
+    {
+      key: "msg-connections-typeahead-input",
+      selectorHint: ".msg-connections-typeahead__search-field input",
+      locatorFactory: (targetPage) =>
+        targetPage.locator(".msg-connections-typeahead__search-field input")
+    },
+    {
+      key: "artdeco-typeahead-input",
+      selectorHint: ".artdeco-typeahead input",
+      locatorFactory: (targetPage) => targetPage.locator(".artdeco-typeahead input")
+    },
+    {
+      key: "input-role-combobox",
+      selectorHint: "input[role='combobox'], input[aria-autocomplete='list']",
+      locatorFactory: (targetPage) =>
+        targetPage.locator("input[role='combobox'], input[aria-autocomplete='list']")
+    }
+  ];
+}
+
+function createRecipientSuggestionSelectors(
+  recipient: LinkedInInboxRecipient
+): SelectorCandidate[] {
+  const recipientNameRegex = new RegExp(escapeRegExp(recipient.full_name), "i");
+  const recipientHeadlineRegex = recipient.headline
+    ? new RegExp(escapeRegExp(recipient.headline), "i")
+    : null;
+  const baseCandidates = [
+    {
+      key: "role-option",
+      selectorHint: `[role='option'] hasText ${JSON.stringify(recipient.full_name)}`,
+      locatorFactory: (targetPage: Page) => targetPage.locator("[role='option']")
+    },
+    {
+      key: "typeahead-hit",
+      selectorHint: `.msg-connections-typeahead__hit hasText ${JSON.stringify(recipient.full_name)}`,
+      locatorFactory: (targetPage: Page) =>
+        targetPage.locator(".msg-connections-typeahead__hit")
+    },
+    {
+      key: "typeahead-result",
+      selectorHint: `.artdeco-typeahead__result hasText ${JSON.stringify(recipient.full_name)}`,
+      locatorFactory: (targetPage: Page) =>
+        targetPage.locator(".artdeco-typeahead__result")
+    },
+    {
+      key: "listitem",
+      selectorHint: `li hasText ${JSON.stringify(recipient.full_name)}`,
+      locatorFactory: (targetPage: Page) => targetPage.locator("li")
+    }
+  ] as const;
+
+  const candidates: SelectorCandidate[] = [];
+  if (recipientHeadlineRegex) {
+    for (const candidate of baseCandidates) {
+      candidates.push({
+        key: `${candidate.key}-name-headline`,
+        selectorHint: `${candidate.selectorHint} + headline ${JSON.stringify(recipient.headline)}`,
+        locatorFactory: (targetPage) =>
+          candidate
+            .locatorFactory(targetPage)
+            .filter({ hasText: recipientNameRegex })
+            .filter({ hasText: recipientHeadlineRegex })
+      });
+    }
+  }
+
+  for (const candidate of baseCandidates) {
+    candidates.push({
+      key: `${candidate.key}-name`,
+      selectorHint: candidate.selectorHint,
+      locatorFactory: (targetPage) =>
+        candidate.locatorFactory(targetPage).filter({ hasText: recipientNameRegex })
+    });
+  }
+
+  return candidates;
+}
+
+function createAddRecipientsButtonSelectors(
+  runtime: LinkedInMessagingRuntime
+): SelectorCandidate[] {
+  const addPeopleRegex = buildLocalizedInboxPhraseRegex(
+    "add_people",
+    runtime.selectorLocale
+  );
+  const addPeopleRegexHint = formatLocalizedInboxPhraseRegexHint(
+    "add_people",
+    runtime.selectorLocale
+  );
+
+  return [
+    {
+      key: "role-button-add-people",
+      selectorHint: `getByRole(button, ${addPeopleRegexHint})`,
+      locatorFactory: (targetPage) =>
+        targetPage.getByRole("button", { name: addPeopleRegex })
+    },
+    {
+      key: "button-text-add-people",
+      selectorHint: `button hasText ${addPeopleRegexHint}`,
+      locatorFactory: (targetPage) =>
+        targetPage.locator("button").filter({ hasText: addPeopleRegex })
+    }
+  ];
+}
+
+function createFinalizeRecipientsSelectors(
+  runtime: LinkedInMessagingRuntime
+): SelectorCandidate[] {
+  const finalizeRegex = buildLocalizedInboxPhraseRegex(
+    "finalize_recipients",
+    runtime.selectorLocale,
+    { exact: true }
+  );
+  const finalizeRegexHint = formatLocalizedInboxPhraseRegexHint(
+    "finalize_recipients",
+    runtime.selectorLocale,
+    { exact: true }
+  );
+
+  return [
+    {
+      key: "role-button-finalize-recipients",
+      selectorHint: `getByRole(button, ${finalizeRegexHint})`,
+      locatorFactory: (targetPage) =>
+        targetPage.getByRole("button", { name: finalizeRegex })
+    },
+    {
+      key: "button-text-finalize-recipients",
+      selectorHint: `button hasText ${finalizeRegexHint}`,
+      locatorFactory: (targetPage) =>
+        targetPage.locator("button").filter({ hasText: finalizeRegex })
+    }
+  ];
+}
+
+async function readEditableValue(locator: Locator): Promise<string> {
+  try {
+    return await locator.evaluate((node) => {
+      const editableNode = node as {
+        textContent?: string | null;
+        value?: unknown;
+      };
+      return typeof editableNode.value === "string"
+        ? editableNode.value
+        : editableNode.textContent ?? "";
+    });
+  } catch {
+    return "";
+  }
+}
+
+async function fillAndSendMessage(input: {
+  actionId: string;
+  actionType: string;
+  artifactMetadata?: Record<string, unknown>;
+  artifactPaths: string[];
+  page: Page;
+  profileName: string;
+  runtime: LinkedInMessagingRuntime;
+  text: string;
+}): Promise<void> {
+  const composer = await findVisibleLocatorOrThrow(
+    input.page,
+    createMessageComposerSelectors(input.runtime),
+    "message_composer",
+    input.artifactPaths
+  );
+  await composer.locator.click({ timeout: 3_000 });
+  await composer.locator.fill(input.text, { timeout: 5_000 });
+
+  const sendButton = await findVisibleLocatorOrThrow(
+    input.page,
+    createSendButtonSelectors(input.runtime),
+    "send_button",
+    input.artifactPaths
+  );
+  await sendButton.locator.click({ timeout: 5_000 });
+  await waitForMessageEcho(input.page, input.text);
+
+  const postSendScreenshot = `linkedin/screenshot-confirm-${Date.now()}.png`;
+  await captureScreenshotArtifact(input.runtime, input.page, postSendScreenshot, {
+    action: input.actionType,
+    action_id: input.actionId,
+    profile_name: input.profileName,
+    ...input.artifactMetadata
+  });
+  input.artifactPaths.push(postSendScreenshot);
+}
+
+async function openNewMessageComposer(
+  page: Page,
+  runtime: LinkedInMessagingRuntime,
+  artifactPaths: string[]
+): Promise<void> {
+  const newMessageButton = await findVisibleLocatorOrThrow(
+    page,
+    createNewMessageButtonSelectors(runtime),
+    "new_message_button",
+    artifactPaths
+  );
+  await newMessageButton.locator.click({ timeout: 5_000 });
+  await page.waitForTimeout(500);
+  await findVisibleLocatorOrThrow(
+    page,
+    createRecipientInputSelectors(runtime),
+    "recipient_input",
+    artifactPaths
+  );
+}
+
+async function selectRecipientsInComposer(input: {
+  artifactPaths: string[];
+  page: Page;
+  recipients: LinkedInInboxRecipient[];
+  runtime: LinkedInMessagingRuntime;
+}): Promise<void> {
+  for (const recipient of input.recipients) {
+    const recipientInput = await findVisibleLocatorOrThrow(
+      input.page,
+      createRecipientInputSelectors(input.runtime),
+      "recipient_input",
+      input.artifactPaths
+    );
+    await recipientInput.locator.click({ timeout: 3_000 });
+    await recipientInput.locator.fill(recipient.full_name, { timeout: 5_000 });
+    await input.page.waitForTimeout(600);
+
+    const suggestion = await findVisibleLocator(
+      input.page,
+      createRecipientSuggestionSelectors(recipient)
+    );
+
+    if (suggestion) {
+      await suggestion.locator.click({ timeout: 5_000 });
+    } else {
+      await recipientInput.locator.press("ArrowDown", { timeout: 2_000 }).catch(
+        () => undefined
+      );
+      await recipientInput.locator.press("Enter", { timeout: 2_000 }).catch(
+        () => undefined
+      );
+    }
+
+    await input.page.waitForTimeout(500);
+
+    const selectedChip = input.page
+      .locator(
+        ".msg-connections-typeahead__recipient, .artdeco-pill, .msg-compose__recipient, .msg-s-message-recipient-list__recipient"
+      )
+      .filter({ hasText: new RegExp(escapeRegExp(recipient.full_name), "i") })
+      .first();
+    const chipVisible = await selectedChip.isVisible().catch(() => false);
+    const remainingValue = normalizeText(await readEditableValue(recipientInput.locator));
+
+    if (!chipVisible && remainingValue.toLowerCase() === recipient.full_name.toLowerCase()) {
+      throw new LinkedInAssistantError(
+        "TARGET_NOT_FOUND",
+        `Could not resolve recipient "${recipient.full_name}" in the LinkedIn composer.`,
+        {
+          recipient_name: recipient.full_name,
+          recipient_profile_url: recipient.profile_url
+        }
+      );
+    }
+  }
+}
+
+async function openProfileMessageComposer(input: {
+  artifactPaths: string[];
+  page: Page;
+  recipient: LinkedInInboxRecipient;
+  runtime: LinkedInMessagingRuntime;
+}): Promise<void> {
+  await input.page.goto(input.recipient.profile_url, {
+    waitUntil: "domcontentloaded"
+  });
+  await waitForNetworkIdleBestEffort(input.page);
+
+  const messageRegex = buildLinkedInSelectorPhraseRegex(
+    "message",
+    input.runtime.selectorLocale,
+    { exact: true }
+  );
+  const messageRegexHint = formatLinkedInSelectorRegexHint(
+    "message",
+    input.runtime.selectorLocale,
+    { exact: true }
+  );
+  const topCardRoot = input.page.locator("main .pv-top-card, .pv-top-card, main").first();
+  const messageButton = await findVisibleLocatorOrThrow(
+    input.page,
+    [
+      {
+        key: "topcard-role-button-message",
+        selectorHint: `topCard.getByRole(button, ${messageRegexHint})`,
+        locatorFactory: () => topCardRoot.getByRole("button", { name: messageRegex })
+      },
+      {
+        key: "topcard-button-text-message",
+        selectorHint: `topCard button hasText ${messageRegexHint}`,
+        locatorFactory: () => topCardRoot.locator("button").filter({ hasText: messageRegex })
+      },
+      {
+        key: "page-role-button-message",
+        selectorHint: `page.getByRole(button, ${messageRegexHint})`,
+        locatorFactory: (targetPage) =>
+          targetPage.getByRole("button", { name: messageRegex })
+      }
+    ],
+    "profile_message_button",
+    input.artifactPaths
+  );
+  await messageButton.locator.click({ timeout: 5_000 });
+  await input.page.waitForTimeout(600);
+  await waitForNetworkIdleBestEffort(input.page);
+  await findVisibleLocatorOrThrow(
+    input.page,
+    createMessageComposerSelectors(input.runtime),
+    "message_composer",
+    input.artifactPaths
+  );
+}
+
+async function openAddRecipientsFlow(input: {
+  artifactPaths: string[];
+  page: Page;
+  runtime: LinkedInMessagingRuntime;
+}): Promise<void> {
+  const directAddRecipients = await findVisibleLocator(
+    input.page,
+    createAddRecipientsButtonSelectors(input.runtime)
+  );
+  if (directAddRecipients) {
+    await directAddRecipients.locator.click({ timeout: 5_000 });
+    await input.page.waitForTimeout(500);
+    return;
+  }
+
+  const moreRegex = buildLinkedInSelectorPhraseRegex(
+    "more",
+    input.runtime.selectorLocale,
+    { exact: true }
+  );
+  const moreRegexHint = formatLinkedInSelectorRegexHint(
+    "more",
+    input.runtime.selectorLocale,
+    { exact: true }
+  );
+  const addPeopleRegex = buildLocalizedInboxPhraseRegex(
+    "add_people",
+    input.runtime.selectorLocale
+  );
+  const addPeopleRegexHint = formatLocalizedInboxPhraseRegexHint(
+    "add_people",
+    input.runtime.selectorLocale
+  );
+  const moreButton = await findVisibleLocatorOrThrow(
+    input.page,
+    [
+      {
+        key: "role-button-more",
+        selectorHint: `getByRole(button, ${moreRegexHint})`,
+        locatorFactory: (targetPage) =>
+          targetPage.getByRole("button", { name: moreRegex })
+      },
+      {
+        key: "button-text-more",
+        selectorHint: `button hasText ${moreRegexHint}`,
+        locatorFactory: (targetPage) =>
+          targetPage.locator("button").filter({ hasText: moreRegex })
+      }
+    ],
+    "thread_more_button",
+    input.artifactPaths
+  );
+  await moreButton.locator.click({ timeout: 5_000 });
+  await input.page.waitForTimeout(500);
+
+  const addRecipientsMenuItem = await findVisibleLocatorOrThrow(
+    input.page,
+    [
+      {
+        key: "menuitem-add-people",
+        selectorHint: `[role='menuitem'] hasText ${addPeopleRegexHint}`,
+        locatorFactory: (targetPage) =>
+          targetPage.locator("[role='menuitem']").filter({ hasText: addPeopleRegex })
+      },
+      {
+        key: "dropdown-button-add-people",
+        selectorHint: `.artdeco-dropdown__content-inner [role='button'] hasText ${addPeopleRegexHint}`,
+        locatorFactory: (targetPage) =>
+          targetPage
+            .locator(".artdeco-dropdown__content-inner [role='button']")
+            .filter({ hasText: addPeopleRegex })
+      },
+      {
+        key: "dropdown-item-add-people",
+        selectorHint: `.artdeco-dropdown__content-inner li hasText ${addPeopleRegexHint}`,
+        locatorFactory: (targetPage) =>
+          targetPage
+            .locator(".artdeco-dropdown__content-inner li")
+            .filter({ hasText: addPeopleRegex })
+      }
+    ],
+    "add_recipients_menu_item",
+    input.artifactPaths
+  );
+  await addRecipientsMenuItem.locator.click({ timeout: 5_000 });
+  await input.page.waitForTimeout(500);
+}
+
+async function maybeFinalizeAddRecipients(input: {
+  artifactPaths: string[];
+  page: Page;
+  runtime: LinkedInMessagingRuntime;
+}): Promise<void> {
+  const finalizeButton = await findVisibleLocator(
+    input.page,
+    createFinalizeRecipientsSelectors(input.runtime)
+  );
+  if (!finalizeButton) {
+    return;
+  }
+
+  await finalizeButton.locator.click({ timeout: 5_000 });
+  await input.page.waitForTimeout(500);
 }
 
 function validateThreadTarget(
@@ -1137,6 +2050,112 @@ function validateThreadTarget(
 
 export class LinkedInInboxService {
   constructor(private readonly runtime: LinkedInInboxRuntime) {}
+
+  private async resolveRecipients(
+    profileName: string,
+    recipients: string[]
+  ): Promise<LinkedInInboxRecipient[]> {
+    const normalizedTargets = normalizeRecipientTargets(recipients);
+    const resolvedRecipients: LinkedInInboxRecipient[] = [];
+    const seen = new Set<string>();
+
+    for (const recipientTarget of normalizedTargets) {
+      const profile = await this.runtime.profile.viewProfile({
+        profileName,
+        target: recipientTarget
+      });
+      const resolvedRecipient = toInboxRecipientFromProfile(profile);
+      if (!resolvedRecipient.full_name || !resolvedRecipient.profile_url) {
+        throw new LinkedInAssistantError(
+          "TARGET_NOT_FOUND",
+          `Could not resolve LinkedIn recipient "${recipientTarget}".`,
+          {
+            profile_name: profileName,
+            recipient: recipientTarget
+          }
+        );
+      }
+
+      const dedupeKey = normalizeLinkedInProfileUrl(resolvedRecipient.profile_url);
+      if (seen.has(dedupeKey)) {
+        continue;
+      }
+
+      seen.add(dedupeKey);
+      resolvedRecipients.push(resolvedRecipient);
+    }
+
+    if (resolvedRecipients.length === 0) {
+      throw new LinkedInAssistantError(
+        "TARGET_NOT_FOUND",
+        "Could not resolve any LinkedIn recipients.",
+        {
+          profile_name: profileName,
+          recipient_count: recipients.length
+        }
+      );
+    }
+
+    return resolvedRecipients;
+  }
+
+  async searchRecipients(
+    input: SearchRecipientsInput
+  ): Promise<SearchRecipientsResult> {
+    const profileName = input.profileName ?? "default";
+    const query = normalizeText(input.query);
+    const limit = input.limit ?? 10;
+
+    if (!query) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        "query is required."
+      );
+    }
+
+    try {
+      const search = await this.runtime.search.search({
+        profileName,
+        query,
+        category: "people",
+        limit
+      });
+
+      if (search.category !== "people") {
+        throw new LinkedInAssistantError(
+          "UNKNOWN",
+          "Expected LinkedIn people search results for recipient search.",
+          {
+            profile_name: profileName,
+            query
+          }
+        );
+      }
+
+      const recipients = search.results
+        .map((result) => toInboxRecipientFromSearchResult(result))
+        .filter(
+          (recipient) =>
+            recipient.full_name.length > 0 || recipient.profile_url.length > 0
+        )
+        .slice(0, Math.max(1, limit));
+
+      return {
+        query,
+        count: recipients.length,
+        recipients
+      };
+    } catch (error) {
+      throw toAutomationError(
+        error,
+        "Failed to search LinkedIn messaging recipients.",
+        {
+          profile_name: profileName,
+          query
+        }
+      );
+    }
+  }
 
   async listThreads(input: ListThreadsInput): Promise<LinkedInThreadSummary[]> {
     const profileName = input.profileName ?? "default";
@@ -1315,6 +2334,162 @@ export class LinkedInInboxService {
       });
     }
   }
+
+  async prepareNewThread(
+    input: PrepareNewThreadInput
+  ): Promise<PrepareNewThreadResult> {
+    const profileName = input.profileName ?? "default";
+    const text = normalizeText(input.text);
+
+    if (!text) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        "Message text must not be empty."
+      );
+    }
+
+    try {
+      const recipients = await this.resolveRecipients(profileName, input.recipients);
+      const rateLimitState = this.runtime.rateLimiter.peek(
+        SEND_MESSAGE_RATE_LIMIT_CONFIG
+      );
+      const target = {
+        message_mode: "new_thread",
+        profile_name: profileName,
+        primary_recipient_name: recipients[0]?.full_name ?? "",
+        primary_recipient_profile_url: recipients[0]?.profile_url ?? "",
+        recipient_count: recipients.length,
+        recipients: recipients.map((recipient) => toRecipientPreviewRecord(recipient))
+      };
+      const preview = {
+        summary:
+          recipients.length === 1
+            ? `Start a new message thread with "${recipients[0]!.full_name}"`
+            : `Start a new message thread with ${recipients.length} recipients`,
+        target,
+        outbound: {
+          text
+        },
+        rate_limit: formatRateLimitState(rateLimitState)
+      } satisfies Record<string, unknown>;
+      const prepared = this.runtime.twoPhaseCommit.prepare({
+        actionType: SEND_NEW_THREAD_ACTION_TYPE,
+        target,
+        payload: {
+          text
+        },
+        preview,
+        ...(input.operatorNote
+          ? {
+              operatorNote: input.operatorNote
+            }
+          : {})
+      });
+
+      return {
+        preparedActionId: prepared.preparedActionId,
+        confirmToken: prepared.confirmToken,
+        expiresAtMs: prepared.expiresAtMs,
+        preview: prepared.preview
+      };
+    } catch (error) {
+      throw toAutomationError(
+        error,
+        "Failed to prepare a new LinkedIn message thread.",
+        {
+          profile_name: profileName,
+          recipient_count: input.recipients.length
+        }
+      );
+    }
+  }
+
+  async prepareAddRecipients(
+    input: PrepareAddRecipientsInput
+  ): Promise<PrepareAddRecipientsResult> {
+    const profileName = input.profileName ?? "default";
+
+    try {
+      const recipients = await this.resolveRecipients(profileName, input.recipients);
+      const threadDetail = await this.getThread({
+        profileName,
+        thread: input.thread,
+        limit: 5
+      });
+      const existingParticipants = new Set(
+        parseParticipantNames(threadDetail.title).map((name) => name.toLowerCase())
+      );
+      const recipientsToAdd = recipients.filter(
+        (recipient) => !existingParticipants.has(recipient.full_name.toLowerCase())
+      );
+
+      if (recipientsToAdd.length === 0) {
+        throw new LinkedInAssistantError(
+          "ACTION_PRECONDITION_FAILED",
+          "All requested recipients are already present in the thread.",
+          {
+            profile_name: profileName,
+            thread_id: threadDetail.thread_id,
+            thread_title: threadDetail.title
+          }
+        );
+      }
+
+      const target = {
+        profile_name: profileName,
+        thread_id: threadDetail.thread_id,
+        thread_url: threadDetail.thread_url,
+        title: threadDetail.title
+      };
+      const previewRecipients = recipientsToAdd.map((recipient) =>
+        toRecipientPreviewRecord(recipient)
+      );
+      const preview = {
+        summary:
+          recipientsToAdd.length === 1
+            ? `Add "${recipientsToAdd[0]!.full_name}" to "${threadDetail.title}"`
+            : `Add ${recipientsToAdd.length} recipients to "${threadDetail.title}"`,
+        target: {
+          ...target,
+          recipient_count: recipientsToAdd.length,
+          recipients: previewRecipients
+        },
+        rate_limit: formatRateLimitState(
+          this.runtime.rateLimiter.peek(ADD_RECIPIENTS_RATE_LIMIT_CONFIG)
+        )
+      } satisfies Record<string, unknown>;
+      const prepared = this.runtime.twoPhaseCommit.prepare({
+        actionType: ADD_RECIPIENTS_ACTION_TYPE,
+        target,
+        payload: {
+          recipients: previewRecipients
+        },
+        preview,
+        ...(input.operatorNote
+          ? {
+              operatorNote: input.operatorNote
+            }
+          : {})
+      });
+
+      return {
+        preparedActionId: prepared.preparedActionId,
+        confirmToken: prepared.confirmToken,
+        expiresAtMs: prepared.expiresAtMs,
+        preview: prepared.preview
+      };
+    } catch (error) {
+      throw toAutomationError(
+        error,
+        "Failed to prepare LinkedIn recipient updates for the thread.",
+        {
+          profile_name: profileName,
+          thread: input.thread,
+          recipient_count: input.recipients.length
+        }
+      );
+    }
+  }
 }
 
 class SendMessageActionExecutor
@@ -1373,138 +2548,305 @@ class SendMessageActionExecutor
           execute: async () => {
             const artifactPaths: string[] = [];
 
-          const detail = await extractThreadDetailWithNetwork(page, threadUrl, 20);
-          validateThreadTarget(action, detail, page.url());
+            const detail = await extractThreadDetailWithNetwork(page, threadUrl, 20);
+            validateThreadTarget(action, detail, page.url());
 
-          const rateLimitState = runtime.rateLimiter.consume(
-            SEND_MESSAGE_RATE_LIMIT_CONFIG
-          );
-          if (!rateLimitState.allowed) {
-            throw new LinkedInAssistantError(
-              "RATE_LIMITED",
-              "LinkedIn send_message confirm is rate limited for the current window.",
-              {
-                action_id: action.id,
-                profile_name: profileName,
-                thread_url: threadUrl,
-                rate_limit: formatRateLimitState(rateLimitState)
-              }
+            const rateLimitState = runtime.rateLimiter.consume(
+              SEND_MESSAGE_RATE_LIMIT_CONFIG
             );
+            if (!rateLimitState.allowed) {
+              throw new LinkedInAssistantError(
+                "RATE_LIMITED",
+                "LinkedIn send_message confirm is rate limited for the current window.",
+                {
+                  action_id: action.id,
+                  profile_name: profileName,
+                  thread_url: threadUrl,
+                  rate_limit: formatRateLimitState(rateLimitState)
+                }
+              );
+            }
+
+            await fillAndSendMessage({
+              actionId: action.id,
+              actionType: SEND_MESSAGE_ACTION_TYPE,
+              artifactMetadata: {
+                thread_url: threadUrl
+              },
+              artifactPaths,
+              page,
+              profileName,
+              runtime,
+              text
+            });
+
+            return {
+              ok: true,
+              result: {
+                sent: true,
+                thread_url: threadUrl
+              },
+              artifacts: artifactPaths
+            };
           }
+        });
+      }
+    );
+  }
+}
 
-          const composerNameRegex = buildLinkedInSelectorPhraseRegex(
-            ["write_message", "message"],
-            runtime.selectorLocale
-          );
-          const composerNameRegexHint = formatLinkedInSelectorRegexHint(
-            ["write_message", "message"],
-            runtime.selectorLocale
-          );
-          const writeMessagePlaceholderRegex = buildLinkedInSelectorPhraseRegex(
-            "write_message",
-            runtime.selectorLocale
-          );
-          const writeMessagePlaceholderRegexHint = formatLinkedInSelectorRegexHint(
-            "write_message",
-            runtime.selectorLocale
-          );
-          const sendButtonRegex = buildLinkedInSelectorPhraseRegex(
-            "send",
-            runtime.selectorLocale,
-            { exact: true }
-          );
-          const sendButtonRegexHint = formatLinkedInSelectorRegexHint(
-            "send",
-            runtime.selectorLocale,
-            { exact: true }
-          );
+class SendNewThreadActionExecutor
+  implements ActionExecutor<LinkedInMessagingRuntime>
+{
+  async execute(input: {
+    runtime: LinkedInMessagingRuntime;
+    action: PreparedAction;
+  }): Promise<ActionExecutorResult> {
+    const runtime = input.runtime;
+    const action = input.action;
+    const profileName = getProfileName(action.target);
+    const recipients = getRequiredPreparedRecipients(
+      action.target,
+      "recipients",
+      action.id,
+      "target"
+    );
+    const text = getRequiredStringField(action.payload, "text", action.id, "payload");
+    const primaryRecipientUrl =
+      getOptionalStringField(action.target, "primary_recipient_profile_url") ??
+      recipients[0]?.profile_url ??
+      LINKEDIN_MESSAGING_URL;
 
-          const composerSelectors: SelectorCandidate[] = [
-            {
-              key: "role-textbox-write-message",
-              selectorHint: `getByRole(textbox, ${composerNameRegexHint})`,
-              locatorFactory: (targetPage) =>
-                targetPage.getByRole("textbox", {
-                  name: composerNameRegex
-                })
-            },
-            {
-              key: "placeholder-write-message",
-              selectorHint: `getByPlaceholder(${writeMessagePlaceholderRegexHint})`,
-              locatorFactory: (targetPage) =>
-                targetPage.getByPlaceholder(writeMessagePlaceholderRegex)
-            },
-            {
-              key: "msg-contenteditable",
-              selectorHint: ".msg-form__contenteditable[contenteditable='true']",
-              locatorFactory: (targetPage) =>
-                targetPage.locator(
-                  ".msg-form__contenteditable[contenteditable='true']"
-                )
-            },
-            {
-              key: "msg-form-contenteditable-fallback",
-              selectorHint: ".msg-form [contenteditable='true']",
-              locatorFactory: (targetPage) =>
-                targetPage.locator(".msg-form [contenteditable='true']")
+    await runtime.auth.ensureAuthenticated({
+      profileName,
+      cdpUrl: runtime.cdpUrl
+    });
+
+    return runtime.profileManager.runWithContext(
+      {
+        cdpUrl: runtime.cdpUrl,
+        profileName,
+        headless: true
+      },
+      async (context) => {
+        const page = await getOrCreatePage(context);
+        return executeConfirmActionWithArtifacts({
+          runtime,
+          context,
+          page,
+          actionId: action.id,
+          actionType: SEND_NEW_THREAD_ACTION_TYPE,
+          profileName,
+          targetUrl: primaryRecipientUrl,
+          persistTraceOnSuccess: true,
+          metadata: {
+            primary_recipient_profile_url: primaryRecipientUrl,
+            recipient_count: recipients.length,
+            selector_context: SEND_NEW_THREAD_ACTION_TYPE
+          },
+          errorDetails: {
+            primary_recipient_profile_url: primaryRecipientUrl,
+            recipient_count: recipients.length,
+            selector_context: SEND_NEW_THREAD_ACTION_TYPE
+          },
+          mapError: (error) =>
+            toAutomationError(
+              error,
+              "Failed to execute LinkedIn new-thread send action.",
+              {
+                primary_recipient_profile_url: primaryRecipientUrl,
+                recipient_count: recipients.length,
+                selector_context: SEND_NEW_THREAD_ACTION_TYPE
+              }
+            ),
+          execute: async () => {
+            const artifactPaths: string[] = [];
+            const rateLimitState = runtime.rateLimiter.consume(
+              SEND_MESSAGE_RATE_LIMIT_CONFIG
+            );
+            if (!rateLimitState.allowed) {
+              throw new LinkedInAssistantError(
+                "RATE_LIMITED",
+                "LinkedIn new-thread send confirm is rate limited for the current window.",
+                {
+                  action_id: action.id,
+                  profile_name: profileName,
+                  recipient_count: recipients.length,
+                  rate_limit: formatRateLimitState(rateLimitState)
+                }
+              );
             }
-          ];
 
-          const composer = await findVisibleLocatorOrThrow(
-            page,
-            composerSelectors,
-            "message_composer",
-            artifactPaths
-          );
-          await composer.locator.click({ timeout: 3_000 });
-          await composer.locator.fill(text, { timeout: 5_000 });
-
-          const sendButtonSelectors: SelectorCandidate[] = [
-            {
-              key: "role-button-send",
-              selectorHint: `getByRole(button, ${sendButtonRegexHint})`,
-              locatorFactory: (targetPage) =>
-                targetPage.getByRole("button", { name: sendButtonRegex })
-            },
-            {
-              key: "msg-form-send-button",
-              selectorHint: "button.msg-form__send-button",
-              locatorFactory: (targetPage) =>
-                targetPage.locator("button.msg-form__send-button")
-            },
-            {
-              key: "msg-form-send-button-fallback",
-              selectorHint: ".msg-form__send-button",
-              locatorFactory: (targetPage) =>
-                targetPage.locator(".msg-form__send-button")
+            if (recipients.length === 1 && recipients[0]) {
+              await openProfileMessageComposer({
+                artifactPaths,
+                page,
+                recipient: recipients[0],
+                runtime
+              });
+            } else {
+              await page.goto(LINKEDIN_MESSAGING_URL, {
+                waitUntil: "domcontentloaded"
+              });
+              await waitForNetworkIdleBestEffort(page);
+              await waitForInboxListSurface(page);
+              await openNewMessageComposer(page, runtime, artifactPaths);
+              await selectRecipientsInComposer({
+                artifactPaths,
+                page,
+                recipients,
+                runtime
+              });
             }
-          ];
 
-          const sendButton = await findVisibleLocatorOrThrow(
-            page,
-            sendButtonSelectors,
-            "send_button",
-            artifactPaths
-          );
-          await sendButton.locator.click({ timeout: 5_000 });
+            await fillAndSendMessage({
+              actionId: action.id,
+              actionType: SEND_NEW_THREAD_ACTION_TYPE,
+              artifactMetadata: {
+                primary_recipient_profile_url: primaryRecipientUrl,
+                recipient_count: recipients.length
+              },
+              artifactPaths,
+              page,
+              profileName,
+              runtime,
+              text
+            });
 
-          await waitForMessageEcho(page, text);
-          const postSendScreenshot = `linkedin/screenshot-confirm-${Date.now()}.png`;
-          await captureScreenshotArtifact(runtime, page, postSendScreenshot, {
-            action: SEND_MESSAGE_ACTION_TYPE,
-            action_id: action.id,
-            profile_name: profileName,
+            return {
+              ok: true,
+              result: {
+                sent: true,
+                recipient_count: recipients.length,
+                thread_url: page.url().includes("/messaging/thread/") ? page.url() : null
+              },
+              artifacts: artifactPaths
+            };
+          }
+        });
+      }
+    );
+  }
+}
+
+class AddRecipientsActionExecutor
+  implements ActionExecutor<LinkedInMessagingRuntime>
+{
+  async execute(input: {
+    runtime: LinkedInMessagingRuntime;
+    action: PreparedAction;
+  }): Promise<ActionExecutorResult> {
+    const runtime = input.runtime;
+    const action = input.action;
+    const profileName = getProfileName(action.target);
+    const threadUrl = getRequiredStringField(
+      action.target,
+      "thread_url",
+      action.id,
+      "target"
+    );
+    const recipients = getRequiredPreparedRecipients(
+      action.payload,
+      "recipients",
+      action.id,
+      "payload"
+    );
+
+    await runtime.auth.ensureAuthenticated({
+      profileName,
+      cdpUrl: runtime.cdpUrl
+    });
+
+    return runtime.profileManager.runWithContext(
+      {
+        cdpUrl: runtime.cdpUrl,
+        profileName,
+        headless: true
+      },
+      async (context) => {
+        const page = await getOrCreatePage(context);
+        return executeConfirmActionWithArtifacts({
+          runtime,
+          context,
+          page,
+          actionId: action.id,
+          actionType: ADD_RECIPIENTS_ACTION_TYPE,
+          profileName,
+          targetUrl: threadUrl,
+          persistTraceOnSuccess: true,
+          metadata: {
+            recipient_count: recipients.length,
+            selector_context: ADD_RECIPIENTS_ACTION_TYPE,
             thread_url: threadUrl
-          });
-          artifactPaths.push(postSendScreenshot);
+          },
+          errorDetails: {
+            recipient_count: recipients.length,
+            selector_context: ADD_RECIPIENTS_ACTION_TYPE,
+            thread_url: threadUrl
+          },
+          mapError: (error) =>
+            toAutomationError(error, "Failed to execute LinkedIn add_recipients action.", {
+              recipient_count: recipients.length,
+              selector_context: ADD_RECIPIENTS_ACTION_TYPE,
+              thread_url: threadUrl
+            }),
+          execute: async () => {
+            const artifactPaths: string[] = [];
+            const detail = await extractThreadDetailWithNetwork(page, threadUrl, 20);
+            validateThreadTarget(action, detail, page.url());
 
-          return {
-            ok: true,
-            result: {
-              sent: true
-            },
-            artifacts: artifactPaths
-          };
+            const rateLimitState = runtime.rateLimiter.consume(
+              ADD_RECIPIENTS_RATE_LIMIT_CONFIG
+            );
+            if (!rateLimitState.allowed) {
+              throw new LinkedInAssistantError(
+                "RATE_LIMITED",
+                "LinkedIn add_recipients confirm is rate limited for the current window.",
+                {
+                  action_id: action.id,
+                  profile_name: profileName,
+                  recipient_count: recipients.length,
+                  thread_url: threadUrl,
+                  rate_limit: formatRateLimitState(rateLimitState)
+                }
+              );
+            }
+
+            await openAddRecipientsFlow({
+              artifactPaths,
+              page,
+              runtime
+            });
+            await selectRecipientsInComposer({
+              artifactPaths,
+              page,
+              recipients,
+              runtime
+            });
+            await maybeFinalizeAddRecipients({
+              artifactPaths,
+              page,
+              runtime
+            });
+
+            const postUpdateScreenshot = `linkedin/screenshot-confirm-${Date.now()}.png`;
+            await captureScreenshotArtifact(runtime, page, postUpdateScreenshot, {
+              action: ADD_RECIPIENTS_ACTION_TYPE,
+              action_id: action.id,
+              profile_name: profileName,
+              recipient_count: recipients.length,
+              thread_url: threadUrl
+            });
+            artifactPaths.push(postUpdateScreenshot);
+
+            return {
+              ok: true,
+              result: {
+                recipients_added: recipients.length,
+                thread_url: threadUrl
+              },
+              artifacts: artifactPaths
+            };
           }
         });
       }
@@ -1514,6 +2856,8 @@ class SendMessageActionExecutor
 
 export function createLinkedInActionExecutors(): ActionExecutorRegistry<LinkedInMessagingRuntime> {
   return {
-    [SEND_MESSAGE_ACTION_TYPE]: new SendMessageActionExecutor()
+    [SEND_MESSAGE_ACTION_TYPE]: new SendMessageActionExecutor(),
+    [SEND_NEW_THREAD_ACTION_TYPE]: new SendNewThreadActionExecutor(),
+    [ADD_RECIPIENTS_ACTION_TYPE]: new AddRecipientsActionExecutor()
   };
 }

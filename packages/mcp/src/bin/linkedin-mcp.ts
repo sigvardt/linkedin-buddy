@@ -63,7 +63,10 @@ import {
   LINKEDIN_FEED_VIEW_POST_TOOL,
   LINKEDIN_INBOX_GET_THREAD_TOOL,
   LINKEDIN_INBOX_LIST_THREADS_TOOL,
+  LINKEDIN_INBOX_PREPARE_ADD_RECIPIENTS_TOOL,
+  LINKEDIN_INBOX_PREPARE_NEW_THREAD_TOOL,
   LINKEDIN_INBOX_PREPARE_REPLY_TOOL,
+  LINKEDIN_INBOX_SEARCH_RECIPIENTS_TOOL,
   LINKEDIN_PROFILE_PREPARE_REMOVE_SECTION_ITEM_TOOL,
   LINKEDIN_PROFILE_PREPARE_UPDATE_INTRO_TOOL,
   LINKEDIN_PROFILE_PREPARE_UPSERT_SECTION_ITEM_TOOL,
@@ -171,6 +174,18 @@ function readStringArray(args: ToolArgs, key: string): string[] | undefined {
   throw new LinkedInAssistantError(
     "ACTION_PRECONDITION_FAILED",
     `${key} must be a string or array of strings.`
+  );
+}
+
+function readRequiredStringArray(args: ToolArgs, key: string): string[] {
+  const values = readStringArray(args, key);
+  if (values && values.length > 0) {
+    return values;
+  }
+
+  throw new LinkedInAssistantError(
+    "ACTION_PRECONDITION_FAILED",
+    `${key} is required.`
   );
 }
 
@@ -546,6 +561,42 @@ async function handleGetThread(args: ToolArgs): Promise<ToolResult> {
   }
 }
 
+async function handleSearchRecipients(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const query = readRequiredString(args, "query");
+    const limit = readPositiveNumber(args, "limit", 10);
+
+    runtime.logger.log("info", "mcp.inbox.search_recipients.start", {
+      profileName,
+      query,
+      limit
+    });
+
+    const result = await runtime.inbox.searchRecipients({
+      profileName,
+      query,
+      limit
+    });
+
+    runtime.logger.log("info", "mcp.inbox.search_recipients.done", {
+      profileName,
+      query,
+      count: result.count
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...result
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 async function handlePrepareReply(args: ToolArgs): Promise<ToolResult> {
   const runtime = createRuntime(args);
 
@@ -574,6 +625,90 @@ async function handlePrepareReply(args: ToolArgs): Promise<ToolResult> {
     runtime.logger.log("info", "mcp.inbox.prepare_reply.done", {
       profileName,
       preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handlePrepareNewThread(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const recipients = readRequiredStringArray(args, "recipients");
+    const text = readRequiredString(args, "text");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.inbox.prepare_new_thread.start", {
+      profileName,
+      recipientCount: recipients.length
+    });
+
+    const prepared = await runtime.inbox.prepareNewThread({
+      profileName,
+      recipients,
+      text,
+      ...(operatorNote
+        ? {
+            operatorNote
+          }
+        : {})
+    });
+
+    runtime.logger.log("info", "mcp.inbox.prepare_new_thread.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId,
+      recipientCount: recipients.length
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handlePrepareAddRecipients(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const thread = readRequiredString(args, "thread");
+    const recipients = readRequiredStringArray(args, "recipients");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.inbox.prepare_add_recipients.start", {
+      profileName,
+      recipientCount: recipients.length,
+      thread
+    });
+
+    const prepared = await runtime.inbox.prepareAddRecipients({
+      profileName,
+      thread,
+      recipients,
+      ...(operatorNote
+        ? {
+            operatorNote
+          }
+        : {})
+    });
+
+    runtime.logger.log("info", "mcp.inbox.prepare_add_recipients.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId,
+      recipientCount: recipients.length,
+      thread
     });
 
     return toToolResult({
@@ -1894,6 +2029,31 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
+        name: LINKEDIN_INBOX_SEARCH_RECIPIENTS_TOOL,
+        description: withSelectorAuditHint(
+          "Search LinkedIn people to resolve recipient identities for messaging flows."
+        ),
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["query"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            },
+            query: {
+              type: "string",
+              description: "Recipient keywords to search for."
+            },
+            limit: {
+              type: "number",
+              description: "Maximum number of recipients to return. Defaults to 10."
+            }
+          })
+        }
+      },
+      {
         name: LINKEDIN_INBOX_LIST_THREADS_TOOL,
         description: withSelectorAuditHint(
           "List LinkedIn inbox threads for a profile."
@@ -1965,6 +2125,70 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             operatorNote: {
               type: "string",
               description: "Optional note attached to the prepared action."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_INBOX_PREPARE_NEW_THREAD_TOOL,
+        description:
+          "Prepare a two-phase first-message action for a new LinkedIn thread. Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["recipients", "text"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            },
+            recipients: {
+              type: "array",
+              items: {
+                type: "string"
+              },
+              description:
+                "Recipient LinkedIn profile URLs, /in/ paths, or vanity names. Use linkedin.inbox.search_recipients to resolve free-text names first."
+            },
+            text: {
+              type: "string",
+              description: "First message text to prepare."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note stored with the prepared action."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_INBOX_PREPARE_ADD_RECIPIENTS_TOOL,
+        description:
+          "Prepare a two-phase add_recipients action for an existing LinkedIn thread. Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["thread", "recipients"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            },
+            thread: {
+              type: "string",
+              description: "Thread id or LinkedIn thread URL."
+            },
+            recipients: {
+              type: "array",
+              items: {
+                type: "string"
+              },
+              description:
+                "Recipient LinkedIn profile URLs, /in/ paths, or vanity names to add to the thread."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note stored with the prepared action."
             }
           })
         }
@@ -2942,9 +3166,12 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   [LINKEDIN_SESSION_STATUS_TOOL]: handleSessionStatus,
   [LINKEDIN_SESSION_OPEN_LOGIN_TOOL]: handleSessionOpenLogin,
   [LINKEDIN_SESSION_HEALTH_TOOL]: handleSessionHealth,
+  [LINKEDIN_INBOX_SEARCH_RECIPIENTS_TOOL]: handleSearchRecipients,
   [LINKEDIN_INBOX_LIST_THREADS_TOOL]: handleListThreads,
   [LINKEDIN_INBOX_GET_THREAD_TOOL]: handleGetThread,
   [LINKEDIN_INBOX_PREPARE_REPLY_TOOL]: handlePrepareReply,
+  [LINKEDIN_INBOX_PREPARE_NEW_THREAD_TOOL]: handlePrepareNewThread,
+  [LINKEDIN_INBOX_PREPARE_ADD_RECIPIENTS_TOOL]: handlePrepareAddRecipients,
   [LINKEDIN_PROFILE_VIEW_TOOL]: handleProfileView,
   [LINKEDIN_PROFILE_VIEW_EDITABLE_TOOL]: handleProfileViewEditable,
   [LINKEDIN_PROFILE_PREPARE_UPDATE_INTRO_TOOL]: handleProfilePrepareUpdateIntro,
