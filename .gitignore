@@ -1,12 +1,30 @@
 node_modules
 npm-debug.log*
 .DS_Store
+.env
+.env.*
+.tmp/
+.tmp-security/
 
 coverage
 dist
 *.tsbuildinfo
+reports/
 
 .linkedin-assistant
+artifacts/
+profiles/
+keepalive/
+state.sqlite
+state.sqlite-journal
+state.sqlite-shm
+state.sqlite-wal
+.session-store.key
+*.session.enc.json
+*.events.jsonl
+*.state.json
+rate-limit-state.json
+*.har
 
 test/fixtures/*
 !test/fixtures/manifest.json

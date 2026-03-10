@@ -18,14 +18,14 @@ const commentConfirmTest =
     : it.skip;
 
 /**
- * Feed Write E2E — two-phase commit comment on Joakim's own post.
+ * Feed Write E2E — two-phase commit comment on the operator's own post.
  *
  * Flow: feed.viewFeed → feed.prepareCommentOnPost → twoPhaseCommit.confirmByToken
  *
  * Requires LINKEDIN_E2E_ENABLE_COMMENT_CONFIRM=1 and
  * LINKEDIN_E2E_COMMENT_POST_URL=<approved-post-url>.
  * Comments can be manually deleted afterwards.
- * Explicitly authorised by project owner (Joakim Sigvardt).
+ * Explicitly authorised by the project owner.
  */
 describe("Feed Write E2E (2PC comment_on_post)", () => {
   const e2e = setupE2ESuite();

@@ -22,7 +22,7 @@ import {
   type LinkedInAssistantErrorCode
 } from "./errors.js";
 import type { LinkedInConnectionsService } from "./linkedinConnections.js";
-import type { LinkedInFeedService, LinkedInFeedPost } from "./linkedinFeed.js";
+import type { LinkedInFeedService } from "./linkedinFeed.js";
 import type {
   LinkedInAcceptedConnection,
   LinkedInFollowupsService
@@ -46,6 +46,7 @@ import {
 } from "./webhookDelivery.js";
 
 const ACTIVITY_EVENT_VERSION = "2026-03-activity-v1";
+type FeedPostRecord = import("./linkedinFeed.js").LinkedInFeedPost;
 
 /** Service dependencies required to poll watches and deliver webhook events. */
 export interface ActivityPollerRuntime {
@@ -388,7 +389,7 @@ function normalizeProfileEntity(profile: LinkedInProfile): ActivityEntityRecord 
   };
 }
 
-function normalizeFeedEntity(post: LinkedInFeedPost): ActivityEntityRecord {
+function normalizeFeedEntity(post: FeedPostRecord): ActivityEntityRecord {
   const snapshot = {
     post_id: readText(post.post_id),
     author_name: readText(post.author_name),

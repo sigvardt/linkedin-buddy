@@ -16,9 +16,14 @@ import { chromium } from "playwright-core";
 
 const CDP_URL = "http://127.0.0.1:18800";
 const RESULTS_PATH = "/tmp/linkedin-integration-results.md";
-// Use an actual connection for reliable testing
-const OTHER_PROFILE_VANITY = "victormaaejensen";
-const OTHER_PROFILE_DISPLAY = "Victor Maae Jensen";
+const OTHER_PROFILE_VANITY =
+  process.env.LINKEDIN_INTEGRATION_TARGET_VANITY ?? "realsimonmiller";
+const OTHER_PROFILE_DISPLAY =
+  process.env.LINKEDIN_INTEGRATION_TARGET_DISPLAY ?? "Simon Miller";
+const EXPECTED_OWN_NAME_SUBSTRING =
+  process.env.LINKEDIN_INTEGRATION_EXPECTED_OWN_NAME_SUBSTRING?.trim().toLowerCase() ?? "";
+const OWN_PROFILE_VANITY =
+  process.env.LINKEDIN_INTEGRATION_OWN_PROFILE_VANITY?.trim() ?? "";
 
 interface TestResult {
   name: string;
@@ -176,10 +181,12 @@ async function main(): Promise<void> {
         throw new Error("Could not extract own profile name");
       }
 
-      // Verify it looks like Joakim's profile
-      const looksCorrect = name.toLowerCase().includes("joakim");
+      const matchesExpectedName =
+        EXPECTED_OWN_NAME_SUBSTRING.length === 0
+          ? "skipped"
+          : String(name.toLowerCase().includes(EXPECTED_OWN_NAME_SUBSTRING));
 
-      return `Name: ${name} | Headline: ${headlineText} | Is Joakim: ${looksCorrect}`;
+      return `Name: ${name} | Headline: ${headlineText} | Expected-name match: ${matchesExpectedName}`;
     } finally {
       await page.close();
     }
@@ -240,7 +247,7 @@ async function main(): Promise<void> {
         .catch(() => undefined);
 
       // Extract connection data using profile links as anchors
-      const connectionData = await page.evaluate(() => {
+      const connectionData = await page.evaluate((ownProfileVanity) => {
         // Find all profile links with text content (connection names)
         const links = Array.from(document.querySelectorAll("a[href*='/in/']"));
         const seen = new Set<string>();
@@ -253,7 +260,8 @@ async function main(): Promise<void> {
           // Skip own profile links and empty text links
           if (!text || text.length < 3 || seen.has(href)) continue;
           // Skip links that look like they're part of nav/sidebar
-          if (href.includes("/in/jsigvardt") || href.includes("/in/me")) continue;
+          if (href.includes("/in/me")) continue;
+          if (ownProfileVanity && href.includes(`/in/${ownProfileVanity}`)) continue;
           
           const vanityMatch = /\/in\/([^/]+)/.exec(href);
           if (!vanityMatch?.[1]) continue;
@@ -267,7 +275,7 @@ async function main(): Promise<void> {
         }
 
         return connections;
-      });
+      }, OWN_PROFILE_VANITY);
 
       if (connectionData.length === 0) {
         throw new Error("No connection profile links found on connections page");
@@ -332,7 +340,7 @@ async function main(): Promise<void> {
       }
 
       // Extract feed data using profile links and content
-      const feedData = await page.evaluate(() => {
+      const feedData = await page.evaluate((ownProfileVanity) => {
         // Find unique authors from /in/ links (excluding own profile)
         const links = Array.from(document.querySelectorAll("a[href*='/in/']"));
         const seen = new Set<string>();
@@ -342,7 +350,8 @@ async function main(): Promise<void> {
           const href = (link as HTMLAnchorElement).href.split("?")[0] ?? "";
           const text = (link.textContent ?? "").replace(/\s+/g, " ").trim();
           if (!text || text.length < 3 || seen.has(href)) continue;
-          if (href.includes("/in/jsigvardt") || href.includes("/in/me")) continue;
+          if (href.includes("/in/me")) continue;
+          if (ownProfileVanity && href.includes(`/in/${ownProfileVanity}`)) continue;
 
           seen.add(href);
           authors.push(text.slice(0, 50));
@@ -362,7 +371,7 @@ async function main(): Promise<void> {
           feedUpdateLinks,
           commentBtns,
         };
-      });
+      }, OWN_PROFILE_VANITY);
 
       return `Feed loaded. ${feedData.commentBtns} posts with comment buttons, ${feedData.feedUpdateLinks} update links, ${feedData.authorCount} unique authors. First: ${feedData.firstAuthors.join(", ") || "(none)"}`;
     } finally {
@@ -382,7 +391,7 @@ async function main(): Promise<void> {
   let md = `# LinkedIn Integration Test Results\n\n`;
   md += `**Date:** ${timestamp}\n`;
   md += `**CDP:** ${CDP_URL}\n`;
-  md += `**Authenticated as:** Joakim Sigvardt\n`;
+  md += `**Authenticated as:** current browser session profile\n`;
   md += `**Summary:** ${passed} passed, ${failed} failed, ${skipped} skipped out of ${results.length} tests\n\n`;
 
   md += `## Results\n\n`;
@@ -398,7 +407,7 @@ async function main(): Promise<void> {
 
   md += `\n## Test Descriptions\n\n`;
   md += `1. **Auth Status Check** — Navigate to feed, verify authenticated session (nav/header visible, no login redirect)\n`;
-  md += `2. **View Own Profile** — Navigate to /in/me/, extract name and headline, verify it's Joakim Sigvardt\n`;
+  md += `2. **View Own Profile** — Navigate to /in/me/, extract name and headline, and optionally compare against LINKEDIN_INTEGRATION_EXPECTED_OWN_NAME_SUBSTRING\n`;
   md += `3. **View Profile: ${OTHER_PROFILE_DISPLAY}** — Navigate to /in/${OTHER_PROFILE_VANITY}/, extract name\n`;
   md += `4. **Connection List** — Navigate to connections page, count connections, extract first names\n`;
   md += `5. **Feed View** — Navigate to feed, detect posts via comment buttons/update links, extract authors\n`;

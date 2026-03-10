@@ -17,44 +17,29 @@ import {
 } from "./e2e/setup.js";
 
 const originalAssistantHome = process.env.LINKEDIN_ASSISTANT_HOME;
-const originalCdpUrl = process.env.LINKEDIN_CDP_URL;
+const savedCdpEndpoint = process.env.LINKEDIN_CDP_URL;
 const originalReplayEnabled = process.env.LINKEDIN_E2E_REPLAY;
 const originalFixtureManifest = process.env.LINKEDIN_E2E_FIXTURE_MANIFEST;
 const originalFixtureSet = process.env.LINKEDIN_E2E_FIXTURE_SET;
+
+function restoreOptionalEnvVar(key: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[key];
+    return;
+  }
+
+  Reflect.set(process.env, key, value);
+}
 
 afterEach(() => {
   cleanupRuntime();
   vi.restoreAllMocks();
 
-  if (originalAssistantHome === undefined) {
-    delete process.env.LINKEDIN_ASSISTANT_HOME;
-  } else {
-    process.env.LINKEDIN_ASSISTANT_HOME = originalAssistantHome;
-  }
-
-  if (originalCdpUrl === undefined) {
-    delete process.env.LINKEDIN_CDP_URL;
-  } else {
-    process.env.LINKEDIN_CDP_URL = originalCdpUrl;
-  }
-
-  if (originalReplayEnabled === undefined) {
-    delete process.env.LINKEDIN_E2E_REPLAY;
-  } else {
-    process.env.LINKEDIN_E2E_REPLAY = originalReplayEnabled;
-  }
-
-  if (originalFixtureManifest === undefined) {
-    delete process.env.LINKEDIN_E2E_FIXTURE_MANIFEST;
-  } else {
-    process.env.LINKEDIN_E2E_FIXTURE_MANIFEST = originalFixtureManifest;
-  }
-
-  if (originalFixtureSet === undefined) {
-    delete process.env.LINKEDIN_E2E_FIXTURE_SET;
-  } else {
-    process.env.LINKEDIN_E2E_FIXTURE_SET = originalFixtureSet;
-  }
+  restoreOptionalEnvVar("LINKEDIN_ASSISTANT_HOME", originalAssistantHome);
+  restoreOptionalEnvVar("LINKEDIN_CDP_URL", savedCdpEndpoint);
+  restoreOptionalEnvVar("LINKEDIN_E2E_REPLAY", originalReplayEnabled);
+  restoreOptionalEnvVar("LINKEDIN_E2E_FIXTURE_MANIFEST", originalFixtureManifest);
+  restoreOptionalEnvVar("LINKEDIN_E2E_FIXTURE_SET", originalFixtureSet);
 });
 
 describe("E2E setup helpers", () => {

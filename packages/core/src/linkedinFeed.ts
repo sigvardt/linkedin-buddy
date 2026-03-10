@@ -172,7 +172,7 @@ const REMOVE_REACTION_RATE_LIMIT_CONFIG = {
   limit: 30
 } as const;
 
-interface ReactionUiConfig {
+interface FeedReactionUiConfig {
   label: string;
   menuAriaLabel: string;
   iconType: string;
@@ -180,7 +180,7 @@ interface ReactionUiConfig {
 
 export const LINKEDIN_FEED_REACTION_MAP: Record<
   LinkedInFeedReaction,
-  ReactionUiConfig
+  FeedReactionUiConfig
 > = {
   like: {
     label: "Like",

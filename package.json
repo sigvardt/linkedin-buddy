@@ -11,6 +11,9 @@
   ],
   "scripts": {
     "lint": "eslint .",
+    "scan:security": "node ./scripts/security-audit.mjs",
+    "scan:security:head": "gitleaks detect --no-banner --no-git --source .",
+    "scan:security:history": "gitleaks detect --no-banner --source .",
     "typecheck": "tsc -b --pretty false --force",
     "test": "vitest run",
     "test:e2e": "node ./scripts/run-e2e.js",

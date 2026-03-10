@@ -8,7 +8,7 @@ import {
 const baseEditableProfile = {
   profile_url: "https://www.linkedin.com/in/me/",
   intro: {
-    full_name: "Emil Sorensen",
+    full_name: "Avery Cole",
     headline: "Software Engineer",
     location: "Copenhagen, Denmark",
     supported_fields: ["firstName", "lastName", "headline", "location"]
@@ -53,8 +53,8 @@ describe("profile seed planner", () => {
   it("parses supported sections and records unsupported fields", () => {
     const spec = parseProfileSeedSpec({
       intro: {
-        firstName: "Emil",
-        headline: "AI/ML Engineer at Signikant",
+        firstName: "Avery",
+        headline: "Automation Engineer at Example Labs",
         industry: "Software Development"
       },
       about: "Building production LLM systems.",
@@ -70,8 +70,8 @@ describe("profile seed planner", () => {
     });
 
     expect(spec.intro).toMatchObject({
-      firstName: "Emil",
-      headline: "AI/ML Engineer at Signikant"
+      firstName: "Avery",
+      headline: "Automation Engineer at Example Labs"
     });
     expect(spec.about).toBe("Building production LLM systems.");
     expect(spec.sections.certifications).toHaveLength(1);
@@ -92,7 +92,7 @@ describe("profile seed planner", () => {
   it("builds intro, about, upsert, and replace actions", () => {
     const spec = parseProfileSeedSpec({
       intro: {
-        headline: "AI/ML Engineer at Signikant",
+        headline: "Automation Engineer at Example Labs",
         location: "Copenhagen, Capital Region of Denmark, Denmark"
       },
       about: "Building production LLM systems.",
@@ -121,7 +121,7 @@ describe("profile seed planner", () => {
       kind: "update_intro",
       input: {
         profileName: "smoke",
-        headline: "AI/ML Engineer at Signikant",
+        headline: "Automation Engineer at Example Labs",
         location: "Copenhagen, Capital Region of Denmark, Denmark"
       }
     });

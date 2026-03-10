@@ -83,10 +83,13 @@ interface SessionSnapshot {
   storageState: LinkedInBrowserStorageState;
 }
 
-type KeepAliveSessionStoreLike = Partial<Pick<
-  LinkedInSessionStore,
-  "restoreToContext" | "saveWithBackups"
->>;
+type RestoreSessionContext = LinkedInSessionStore["restoreToContext"];
+type SaveSessionBackups = LinkedInSessionStore["saveWithBackups"];
+
+interface KeepAliveSessionStoreLike {
+  restoreToContext?: RestoreSessionContext;
+  saveWithBackups?: SaveSessionBackups;
+}
 
 interface SessionRestoreAttempt {
   attemptDetail: string;
