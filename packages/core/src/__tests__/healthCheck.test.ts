@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Browser, BrowserContext, Locator, Page } from "playwright-core";
+import { resolveEvasionConfig } from "../config.js";
 import { checkBrowserHealth, checkLinkedInSession } from "../healthCheck.js";
 
 function createMockPage(opts: {
@@ -138,6 +139,11 @@ describe("checkLinkedInSession", () => {
     expect(status.currentUrl).toContain("/feed");
     expect(status.loginWallDetected).toBe(false);
     expect(status.reason).toContain("authenticated");
+    expect(status.evasion).toMatchObject({
+      diagnosticsEnabled: false,
+      level: "moderate",
+      source: "default"
+    });
     expect(status.sessionCookiePresent).toBe(false);
   });
 
@@ -190,5 +196,24 @@ describe("checkLinkedInSession", () => {
     expect(status.sessionCookieFingerprint).toMatch(/^[a-f0-9]{64}$/u);
     expect(status.sessionCookiePresent).toBe(true);
     expect(status.sessionCookies).toHaveLength(1);
+  });
+
+  it("propagates the runtime evasion snapshot into health output", async () => {
+    const page = createMockPage({
+      url: "https://www.linkedin.com/feed/",
+      isVisible: (selector) => selector === "nav.global-nav"
+    });
+    const context = createMockContext({
+      connected: true,
+      pages: [page]
+    });
+    const evasion = resolveEvasionConfig({
+      diagnosticsEnabled: true,
+      level: "paranoid"
+    });
+
+    const status = await checkLinkedInSession(context, { evasion });
+
+    expect(status.evasion).toBe(evasion);
   });
 });

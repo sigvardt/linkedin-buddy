@@ -144,6 +144,11 @@ describe("LinkedInAuthService auth flow", () => {
     const status = await auth.status({ profileName: "default" });
 
     expect(status.authenticated).toBe(true);
+    expect(status.evasion).toMatchObject({
+      diagnosticsEnabled: false,
+      level: "moderate",
+      source: "default"
+    });
     expect(status.rateLimitActive).toBeUndefined();
     expect(rateLimitStateMocks.clearRateLimitState).toHaveBeenCalledTimes(1);
   });

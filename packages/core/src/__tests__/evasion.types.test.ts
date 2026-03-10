@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { EVASION_PROFILES } from "../evasion/profiles.js";
+import { EVASION_LEVELS, EVASION_PROFILES } from "../evasion.js";
 
-const EVASION_LEVELS = ["minimal", "moderate", "paranoid"] as const;
 const EVASION_PROFILE_KEYS = [
   "bezierMouseMovement",
   "mouseOvershootFactor",

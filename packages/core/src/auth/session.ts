@@ -1,4 +1,5 @@
 import type { BrowserContext, Page } from "playwright-core";
+import { resolveEvasionConfig, type EvasionConfig } from "../config.js";
 import { LinkedInAssistantError } from "../errors.js";
 import { attachHumanizeLogger, detachHumanizeLogger, humanize } from "../humanize.js";
 import type { JsonEventLogger } from "../logging.js";
@@ -18,11 +19,14 @@ import {
   type RateLimitState
 } from "./rateLimitState.js";
 
+/** Authentication snapshot for a LinkedIn browser profile. */
 export interface SessionStatus {
   authenticated: boolean;
   checkedAt: string;
   checkpointDetected?: boolean;
   currentUrl: string;
+  /** Resolved anti-bot evasion status when available. */
+  evasion?: EvasionConfig;
   loginWallDetected?: boolean;
   reason: string;
   rateLimitActive?: boolean;
@@ -31,20 +35,24 @@ export interface SessionStatus {
   sessionCookiePresent?: boolean;
 }
 
+/** Common profile/session options accepted by auth helpers. */
 export interface SessionOptions {
   profileName?: string;
   cdpUrl?: string | undefined;
 }
 
+/** Options for the interactive open-login poll loop. */
 export interface OpenLoginOptions extends SessionOptions {
   timeoutMs?: number;
   pollIntervalMs?: number;
 }
 
+/** Result returned by the interactive open-login flow. */
 export interface OpenLoginResult extends SessionStatus {
   timedOut: boolean;
 }
 
+/** Options for the headless credential-based login flow. */
 export interface HeadlessLoginOptions extends SessionOptions {
   email: string;
   password: string;
@@ -57,6 +65,7 @@ export interface HeadlessLoginOptions extends SessionOptions {
   retryBaseDelayMs?: number;
 }
 
+/** Result returned by the headless credential-based login flow. */
 export interface HeadlessLoginResult extends SessionStatus {
   timedOut: boolean;
   checkpoint: boolean;
@@ -98,9 +107,11 @@ export class LinkedInAuthService {
     private readonly cdpUrl?: string,
     private readonly selectorLocale: LinkedInSelectorLocale =
       DEFAULT_LINKEDIN_SELECTOR_LOCALE,
-    private readonly logger?: Pick<JsonEventLogger, "log">
+    private readonly logger?: Pick<JsonEventLogger, "log">,
+    private readonly evasion: EvasionConfig = resolveEvasionConfig()
   ) {}
 
+  /** Checks whether the profile currently looks authenticated to LinkedIn. */
   async status(options: SessionOptions = {}): Promise<SessionStatus> {
     const profileName = options.profileName ?? "default";
     const cdpUrl = options.cdpUrl ?? this.cdpUrl;
@@ -127,22 +138,62 @@ export class LinkedInAuthService {
     );
 
     if (status.authenticated) {
-      return status;
+      const resolvedStatus = {
+        ...status,
+        evasion: this.evasion
+      };
+      this.logger?.log("debug", "auth.session.status.checked", {
+        authenticated: true,
+        current_url: status.currentUrl,
+        evasion_level: this.evasion.level,
+        profileName,
+        reason: status.reason
+      });
+
+      return resolvedStatus;
     }
 
     const cooldown = await isInRateLimitCooldown();
     if (cooldown.active && cooldown.state) {
-      return {
+      const resolvedStatus = {
         ...status,
+        evasion: this.evasion,
         reason: `${status.reason} Rate-limit cooldown is active until ${cooldown.state.rateLimitedUntil}.`,
         rateLimitActive: true,
         rateLimitUntil: cooldown.state.rateLimitedUntil
       };
+
+      this.logger?.log("debug", "auth.session.status.checked", {
+        authenticated: false,
+        checkpoint_detected: status.checkpointDetected ?? false,
+        current_url: status.currentUrl,
+        evasion_level: this.evasion.level,
+        profileName,
+        rate_limit_active: true,
+        reason: resolvedStatus.reason
+      });
+
+      return resolvedStatus;
     }
 
-    return status;
+    const resolvedStatus = {
+      ...status,
+      evasion: this.evasion
+    };
+    this.logger?.log("debug", "auth.session.status.checked", {
+      authenticated: false,
+      checkpoint_detected: status.checkpointDetected ?? false,
+      current_url: status.currentUrl,
+      evasion_level: this.evasion.level,
+      profileName,
+      rate_limit_active: false,
+      reason: status.reason
+    });
+
+    return resolvedStatus;
   }
 
+  /** Throws a structured error when the session is not currently authenticated. */
   async ensureAuthenticated(options: SessionOptions = {}): Promise<SessionStatus> {
     const status = await this.status(options);
 
@@ -155,6 +206,14 @@ export class LinkedInAuthService {
       const guidance = status.rateLimitActive
         ? `Wait for cooldown expiry (${status.rateLimitUntil}) or clear it with "linkedin rate-limit --clear".`
         : `Run "linkedin login --profile ${options.profileName ?? "default"}" first.`;
+      this.logger?.log("warn", "auth.session.ensure_authenticated.failed", {
+        code,
+        current_url: status.currentUrl,
+        evasion_level: status.evasion?.level,
+        profileName: options.profileName ?? "default",
+        rate_limit_active: status.rateLimitActive ?? false,
+        reason: status.reason
+      });
       throw new LinkedInAssistantError(
         code,
         `${status.reason} ${guidance}`,
@@ -162,6 +221,7 @@ export class LinkedInAuthService {
           profile_name: options.profileName ?? "default",
           current_url: status.currentUrl,
           checked_at: status.checkedAt,
+          ...(status.evasion ? { evasion_level: status.evasion.level } : {}),
           rate_limit_active: status.rateLimitActive ?? false,
           ...(status.rateLimitUntil
             ? { rate_limit_until: status.rateLimitUntil }
@@ -173,6 +233,7 @@ export class LinkedInAuthService {
     return status;
   }
 
+  /** Runs the headless login flow and optionally retries rate-limit checkpoints. */
   async headlessLogin(options: HeadlessLoginOptions): Promise<HeadlessLoginResult> {
     const cooldown = await isInRateLimitCooldown();
     if (cooldown.active && cooldown.state) {
@@ -180,6 +241,7 @@ export class LinkedInAuthService {
         authenticated: false,
         checkedAt: new Date().toISOString(),
         currentUrl: "N/A (skipped — rate limit cooldown)",
+        evasion: this.evasion,
         reason: `Skipped — rate limit cooldown active until ${cooldown.state.rateLimitedUntil}`,
         timedOut: false,
         checkpoint: false,
@@ -192,7 +254,10 @@ export class LinkedInAuthService {
     const maxRetries = options.maxRetries ?? 3;
     const retryBaseDelayMs = options.retryBaseDelayMs ?? 30_000;
 
-    let result = await this.performHeadlessLogin(options);
+    let result = {
+      ...(await this.performHeadlessLogin(options)),
+      evasion: this.evasion
+    };
     if (!retryOnRateLimit || result.checkpointType !== "rate_limited") {
       return result;
     }
@@ -201,7 +266,10 @@ export class LinkedInAuthService {
       const backoffMs = retryBaseDelayMs * 2 ** (attempt - 1) + Math.random() * 5_000;
       await sleep(backoffMs);
 
-      result = await this.performHeadlessLogin(options);
+      result = {
+        ...(await this.performHeadlessLogin(options)),
+        evasion: this.evasion
+      };
       if (result.checkpointType !== "rate_limited") {
         return result;
       }

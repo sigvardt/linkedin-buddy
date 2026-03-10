@@ -124,6 +124,14 @@ export function computeReadingPauseMs(charCount: number, wpm: number): number {
   return Math.round(minutes * 60_000);
 }
 
+/**
+ * Breaks a total scroll distance into a decelerating sequence of momentum
+ * steps that sum back to the requested distance.
+ *
+ * @param totalPixels - Total distance to scroll.
+ * @param steps - Number of momentum steps to generate.
+ * @returns Array of per-step scroll deltas.
+ */
 export function computeMomentumSteps(totalPixels: number, steps: number): number[] {
   const safeTotalPixels = normalizeFiniteNumber(totalPixels, 0);
   if (safeTotalPixels === 0) {
@@ -149,6 +157,13 @@ export function computeMomentumSteps(totalPixels: number, steps: number): number
   return amounts;
 }
 
+/**
+ * Applies interval bounds and rate-limit backoff rules to a fixed base delay.
+ *
+ * @param baseMs - Base interval in milliseconds.
+ * @param options - Optional bounds and rate-limit hints.
+ * @returns Resolved interval in milliseconds.
+ */
 export function resolveIntervalMs(baseMs: number, options?: IntervalSampleOptions): number {
   const safeBaseMs = Math.max(0, normalizeFiniteNumber(baseMs, 0));
   return applyIntervalConstraints(safeBaseMs, safeBaseMs, options);

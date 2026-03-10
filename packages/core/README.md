@@ -132,6 +132,45 @@ await hp.type('input[name="password"]', password, {
 });
 ```
 
+## Anti-bot evasion
+
+`@linkedin-assistant/core` exports an anti-bot evasion module that can be used
+independently or alongside `createCoreRuntime()`.
+
+Key entry points:
+
+- `EvasionSession` for page-level behavioral helpers and optional diagnostics
+- `DEFAULT_EVASION_LEVEL`, `EVASION_LEVELS`, and `EVASION_PROFILES` for profile selection
+- `createEvasionStatus()` and `resolveEvasionConfig()` for resolved config snapshots
+
+Example:
+
+```ts
+import { EvasionSession, createCoreRuntime } from "@linkedin-assistant/core";
+
+const runtime = createCoreRuntime({
+  evasionLevel: "moderate",
+  evasionDiagnostics: true
+});
+
+const session = new EvasionSession(page, runtime.evasion.level, {
+  diagnosticsEnabled: runtime.evasion.diagnosticsEnabled,
+  diagnosticsLabel: "message-compose",
+  logger: runtime.logger
+});
+
+await session.hardenFingerprint();
+await session.moveMouse({ x: 0, y: 0 }, { x: 240, y: 140 });
+await session.scroll(320);
+```
+
+Use `runtime.evasion.summary` for a human-readable snapshot, and inspect
+`linkedin status`, `linkedin health`, `linkedin.session.status`, or
+`linkedin.session.health` when you want to confirm the resolved runtime config.
+
+See `../../docs/evasion.md` for the environment variables, profile behavior,
+and diagnostics guidance.
+
 ## Tier 3 write validation
 
 Tier 3 live write validation is exported from the core package through

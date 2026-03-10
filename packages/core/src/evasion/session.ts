@@ -15,9 +15,15 @@ import {
   resolveIntervalMs,
   samplePoissonInterval
 } from "./math.js";
-import { EVASION_PROFILES } from "./profiles.js";
+import { resolveEvasionLevel, resolveEvasionProfile } from "./profiles.js";
 import { MAX_SCROLL_DISTANCE_PX, clamp, isFiniteNumber, normalizeFiniteNumber } from "./shared.js";
-import type { EvasionLevel, EvasionProfile, IntervalSampleOptions, Point2D } from "./types.js";
+import type {
+  EvasionLevel,
+  EvasionProfile,
+  EvasionSessionOptions,
+  IntervalSampleOptions,
+  Point2D
+} from "./types.js";
 
 const MIN_IDLE_DRIFT_DELAY_MS = 80;
 const ORIGIN_POINT: Readonly<Point2D> = Object.freeze({ x: 0, y: 0 });
@@ -51,15 +57,36 @@ export class EvasionSession {
   private readonly page: Page;
   private readonly profile: Readonly<EvasionProfile>;
   private readonly level: EvasionLevel;
+  private readonly diagnosticsEnabled: boolean;
+  private readonly diagnosticsLabel: string;
+  private readonly logger: EvasionSessionOptions["logger"];
   private mouseX = 0;
   private mouseY = 0;
   private operationQueue: Promise<void> = Promise.resolve();
   private fingerprintHardeningPromise: Promise<void> | undefined;
 
-  constructor(page: Page, level: EvasionLevel = "moderate") {
+  /**
+   * @param page - Playwright page to wrap with evasion helpers.
+   * @param level - Desired evasion level. Defaults to `"moderate"`.
+   * @param options - Optional diagnostics controls for debug logging.
+   */
+  constructor(
+    page: Page,
+    level: EvasionLevel = "moderate",
+    options: EvasionSessionOptions = {}
+  ) {
     this.page = page;
-    this.level = level;
-    this.profile = EVASION_PROFILES[level];
+    this.level = resolveEvasionLevel(level, "EvasionSession level");
+    this.profile = resolveEvasionProfile(this.level);
+    this.logger = options.logger;
+    this.diagnosticsEnabled = options.diagnosticsEnabled ?? this.logger !== undefined;
+    this.diagnosticsLabel = options.diagnosticsLabel ?? "default";
+
+    this.logDebug("evasion.session.created", {
+      diagnostics_enabled: this.diagnosticsEnabled,
+      diagnostics_label: this.diagnosticsLabel,
+      profile: this.profile
+    });
   }
 
   /** The active evasion level. */
@@ -82,8 +109,11 @@ export class EvasionSession {
     }
 
     if (this.fingerprintHardeningPromise === undefined) {
-      this.fingerprintHardeningPromise = this.enqueue(async () => {
+      this.fingerprintHardeningPromise = this.enqueue("harden_fingerprint", async () => {
         await applyFingerprintHardening(this.page, this.level);
+        this.logDebug("evasion.session.fingerprint_hardening.applied", {
+          diagnostics_label: this.diagnosticsLabel
+        });
       }, undefined);
     }
 
@@ -100,7 +130,7 @@ export class EvasionSession {
    * @param to - Destination coordinate.
    */
   async moveMouse(from: Readonly<Point2D>, to: Readonly<Point2D>): Promise<void> {
-    await this.enqueue(async () => {
+    await this.enqueue("move_mouse", async () => {
       const safeFrom = this.normalizePoint(from);
       const safeTo = this.normalizePoint(to, safeFrom);
       const path = this.profile.bezierMouseMovement
@@ -113,6 +143,11 @@ export class EvasionSession {
         const point = this.normalizePoint(pointOnPath, lastPoint);
         const moved = await this.tryMoveMouse(point, steps);
         if (!moved) {
+          this.logDebug("evasion.session.mouse_move.fallback_to_direct", {
+            diagnostics_label: this.diagnosticsLabel,
+            destination: safeTo,
+            attempted_point: point
+          });
           await this.tryMoveMouse(safeTo, 5);
           this.setMousePosition(safeTo);
           return;
@@ -134,14 +169,24 @@ export class EvasionSession {
    * @param pixels - Distance in pixels (positive = down, negative = up).
    */
   async scroll(pixels: number): Promise<void> {
-    await this.enqueue(async () => {
+    await this.enqueue("scroll", async () => {
+      const requestedPixels = normalizeFiniteNumber(pixels, 0);
       const clampedPixels = clamp(
-        normalizeFiniteNumber(pixels, 0),
+        requestedPixels,
         -MAX_SCROLL_DISTANCE_PX,
         MAX_SCROLL_DISTANCE_PX
       );
       if (clampedPixels === 0) {
         return;
+      }
+
+      if (requestedPixels !== clampedPixels) {
+        this.logDebug("evasion.session.scroll.clamped", {
+          diagnostics_label: this.diagnosticsLabel,
+          requested_pixels: requestedPixels,
+          clamped_pixels: clampedPixels,
+          max_scroll_distance_px: MAX_SCROLL_DISTANCE_PX
+        });
       }
 
       if (this.profile.momentumScroll) {
@@ -167,10 +212,16 @@ export class EvasionSession {
       return;
     }
 
-    await this.enqueue(async () => {
+    await this.enqueue("idle", async () => {
       const shouldDrift = this.profile.idleDriftEnabled && this.profile.mouseJitterRadius > 0;
       if (shouldDrift) {
         const driftSteps = Math.max(1, Math.floor(safeDurationMs / 300));
+        this.logDebug("evasion.session.idle.drift", {
+          diagnostics_label: this.diagnosticsLabel,
+          drift_steps: driftSteps,
+          jitter_radius_px: this.profile.mouseJitterRadius,
+          requested_duration_ms: safeDurationMs
+        });
         await simulateIdleDrift(
           this.page,
           this.mouseX,
@@ -199,8 +250,12 @@ export class EvasionSession {
       return;
     }
 
-    await this.enqueue(async () => {
+    await this.enqueue("simulate_tab_switch", async () => {
       await simulateTabBlurOnPage(this.page, blurDurationMs);
+      this.logDebug("evasion.session.tab_switch.simulated", {
+        blur_duration_ms: blurDurationMs,
+        diagnostics_label: this.diagnosticsLabel
+      });
     }, undefined);
   }
 
@@ -214,8 +269,11 @@ export class EvasionSession {
       return;
     }
 
-    await this.enqueue(async () => {
+    await this.enqueue("simulate_viewport_jitter", async () => {
       await simulateViewportJitterOnPage(this.page);
+      this.logDebug("evasion.session.viewport_jitter.simulated", {
+        diagnostics_label: this.diagnosticsLabel
+      });
     }, undefined);
   }
 
@@ -233,9 +291,15 @@ export class EvasionSession {
       return;
     }
 
-    await this.enqueue(async () => {
+    await this.enqueue("reading_pause", async () => {
       const pauseMs = computeReadingPauseMs(charCount, this.profile.readingPauseWpm);
       if (pauseMs > 0) {
+        this.logDebug("evasion.session.reading_pause.applied", {
+          char_count: charCount,
+          diagnostics_label: this.diagnosticsLabel,
+          pause_ms: pauseMs,
+          reading_pause_wpm: this.profile.readingPauseWpm
+        });
         await this.waitForTimeoutSafely(pauseMs);
       }
     }, undefined);
@@ -254,9 +318,25 @@ export class EvasionSession {
    * @returns Sampled interval in milliseconds.
    */
   sampleInterval(baseMs: number, options?: IntervalSampleOptions): number {
-    return this.profile.poissonIntervals
+    const intervalMs = this.profile.poissonIntervals
       ? samplePoissonInterval(baseMs, options)
       : resolveIntervalMs(baseMs, options);
+
+    if (
+      this.profile.poissonIntervals &&
+      (options?.rateLimited === true ||
+        typeof options?.retryAfterMs === "number" ||
+        typeof options?.responseStatus === "number")
+    ) {
+      this.logDebug("evasion.session.interval.sampled", {
+        base_ms: baseMs,
+        diagnostics_label: this.diagnosticsLabel,
+        interval_ms: intervalMs,
+        options
+      });
+    }
+
+    return intervalMs;
   }
 
   /**
@@ -266,7 +346,16 @@ export class EvasionSession {
    * CAPTCHAs; callers should pause and alert an operator.
    */
   async detectCaptcha(): Promise<boolean> {
-    return this.enqueue(async () => detectCaptchaOnPage(this.page), false);
+    return this.enqueue("detect_captcha", async () => {
+      const detected = await detectCaptchaOnPage(this.page);
+      if (detected) {
+        this.logDebug("evasion.session.captcha.detected", {
+          diagnostics_label: this.diagnosticsLabel
+        });
+      }
+
+      return detected;
+    }, false);
   }
 
   /**
@@ -275,14 +364,44 @@ export class EvasionSession {
    * Returns CSS selectors of hidden inputs that should NOT be filled.
    */
   async findHoneypotFields(): Promise<readonly string[]> {
-    return this.enqueue(async () => findHoneypotFieldsOnPage(this.page), []);
+    return this.enqueue("find_honeypot_fields", async () => {
+      const fields = await findHoneypotFieldsOnPage(this.page);
+      if (fields.length > 0) {
+        this.logDebug("evasion.session.honeypots.detected", {
+          diagnostics_label: this.diagnosticsLabel,
+          selectors: fields
+        });
+      }
+
+      return fields;
+    }, []);
   }
 
-  private enqueue<T>(operation: () => Promise<T>, fallback: T): Promise<T> {
+  private logDebug(event: string, payload: Record<string, unknown>): void {
+    if (!this.diagnosticsEnabled || this.logger === undefined) {
+      return;
+    }
+
+    this.logger.log("debug", event, {
+      evasion_level: this.level,
+      ...payload
+    });
+  }
+
+  private enqueue<T>(
+    operationName: string,
+    operation: () => Promise<T>,
+    fallback: T
+  ): Promise<T> {
     const task = this.operationQueue.catch(() => undefined).then(async () => {
       try {
         return await operation();
-      } catch {
+      } catch (error) {
+        this.logDebug("evasion.session.operation.failed", {
+          diagnostics_label: this.diagnosticsLabel,
+          error_message: getErrorMessage(error),
+          operation_name: operationName
+        });
         return fallback;
       }
     });
@@ -354,7 +473,13 @@ export class EvasionSession {
     try {
       await this.page.mouse.move(point.x, point.y, { steps });
       return true;
-    } catch {
+    } catch (error) {
+      this.logDebug("evasion.session.mouse_move.failed", {
+        diagnostics_label: this.diagnosticsLabel,
+        error_message: getErrorMessage(error),
+        point,
+        steps
+      });
       return false;
     }
   }
@@ -367,10 +492,18 @@ export class EvasionSession {
 
     try {
       await this.page.waitForTimeout(safeDelayMs);
-    } catch {
-      // Ignore transient page timing failures.
+    } catch (error) {
+      this.logDebug("evasion.session.wait_for_timeout.failed", {
+        delay_ms: safeDelayMs,
+        diagnostics_label: this.diagnosticsLabel,
+        error_message: getErrorMessage(error)
+      });
     }
   }
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Unknown error";
 }
 
 function isViewportSize(value: unknown): value is ViewportBounds {

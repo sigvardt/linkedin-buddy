@@ -8,9 +8,11 @@ import {
   resolveConfirmFailureArtifactConfig,
   resolveLinkedInSelectorLocaleConfigResolution,
   resolveActivityWebhookConfig,
+  resolveEvasionConfig,
   type ActivityWebhookConfig,
   type ConfigPaths,
-  type ConfirmFailureArtifactConfig
+  type ConfirmFailureArtifactConfig,
+  type EvasionConfig
 } from "./config.js";
 import { AssistantDatabase } from "./db/database.js";
 import { LinkedInAuthService } from "./auth/session.js";
@@ -75,6 +77,7 @@ import {
   DEFAULT_LINKEDIN_SELECTOR_LOCALE,
   type LinkedInSelectorLocale
 } from "./selectorLocale.js";
+import type { EvasionLevel } from "./evasion.js";
 
 function summarizeSelectorLocaleInput(
   normalizedInput: string | undefined,
@@ -99,6 +102,10 @@ export interface CreateCoreRuntimeOptions {
   runId?: string;
   cdpUrl?: string | undefined;
   privacy?: Partial<PrivacyConfig>;
+  /** Enables verbose anti-bot evasion diagnostics in run logs. */
+  evasionDiagnostics?: boolean;
+  /** Overrides the default anti-bot evasion level for this runtime. */
+  evasionLevel?: string | EvasionLevel;
   selectorLocale?: string | LinkedInSelectorLocale;
 }
 
@@ -111,6 +118,8 @@ export interface CoreRuntime {
   runId: string;
   cdpUrl?: string | undefined;
   selectorLocale: LinkedInSelectorLocale;
+  /** Resolved anti-bot evasion snapshot shared across status and health checks. */
+  evasion: EvasionConfig;
   confirmFailureArtifacts: ConfirmFailureArtifactConfig;
   privacy: PrivacyConfig;
   postSafetyLint: LinkedInPostSafetyLintConfig;
@@ -151,6 +160,14 @@ export function createCoreRuntime(
   const privacy = resolvePrivacyConfig(options.privacy);
   const postSafetyLint = resolveLinkedInPostSafetyLintConfig(paths.baseDir);
   const activityConfig = resolveActivityWebhookConfig();
+  const evasion = resolveEvasionConfig({
+    ...(typeof options.evasionDiagnostics === "boolean"
+      ? { diagnosticsEnabled: options.evasionDiagnostics }
+      : {}),
+    ...(typeof options.evasionLevel === "string"
+      ? { level: options.evasionLevel }
+      : {})
+  });
   const selectorLocaleResolution = resolveLinkedInSelectorLocaleConfigResolution(
     options.selectorLocale
   );
@@ -231,6 +248,7 @@ export function createCoreRuntime(
     runId,
     cdpUrl: options.cdpUrl,
     selectorLocale,
+    evasion,
     confirmFailureArtifacts,
     privacy,
     postSafetyLint,
@@ -245,7 +263,8 @@ export function createCoreRuntime(
       profileManager,
       options.cdpUrl,
       selectorLocale,
-      logger
+      logger,
+      evasion
     ),
     profile: undefined as unknown as LinkedInProfileService,
     search: undefined as unknown as LinkedInSearchService,
@@ -270,7 +289,7 @@ export function createCoreRuntime(
           profileName,
           headless: true
         },
-        (context) => checkFullHealth(context)
+        (context) => checkFullHealth(context, { evasion })
       );
     },
     close: () => {
@@ -308,7 +327,20 @@ export function createCoreRuntime(
   logger.log("info", "runtime.started", {
     runId,
     baseDir: paths.baseDir,
+    evasion_diagnostics_enabled: evasion.diagnosticsEnabled,
+    evasion_level: evasion.level,
+    evasion_source: evasion.source,
     selector_locale: selectorLocale
+  });
+
+  logger.log("debug", "runtime.evasion.configured", {
+    diagnostics_enabled: evasion.diagnosticsEnabled,
+    disabled_features: evasion.disabledFeatures,
+    enabled_features: evasion.enabledFeatures,
+    evasion_level: evasion.level,
+    evasion_source: evasion.source,
+    profile: evasion.profile,
+    summary: evasion.summary
   });
 
   return runtime;

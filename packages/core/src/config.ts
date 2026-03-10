@@ -9,6 +9,14 @@ import {
   type LinkedInSelectorLocaleResolution,
   type LinkedInSelectorLocale
 } from "./selectorLocale.js";
+import {
+  createEvasionStatus,
+  DEFAULT_EVASION_LEVEL,
+  EVASION_LEVELS,
+  resolveEvasionLevel,
+  type EvasionLevel,
+  type EvasionStatus
+} from "./evasion.js";
 import { LinkedInAssistantError } from "./errors.js";
 
 /**
@@ -41,6 +49,17 @@ export const DEFAULT_CONFIRM_TRACE_MAX_BYTES = 25 * 1024 * 1024;
 export interface ConfirmFailureArtifactConfig {
   traceMaxBytes: number;
 }
+
+/** Environment variable that configures the default anti-bot evasion level. */
+export const LINKEDIN_ASSISTANT_EVASION_LEVEL_ENV =
+  "LINKEDIN_ASSISTANT_EVASION_LEVEL";
+
+/** Environment variable that enables verbose evasion diagnostics in run logs. */
+export const LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS_ENV =
+  "LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS";
+
+/** Resolved evasion configuration shared across runtime/session diagnostics. */
+export type EvasionConfig = EvasionStatus;
 
 /**
  * Scheduler lane names accepted by config validation.
@@ -342,6 +361,25 @@ function invalidActivityWebhookConfig(
   );
 }
 
+function invalidEvasionConfig(
+  message: string,
+  details: Record<string, unknown>
+): LinkedInAssistantError {
+  const env = typeof details.env === "string" ? details.env : undefined;
+  const guidance = env ? EVASION_ENV_GUIDANCE[env] : undefined;
+
+  return new LinkedInAssistantError(
+    "ACTION_PRECONDITION_FAILED",
+    message,
+    {
+      ...details,
+      ...(guidance ? { default_value: guidance.defaultValue } : {}),
+      ...(guidance ? { example: `${env}=${guidance.exampleValue}` } : {}),
+      ...(guidance ? { suggestion: guidance.suggestion } : {})
+    }
+  );
+}
+
 const ACTIVITY_WEBHOOK_ENV_GUIDANCE: Record<
   string,
   {
@@ -433,6 +471,28 @@ const ACTIVITY_WEBHOOK_ENV_GUIDANCE: Record<
     exampleValue: "3600",
     suggestion:
       "Use a whole-number maximum backoff in seconds that is greater than or equal to the initial backoff."
+  }
+};
+
+const EVASION_ENV_GUIDANCE: Record<
+  string,
+  {
+    defaultValue: string;
+    exampleValue: string;
+    suggestion: string;
+  }
+> = {
+  [LINKEDIN_ASSISTANT_EVASION_LEVEL_ENV]: {
+    defaultValue: DEFAULT_EVASION_LEVEL,
+    exampleValue: "paranoid",
+    suggestion:
+      "Use minimal for deterministic development and tests, moderate for the default balance, or paranoid for the fullest anti-bot profile."
+  },
+  [LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS_ENV]: {
+    defaultValue: "false",
+    exampleValue: "true",
+    suggestion:
+      "Use true to record debug evasion diagnostics in the run log, or unset the variable to restore the default quiet mode."
   }
 };
 
@@ -711,6 +771,65 @@ export function resolveConfirmFailureArtifactConfig(): ConfirmFailureArtifactCon
       DEFAULT_CONFIRM_TRACE_MAX_BYTES
     )
   };
+}
+
+/**
+ * Resolves the effective anti-bot evasion configuration from runtime options
+ * and environment variables.
+ */
+export function resolveEvasionConfig(options: {
+  diagnosticsEnabled?: boolean;
+  level?: string | EvasionLevel;
+} = {}): EvasionConfig {
+  const rawLevel =
+    typeof options.level === "string"
+      ? options.level
+      : process.env[LINKEDIN_ASSISTANT_EVASION_LEVEL_ENV];
+  const source =
+    typeof options.level === "string"
+      ? "option"
+      : typeof process.env[LINKEDIN_ASSISTANT_EVASION_LEVEL_ENV] === "string"
+        ? "env"
+        : "default";
+  const diagnosticsEnabled =
+    typeof options.diagnosticsEnabled === "boolean"
+      ? options.diagnosticsEnabled
+      : parseStrictBoolean(
+          process.env[LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS_ENV],
+          false,
+          LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS_ENV,
+          invalidEvasionConfig
+        );
+
+  let level: EvasionLevel;
+  try {
+    level = resolveEvasionLevel(
+      rawLevel,
+      source === "option"
+        ? "evasionLevel"
+        : LINKEDIN_ASSISTANT_EVASION_LEVEL_ENV,
+      DEFAULT_EVASION_LEVEL
+    );
+  } catch (error) {
+    if (source === "env" && error instanceof LinkedInAssistantError) {
+      throw invalidEvasionConfig(
+        `${LINKEDIN_ASSISTANT_EVASION_LEVEL_ENV} must be one of ${EVASION_LEVELS.join(", ")}. Unset it to use the default value.`,
+        {
+          env: LINKEDIN_ASSISTANT_EVASION_LEVEL_ENV,
+          supported_values: [...EVASION_LEVELS],
+          value: rawLevel
+        }
+      );
+    }
+
+    throw error;
+  }
+
+  return createEvasionStatus({
+    diagnosticsEnabled,
+    level,
+    source
+  });
 }
 
 /**

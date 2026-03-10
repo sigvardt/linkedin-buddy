@@ -387,7 +387,9 @@ async function handleSessionStatus(args: ToolArgs): Promise<ToolResult> {
 
     runtime.logger.log("info", "mcp.session.status.done", {
       profileName,
-      authenticated: status.authenticated
+      authenticated: status.authenticated,
+      evasion_level: status.evasion?.level,
+      evasion_diagnostics_enabled: status.evasion?.diagnosticsEnabled ?? false
     });
 
     return toToolResult({
@@ -450,7 +452,9 @@ async function handleSessionHealth(args: ToolArgs): Promise<ToolResult> {
     runtime.logger.log("info", "mcp.session.health.done", {
       profileName,
       browserHealthy: health.browser.healthy,
-      authenticated: health.session.authenticated
+      authenticated: health.session.authenticated,
+      evasion_level: health.session.evasion.level,
+      evasion_diagnostics_enabled: health.session.evasion.diagnosticsEnabled
     });
 
     return toToolResult({
@@ -1524,7 +1528,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: LINKEDIN_SESSION_STATUS_TOOL,
-        description: "Check LinkedIn session authentication status for a profile.",
+        description:
+          "Check LinkedIn session authentication status for a profile, including the resolved anti-bot evasion configuration.",
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -1556,7 +1561,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: LINKEDIN_SESSION_HEALTH_TOOL,
-        description: "Check browser connectivity and LinkedIn session health for a profile.",
+        description:
+          "Check browser connectivity and LinkedIn session health for a profile, including the resolved anti-bot evasion configuration.",
         inputSchema: {
           type: "object",
           additionalProperties: false,
