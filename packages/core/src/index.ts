@@ -29,6 +29,7 @@ export * from "./linkedinProfile.js";
 export * from "./linkedinJobs.js";
 export * from "./linkedinNotifications.js";
 export * from "./linkedinPosts.js";
+export * from "./linkedinPublishing.js";
 export * from "./linkedinSearch.js";
 export * from "./logging.js";
 export * from "./privacy.js";

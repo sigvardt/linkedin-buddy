@@ -61,6 +61,11 @@ import {
   type LinkedInPostSafetyLintConfig,
   type LinkedInPostsRuntime
 } from "./linkedinPosts.js";
+import {
+  LinkedInPublishingService,
+  createPublishingActionExecutors,
+  type LinkedInPublishingRuntime
+} from "./linkedinPublishing.js";
 import { JsonEventLogger } from "./logging.js";
 import { ProfileManager } from "./profileManager.js";
 import { RateLimiter } from "./rateLimiter.js";
@@ -159,6 +164,7 @@ export interface CoreRuntime {
   followups: LinkedInFollowupsService;
   feed: LinkedInFeedService;
   posts: LinkedInPostsService;
+  publishing: LinkedInPublishingService;
   inbox: LinkedInInboxService;
   activityWatches: ActivityWatchesService;
   activityPoller: ActivityPollerService;
@@ -264,6 +270,10 @@ export function createCoreRuntime(
     string,
     import("./twoPhaseCommit.js").ActionExecutor<LinkedInMessagingRuntime>
   >;
+  const publishingExecutors = createPublishingActionExecutors() as unknown as Record<
+    string,
+    import("./twoPhaseCommit.js").ActionExecutor<LinkedInMessagingRuntime>
+  >;
   const testEchoExecutor = new TestEchoActionExecutor<LinkedInMessagingRuntime>();
   const twoPhaseCommit = new TwoPhaseCommitService<LinkedInMessagingRuntime>(db, {
     privacy,
@@ -274,6 +284,7 @@ export function createCoreRuntime(
       ...followupExecutors,
       ...feedExecutors,
       ...postExecutors,
+      ...publishingExecutors,
       [TEST_ECHO_ACTION_TYPE]: testEchoExecutor
     },
     getRuntime: () => runtime
@@ -311,6 +322,7 @@ export function createCoreRuntime(
     followups: undefined as unknown as LinkedInFollowupsService,
     feed: undefined as unknown as LinkedInFeedService,
     posts: undefined as unknown as LinkedInPostsService,
+    publishing: undefined as unknown as LinkedInPublishingService,
     inbox: undefined as unknown as LinkedInInboxService,
     activityWatches: undefined as unknown as ActivityWatchesService,
     activityPoller: undefined as unknown as ActivityPollerService,
@@ -376,6 +388,8 @@ export function createCoreRuntime(
   runtime.feed = new LinkedInFeedService(feedRuntime);
   const postsRuntime: LinkedInPostsRuntime = runtime;
   runtime.posts = new LinkedInPostsService(postsRuntime);
+  const publishingRuntime: LinkedInPublishingRuntime = runtime;
+  runtime.publishing = new LinkedInPublishingService(publishingRuntime);
   runtime.inbox = new LinkedInInboxService(runtime);
   runtime.activityWatches = new ActivityWatchesService(runtime);
   runtime.activityPoller = new ActivityPollerService(runtime);

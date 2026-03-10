@@ -42,6 +42,7 @@ import {
   FIXTURE_REPLAY_ENV_KEYS,
   LINKEDIN_FEED_REACTION_TYPES,
   LINKEDIN_FIXTURE_MANIFEST_FORMAT_VERSION,
+  LINKEDIN_NEWSLETTER_CADENCE_TYPES,
   LINKEDIN_POST_VISIBILITY_TYPES,
   LINKEDIN_SELECTOR_LOCALES,
   LINKEDIN_WRITE_VALIDATION_ACTIONS,
@@ -55,6 +56,7 @@ import {
   loadLinkedInFixtureSet,
   normalizeLinkedInFeedReaction,
   normalizeFixtureRouteHeaders,
+  normalizeLinkedInNewsletterCadence,
   normalizeLinkedInPostVisibility,
   parseDraftQualityCandidateSet,
   parseDraftQualityDataset,
@@ -5529,6 +5531,184 @@ async function runPostPrepare(input: {
   }
 }
 
+async function runArticlePrepareCreate(input: {
+  profileName: string;
+  title: string;
+  body: string;
+  operatorNote?: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.article.prepare_create.start", {
+      profileName: input.profileName
+    });
+
+    const prepared = await runtime.publishing.prepareCreateArticle({
+      profileName: input.profileName,
+      title: input.title,
+      body: input.body,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "cli.article.prepare_create.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runArticlePreparePublish(input: {
+  profileName: string;
+  articleUrl: string;
+  operatorNote?: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.article.prepare_publish.start", {
+      articleUrl: input.articleUrl,
+      profileName: input.profileName
+    });
+
+    const prepared = await runtime.publishing.preparePublishArticle({
+      articleUrl: input.articleUrl,
+      profileName: input.profileName,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "cli.article.prepare_publish.done", {
+      articleUrl: input.articleUrl,
+      preparedActionId: prepared.preparedActionId,
+      profileName: input.profileName
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runNewsletterList(input: {
+  profileName: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.newsletter.list.start", {
+      profileName: input.profileName
+    });
+
+    const result = await runtime.publishing.listNewsletters({
+      profileName: input.profileName
+    });
+
+    runtime.logger.log("info", "cli.newsletter.list.done", {
+      count: result.count,
+      profileName: input.profileName
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...result
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runNewsletterPrepareCreate(input: {
+  profileName: string;
+  title: string;
+  description: string;
+  cadence?: string;
+  operatorNote?: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+  const cadence = normalizeLinkedInNewsletterCadence(input.cadence, "weekly");
+
+  try {
+    runtime.logger.log("info", "cli.newsletter.prepare_create.start", {
+      cadence,
+      profileName: input.profileName
+    });
+
+    const prepared = await runtime.publishing.prepareCreateNewsletter({
+      cadence,
+      description: input.description,
+      profileName: input.profileName,
+      title: input.title,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "cli.newsletter.prepare_create.done", {
+      cadence,
+      preparedActionId: prepared.preparedActionId,
+      profileName: input.profileName
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runNewsletterPreparePublishIssue(input: {
+  profileName: string;
+  newsletterUrl: string;
+  title: string;
+  body: string;
+  operatorNote?: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.newsletter.prepare_publish_issue.start", {
+      newsletterUrl: input.newsletterUrl,
+      profileName: input.profileName
+    });
+
+    const prepared = await runtime.publishing.preparePublishNewsletterIssue({
+      body: input.body,
+      newsletterUrl: input.newsletterUrl,
+      profileName: input.profileName,
+      title: input.title,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "cli.newsletter.prepare_publish_issue.done", {
+      newsletterUrl: input.newsletterUrl,
+      preparedActionId: prepared.preparedActionId,
+      profileName: input.profileName
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 async function runProfileView(input: {
   profileName: string;
   target: string;
@@ -8709,6 +8889,126 @@ export function createCliProgram(): Command {
           profileName: options.profile,
           token: options.token,
           yes: options.yes
+        }, readCdpUrl());
+      }
+    );
+
+  const articleCommand = program
+    .command("article")
+    .description("Prepare and confirm LinkedIn long-form article actions");
+
+  articleCommand
+    .command("prepare-create")
+    .description("Prepare a new LinkedIn article draft (two-phase)")
+    .requiredOption("--title <title>", "Article title")
+    .requiredOption("--body <body>", "Article body")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-o, --operator-note <note>", "Optional operator note")
+    .action(
+      async (options: {
+        profile: string;
+        title: string;
+        body: string;
+        operatorNote?: string;
+      }) => {
+        await runArticlePrepareCreate({
+          profileName: options.profile,
+          title: options.title,
+          body: options.body,
+          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
+        }, readCdpUrl());
+      }
+    );
+
+  articleCommand
+    .command("prepare-publish")
+    .description("Prepare to publish an existing LinkedIn article draft (two-phase)")
+    .argument("<article>", "LinkedIn article draft URL or numeric article id")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-o, --operator-note <note>", "Optional operator note")
+    .action(
+      async (
+        article: string,
+        options: { profile: string; operatorNote?: string }
+      ) => {
+        await runArticlePreparePublish({
+          profileName: options.profile,
+          articleUrl: article,
+          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
+        }, readCdpUrl());
+      }
+    );
+
+  const newsletterCommand = program
+    .command("newsletter")
+    .description("List and prepare LinkedIn newsletter actions");
+
+  newsletterCommand
+    .command("list")
+    .description("List newsletters managed by the current profile")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(async (options: { profile: string }) => {
+      await runNewsletterList({
+        profileName: options.profile
+      }, readCdpUrl());
+    });
+
+  newsletterCommand
+    .command("prepare-create")
+    .description("Prepare a new LinkedIn newsletter (two-phase)")
+    .requiredOption("--title <title>", "Newsletter title")
+    .requiredOption("--description <description>", "Newsletter description")
+    .option(
+      "-c, --cadence <cadence>",
+      `Publishing cadence (${LINKEDIN_NEWSLETTER_CADENCE_TYPES.join(", ")})`,
+      "weekly"
+    )
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-o, --operator-note <note>", "Optional operator note")
+    .action(
+      async (options: {
+        profile: string;
+        title: string;
+        description: string;
+        cadence: string;
+        operatorNote?: string;
+      }) => {
+        await runNewsletterPrepareCreate({
+          profileName: options.profile,
+          title: options.title,
+          description: options.description,
+          cadence: options.cadence,
+          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
+        }, readCdpUrl());
+      }
+    );
+
+  newsletterCommand
+    .command("prepare-publish-issue")
+    .description(
+      "Prepare to create and publish a new LinkedIn newsletter edition (two-phase)"
+    )
+    .argument("<newsletter>", "LinkedIn newsletter URL or numeric newsletter id")
+    .requiredOption("--title <title>", "Issue title")
+    .requiredOption("--body <body>", "Issue body")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-o, --operator-note <note>", "Optional operator note")
+    .action(
+      async (
+        newsletter: string,
+        options: {
+          profile: string;
+          title: string;
+          body: string;
+          operatorNote?: string;
+        }
+      ) => {
+        await runNewsletterPreparePublishIssue({
+          profileName: options.profile,
+          newsletterUrl: newsletter,
+          title: options.title,
+          body: options.body,
+          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
         }, readCdpUrl());
       }
     );
