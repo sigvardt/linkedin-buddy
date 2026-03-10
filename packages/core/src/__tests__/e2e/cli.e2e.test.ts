@@ -373,6 +373,78 @@ describe.sequential("CLI E2E", () => {
       confirmToken: expect.stringMatching(/^ct_/)
     });
 
+    const feedRepost = await runCliCommand([
+      "feed",
+      "repost",
+      fixtures.postUrl,
+      "--profile",
+      profileName
+    ]);
+    expect(feedRepost.error).toBeUndefined();
+    expect(getLastJsonObject(feedRepost.stdout)).toMatchObject({
+      profile_name: profileName,
+      preparedActionId: expect.stringMatching(/^pa_/),
+      confirmToken: expect.stringMatching(/^ct_/)
+    });
+
+    const feedShare = await runCliCommand([
+      "feed",
+      "share",
+      fixtures.postUrl,
+      "--profile",
+      profileName,
+      "--text",
+      `CLI preview share [${Date.now()}]`
+    ]);
+    expect(feedShare.error).toBeUndefined();
+    expect(getLastJsonObject(feedShare.stdout)).toMatchObject({
+      profile_name: profileName,
+      preparedActionId: expect.stringMatching(/^pa_/),
+      confirmToken: expect.stringMatching(/^ct_/)
+    });
+
+    const feedSave = await runCliCommand([
+      "feed",
+      "save",
+      fixtures.postUrl,
+      "--profile",
+      profileName
+    ]);
+    expect(feedSave.error).toBeUndefined();
+    expect(getLastJsonObject(feedSave.stdout)).toMatchObject({
+      profile_name: profileName,
+      preparedActionId: expect.stringMatching(/^pa_/),
+      confirmToken: expect.stringMatching(/^ct_/)
+    });
+
+    const feedUnsave = await runCliCommand([
+      "feed",
+      "unsave",
+      fixtures.postUrl,
+      "--profile",
+      profileName
+    ]);
+    expect(feedUnsave.error).toBeUndefined();
+    expect(getLastJsonObject(feedUnsave.stdout)).toMatchObject({
+      profile_name: profileName,
+      preparedActionId: expect.stringMatching(/^pa_/),
+      confirmToken: expect.stringMatching(/^ct_/)
+    });
+
+    const feedRemoveReaction = await runCliCommand([
+      "feed",
+      "remove-reaction",
+      fixtures.postUrl,
+      "--profile",
+      profileName
+    ]);
+    expect(feedRemoveReaction.error).toBeUndefined();
+    expect(getLastJsonObject(feedRemoveReaction.stdout)).toMatchObject({
+      profile_name: profileName,
+      preparedActionId: expect.stringMatching(/^pa_/),
+      confirmToken: expect.stringMatching(/^ct_/)
+    });
+
     const postPrepare = await runCliCommand([
       "post",
       "prepare",

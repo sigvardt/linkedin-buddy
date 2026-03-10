@@ -159,14 +159,17 @@ export type LinkedInSelectorPhraseKey =
   | "reaction"
   | "remove"
   | "remove_connection"
+  | "repost"
   | "resources"
   | "respond"
   | "save"
+  | "share"
   | "send"
   | "send_without_note"
   | "start_post"
   | "support"
   | "time_ago"
+  | "unsave"
   | "unfollow"
   | "visibility"
   | "what_do_you_want_to_talk_about"
@@ -225,14 +228,17 @@ const ENGLISH_SELECTOR_PHRASES: SelectorPhraseDictionary = {
   reaction: ["Reaction", "Reactions"],
   remove: ["Remove"],
   remove_connection: ["Remove connection"],
+  repost: ["Repost"],
   resources: ["Resources"],
   respond: ["Respond"],
   save: ["Save"],
+  share: ["Share"],
   send: ["Send"],
   send_without_note: ["Send without a note"],
   start_post: ["Start a post"],
   support: ["Support"],
   time_ago: ["ago"],
+  unsave: ["Unsave"],
   unfollow: ["Unfollow"],
   visibility: ["Visibility"],
   what_do_you_want_to_talk_about: ["What do you want to talk about?"],

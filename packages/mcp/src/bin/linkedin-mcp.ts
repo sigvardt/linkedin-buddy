@@ -60,6 +60,11 @@ import {
   LINKEDIN_FEED_COMMENT_TOOL,
   LINKEDIN_FEED_LIKE_TOOL,
   LINKEDIN_FEED_LIST_TOOL,
+  LINKEDIN_FEED_PREPARE_REMOVE_REACTION_TOOL,
+  LINKEDIN_FEED_PREPARE_REPOST_TOOL,
+  LINKEDIN_FEED_PREPARE_SHARE_TOOL,
+  LINKEDIN_FEED_SAVE_POST_TOOL,
+  LINKEDIN_FEED_UNSAVE_POST_TOOL,
   LINKEDIN_FEED_VIEW_POST_TOOL,
   LINKEDIN_INBOX_GET_THREAD_TOOL,
   LINKEDIN_INBOX_LIST_THREADS_TOOL,
@@ -1428,6 +1433,180 @@ async function handleFeedComment(args: ToolArgs): Promise<ToolResult> {
   }
 }
 
+async function handleFeedPrepareRepost(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const postUrl = readRequiredString(args, "postUrl");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.feed.prepare_repost.start", {
+      profileName,
+      postUrl
+    });
+
+    const prepared = runtime.feed.prepareRepostPost({
+      profileName,
+      postUrl,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.feed.prepare_repost.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleFeedPrepareShare(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const postUrl = readRequiredString(args, "postUrl");
+    const text = readRequiredString(args, "text");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.feed.prepare_share.start", {
+      profileName,
+      postUrl
+    });
+
+    const prepared = runtime.feed.prepareSharePost({
+      profileName,
+      postUrl,
+      text,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.feed.prepare_share.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleFeedSavePost(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const postUrl = readRequiredString(args, "postUrl");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.feed.save_post.start", {
+      profileName,
+      postUrl
+    });
+
+    const prepared = runtime.feed.prepareSavePost({
+      profileName,
+      postUrl,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.feed.save_post.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleFeedUnsavePost(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const postUrl = readRequiredString(args, "postUrl");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.feed.unsave_post.start", {
+      profileName,
+      postUrl
+    });
+
+    const prepared = runtime.feed.prepareUnsavePost({
+      profileName,
+      postUrl,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.feed.unsave_post.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleFeedPrepareRemoveReaction(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const postUrl = readRequiredString(args, "postUrl");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.feed.prepare_remove_reaction.start", {
+      profileName,
+      postUrl
+    });
+
+    const prepared = runtime.feed.prepareRemoveReaction({
+      profileName,
+      postUrl,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.feed.prepare_remove_reaction.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 async function handlePostPrepareCreate(args: ToolArgs): Promise<ToolResult> {
   const runtime = createRuntime(args);
 
@@ -2536,6 +2715,135 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
+        name: LINKEDIN_FEED_PREPARE_REPOST_TOOL,
+        description:
+          "Prepare to repost a LinkedIn post (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["postUrl"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            postUrl: {
+              type: "string",
+              description: "LinkedIn post URL, URN, or activity/share identifier."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_FEED_PREPARE_SHARE_TOOL,
+        description:
+          "Prepare to share a LinkedIn post with your own text (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["postUrl", "text"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            postUrl: {
+              type: "string",
+              description: "LinkedIn post URL, URN, or activity/share identifier."
+            },
+            text: {
+              type: "string",
+              description: "Text to publish with the shared post."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_FEED_SAVE_POST_TOOL,
+        description:
+          "Prepare to save a LinkedIn post for later (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["postUrl"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            postUrl: {
+              type: "string",
+              description: "LinkedIn post URL, URN, or activity/share identifier."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_FEED_UNSAVE_POST_TOOL,
+        description:
+          "Prepare to remove a LinkedIn post from your saved items (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["postUrl"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            postUrl: {
+              type: "string",
+              description: "LinkedIn post URL, URN, or activity/share identifier."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_FEED_PREPARE_REMOVE_REACTION_TOOL,
+        description:
+          "Prepare to remove your current reaction from a LinkedIn post (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["postUrl"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            postUrl: {
+              type: "string",
+              description: "LinkedIn post URL, URN, or activity/share identifier."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
         name: LINKEDIN_POST_PREPARE_CREATE_TOOL,
         description:
           "Prepare a new LinkedIn post (two-phase: returns confirm token). Use linkedin.actions.confirm to publish.",
@@ -2967,6 +3275,11 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   [LINKEDIN_FEED_VIEW_POST_TOOL]: handleFeedViewPost,
   [LINKEDIN_FEED_LIKE_TOOL]: handleFeedLike,
   [LINKEDIN_FEED_COMMENT_TOOL]: handleFeedComment,
+  [LINKEDIN_FEED_PREPARE_REPOST_TOOL]: handleFeedPrepareRepost,
+  [LINKEDIN_FEED_PREPARE_SHARE_TOOL]: handleFeedPrepareShare,
+  [LINKEDIN_FEED_SAVE_POST_TOOL]: handleFeedSavePost,
+  [LINKEDIN_FEED_UNSAVE_POST_TOOL]: handleFeedUnsavePost,
+  [LINKEDIN_FEED_PREPARE_REMOVE_REACTION_TOOL]: handleFeedPrepareRemoveReaction,
   [LINKEDIN_POST_PREPARE_CREATE_TOOL]: handlePostPrepareCreate,
   [LINKEDIN_NOTIFICATIONS_LIST_TOOL]: handleNotificationsList,
   [LINKEDIN_JOBS_SEARCH_TOOL]: handleJobsSearch,
