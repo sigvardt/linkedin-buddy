@@ -12,8 +12,8 @@ import type {
   SentInvitationStateRow
 } from "./db/database.js";
 import {
-  LinkedInAssistantError,
-  asLinkedInAssistantError
+  LinkedInBuddyError,
+  asLinkedInBuddyError
 } from "./errors.js";
 import {
   SEND_MESSAGE_RATE_LIMIT_CONFIG,
@@ -213,7 +213,7 @@ export function resolveFollowupSinceWindow(
     const unit = (relativeMatch[2] ?? "d").toLowerCase();
 
     if (!Number.isFinite(amount) || amount <= 0) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "since must be a positive relative duration like 7d or 24h."
       );
@@ -237,7 +237,7 @@ export function resolveFollowupSinceWindow(
   const absoluteMs = Date.parse(normalized);
   if (Number.isFinite(absoluteMs)) {
     if (absoluteMs > nowMs) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "since must not be in the future."
       );
@@ -249,7 +249,7 @@ export function resolveFollowupSinceWindow(
     };
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     "since must be a relative duration like 7d, 24h, 30m, or an ISO date."
   );
@@ -281,7 +281,7 @@ function resolveFollowupLookbackWindow(input: {
 
   if (typeof input.sinceMs === "number") {
     if (!Number.isFinite(input.sinceMs) || input.sinceMs <= 0) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "sinceMs must be a positive number of milliseconds."
       );
@@ -334,7 +334,7 @@ function getRequiredStringField(
     return value.trim();
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `Prepared action ${actionId} is missing ${location}.${key}.`,
     {
@@ -361,25 +361,25 @@ function toAutomationError(
   error: unknown,
   message: string,
   details: Record<string, unknown>
-): LinkedInAssistantError {
-  if (error instanceof LinkedInAssistantError) {
+): LinkedInBuddyError {
+  if (error instanceof LinkedInBuddyError) {
     return error;
   }
 
   if (error instanceof playwrightErrors.TimeoutError) {
-    return new LinkedInAssistantError("TIMEOUT", message, details, { cause: error });
+    return new LinkedInBuddyError("TIMEOUT", message, details, { cause: error });
   }
 
   if (
     error instanceof Error &&
     /(net::|ERR_|ECONN|ENOTFOUND|EAI_AGAIN|socket hang up)/i.test(error.message)
   ) {
-    return new LinkedInAssistantError("NETWORK_ERROR", message, details, {
+    return new LinkedInBuddyError("NETWORK_ERROR", message, details, {
       cause: error
     });
   }
 
-  return asLinkedInAssistantError(error, "UNKNOWN", message);
+  return asLinkedInBuddyError(error, "UNKNOWN", message);
 }
 
 function deriveFollowupStatus(input: {
@@ -503,7 +503,7 @@ async function findVisibleLocatorOrThrow(
     return result;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "UI_CHANGED_SELECTOR_FAILED",
     `Could not locate LinkedIn selector group "${selectorKey}".`,
     {
@@ -784,7 +784,7 @@ async function validateMessageSurfaceTarget(
       return;
     }
 
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "Message surface validation failed before sending the accepted-connection follow-up.",
       {
@@ -915,7 +915,7 @@ export class FollowupAfterAcceptActionExecutor
             runtime.selectorLocale
           );
           if (!messageTrigger) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "ACTION_PRECONDITION_FAILED",
               "Accepted-connection follow-up requires a visible Message action on the target profile.",
               {
@@ -934,7 +934,7 @@ export class FollowupAfterAcceptActionExecutor
             SEND_MESSAGE_RATE_LIMIT_CONFIG
           );
           if (!rateLimitState.allowed) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "RATE_LIMITED",
               "LinkedIn follow-up confirm is rate limited for the current window.",
               {
@@ -1489,7 +1489,7 @@ export class LinkedInFollowupsService {
               updatedAtMs: preparedAtMs
             });
             if (!updated) {
-              throw new LinkedInAssistantError(
+              throw new LinkedInBuddyError(
                 "ACTION_PRECONDITION_FAILED",
                 `Could not persist follow-up preparation state for ${state.profile_url}.`,
                 {

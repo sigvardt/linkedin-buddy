@@ -2,15 +2,15 @@
 
 ## Repo Overview
 
-LinkedIn Assistant — Playwright-based browser automation for LinkedIn with CLI and MCP server.
+LinkedIn Buddy — Playwright-based browser automation for LinkedIn with CLI and MCP server.
 
 ## Monorepo Structure
 
 ```
 packages/
-  core/       @linkedin-assistant/core    — automation library, DB, rate limiter, two-phase commit
-  cli/        @linkedin-assistant/cli     — operator CLI (binary: linkedin)
-  mcp/        @linkedin-assistant/mcp     — MCP stdio server (binary: linkedin-mcp)
+  core/       @linkedin-buddy/core    — automation library, DB, rate limiter, two-phase commit
+  cli/        @linkedin-buddy/cli     — operator CLI (binary: linkedin)
+  mcp/        @linkedin-buddy/mcp     — MCP stdio server (binary: linkedin-buddy-mcp)
 scripts/      integration test scripts
 ```
 
@@ -39,7 +39,7 @@ scripts/      integration test scripts
 | `packages/core/src/logging.ts` | Structured JSON event logger |
 | `packages/core/src/config.ts` | Configuration |
 | `packages/cli/src/bin/linkedin.ts` | CLI entry point (Commander-based) |
-| `packages/mcp/src/bin/linkedin-mcp.ts` | MCP server entry point |
+| `packages/mcp/src/bin/linkedin-buddy-mcp.ts` | MCP server entry point |
 | `packages/mcp/src/index.ts` | MCP tool name constants |
 
 ## Build & Test
@@ -84,7 +84,7 @@ npm run build
 - **Node version:** 22+
 - **Imports:** Use `.js` extension in import paths (TypeScript ESM convention)
 - **Exports:** All core modules re-exported via `packages/core/src/index.ts`
-- **Error handling:** Use `LinkedInAssistantError` with structured error codes
+- **Error handling:** Use `LinkedInBuddyError` with structured error codes
 - **Two-phase commit pattern:** Every outbound action must:
   1. Have a `prepare*` method that stores action in DB and returns confirm token
   2. Have an `ActionExecutor` class that implements the `execute` method
@@ -111,7 +111,7 @@ npm run build
    - Register executors
    - Expose on runtime object
 4. Add CLI commands in `packages/cli/src/bin/linkedin.ts`
-5. Add MCP tools in `packages/mcp/src/bin/linkedin-mcp.ts` + constants in `packages/mcp/src/index.ts`
+5. Add MCP tools in `packages/mcp/src/bin/linkedin-buddy-mcp.ts` + constants in `packages/mcp/src/index.ts`
 6. Add unit tests and E2E tests
 
 ### Two-Phase Commit Flow
@@ -142,3 +142,14 @@ Violating these rules risks real social interactions on Joakim's LinkedIn accoun
 - `feat #N: description` for new features
 - `fix #N: description` for bug fixes
 - `chore: description` for maintenance
+
+## Agent Orchestrator (ao) Session
+
+You are running inside an Agent Orchestrator managed workspace.
+Session metadata is updated automatically via shell wrappers.
+
+If automatic updates fail, you can manually update metadata:
+```bash
+~/.ao/bin/ao-metadata-helper.sh  # sourced automatically
+# Then call: update_ao_metadata <key> <value>
+```

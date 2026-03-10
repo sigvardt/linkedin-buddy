@@ -19,7 +19,7 @@ const cliSelectorLocaleMocks = vi.hoisted(() => ({
   }))
 }));
 
-vi.mock("@linkedin-assistant/core", async () => {
+vi.mock("@linkedin-buddy/core", async () => {
   const actual = await import("../../core/src/index.js");
   return {
     ...actual,
@@ -32,7 +32,7 @@ vi.mock("node:child_process", () => ({
 }));
 
 import {
-  LINKEDIN_ASSISTANT_SELECTOR_LOCALE_ENV
+  LINKEDIN_BUDDY_SELECTOR_LOCALE_ENV
 } from "../../core/src/index.js";
 import { runCli } from "../src/bin/linkedin.js";
 
@@ -45,9 +45,9 @@ describe("CLI selector locale messaging", () => {
 
   beforeEach(async () => {
     tempDir = await mkdtemp(path.join(os.tmpdir(), "linkedin-cli-selector-locale-"));
-    previousSelectorLocaleEnv = process.env[LINKEDIN_ASSISTANT_SELECTOR_LOCALE_ENV];
-    delete process.env[LINKEDIN_ASSISTANT_SELECTOR_LOCALE_ENV];
-    process.env.LINKEDIN_ASSISTANT_HOME = path.join(tempDir, "assistant-home");
+    previousSelectorLocaleEnv = process.env[LINKEDIN_BUDDY_SELECTOR_LOCALE_ENV];
+    delete process.env[LINKEDIN_BUDDY_SELECTOR_LOCALE_ENV];
+    process.env.LINKEDIN_BUDDY_HOME = path.join(tempDir, "assistant-home");
     process.exitCode = undefined;
     stderrChunks = [];
     vi.clearAllMocks();
@@ -76,11 +76,11 @@ describe("CLI selector locale messaging", () => {
     consoleLogSpy.mockRestore();
     stderrWriteSpy.mockRestore();
     process.exitCode = undefined;
-    delete process.env.LINKEDIN_ASSISTANT_HOME;
+    delete process.env.LINKEDIN_BUDDY_HOME;
     if (typeof previousSelectorLocaleEnv === "string") {
-      process.env[LINKEDIN_ASSISTANT_SELECTOR_LOCALE_ENV] = previousSelectorLocaleEnv;
+      process.env[LINKEDIN_BUDDY_SELECTOR_LOCALE_ENV] = previousSelectorLocaleEnv;
     } else {
-      delete process.env[LINKEDIN_ASSISTANT_SELECTOR_LOCALE_ENV];
+      delete process.env[LINKEDIN_BUDDY_SELECTOR_LOCALE_ENV];
     }
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -106,14 +106,14 @@ describe("CLI selector locale messaging", () => {
   });
 
   it("warns before starting keepalive when env locale falls back to English", async () => {
-    process.env[LINKEDIN_ASSISTANT_SELECTOR_LOCALE_ENV] = "fr-CA";
+    process.env[LINKEDIN_BUDDY_SELECTOR_LOCALE_ENV] = "fr-CA";
 
     await runCli(["node", "linkedin", "keepalive", "start"]);
 
     const stderrOutput = stderrChunks.join("");
 
     expect(stderrOutput).toContain(
-      `[linkedin] Warning: Unsupported selector locale "fr-ca" from ${LINKEDIN_ASSISTANT_SELECTOR_LOCALE_ENV}.`
+      `[linkedin] Warning: Unsupported selector locale "fr-ca" from ${LINKEDIN_BUDDY_SELECTOR_LOCALE_ENV}.`
     );
     expect(stderrOutput).toContain(
       "override it for one command with --selector-locale <locale>."

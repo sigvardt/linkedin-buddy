@@ -131,7 +131,7 @@ kinds that are actually implemented and tested.
 - `packages/mcp/src/index.ts`
   - add tool-name constants for activity watch/subscription/event/delivery
     operations
-- `packages/mcp/src/bin/linkedin-mcp.ts`
+- `packages/mcp/src/bin/linkedin-buddy-mcp.ts`
   - add schemas, handlers, and dispatcher entries for the new tools
 
 ### `docs`
@@ -207,18 +207,18 @@ export function resolveActivityWebhookConfig(): ActivityWebhookConfig;
 
 Recommended phase-1 env vars:
 
-- `LINKEDIN_ASSISTANT_ACTIVITY_ENABLED`
-- `LINKEDIN_ASSISTANT_ACTIVITY_DAEMON_POLL_INTERVAL_SECONDS`
-- `LINKEDIN_ASSISTANT_ACTIVITY_MAX_WATCHES_PER_TICK`
-- `LINKEDIN_ASSISTANT_ACTIVITY_JITTER_PERCENT`
-- `LINKEDIN_ASSISTANT_ACTIVITY_HTTP_TIMEOUT_SECONDS`
-- `LINKEDIN_ASSISTANT_ACTIVITY_MAX_ATTEMPTS`
-- `LINKEDIN_ASSISTANT_ACTIVITY_INITIAL_BACKOFF_SECONDS`
-- `LINKEDIN_ASSISTANT_ACTIVITY_MAX_BACKOFF_SECONDS`
-- `LINKEDIN_ASSISTANT_ACTIVITY_MAX_THREADS_PER_POLL`
-- `LINKEDIN_ASSISTANT_ACTIVITY_MAX_NOTIFICATIONS_PER_POLL`
-- `LINKEDIN_ASSISTANT_ACTIVITY_MAX_INVITATIONS_PER_POLL`
-- `LINKEDIN_ASSISTANT_ACTIVITY_MAX_FEED_POSTS_PER_POLL`
+- `LINKEDIN_BUDDY_ACTIVITY_ENABLED`
+- `LINKEDIN_BUDDY_ACTIVITY_DAEMON_POLL_INTERVAL_SECONDS`
+- `LINKEDIN_BUDDY_ACTIVITY_MAX_WATCHES_PER_TICK`
+- `LINKEDIN_BUDDY_ACTIVITY_JITTER_PERCENT`
+- `LINKEDIN_BUDDY_ACTIVITY_HTTP_TIMEOUT_SECONDS`
+- `LINKEDIN_BUDDY_ACTIVITY_MAX_ATTEMPTS`
+- `LINKEDIN_BUDDY_ACTIVITY_INITIAL_BACKOFF_SECONDS`
+- `LINKEDIN_BUDDY_ACTIVITY_MAX_BACKOFF_SECONDS`
+- `LINKEDIN_BUDDY_ACTIVITY_MAX_THREADS_PER_POLL`
+- `LINKEDIN_BUDDY_ACTIVITY_MAX_NOTIFICATIONS_PER_POLL`
+- `LINKEDIN_BUDDY_ACTIVITY_MAX_INVITATIONS_PER_POLL`
+- `LINKEDIN_BUDDY_ACTIVITY_MAX_FEED_POSTS_PER_POLL`
 
 Phase 1 should **not** add business-hours gating yet. The scheduler already has
 that complexity; the activity webhooks feature should first prove correctness,
@@ -626,9 +626,9 @@ The daemon loop should:
 
 Phase 1 should keep all daemon state local and operator-visible, for example:
 
-- `~/.linkedin-assistant/linkedin-owa-agentools/activity/*.pid`
-- `~/.linkedin-assistant/linkedin-owa-agentools/activity/*.state.json`
-- `~/.linkedin-assistant/linkedin-owa-agentools/activity/*.events.jsonl`
+- `~/.linkedin-buddy/linkedin-buddy/activity/*.pid`
+- `~/.linkedin-buddy/linkedin-buddy/activity/*.state.json`
+- `~/.linkedin-buddy/linkedin-buddy/activity/*.events.jsonl`
 
 #### Tests
 
@@ -650,7 +650,7 @@ MCP should expose safe management and inspection flows, not a second daemon.
 #### Files
 
 - `packages/mcp/src/index.ts`
-- `packages/mcp/src/bin/linkedin-mcp.ts`
+- `packages/mcp/src/bin/linkedin-buddy-mcp.ts`
 
 #### MCP tool surface
 

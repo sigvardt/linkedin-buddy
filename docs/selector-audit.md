@@ -5,7 +5,7 @@ selector registry. It navigates across key pages, checks each selector group in
 primary-to-tertiary order, captures artifacts for failures, and writes a
 structured JSON report for humans and automation.
 
-The selector audit feature is also exported from `@linkedin-assistant/core` via
+The selector audit feature is also exported from `@linkedin-buddy/core` via
 `packages/core/src/index.ts`.
 
 For selector-locale configuration across the CLI, MCP server, and Core runtime,
@@ -22,22 +22,22 @@ see `docs/selector-locale.md`.
 
 ```bash
 # Human-readable summary with progress
-npm exec -w @linkedin-assistant/cli -- linkedin audit selectors --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin audit selectors --profile default
 
 # Verbose human-readable summary
-npm exec -w @linkedin-assistant/cli -- linkedin audit selectors --profile default --verbose
+npm exec -w @linkedin-buddy/cli -- linkedin audit selectors --profile default --verbose
 
 # JSON for CI, scripts, or agent workflows
-npm exec -w @linkedin-assistant/cli -- linkedin audit selectors --profile default --json
+npm exec -w @linkedin-buddy/cli -- linkedin audit selectors --profile default --json
 
 # Attach to an existing authenticated browser session
-npm exec -w @linkedin-assistant/cli -- linkedin audit selectors --profile default --cdp-url http://127.0.0.1:18800
+npm exec -w @linkedin-buddy/cli -- linkedin audit selectors --profile default --cdp-url http://127.0.0.1:18800
 
 # Prefer Danish selectors first, then fall back to English phrases
-npm exec -w @linkedin-assistant/cli -- linkedin audit selectors --profile default --selector-locale da
+npm exec -w @linkedin-buddy/cli -- linkedin audit selectors --profile default --selector-locale da
 
 # Show built-in help and doc pointer
-npm exec -w @linkedin-assistant/cli -- linkedin audit selectors --help
+npm exec -w @linkedin-buddy/cli -- linkedin audit selectors --help
 ```
 
 ## Reading the result
@@ -128,10 +128,10 @@ Available switches:
 - `--cdp-url <url>`: attach to an existing authenticated browser session
 - `--selector-locale <locale>`: prefer locale-aware UI text fallbacks (`en`, `da`); region tags like `da-DK` normalize to `da`
 
-You can also set `LINKEDIN_ASSISTANT_SELECTOR_LOCALE` to change the default
+You can also set `LINKEDIN_BUDDY_SELECTOR_LOCALE` to change the default
 selector locale. Unsupported values fall back to `en` with a warning. General
 tool state and artifacts still follow
-`LINKEDIN_ASSISTANT_HOME`.
+`LINKEDIN_BUDDY_HOME`.
 
 ### Core API
 
@@ -142,7 +142,7 @@ import {
   LinkedInSelectorAuditService,
   createCoreRuntime,
   createLinkedInSelectorAuditRegistry
-} from "@linkedin-assistant/core";
+} from "@linkedin-buddy/core";
 
 const runtime = createCoreRuntime({
   selectorLocale: "da-DK"

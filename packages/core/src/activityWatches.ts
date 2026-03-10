@@ -12,7 +12,7 @@ import type {
   WebhookDeliveryAttemptRow,
   WebhookSubscriptionRow
 } from "./db/database.js";
-import { LinkedInAssistantError } from "./errors.js";
+import { LinkedInBuddyError } from "./errors.js";
 import { resolveProfileUrl } from "./linkedinProfile.js";
 import type { JsonEventLogger } from "./logging.js";
 import {
@@ -163,7 +163,7 @@ function readText(value: unknown, label: string, required = false): string {
     return normalized;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `${label} is required.`,
     {
@@ -183,7 +183,7 @@ function readPositiveInteger(
   }
 
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a positive integer.`,
       {
@@ -197,7 +197,7 @@ function readPositiveInteger(
 
   const normalized = Math.floor(value);
   if (normalized <= 0 || normalized > max) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be between 1 and ${max}.`,
       {
@@ -218,7 +218,7 @@ function readHttpUrl(value: string, label: string): string {
   try {
     parsed = new URL(value);
   } catch (error) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a valid URL.`,
       {
@@ -231,7 +231,7 @@ function readHttpUrl(value: string, label: string): string {
   }
 
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must use http or https.`,
       {
@@ -271,7 +271,7 @@ function normalizeTarget(
     case "pending_invitations": {
       const direction = readText(target.direction, "target.direction") || "all";
       if (!["all", "sent", "received"].includes(direction)) {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
           "target.direction must be one of: all, sent, received."
         );
@@ -306,7 +306,7 @@ function parseCronField(
 ): Set<number> {
   const trimmed = value.trim();
   if (!trimmed) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "cron expressions may not contain blank fields."
     );
@@ -318,7 +318,7 @@ function parseCronField(
     const normalized =
       definition.allowSevenAsSunday && rawNumber === 7 ? 0 : rawNumber;
     if (normalized < definition.min || normalized > definition.max) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "cron expression contains a value outside the supported range."
       );
@@ -328,14 +328,14 @@ function parseCronField(
 
   const expandRange = (start: number, end: number, step: number): void => {
     if (step <= 0) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "cron step values must be greater than 0."
       );
     }
 
     if (end < start) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "cron ranges must end after they start."
       );
@@ -361,7 +361,7 @@ function parseCronField(
       const start = Number.parseInt(startText ?? "", 10);
       const end = Number.parseInt(endText ?? "", 10);
       if (!Number.isFinite(start) || !Number.isFinite(end)) {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
           "cron ranges must use whole numbers."
         );
@@ -373,7 +373,7 @@ function parseCronField(
 
     const numeric = Number.parseInt(rangePart, 10);
     if (!Number.isFinite(numeric)) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "cron fields must use numbers, ranges, lists, or step values."
       );
@@ -393,7 +393,7 @@ export function parseCronExpression(expression: string): ParsedCronExpression {
     .filter((part) => part.length > 0);
 
   if (parts.length !== 5) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "cron must use 5 fields: minute hour day-of-month month day-of-week."
     );
@@ -442,7 +442,7 @@ export function getNextCronOccurrenceMs(
     cursor.setMinutes(cursor.getMinutes() + 1);
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     "cron did not produce a next occurrence within one year."
   );
@@ -461,7 +461,7 @@ function resolveSchedule(input: {
   const cron = typeof input.cron === "string" ? input.cron.trim() : "";
 
   if (typeof intervalSeconds === "number" && cron.length > 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "Specify either intervalSeconds or cron, not both."
     );
@@ -598,7 +598,7 @@ function ensureWatchExists(
     return watch;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "TARGET_NOT_FOUND",
     `Activity watch ${watchId} was not found.`,
     {
@@ -616,7 +616,7 @@ function ensureWebhookSubscriptionExists(
     return subscription;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "TARGET_NOT_FOUND",
     `Webhook subscription ${subscriptionId} was not found.`,
     {
@@ -636,7 +636,7 @@ function resolveEventTypesForWatch(
 
   const invalid = eventTypes.filter((eventType) => !supported.includes(eventType));
   if (invalid.length > 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `Unsupported event types for ${kind}: ${invalid.join(", ")}.`,
       {
@@ -672,7 +672,7 @@ export class ActivityWatchesService {
   /** Creates and stores a new activity watch. */
   createWatch(input: CreateActivityWatchInput): ActivityWatch {
     if (!ACTIVITY_WATCH_KINDS.includes(input.kind)) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `kind must be one of: ${ACTIVITY_WATCH_KINDS.join(", ")}.`,
         {
@@ -709,7 +709,7 @@ export class ActivityWatchesService {
       schedule.pollIntervalMs !== null &&
       schedule.pollIntervalMs < effectiveMinPollIntervalMs
     ) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `intervalSeconds must be at least ${Math.ceil(effectiveMinPollIntervalMs / 1_000)} for ${input.kind}.`,
         {
@@ -956,9 +956,9 @@ export class ActivityWatchesService {
       .filter((watch) => watch.id !== currentWatchId).length;
 
     if (activeWatchCount >= this.config.maxConcurrentWatches) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        `Active watch limit reached for profile ${profileName}. Reduce active watches or raise LINKEDIN_ASSISTANT_ACTIVITY_MAX_CONCURRENT_WATCHES.`,
+        `Active watch limit reached for profile ${profileName}. Reduce active watches or raise LINKEDIN_BUDDY_ACTIVITY_MAX_CONCURRENT_WATCHES.`,
         {
           profile_name: profileName,
           active_watch_count: activeWatchCount,

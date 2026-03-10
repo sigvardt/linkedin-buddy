@@ -1,4 +1,4 @@
-import type { JsonLogEntry } from "@linkedin-assistant/core";
+import type { JsonLogEntry } from "@linkedin-buddy/core";
 
 type HeadlessLoginProgressLogEntry = Pick<JsonLogEntry, "event" | "payload">;
 

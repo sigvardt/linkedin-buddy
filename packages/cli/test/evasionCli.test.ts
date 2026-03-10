@@ -100,7 +100,7 @@ const evasionCliMocks = vi.hoisted(() => ({
   loggerLog: vi.fn()
 }));
 
-vi.mock("@linkedin-assistant/core", async () => {
+vi.mock("@linkedin-buddy/core", async () => {
   const actual = await import("../../core/src/index.js");
   return {
     ...actual,
@@ -117,7 +117,7 @@ describe("CLI evasion diagnostics output", () => {
 
   beforeEach(async () => {
     tempDir = await mkdtemp(path.join(os.tmpdir(), "linkedin-cli-evasion-"));
-    process.env.LINKEDIN_ASSISTANT_HOME = path.join(tempDir, "assistant-home");
+    process.env.LINKEDIN_BUDDY_HOME = path.join(tempDir, "assistant-home");
     process.exitCode = undefined;
     stdoutChunks = [];
     vi.clearAllMocks();
@@ -129,7 +129,7 @@ describe("CLI evasion diagnostics output", () => {
   afterEach(async () => {
     consoleLogSpy.mockRestore();
     process.exitCode = undefined;
-    delete process.env.LINKEDIN_ASSISTANT_HOME;
+    delete process.env.LINKEDIN_BUDDY_HOME;
     await rm(tempDir, { recursive: true, force: true });
   });
 

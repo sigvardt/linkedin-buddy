@@ -12,7 +12,7 @@ import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
 import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
 import type { ConfirmFailureArtifactConfig } from "./config.js";
-import { LinkedInAssistantError, asLinkedInAssistantError } from "./errors.js";
+import { LinkedInBuddyError, asLinkedInBuddyError } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
@@ -843,7 +843,7 @@ export function resolveProfileUrl(target: string | undefined): string {
     try {
       parsedUrl = new URL(trimmedTarget);
     } catch (error) {
-      throw asLinkedInAssistantError(
+      throw asLinkedInBuddyError(
         error,
         "ACTION_PRECONDITION_FAILED",
         "Profile URL must be a valid URL."
@@ -854,7 +854,7 @@ export function resolveProfileUrl(target: string | undefined): string {
     const isLinkedInDomain =
       hostname === "linkedin.com" || hostname.endsWith(".linkedin.com");
     if (!isLinkedInDomain || !parsedUrl.pathname.startsWith("/in/")) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "Profile URL must point to linkedin.com/in/.",
         { target: trimmedTarget }
@@ -934,7 +934,7 @@ function requireFilePath(value: string | undefined, label: string): string {
     return normalizedValue;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `${label} is required.`
   );
@@ -943,14 +943,14 @@ function requireFilePath(value: string | undefined, label: string): string {
 function normalizeAbsoluteUrl(value: string | undefined, label: string): string {
   const normalizedValue = normalizeText(value);
   if (!normalizedValue) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} is required.`
     );
   }
 
   if (!isAbsoluteUrl(normalizedValue)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be an absolute URL.`,
       {
@@ -964,7 +964,7 @@ function normalizeAbsoluteUrl(value: string | undefined, label: string): string 
     parsedUrl.hash = "";
     return parsedUrl.toString();
   } catch (error) {
-    throw asLinkedInAssistantError(
+    throw asLinkedInBuddyError(
       error,
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a valid URL.`
@@ -988,7 +988,7 @@ function normalizeLinkedInFeaturedPostUrl(value: string | undefined): string {
       pathname.includes("/newsletters/");
 
     if (!isLinkedInDomain || !isSupportedPostPath) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "Featured post URL must point to a LinkedIn post, article, or newsletter.",
         {
@@ -999,11 +999,11 @@ function normalizeLinkedInFeaturedPostUrl(value: string | undefined): string {
 
     return parsedUrl.toString();
   } catch (error) {
-    if (error instanceof LinkedInAssistantError) {
+    if (error instanceof LinkedInBuddyError) {
       throw error;
     }
 
-    throw asLinkedInAssistantError(
+    throw asLinkedInBuddyError(
       error,
       "ACTION_PRECONDITION_FAILED",
       "Featured post URL must be a valid LinkedIn URL."
@@ -1024,7 +1024,7 @@ async function stagePreparedUploadArtifact(
   try {
     canonicalPath = realpathSync(requestedPath);
   } catch (error) {
-    throw asLinkedInAssistantError(
+    throw asLinkedInBuddyError(
       error,
       "ACTION_PRECONDITION_FAILED",
       `${label} file does not exist.`
@@ -1033,7 +1033,7 @@ async function stagePreparedUploadArtifact(
 
   const stats = statSync(canonicalPath);
   if (!stats.isFile()) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} filePath must point to a file.`,
       {
@@ -1043,7 +1043,7 @@ async function stagePreparedUploadArtifact(
   }
 
   if (stats.size <= 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} file must not be empty.`,
       {
@@ -1053,7 +1053,7 @@ async function stagePreparedUploadArtifact(
   }
 
   if (stats.size > MAX_PROFILE_UPLOAD_BYTES) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} file exceeds the supported size limit.`,
       {
@@ -1066,7 +1066,7 @@ async function stagePreparedUploadArtifact(
 
   const extension = path.extname(canonicalPath).toLowerCase();
   if (!allowedExtensions.some((candidate) => candidate === extension)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} file type is not supported.`,
       {
@@ -1144,7 +1144,7 @@ async function resolvePreparedUploadArtifact(
     expectedMimeType.length === 0 ||
     !Number.isFinite(expectedSizeBytes)
   ) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} payload is missing staged upload details.`
     );
@@ -1152,7 +1152,7 @@ async function resolvePreparedUploadArtifact(
 
   const normalizedAbsolutePath = path.resolve(absolutePath);
   if (!isPathWithinParent(getArtifactsRootDir(runtime.artifacts), normalizedAbsolutePath)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} upload artifact escapes the assistant artifacts directory.`,
       {
@@ -1163,7 +1163,7 @@ async function resolvePreparedUploadArtifact(
 
   const stats = statSync(normalizedAbsolutePath);
   if (!stats.isFile()) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} upload artifact is missing.`,
       {
@@ -1174,7 +1174,7 @@ async function resolvePreparedUploadArtifact(
 
   const actualExtension = path.extname(normalizedAbsolutePath).toLowerCase();
   if (!allowedExtensions.some((candidate) => candidate === actualExtension)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} upload artifact type is no longer supported.`,
       {
@@ -1186,7 +1186,7 @@ async function resolvePreparedUploadArtifact(
   }
 
   if (stats.size !== expectedSizeBytes) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} upload artifact size no longer matches the prepared file.`,
       {
@@ -1199,7 +1199,7 @@ async function resolvePreparedUploadArtifact(
 
   const actualSha256 = await computeFileSha256(normalizedAbsolutePath);
   if (actualSha256 !== expectedSha256) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} upload artifact contents changed after preparation.`,
       {
@@ -1250,7 +1250,7 @@ function normalizeProfileFeaturedItemKind(
     case "newsletter":
       return "post";
     default:
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `kind must be one of: ${LINKEDIN_PROFILE_FEATURED_ITEM_KINDS.join(", ")}.`,
         {
@@ -1824,7 +1824,7 @@ function normalizeProfileSectionType(
     return section;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `section must be one of: ${LINKEDIN_PROFILE_SECTION_TYPES.join(", ")}.`,
     { provided_section: value }
@@ -2019,7 +2019,7 @@ function normalizeEditableValue(value: unknown): NormalizedEditableValue {
     return String(value);
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     "Editable field values must be strings, booleans, or finite numbers."
   );
@@ -2036,7 +2036,7 @@ function normalizeEditableValues(
   for (const [rawKey, rawValue] of Object.entries(values)) {
     const definition = fieldMap.get(normalizeFieldKey(rawKey));
     if (!definition) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `Unsupported ${label} field "${rawKey}".`,
         {
@@ -2055,7 +2055,7 @@ function normalizeEditableValues(
   }
 
   if (Object.keys(normalized).length === 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} values must include at least one non-empty field.`
     );
@@ -2123,7 +2123,7 @@ function normalizeProfileSectionItemMatch(
   }
 
   if (decodedItem && decodedItem.section !== section) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "itemId belongs to a different profile section.",
       {
@@ -2594,7 +2594,7 @@ async function openIntroEditDialog(
   );
   const resolved = await findFirstVisibleLocator(editCandidates);
   if (!resolved) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
       "Could not find the intro edit control on the profile page."
     );
@@ -2616,7 +2616,7 @@ async function openGlobalAddSectionDialog(
   const resolved = await findFirstVisibleLocator(addCandidates);
 
   if (!resolved) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
       "Could not find the global add profile section control."
     );
@@ -2666,7 +2666,7 @@ async function openSectionCreateDialog(
 
   const resolved = await findFirstVisibleLocator(sectionCandidates);
   if (!resolved) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
       `Could not find an add flow for the ${getSectionDisplayLabel(section, selectorLocale)} section.`
     );
@@ -2685,7 +2685,7 @@ async function openExistingSectionItemDialog(
 ): Promise<Locator> {
   const sectionRoot = await findProfileSectionRoot(page, section, selectorLocale);
   if (!sectionRoot) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
       `Could not find the ${getSectionDisplayLabel(section, selectorLocale)} section on the profile page.`
     );
@@ -2693,7 +2693,7 @@ async function openExistingSectionItemDialog(
 
   const itemLocator = await findMatchingSectionItemLocator(sectionRoot, match);
   if (!itemLocator) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
       `Could not find a matching item in the ${getSectionDisplayLabel(section, selectorLocale)} section.`,
       {
@@ -2720,7 +2720,7 @@ async function openExistingSectionItemDialog(
   );
   const resolvedMore = await findFirstVisibleLocator(moreCandidates);
   if (!resolvedMore) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
       `Could not find edit controls for the selected ${getSectionDisplayLabel(section, selectorLocale)} item.`
     );
@@ -2738,7 +2738,7 @@ async function openExistingSectionItemDialog(
   ];
   const resolvedMenuEdit = await findFirstVisibleLocator(editMenuCandidates);
   if (!resolvedMenuEdit) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
       `Could not find the edit menu entry for the selected ${getSectionDisplayLabel(section, selectorLocale)} item.`
     );
@@ -2780,7 +2780,7 @@ async function fillDialogField(
 ): Promise<void> {
   const locator = await findDialogFieldLocator(dialog, definition);
   if (!locator) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
       `Could not find the "${definition.key}" field in the profile editor.`
     );
@@ -2842,7 +2842,7 @@ async function clickSaveInDialog(
   ];
   const resolved = await findFirstVisibleLocator(saveCandidates);
   if (!resolved) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
       "Could not find the save button in the profile editor dialog."
     );
@@ -2865,7 +2865,7 @@ async function clickDeleteInDialog(
   );
   const resolvedDelete = await findFirstVisibleLocator(deleteCandidates);
   if (!resolvedDelete) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
       "Could not find the delete button in the profile editor dialog."
     );
@@ -3329,7 +3329,7 @@ async function openFeaturedAddSurface(
 
   const resolvedFeatured = await findFirstVisibleLocator(featuredCandidates);
   if (!resolvedFeatured) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
       "Could not find the Featured section add flow on the profile page."
     );
@@ -3366,7 +3366,7 @@ async function selectFeaturedAddOption(
 
   const resolved = await findFirstVisibleLocator(candidates);
   if (!resolved) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
       `Could not find the Featured ${kind} add option.`
     );
@@ -3383,7 +3383,7 @@ async function openFeaturedEditDialog(
 ): Promise<Locator> {
   const featuredRoot = await findFeaturedSectionRoot(page, selectorLocale);
   if (!featuredRoot) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
       "Could not find the Featured section on the profile page."
     );
@@ -3396,7 +3396,7 @@ async function openFeaturedEditDialog(
   );
   const resolvedEdit = await findFirstVisibleLocator(editCandidates);
   if (!resolvedEdit) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
       "Could not find the Featured edit control on the profile page."
     );
@@ -3468,7 +3468,7 @@ async function selectFeaturedPostInDialog(dialog: Locator, postUrl: string): Pro
     }
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "TARGET_NOT_FOUND",
     "Could not find the requested post in the Featured post picker.",
     {
@@ -3512,7 +3512,7 @@ async function addFeaturedMedia(
   );
 
   if (!uploadResult.uploaded) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
       "Could not find a file upload control for the Featured media flow."
     );
@@ -3548,7 +3548,7 @@ async function openFeaturedItemMenu(
 ): Promise<Locator> {
   const featuredRoot = await findFeaturedSectionRoot(page, selectorLocale);
   if (!featuredRoot) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
       "Could not find the Featured section on the profile page."
     );
@@ -3556,7 +3556,7 @@ async function openFeaturedItemMenu(
 
   const itemLocator = await findMatchingFeaturedItemLocator(featuredRoot, match);
   if (!itemLocator) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
       "Could not find a matching item in the Featured section.",
       {
@@ -3572,7 +3572,7 @@ async function openFeaturedItemMenu(
   );
   const resolvedMore = await findFirstVisibleLocator(moreCandidates);
   if (!resolvedMore) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
       "Could not find the Featured item actions menu."
     );
@@ -3598,7 +3598,7 @@ async function removeFeaturedItem(
   ];
   const resolvedRemove = await findFirstVisibleLocator(removeCandidates);
   if (!resolvedRemove) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
       "Could not find the remove-from-featured action for the selected item."
     );
@@ -3677,7 +3677,7 @@ async function dragLocatorToTarget(
   const targetBox = await target.boundingBox();
 
   if (!sourceBox || !targetBox) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
       "Could not resolve drag handles while reordering Featured items."
     );
@@ -3706,7 +3706,7 @@ async function reorderFeaturedItems(
   const decodedItems = itemIds.map((itemId) => {
     const decoded = decodeProfileFeaturedItemId(itemId);
     if (!decoded) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "Featured reorder requires itemIds returned by view_editable.featured.items.",
         {
@@ -3729,7 +3729,7 @@ async function reorderFeaturedItems(
     };
     const locatedRow = await findMatchingFeaturedDialogRow(dialog, match);
     if (!locatedRow) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "TARGET_NOT_FOUND",
         "Could not find one of the requested Featured items in the reorder dialog.",
         {
@@ -3803,7 +3803,7 @@ async function openProfileMediaAndUpload(
     }
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "TARGET_NOT_FOUND",
     `Could not find the LinkedIn profile ${kind} upload controls.`
   );
@@ -3816,7 +3816,7 @@ function getPayloadRecord(
 ): Record<string, unknown> {
   const value = payload[key];
   if (!isRecord(value)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} payload is missing a valid ${key} object.`
     );
@@ -3873,7 +3873,7 @@ async function executeUploadProfileMedia(
           file_name: upload.file_name
         },
         mapError: (error) =>
-          asLinkedInAssistantError(
+          asLinkedInBuddyError(
             error,
             "UNKNOWN",
             `Failed to execute LinkedIn profile ${kind} upload.`
@@ -3964,7 +3964,7 @@ async function executeAddFeaturedItem(
           ...(upload ? { file_name: upload.file_name } : {})
         },
         mapError: (error) =>
-          asLinkedInAssistantError(
+          asLinkedInBuddyError(
             error,
             "UNKNOWN",
             `Failed to add a ${kind} item to the LinkedIn Featured section.`
@@ -3976,7 +3976,7 @@ async function executeAddFeaturedItem(
             await addFeaturedLink(page, runtime.selectorLocale, url ?? "", title, description);
           } else if (kind === "media") {
             if (!upload) {
-              throw new LinkedInAssistantError(
+              throw new LinkedInBuddyError(
                 "ACTION_PRECONDITION_FAILED",
                 "Featured media add is missing the staged upload payload."
               );
@@ -4023,7 +4023,7 @@ async function executeRemoveFeaturedItem(
   );
 
   if (!match) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "Removing a Featured item requires itemId or match details."
     );
@@ -4056,7 +4056,7 @@ async function executeRemoveFeaturedItem(
           ...(match.title ? { title: match.title } : {})
         },
         mapError: (error) =>
-          asLinkedInAssistantError(
+          asLinkedInBuddyError(
             error,
             "UNKNOWN",
             "Failed to remove a LinkedIn Featured item."
@@ -4100,7 +4100,7 @@ async function executeReorderFeaturedItems(
     : [];
 
   if (itemIds.length === 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "Featured reorder payload is missing item_ids."
     );
@@ -4131,7 +4131,7 @@ async function executeReorderFeaturedItems(
           item_count: itemIds.length
         },
         mapError: (error) =>
-          asLinkedInAssistantError(
+          asLinkedInBuddyError(
             error,
             "UNKNOWN",
             "Failed to reorder LinkedIn Featured items."
@@ -4193,7 +4193,7 @@ async function executeUpdateProfileIntro(
           updated_fields: Object.keys(updates)
         },
         mapError: (error) =>
-          asLinkedInAssistantError(
+          asLinkedInBuddyError(
             error,
             "UNKNOWN",
             "Failed to execute LinkedIn profile intro update."
@@ -4274,7 +4274,7 @@ async function executeUpsertProfileSectionItem(
           updated_fields: Object.keys(values)
         },
         mapError: (error) =>
-          asLinkedInAssistantError(
+          asLinkedInBuddyError(
             error,
             "UNKNOWN",
             `Failed to execute LinkedIn ${section} section upsert.`
@@ -4370,7 +4370,7 @@ async function executeRemoveProfileSectionItem(
           section
         },
         mapError: (error) =>
-          asLinkedInAssistantError(
+          asLinkedInBuddyError(
             error,
             "UNKNOWN",
             `Failed to execute LinkedIn ${section} section removal.`
@@ -4384,7 +4384,7 @@ async function executeRemoveProfileSectionItem(
             await clickSaveInDialog(page, dialog, runtime.selectorLocale);
           } else {
             if (!match) {
-              throw new LinkedInAssistantError(
+              throw new LinkedInBuddyError(
                 "ACTION_PRECONDITION_FAILED",
                 `Removing a ${section} item requires itemId or match details.`
               );
@@ -4602,10 +4602,10 @@ export class LinkedInProfileService {
         }
       );
     } catch (error) {
-      if (error instanceof LinkedInAssistantError) {
+      if (error instanceof LinkedInBuddyError) {
         throw error;
       }
-      throw asLinkedInAssistantError(
+      throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
         "Failed to view LinkedIn profile."
@@ -4659,10 +4659,10 @@ export class LinkedInProfileService {
         }
       );
     } catch (error) {
-      if (error instanceof LinkedInAssistantError) {
+      if (error instanceof LinkedInBuddyError) {
         throw error;
       }
-      throw asLinkedInAssistantError(
+      throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
         "Failed to inspect the editable LinkedIn profile view."
@@ -4757,7 +4757,7 @@ export class LinkedInProfileService {
     const match = normalizeProfileSectionItemMatch(input.match, input.itemId, section);
 
     if (section !== "about" && !input.itemId && !match) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `Removing a ${section} section item requires itemId or match details.`
       );
@@ -4915,7 +4915,7 @@ export class LinkedInProfileService {
     const match = normalizeProfileFeaturedItemMatch(input.match, input.itemId);
 
     if (!input.itemId && !match) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "Removing a Featured item requires itemId or match details."
       );
@@ -4952,14 +4952,14 @@ export class LinkedInProfileService {
       .filter((itemId) => itemId.length > 0);
 
     if (itemIds.length === 0) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "Featured reorder requires at least one itemId."
       );
     }
 
     if (new Set(itemIds).size !== itemIds.length) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "Featured reorder itemIds must be unique."
       );
@@ -4967,7 +4967,7 @@ export class LinkedInProfileService {
 
     for (const itemId of itemIds) {
       if (!decodeProfileFeaturedItemId(itemId)) {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
           "Featured reorder requires itemIds returned by view_editable.featured.items.",
           {

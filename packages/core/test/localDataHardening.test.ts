@@ -85,8 +85,8 @@ describe("local data deletion hardening", () => {
   let previousAssistantHome: string | undefined;
 
   beforeEach(async () => {
-    previousAssistantHome = process.env.LINKEDIN_ASSISTANT_HOME;
-    delete process.env.LINKEDIN_ASSISTANT_HOME;
+    previousAssistantHome = process.env.LINKEDIN_BUDDY_HOME;
+    delete process.env.LINKEDIN_BUDDY_HOME;
 
     tempDir = await mkdtemp(path.join(os.tmpdir(), "linkedin-local-data-hardening-"));
     baseDir = path.join(tempDir, "assistant-home");
@@ -100,9 +100,9 @@ describe("local data deletion hardening", () => {
     vi.restoreAllMocks();
 
     if (typeof previousAssistantHome === "string") {
-      process.env.LINKEDIN_ASSISTANT_HOME = previousAssistantHome;
+      process.env.LINKEDIN_BUDDY_HOME = previousAssistantHome;
     } else {
-      delete process.env.LINKEDIN_ASSISTANT_HOME;
+      delete process.env.LINKEDIN_BUDDY_HOME;
     }
 
     await rm(tempDir, { recursive: true, force: true });

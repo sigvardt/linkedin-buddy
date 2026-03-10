@@ -3,11 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@linkedin-assistant/core", async () => {
+vi.mock("@linkedin-buddy/core", async () => {
   return await import("../../core/src/index.js");
 });
 
-import { loadWriteValidationAccounts } from "@linkedin-assistant/core";
+import { loadWriteValidationAccounts } from "@linkedin-buddy/core";
 import { runCli } from "../src/bin/linkedin.js";
 
 function createAccountsAddArgv(
@@ -58,7 +58,7 @@ describe("write validation CLI integration", () => {
   beforeEach(async () => {
     tempDir = await mkdtemp(path.join(os.tmpdir(), "linkedin-cli-write-validation-"));
     assistantHome = path.join(tempDir, "assistant-home");
-    process.env.LINKEDIN_ASSISTANT_HOME = assistantHome;
+    process.env.LINKEDIN_BUDDY_HOME = assistantHome;
     process.exitCode = undefined;
     stderrChunks = [];
     consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -75,7 +75,7 @@ describe("write validation CLI integration", () => {
     consoleLogSpy.mockRestore();
     stderrWriteSpy.mockRestore();
     process.exitCode = undefined;
-    delete process.env.LINKEDIN_ASSISTANT_HOME;
+    delete process.env.LINKEDIN_BUDDY_HOME;
     await rm(tempDir, { force: true, recursive: true });
   });
 
@@ -140,7 +140,7 @@ describe("write validation CLI integration", () => {
     await writeFile(configPath, "{ invalid-json\n", "utf8");
 
     await expect(runCli(createAccountsAddArgv("secondary"))).rejects.toThrow(
-      `Failed to parse LinkedIn assistant config file at ${configPath}.`
+      `Failed to parse LinkedIn Buddy config file at ${configPath}.`
     );
 
     expect(stderrChunks).toEqual([]);

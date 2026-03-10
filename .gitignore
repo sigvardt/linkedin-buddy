@@ -11,7 +11,7 @@ dist
 *.tsbuildinfo
 reports/
 
-.linkedin-assistant
+.linkedin-buddy
 artifacts/
 profiles/
 keepalive/

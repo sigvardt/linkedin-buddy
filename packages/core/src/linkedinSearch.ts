@@ -1,6 +1,6 @@
 import { type BrowserContext, type Page } from "playwright-core";
 import type { LinkedInAuthService } from "./auth/session.js";
-import { LinkedInAssistantError, asLinkedInAssistantError } from "./errors.js";
+import { LinkedInBuddyError, asLinkedInBuddyError } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
@@ -145,7 +145,7 @@ export class LinkedInSearchService {
     const query = normalizeText(input.query);
     const limit = readSearchLimit(input.limit);
     if (!query) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "query is required."
       );
@@ -264,10 +264,10 @@ export class LinkedInSearchService {
         count: results.length
       };
     } catch (error) {
-      if (error instanceof LinkedInAssistantError) {
+      if (error instanceof LinkedInBuddyError) {
         throw error;
       }
-      throw asLinkedInAssistantError(
+      throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
         "Failed to search LinkedIn people."
@@ -282,7 +282,7 @@ export class LinkedInSearchService {
     const query = normalizeText(input.query);
     const limit = readSearchLimit(input.limit);
     if (!query) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "query is required."
       );
@@ -381,10 +381,10 @@ export class LinkedInSearchService {
         count: results.length
       };
     } catch (error) {
-      if (error instanceof LinkedInAssistantError) {
+      if (error instanceof LinkedInBuddyError) {
         throw error;
       }
-      throw asLinkedInAssistantError(
+      throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
         "Failed to search LinkedIn companies."
@@ -397,7 +397,7 @@ export class LinkedInSearchService {
     const query = normalizeText(input.query);
     const limit = readSearchLimit(input.limit);
     if (!query) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "query is required."
       );
@@ -518,10 +518,10 @@ export class LinkedInSearchService {
         count: results.length
       };
     } catch (error) {
-      if (error instanceof LinkedInAssistantError) {
+      if (error instanceof LinkedInBuddyError) {
         throw error;
       }
-      throw asLinkedInAssistantError(
+      throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
         "Failed to search LinkedIn jobs."

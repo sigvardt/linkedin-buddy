@@ -5,7 +5,7 @@ import {
   type PrivacyConfig
 } from "./privacy.js";
 
-export const LINKEDIN_ASSISTANT_ERROR_CODES = [
+export const LINKEDIN_BUDDY_ERROR_CODES = [
   "AUTH_REQUIRED",
   "CAPTCHA_OR_CHALLENGE",
   "RATE_LIMITED",
@@ -17,34 +17,34 @@ export const LINKEDIN_ASSISTANT_ERROR_CODES = [
   "UNKNOWN"
 ] as const;
 
-export type LinkedInAssistantErrorCode =
-  (typeof LINKEDIN_ASSISTANT_ERROR_CODES)[number];
+export type LinkedInBuddyErrorCode =
+  (typeof LINKEDIN_BUDDY_ERROR_CODES)[number];
 
-export interface LinkedInAssistantErrorPayload {
-  code: LinkedInAssistantErrorCode;
+export interface LinkedInBuddyErrorPayload {
+  code: LinkedInBuddyErrorCode;
   message: string;
   details: Record<string, unknown>;
 }
 
-export class LinkedInAssistantError extends Error {
-  readonly code: LinkedInAssistantErrorCode;
+export class LinkedInBuddyError extends Error {
+  readonly code: LinkedInBuddyErrorCode;
   readonly details: Record<string, unknown>;
 
   constructor(
-    code: LinkedInAssistantErrorCode,
+    code: LinkedInBuddyErrorCode,
     message: string,
     details: Record<string, unknown> = {},
     options?: ErrorOptions
   ) {
     super(message, options);
-    this.name = "LinkedInAssistantError";
+    this.name = "LinkedInBuddyError";
     this.code = code;
     this.details = details;
   }
 }
 
 function summarizeUnknownError(error: unknown): Record<string, unknown> {
-  if (error instanceof LinkedInAssistantError) {
+  if (error instanceof LinkedInBuddyError) {
     return error.details;
   }
 
@@ -59,13 +59,13 @@ function summarizeUnknownError(error: unknown): Record<string, unknown> {
   };
 }
 
-export function toLinkedInAssistantErrorPayload(
+export function toLinkedInBuddyErrorPayload(
   error: unknown,
   privacy?: Partial<PrivacyConfig>
-): LinkedInAssistantErrorPayload {
+): LinkedInBuddyErrorPayload {
   const privacyConfig = resolvePrivacyConfig(privacy);
 
-  if (error instanceof LinkedInAssistantError) {
+  if (error instanceof LinkedInBuddyError) {
     return {
       code: error.code,
       message:
@@ -105,19 +105,19 @@ export function toLinkedInAssistantErrorPayload(
   };
 }
 
-export { toLinkedInAssistantErrorPayload as toAssistantErrorPayload };
+export { toLinkedInBuddyErrorPayload as toAssistantErrorPayload };
 
-export function asLinkedInAssistantError(
+export function asLinkedInBuddyError(
   error: unknown,
-  fallbackCode: LinkedInAssistantErrorCode = "UNKNOWN",
-  fallbackMessage: string = "Unexpected LinkedIn assistant error."
-): LinkedInAssistantError {
-  if (error instanceof LinkedInAssistantError) {
+  fallbackCode: LinkedInBuddyErrorCode = "UNKNOWN",
+  fallbackMessage: string = "Unexpected LinkedIn Buddy error."
+): LinkedInBuddyError {
+  if (error instanceof LinkedInBuddyError) {
     return error;
   }
 
   if (error instanceof Error) {
-    return new LinkedInAssistantError(
+    return new LinkedInBuddyError(
       fallbackCode,
       error.message || fallbackMessage,
       summarizeUnknownError(error),
@@ -125,7 +125,7 @@ export function asLinkedInAssistantError(
     );
   }
 
-  return new LinkedInAssistantError(
+  return new LinkedInBuddyError(
     fallbackCode,
     fallbackMessage,
     summarizeUnknownError(error)

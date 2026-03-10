@@ -8,7 +8,7 @@ Epic: #209
 
 This audit compares the current LinkedIn web feature surface against the MCP
 server surface implemented in `packages/mcp/src/index.ts` and
-`packages/mcp/src/bin/linkedin-mcp.ts`.
+`packages/mcp/src/bin/linkedin-buddy-mcp.ts`.
 
 The goal is not to restate every LinkedIn UI affordance. Instead, it groups the
 missing MCP coverage into implementation-sized tracker issues so future work can
@@ -83,7 +83,7 @@ land in focused slices.
 Local code:
 
 - `packages/mcp/src/index.ts`
-- `packages/mcp/src/bin/linkedin-mcp.ts`
+- `packages/mcp/src/bin/linkedin-buddy-mcp.ts`
 - `packages/core/src/linkedinProfile.ts`
 - `packages/core/src/linkedinInbox.ts`
 - `packages/core/src/linkedinConnections.ts`

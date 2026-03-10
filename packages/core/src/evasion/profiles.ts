@@ -1,4 +1,4 @@
-import { LinkedInAssistantError } from "../errors.js";
+import { LinkedInBuddyError } from "../errors.js";
 import type {
   EvasionConfigSource,
   EvasionFeatureName,
@@ -145,7 +145,7 @@ export function isEvasionLevel(value: string): value is EvasionLevel {
  *
  * @example
  * ```ts
- * const level = resolveEvasionLevel(process.env.LINKEDIN_ASSISTANT_EVASION_LEVEL);
+ * const level = resolveEvasionLevel(process.env.LINKEDIN_BUDDY_EVASION_LEVEL);
  * ```
  */
 export function resolveEvasionLevel(
@@ -162,7 +162,7 @@ export function resolveEvasionLevel(
     return normalized;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `${sourceLabel} must be one of ${EVASION_LEVELS.join(", ")}.`,
     {

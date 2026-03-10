@@ -1,5 +1,5 @@
 {
-  "name": "linkedin-owa-agentools",
+  "name": "linkedin-buddy",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,6 +9,14 @@
   "workspaces": [
     "packages/*"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sigvardt/linkedin-buddy.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sigvardt/linkedin-buddy/issues"
+  },
+  "homepage": "https://github.com/sigvardt/linkedin-buddy#readme",
   "scripts": {
     "lint": "eslint .",
     "scan:security": "node ./scripts/security-audit.mjs",

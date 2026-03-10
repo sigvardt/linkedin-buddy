@@ -16,9 +16,9 @@ import {
   type ConfigPaths
 } from "./config.js";
 import {
-  LinkedInAssistantError,
-  asLinkedInAssistantError,
-  type LinkedInAssistantErrorCode
+  LinkedInBuddyError,
+  asLinkedInBuddyError,
+  type LinkedInBuddyErrorCode
 } from "./errors.js";
 import { JsonEventLogger, type JsonLogEntry } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
@@ -129,7 +129,7 @@ export interface ReadOnlyValidationSelectorResult {
 export interface ReadOnlyValidationOperationResult {
   attempt_count: number;
   completed_at: string;
-  error_code?: LinkedInAssistantErrorCode;
+  error_code?: LinkedInBuddyErrorCode;
   error_message?: string;
   failed_count: number;
   final_url: string;
@@ -472,7 +472,7 @@ function resolvePositiveInt(
   }
 
   if (!isFinitePositiveNumber(value)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a positive integer.`
     );
@@ -491,7 +491,7 @@ function resolveNonNegativeInt(
   }
 
   if (!isFiniteNonNegativeNumber(value)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a non-negative integer.`
     );
@@ -503,14 +503,14 @@ function resolveNonNegativeInt(
 function validateSessionName(sessionName: string | undefined): string {
   const normalized = (sessionName ?? "default").trim();
   if (normalized.length === 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "sessionName must not be empty."
     );
   }
 
   if (normalized === "." || normalized === ".." || /[\\/]/u.test(normalized)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "sessionName must not contain path separators or relative path segments.",
       {
@@ -530,7 +530,7 @@ function validateRunReadOnlyValidationOptions(
   }
 
   if (typeof options !== "object" || options === null || Array.isArray(options)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "read-only live validation options must be an object.",
       {
@@ -543,21 +543,21 @@ function validateRunReadOnlyValidationOptions(
     typeof options.onBeforeOperation !== "undefined" &&
     typeof options.onBeforeOperation !== "function"
   ) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "onBeforeOperation must be a function when provided."
     );
   }
 
   if (typeof options.onLog !== "undefined" && typeof options.onLog !== "function") {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "onLog must be a function when provided."
     );
   }
 
   if (typeof options.baseDir !== "undefined" && typeof options.baseDir !== "string") {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "baseDir must be a string when provided."
     );
@@ -567,7 +567,7 @@ function validateRunReadOnlyValidationOptions(
     typeof options.sessionName !== "undefined" &&
     typeof options.sessionName !== "string"
   ) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "sessionName must be a string when provided."
     );
@@ -648,7 +648,7 @@ function getOperationDefinition(
   const definition = READ_ONLY_OPERATION_MAP.get(operationId);
 
   if (!definition) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `Unsupported read-only live validation operation: ${operationId}.`
     );
@@ -676,11 +676,11 @@ async function assertHealthyStoredSession(
   const challengeDetected =
     status.currentUrl.includes("/checkpoint") || status.currentUrl.includes("/challenge");
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     challengeDetected ? "CAPTCHA_OR_CHALLENGE" : "AUTH_REQUIRED",
     challengeDetected
-      ? `Stored LinkedIn session "${sessionName}" triggered a challenge while running ${operationId}. Capture a fresh session with "owa auth:session --session ${sessionName}" and retry.`
-      : `Stored LinkedIn session "${sessionName}" is missing or expired while running ${operationId}. Capture a fresh session with "owa auth:session --session ${sessionName}" and retry.`,
+      ? `Stored LinkedIn session "${sessionName}" triggered a challenge while running ${operationId}. Capture a fresh session with "buddy auth:session --session ${sessionName}" and retry.`
+      : `Stored LinkedIn session "${sessionName}" is missing or expired while running ${operationId}. Capture a fresh session with "buddy auth:session --session ${sessionName}" and retry.`,
     {
       checked_at: status.checkedAt,
       current_url: status.currentUrl,
@@ -700,7 +700,7 @@ function assertExpectedOperationUrl(
   try {
     parsedUrl = new URL(currentUrl);
   } catch (error) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "NETWORK_ERROR",
       `Unexpected redirect while running ${definition.id}: ${currentUrl}`,
       {
@@ -714,7 +714,7 @@ function assertExpectedOperationUrl(
   }
 
   if (!isAllowedLinkedInHost(parsedUrl.hostname) || !definition.expectedPath.test(parsedUrl.pathname)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "NETWORK_ERROR",
       `Unexpected redirect while running ${definition.id}. Expected a LinkedIn ${definition.id} page but reached ${currentUrl}.`,
       {
@@ -756,7 +756,7 @@ function createNavigationStatusError(
   definition: ReadOnlyOperationDefinition,
   status: number,
   currentUrl: string
-): LinkedInAssistantError {
+): LinkedInBuddyError {
   const details = {
     current_url: currentUrl,
     http_status: status,
@@ -764,7 +764,7 @@ function createNavigationStatusError(
   };
 
   if (status === 401 || status === 403) {
-    return new LinkedInAssistantError(
+    return new LinkedInBuddyError(
       "AUTH_REQUIRED",
       `LinkedIn rejected the stored session while loading ${definition.id}. Capture a fresh session and rerun the live validation.`,
       details
@@ -772,7 +772,7 @@ function createNavigationStatusError(
   }
 
   if (status === 429 || status === 999) {
-    return new LinkedInAssistantError(
+    return new LinkedInBuddyError(
       "RATE_LIMITED",
       `LinkedIn temporarily rate limited the ${definition.id} page (HTTP ${status}). Wait for the session to cool down, then rerun the live validation.`,
       details
@@ -780,14 +780,14 @@ function createNavigationStatusError(
   }
 
   if (status >= 500) {
-    return new LinkedInAssistantError(
+    return new LinkedInBuddyError(
       "NETWORK_ERROR",
       `LinkedIn returned HTTP ${status} while loading ${definition.id}. Check connectivity and rerun the live validation.`,
       details
     );
   }
 
-  return new LinkedInAssistantError(
+  return new LinkedInBuddyError(
     "UNKNOWN",
     `LinkedIn returned HTTP ${status} while loading ${definition.id}. Refresh the session and rerun the live validation.`,
     details
@@ -806,8 +806,8 @@ function normalizeOperationError(
   timeoutMs: number,
   currentUrl: string,
   error: unknown
-): LinkedInAssistantError {
-  if (error instanceof LinkedInAssistantError) {
+): LinkedInBuddyError {
+  if (error instanceof LinkedInBuddyError) {
     return error;
   }
 
@@ -818,7 +818,7 @@ function normalizeOperationError(
   };
 
   if (isTimeoutError(error)) {
-    return new LinkedInAssistantError(
+    return new LinkedInBuddyError(
       "TIMEOUT",
       `Timed out after ${timeoutMs}ms while running ${definition.id}. LinkedIn may be slow or the page may be incomplete; rerun the live validation or increase the timeout.`,
       details,
@@ -827,7 +827,7 @@ function normalizeOperationError(
   }
 
   if (isNetworkError(error)) {
-    return new LinkedInAssistantError(
+    return new LinkedInBuddyError(
       "NETWORK_ERROR",
       `Could not load the ${definition.id} page because the browser or network connection failed: ${getErrorMessage(error)}. Check connectivity and rerun the live validation.`,
       details,
@@ -835,7 +835,7 @@ function normalizeOperationError(
     );
   }
 
-  return new LinkedInAssistantError(
+  return new LinkedInBuddyError(
     "UNKNOWN",
     `Live validation failed while running ${definition.id}: ${getErrorMessage(error)}. Refresh the stored session or rerun the live validation.`,
     details,
@@ -843,15 +843,15 @@ function normalizeOperationError(
   );
 }
 
-function isRetryableOperationError(code: LinkedInAssistantErrorCode): boolean {
+function isRetryableOperationError(code: LinkedInBuddyErrorCode): boolean {
   return code === "NETWORK_ERROR" || code === "TIMEOUT";
 }
 
-function isBlockingOperationErrorCode(code: LinkedInAssistantErrorCode): boolean {
+function isBlockingOperationErrorCode(code: LinkedInBuddyErrorCode): boolean {
   return code === "AUTH_REQUIRED" || code === "CAPTCHA_OR_CHALLENGE" || code === "RATE_LIMITED";
 }
 
-function getOperationAttemptCount(error: LinkedInAssistantError): number {
+function getOperationAttemptCount(error: LinkedInBuddyError): number {
   const attemptCount = error.details.attempt_count;
   return typeof attemptCount === "number" && Number.isInteger(attemptCount) && attemptCount > 0
     ? attemptCount
@@ -992,14 +992,14 @@ export class ReadOnlyOperationRateLimiter {
     }
   ) {
     if (!isFinitePositiveNumber(maxRequests)) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "maxRequests must be a positive number."
       );
     }
 
     if (!isFinitePositiveNumber(minIntervalMs)) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "minIntervalMs must be a positive number."
       );
@@ -1012,7 +1012,7 @@ export class ReadOnlyOperationRateLimiter {
    */
   async waitTurn(operationId: LinkedInReadOnlyValidationOperationId): Promise<void> {
     if (this.requestCount >= this.maxRequests) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "RATE_LIMITED",
         `Read-only live validation reached the per-session request cap (${this.maxRequests}) before ${operationId}.`,
         {
@@ -1084,7 +1084,7 @@ function buildRecommendedActions(
 
   if (operations.some((operation) => operation.status === "fail")) {
     actions.push(
-      `Capture a fresh session with "owa auth:session --session ${sessionName}" if the report shows login or challenge redirects.`
+      `Capture a fresh session with "buddy auth:session --session ${sessionName}" if the report shows login or challenge redirects.`
     );
     actions.push(
       "Review failed selector groups and update the read-only validation selectors if LinkedIn changed the UI."
@@ -1350,7 +1350,7 @@ async function runInboxOperation(
   const conversationSelectorDefinition = INBOX_OPERATION.selectors[0];
   const messageSelectorDefinition = INBOX_OPERATION.selectors[1];
   if (!conversationSelectorDefinition || !messageSelectorDefinition) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "Inbox live validation is misconfigured because required selector groups are missing."
     );
@@ -1439,7 +1439,7 @@ function createOperationFailureResult(
   completedAt: string,
   pageLoadMs: number,
   finalUrl: string,
-  error: LinkedInAssistantError,
+  error: LinkedInBuddyError,
   attemptCount: number
 ): ReadOnlyValidationOperationResult {
   const warnings: string[] = [];
@@ -1492,7 +1492,7 @@ async function runOperationWithRetries(
   logger: ReadOnlyValidationLogger
 ): Promise<ReadOnlyRetriedOperationExecutionResult> {
   const maxAttempts = maxRetries + 1;
-  let lastError: LinkedInAssistantError | undefined;
+  let lastError: LinkedInBuddyError | undefined;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     logger.log("debug", "live_validation.operation.attempt", {
@@ -1516,7 +1516,7 @@ async function runOperationWithRetries(
         getCurrentPageUrl(page),
         error
       );
-      lastError = new LinkedInAssistantError(
+      lastError = new LinkedInBuddyError(
         normalizedError.code,
         normalizedError.message,
         {
@@ -1550,7 +1550,7 @@ async function runOperationWithRetries(
 
   throw (
     lastError ??
-    new LinkedInAssistantError(
+    new LinkedInBuddyError(
       "UNKNOWN",
       `Read-only live validation exhausted retries for ${definition.id}.`,
       {
@@ -1632,7 +1632,7 @@ export async function runReadOnlyLinkedInLiveValidation(
     "retryMaxDelayMs"
   );
   if (retryMaxDelayMs < retryBaseDelayMs) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "retryMaxDelayMs must be greater than or equal to retryBaseDelayMs.",
       {
@@ -1832,9 +1832,9 @@ export async function runReadOnlyLinkedInLiveValidation(
           }
         );
       } catch (error) {
-        const normalizedError = asLinkedInAssistantError(
+        const normalizedError = asLinkedInBuddyError(
           error,
-          error instanceof LinkedInAssistantError ? error.code : "UNKNOWN",
+          error instanceof LinkedInBuddyError ? error.code : "UNKNOWN",
           `Read-only live validation failed while running ${operation.id}.`
         );
 
@@ -1968,9 +1968,9 @@ export async function runReadOnlyLinkedInLiveValidation(
 
     return report;
   } catch (error) {
-    const normalizedError = asLinkedInAssistantError(
+    const normalizedError = asLinkedInBuddyError(
       withPlaywrightInstallHint(error),
-      error instanceof LinkedInAssistantError ? error.code : "UNKNOWN",
+      error instanceof LinkedInBuddyError ? error.code : "UNKNOWN",
       "Failed to run the read-only LinkedIn live validation."
     );
     logger.log("error", "live_validation.failed", {

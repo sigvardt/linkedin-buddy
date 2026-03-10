@@ -391,7 +391,7 @@ describe.sequential("MCP E2E", () => {
       }
     });
 
-    const tempDir = mkdtempSync(path.join(tmpdir(), "linkedin-mcp-profile-"));
+    const tempDir = mkdtempSync(path.join(tmpdir(), "linkedin-buddy-mcp-profile-"));
     const photoPath = path.join(tempDir, "photo.png");
     const bannerPath = path.join(tempDir, "banner.png");
     writeFileSync(photoPath, "fake-profile-photo", "utf8");

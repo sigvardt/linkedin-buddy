@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type {
   JsonLogEntry,
-  LinkedInAssistantErrorPayload,
+  LinkedInBuddyErrorPayload,
   SelectorAuditReport
-} from "@linkedin-assistant/core";
+} from "@linkedin-buddy/core";
 import {
   formatSelectorAuditError,
   formatSelectorAuditReport,
@@ -261,7 +261,7 @@ describe("selector audit output helpers", () => {
   });
 
   it("formats friendly human-facing errors", () => {
-    const payload: LinkedInAssistantErrorPayload = {
+    const payload: LinkedInBuddyErrorPayload = {
       code: "NETWORK_ERROR",
       message: "Could not load the feed page because the browser or network connection failed.",
       details: {

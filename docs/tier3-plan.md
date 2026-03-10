@@ -116,7 +116,7 @@ Rationale:
 ### 4) Use `config.json` as the phase-1 account registry
 
 The dormant SQLite `account` table is a useful long-term signal, but the safest
-phase-1 source of truth is `LINKEDIN_ASSISTANT_HOME/config.json`.
+phase-1 source of truth is `LINKEDIN_BUDDY_HOME/config.json`.
 
 Why config first:
 

@@ -10,7 +10,7 @@ const readlineMocks = vi.hoisted(() => ({
   question: vi.fn()
 }));
 
-vi.mock("@linkedin-assistant/core", async () =>
+vi.mock("@linkedin-buddy/core", async () =>
   await import("../../core/src/index.js")
 );
 
@@ -21,7 +21,7 @@ vi.mock("node:readline/promises", () => ({
   }))
 }));
 
-import * as core from "@linkedin-assistant/core";
+import * as core from "@linkedin-buddy/core";
 import { createCliProgram, runCli } from "../src/bin/linkedin.js";
 
 async function pathExists(targetPath: string): Promise<boolean> {
@@ -61,7 +61,7 @@ describe("linkedin data delete", () => {
   beforeEach(async () => {
     tempDir = await mkdtemp(path.join(os.tmpdir(), "linkedin-cli-data-delete-"));
     assistantHome = path.join(tempDir, "assistant-home");
-    process.env.LINKEDIN_ASSISTANT_HOME = assistantHome;
+    process.env.LINKEDIN_BUDDY_HOME = assistantHome;
     setInteractiveMode(true, true);
     vi.clearAllMocks();
     readlineMocks.createInterface.mockImplementation(() => ({
@@ -75,7 +75,7 @@ describe("linkedin data delete", () => {
   afterEach(async () => {
     consoleErrorSpy.mockRestore();
     consoleLogSpy.mockRestore();
-    delete process.env.LINKEDIN_ASSISTANT_HOME;
+    delete process.env.LINKEDIN_BUDDY_HOME;
     await rm(tempDir, { recursive: true, force: true });
   });
 
@@ -403,7 +403,7 @@ describe("linkedin data delete", () => {
     const fixture = await seedLocalDataFixture();
     readlineMocks.question.mockResolvedValueOnce("yes");
     const deleteSpy = vi.spyOn(core, "deleteLocalData").mockRejectedValueOnce(
-      new core.LinkedInAssistantError(
+      new core.LinkedInBuddyError(
         "UNKNOWN",
         "Local data deletion completed with some failures.",
         {

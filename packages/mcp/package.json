@@ -1,5 +1,5 @@
 {
-  "name": "@linkedin-assistant/mcp",
+  "name": "@linkedin-buddy/mcp",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
@@ -8,7 +8,12 @@
     "dist"
   ],
   "bin": {
-    "linkedin-mcp": "dist/bin/linkedin-mcp.js"
+    "linkedin-buddy-mcp": "dist/bin/linkedin-buddy-mcp.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sigvardt/linkedin-buddy.git",
+    "directory": "packages/mcp"
   },
   "publishConfig": {
     "access": "public"
@@ -33,7 +38,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@linkedin-assistant/core": "0.1.0",
+    "@linkedin-buddy/core": "0.1.0",
     "@modelcontextprotocol/sdk": "^1.17.5"
   }
 }

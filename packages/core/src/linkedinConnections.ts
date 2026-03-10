@@ -3,7 +3,7 @@ import type { LinkedInAuthService } from "./auth/session.js";
 import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
 import type { ConfirmFailureArtifactConfig } from "./config.js";
 import type { AssistantDatabase } from "./db/database.js";
-import { LinkedInAssistantError, asLinkedInAssistantError } from "./errors.js";
+import { LinkedInBuddyError, asLinkedInBuddyError } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
@@ -390,7 +390,7 @@ async function clickProfileAction(input: {
   }
 
   if (input.allowMoreMenu === false) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UI_CHANGED_SELECTOR_FAILED",
       `Could not find ${input.actionLabel} button on profile page.`,
       {
@@ -421,7 +421,7 @@ async function clickProfileAction(input: {
       return `${moreButton.key}:${menuAction.key}`;
     }
 
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UI_CHANGED_SELECTOR_FAILED",
       `Could not find ${input.actionLabel} in the profile actions menu.`,
       {
@@ -434,7 +434,7 @@ async function clickProfileAction(input: {
     );
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "UI_CHANGED_SELECTOR_FAILED",
     `Could not find ${input.actionLabel} control on profile page.`,
     {
@@ -742,7 +742,7 @@ async function executeSendInvitation(
           note_included: note.length > 0
         },
         mapError: (error) =>
-          asLinkedInAssistantError(
+          asLinkedInBuddyError(
             error,
             "UNKNOWN",
             "Failed to execute LinkedIn send_invitation action."
@@ -961,7 +961,7 @@ async function executeSendInvitation(
       }
 
       if (!connectSelectorKey) {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "UI_CHANGED_SELECTOR_FAILED",
           "Could not find Connect button on profile page.",
           {
@@ -1023,7 +1023,7 @@ async function executeSendInvitation(
 
         const noteField = await findVisibleLocator(page, noteFieldCandidates);
         if (!noteField) {
-          throw new LinkedInAssistantError(
+          throw new LinkedInBuddyError(
             "UI_CHANGED_SELECTOR_FAILED",
             "Could not find invitation note field in connect dialog.",
             {
@@ -1069,7 +1069,7 @@ async function executeSendInvitation(
 
       const sendButton = await findVisibleLocator(page, sendCandidates);
       if (!sendButton) {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "UI_CHANGED_SELECTOR_FAILED",
           "Could not find Send button in invitation dialog.",
           {
@@ -1109,7 +1109,7 @@ async function executeSendInvitation(
       }, 8_000);
 
       if (!invitationLanded) {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "UNKNOWN",
           "Connection invitation could not be verified after clicking send.",
           {
@@ -1183,7 +1183,7 @@ async function executeAcceptInvitation(
           target_profile: targetProfile
         },
         mapError: (error) =>
-          asLinkedInAssistantError(
+          asLinkedInBuddyError(
             error,
             "UNKNOWN",
             "Failed to execute LinkedIn accept_invitation action."
@@ -1224,7 +1224,7 @@ async function executeAcceptInvitation(
       const acceptButton = await findVisibleLocator(page, acceptCandidates);
 
       if (!acceptButton) {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "TARGET_NOT_FOUND",
           `No pending invitation found from "${targetProfile}".`,
           { target_profile: targetProfile }
@@ -1282,7 +1282,7 @@ async function executeWithdrawInvitation(
           target_profile: targetProfile
         },
         mapError: (error) =>
-          asLinkedInAssistantError(
+          asLinkedInBuddyError(
             error,
             "UNKNOWN",
             "Failed to execute LinkedIn withdraw_invitation action."
@@ -1324,7 +1324,7 @@ async function executeWithdrawInvitation(
       const withdrawButton = await findVisibleLocator(page, withdrawCandidates);
 
       if (!withdrawButton) {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "TARGET_NOT_FOUND",
           `No sent invitation found to "${targetProfile}".`,
           { target_profile: targetProfile }
@@ -1401,7 +1401,7 @@ async function executeIgnoreInvitation(
           target_profile: targetProfile
         },
         mapError: (error) =>
-          asLinkedInAssistantError(
+          asLinkedInBuddyError(
             error,
             "UNKNOWN",
             "Failed to execute LinkedIn ignore_invitation action."
@@ -1442,7 +1442,7 @@ async function executeIgnoreInvitation(
           const ignoreButton = await findVisibleLocator(page, ignoreCandidates);
 
           if (!ignoreButton) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "TARGET_NOT_FOUND",
               `No pending invitation found from "${targetProfile}".`,
               { target_profile: targetProfile }
@@ -1504,7 +1504,7 @@ async function executeRemoveConnection(
           profile_url: profileUrl
         },
         mapError: (error) =>
-          asLinkedInAssistantError(
+          asLinkedInBuddyError(
             error,
             "UNKNOWN",
             "Failed to execute LinkedIn remove_connection action."
@@ -1564,7 +1564,7 @@ async function executeRemoveConnection(
           ];
           const removeConfirmButton = await findVisibleLocator(page, removeConfirmCandidates);
           if (!removeConfirmButton) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "UI_CHANGED_SELECTOR_FAILED",
               "Could not find Remove confirmation button after opening the connection removal dialog.",
               {
@@ -1633,7 +1633,7 @@ async function executeFollowMember(
           profile_url: profileUrl
         },
         mapError: (error) =>
-          asLinkedInAssistantError(
+          asLinkedInBuddyError(
             error,
             "UNKNOWN",
             "Failed to execute LinkedIn follow_member action."
@@ -1650,7 +1650,7 @@ async function executeFollowMember(
             candidateKeyPrefix: "already-following"
           });
           if (await findVisibleLocator(page, alreadyFollowingCandidates)) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "ACTION_PRECONDITION_FAILED",
               `Already following "${targetProfile}".`,
               { target_profile: targetProfile }
@@ -1687,7 +1687,7 @@ async function executeFollowMember(
           }, 5_000);
 
           if (!followed) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "UNKNOWN",
               "Follow action could not be verified after clicking the control.",
               {
@@ -1746,7 +1746,7 @@ async function executeUnfollowMember(
           profile_url: profileUrl
         },
         mapError: (error) =>
-          asLinkedInAssistantError(
+          asLinkedInBuddyError(
             error,
             "UNKNOWN",
             "Failed to execute LinkedIn unfollow_member action."
@@ -1763,7 +1763,7 @@ async function executeUnfollowMember(
             candidateKeyPrefix: "follow-check"
           });
           if (await findVisibleLocator(page, followCandidates)) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "ACTION_PRECONDITION_FAILED",
               `Not currently following "${targetProfile}".`,
               { target_profile: targetProfile }
@@ -1805,7 +1805,7 @@ async function executeUnfollowMember(
           }, 5_000);
 
           if (!unfollowed) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "UNKNOWN",
               "Unfollow action could not be verified after clicking the control.",
               {
@@ -1984,7 +1984,7 @@ export class LinkedInConnectionsService {
     const targetProfile = normalizeText(input.targetProfile);
 
     if (!targetProfile) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "targetProfile is required.",
         {}
@@ -2034,10 +2034,10 @@ export class LinkedInConnectionsService {
         }
       );
     } catch (error) {
-      if (error instanceof LinkedInAssistantError) {
+      if (error instanceof LinkedInBuddyError) {
         throw error;
       }
-      throw asLinkedInAssistantError(
+      throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
         "Failed to list LinkedIn connections."
@@ -2118,10 +2118,10 @@ export class LinkedInConnectionsService {
 
       return results;
     } catch (error) {
-      if (error instanceof LinkedInAssistantError) {
+      if (error instanceof LinkedInBuddyError) {
         throw error;
       }
-      throw asLinkedInAssistantError(
+      throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
         "Failed to list pending LinkedIn invitations."
@@ -2139,7 +2139,7 @@ export class LinkedInConnectionsService {
     const targetProfile = normalizeText(input.targetProfile);
 
     if (!targetProfile) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "targetProfile is required.",
         {}

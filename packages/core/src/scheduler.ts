@@ -9,9 +9,9 @@ import type {
   SchedulerJobRow
 } from "./db/database.js";
 import {
-  LinkedInAssistantError,
-  asLinkedInAssistantError,
-  type LinkedInAssistantErrorCode
+  LinkedInBuddyError,
+  asLinkedInBuddyError,
+  type LinkedInBuddyErrorCode
 } from "./errors.js";
 import {
   FOLLOWUP_AFTER_ACCEPT_ACTION_TYPE,
@@ -342,7 +342,7 @@ function getRequiredTargetField(
     return value.trim();
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `Scheduler job ${jobId} is missing target.${key}.`,
     {
@@ -361,7 +361,7 @@ function parseFollowupSchedulerTarget(job: SchedulerJobRow): {
   try {
     parsed = JSON.parse(job.target_json);
   } catch (error) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `Scheduler job ${job.id} target_json is not valid JSON.`,
       {
@@ -372,7 +372,7 @@ function parseFollowupSchedulerTarget(job: SchedulerJobRow): {
   }
 
   if (!isRecord(parsed)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `Scheduler job ${job.id} target_json must be an object.`,
       {
@@ -383,7 +383,7 @@ function parseFollowupSchedulerTarget(job: SchedulerJobRow): {
 
   const targetProfileName = getRequiredTargetField(parsed, "profile_name", job.id);
   if (targetProfileName !== job.profile_name) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `Scheduler job ${job.id} target.profile_name does not match the claimed profile.`,
       {
@@ -407,7 +407,7 @@ function getSchedulerJobLeaseOwner(job: SchedulerJobRow): string {
     return job.lease_owner;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `Scheduler job ${job.id} is missing an active lease owner.`,
     {
@@ -426,12 +426,12 @@ function isProfileBusyError(error: unknown): boolean {
 }
 
 function normalizeSchedulerError(error: unknown): {
-  code: LinkedInAssistantErrorCode | null;
+  code: LinkedInBuddyErrorCode | null;
   message: string;
   retryable: boolean;
 } {
-  const normalized = asLinkedInAssistantError(error);
-  const retryableCodes: LinkedInAssistantErrorCode[] = [
+  const normalized = asLinkedInBuddyError(error);
+  const retryableCodes: LinkedInBuddyErrorCode[] = [
     "AUTH_REQUIRED",
     "CAPTCHA_OR_CHALLENGE",
     "RATE_LIMITED",
@@ -1025,7 +1025,7 @@ export class LinkedInSchedulerService {
           errorMessage: normalizedError.message
         };
       } catch (transitionError) {
-        const transitionFailure = asLinkedInAssistantError(transitionError);
+        const transitionFailure = asLinkedInBuddyError(transitionError);
 
         this.runtime.logger.log("error", "scheduler.job.transition_failed", {
           job_id: job.id,

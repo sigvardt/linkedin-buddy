@@ -7,9 +7,9 @@ import {
   type ConfigPaths
 } from "./config.js";
 import {
-  LinkedInAssistantError,
-  asLinkedInAssistantError,
-  type LinkedInAssistantErrorCode
+  LinkedInBuddyError,
+  asLinkedInBuddyError,
+  type LinkedInBuddyErrorCode
 } from "./errors.js";
 import type { PreparedActionResult } from "./twoPhaseCommit.js";
 import { resolveWriteValidationAccount } from "./writeValidationAccounts.js";
@@ -222,7 +222,7 @@ function resolvePositiveInt(
   }
 
   if (!isFinitePositiveInteger(value)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a positive integer.`
     );
@@ -241,7 +241,7 @@ function resolveNonNegativeInt(
   }
 
   if (!isFiniteNonNegativeInteger(value)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a non-negative integer.`
     );
@@ -280,7 +280,7 @@ function isRateLimitError(error: unknown): boolean {
   );
 }
 
-function detectAuthErrorCode(message: string): LinkedInAssistantErrorCode | null {
+function detectAuthErrorCode(message: string): LinkedInBuddyErrorCode | null {
   if (/checkpoint|challenge/iu.test(message)) {
     return "CAPTCHA_OR_CHALLENGE";
   }
@@ -321,7 +321,7 @@ function calculateRetryBackoffMs(
   return Math.min(retryMaxDelayMs, retryBaseDelayMs * 2 ** Math.max(0, attempt - 1));
 }
 
-function getErrorAttemptCount(error: LinkedInAssistantError): number {
+function getErrorAttemptCount(error: LinkedInBuddyError): number {
   const attemptCount = error.details.attempt_count;
   return typeof attemptCount === "number" && Number.isInteger(attemptCount) && attemptCount > 0
     ? attemptCount
@@ -352,11 +352,11 @@ function buildRetryExhaustedWarning(
   return `Retried ${retryCount} ${retryCount === 1 ? "time" : "times"} before ${describeActionStage(stage)} still failed.`;
 }
 
-function isRetryableWriteValidationError(code: LinkedInAssistantErrorCode): boolean {
+function isRetryableWriteValidationError(code: LinkedInBuddyErrorCode): boolean {
   return code === "NETWORK_ERROR" || code === "TIMEOUT";
 }
 
-function isBlockingWriteValidationErrorCode(code: LinkedInAssistantErrorCode): boolean {
+function isBlockingWriteValidationErrorCode(code: LinkedInBuddyErrorCode): boolean {
   return code === "AUTH_REQUIRED" || code === "CAPTCHA_OR_CHALLENGE" || code === "RATE_LIMITED";
 }
 
@@ -367,7 +367,7 @@ function normalizeWriteValidationError(input: {
   expectedOutcome: string;
   sessionName: string;
   stage: WriteValidationActionStage;
-}): LinkedInAssistantError {
+}): LinkedInBuddyError {
   const details = {
     account_id: input.accountId,
     action_type: input.actionType,
@@ -376,8 +376,8 @@ function normalizeWriteValidationError(input: {
     stage: input.stage
   };
 
-  if (input.error instanceof LinkedInAssistantError) {
-    return new LinkedInAssistantError(
+  if (input.error instanceof LinkedInBuddyError) {
+    return new LinkedInBuddyError(
       input.error.code,
       input.error.message,
       {
@@ -391,7 +391,7 @@ function normalizeWriteValidationError(input: {
   const rawMessage = getErrorMessage(input.error);
   const authCode = detectAuthErrorCode(rawMessage);
   if (authCode) {
-    return new LinkedInAssistantError(
+    return new LinkedInBuddyError(
       authCode,
       authCode === "CAPTCHA_OR_CHALLENGE"
         ? `Stored session "${input.sessionName}" triggered a LinkedIn challenge while ${describeActionStage(input.stage)} for ${input.actionType}. Capture a fresh session with "linkedin auth session --session ${input.sessionName}" and rerun the harness.`
@@ -405,7 +405,7 @@ function normalizeWriteValidationError(input: {
   }
 
   if (isTimeoutError(input.error)) {
-    return new LinkedInAssistantError(
+    return new LinkedInBuddyError(
       "TIMEOUT",
       `Timed out while ${describeActionStage(input.stage)} for ${input.actionType}. LinkedIn may be slow; rerun the harness or increase the timeout.`,
       {
@@ -417,7 +417,7 @@ function normalizeWriteValidationError(input: {
   }
 
   if (isRateLimitError(input.error)) {
-    return new LinkedInAssistantError(
+    return new LinkedInBuddyError(
       "RATE_LIMITED",
       `LinkedIn rate limited ${input.actionType} while ${describeActionStage(input.stage)}. Wait for the account to cool down, then rerun the harness.`,
       {
@@ -429,7 +429,7 @@ function normalizeWriteValidationError(input: {
   }
 
   if (isNetworkError(input.error)) {
-    return new LinkedInAssistantError(
+    return new LinkedInBuddyError(
       "NETWORK_ERROR",
       `The browser or network connection failed while ${describeActionStage(input.stage)} for ${input.actionType}: ${rawMessage}. Check connectivity and rerun the harness.`,
       {
@@ -441,7 +441,7 @@ function normalizeWriteValidationError(input: {
   }
 
   if (/selector|locator/iu.test(rawMessage)) {
-    return new LinkedInAssistantError(
+    return new LinkedInBuddyError(
       "UI_CHANGED_SELECTOR_FAILED",
       `LinkedIn's DOM no longer matched the expected selectors while ${describeActionStage(input.stage)} for ${input.actionType}. Review the screenshots and validator assumptions, then rerun the harness.`,
       {
@@ -452,7 +452,7 @@ function normalizeWriteValidationError(input: {
     );
   }
 
-  return new LinkedInAssistantError(
+  return new LinkedInBuddyError(
     "UNKNOWN",
     `Write validation failed while ${describeActionStage(input.stage)} for ${input.actionType}: ${rawMessage}. Review the audit log and rerun the harness.`,
     {
@@ -478,7 +478,7 @@ function buildActionArtifactPaths(input: {
 }
 
 function resolveFailureStage(
-  error: LinkedInAssistantError,
+  error: LinkedInBuddyError,
   fallback: WriteValidationActionStage
 ): WriteValidationActionStage {
   return isWriteValidationActionStage(error.details.stage) ? error.details.stage : fallback;
@@ -486,14 +486,14 @@ function resolveFailureStage(
 
 function assertInteractiveWriteValidation(input: { interactive?: boolean }): void {
   if (input.interactive === false) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "Write validation requires an interactive terminal and a visible browser window."
     );
   }
 
   if (isTruthyCiValue(process.env.CI)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "Write validation cannot run in CI. Run it manually from an interactive terminal."
     );
@@ -505,7 +505,7 @@ export function validateWriteValidationOptions(
   options: RunLinkedInWriteValidationOptions
 ): ValidatedWriteValidationOptions {
   if (typeof options !== "object" || options === null || Array.isArray(options)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "write validation options must be an object.",
       {
@@ -515,14 +515,14 @@ export function validateWriteValidationOptions(
   }
 
   if (typeof options.accountId !== "string") {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "accountId is required for write validation."
     );
   }
 
   if (typeof options.baseDir !== "undefined" && typeof options.baseDir !== "string") {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "baseDir must be a string when provided."
     );
@@ -532,21 +532,21 @@ export function validateWriteValidationOptions(
     typeof options.onBeforeAction !== "undefined" &&
     typeof options.onBeforeAction !== "function"
   ) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "onBeforeAction must be a function when provided."
     );
   }
 
   if (typeof options.onLog !== "undefined" && typeof options.onLog !== "function") {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "onLog must be a function when provided."
     );
   }
 
   if (typeof options.interactive !== "undefined" && typeof options.interactive !== "boolean") {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "interactive must be a boolean when provided."
     );
@@ -554,7 +554,7 @@ export function validateWriteValidationOptions(
 
   const accountId = options.accountId.trim();
   if (!accountId) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "accountId is required for write validation."
     );
@@ -587,7 +587,7 @@ export function validateWriteValidationOptions(
   );
 
   if (retryMaxDelayMs < retryBaseDelayMs) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "retryMaxDelayMs must be greater than or equal to retryBaseDelayMs.",
       {
@@ -618,7 +618,7 @@ function ensureSecondaryWriteValidationAccount(account: {
     return;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `Write validation can run only against a registered secondary account. Account "${account.id}" is marked as ${account.designation}.`,
     {
@@ -641,14 +641,14 @@ function validateWriteValidationScenarioDefinitions(
 
   for (const scenario of scenarios) {
     if (typeof scenario.actionType !== "string" || scenario.actionType.trim().length === 0) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "write-validation scenarios must define a non-empty actionType."
       );
     }
 
     if (seenActionTypes.has(scenario.actionType)) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `Duplicate write-validation scenario action type: ${scenario.actionType}.`,
         {
@@ -659,7 +659,7 @@ function validateWriteValidationScenarioDefinitions(
     seenActionTypes.add(scenario.actionType);
 
     if (typeof scenario.summary !== "string" || scenario.summary.trim().length === 0) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `write-validation scenario ${scenario.actionType} is missing a summary.`,
         {
@@ -672,7 +672,7 @@ function validateWriteValidationScenarioDefinitions(
       typeof scenario.expectedOutcome !== "string" ||
       scenario.expectedOutcome.trim().length === 0
     ) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `write-validation scenario ${scenario.actionType} is missing an expectedOutcome.`,
         {
@@ -682,7 +682,7 @@ function validateWriteValidationScenarioDefinitions(
     }
 
     if (!["private", "network", "public"].includes(scenario.riskClass)) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `write-validation scenario ${scenario.actionType} has an unsupported risk class.`,
         {
@@ -693,7 +693,7 @@ function validateWriteValidationScenarioDefinitions(
     }
 
     if (typeof scenario.prepare !== "function") {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `write-validation scenario ${scenario.actionType} is missing a prepare function.`,
         {
@@ -703,7 +703,7 @@ function validateWriteValidationScenarioDefinitions(
     }
 
     if (typeof scenario.resolveAfterScreenshotUrl !== "function") {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `write-validation scenario ${scenario.actionType} is missing a resolveAfterScreenshotUrl function.`,
         {
@@ -713,7 +713,7 @@ function validateWriteValidationScenarioDefinitions(
     }
 
     if (typeof scenario.verify !== "function") {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `write-validation scenario ${scenario.actionType} is missing a verify function.`,
         {
@@ -726,7 +726,7 @@ function validateWriteValidationScenarioDefinitions(
       typeof scenario.validateConfig !== "undefined" &&
       typeof scenario.validateConfig !== "function"
     ) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `write-validation scenario ${scenario.actionType} has an invalid validateConfig hook.`,
         {
@@ -749,12 +749,12 @@ function validateWriteValidationStartupConfig(
     try {
       scenario.validateConfig(account);
     } catch (error) {
-      const normalizedError = asLinkedInAssistantError(
+      const normalizedError = asLinkedInBuddyError(
         error,
-        error instanceof LinkedInAssistantError ? error.code : "ACTION_PRECONDITION_FAILED",
+        error instanceof LinkedInBuddyError ? error.code : "ACTION_PRECONDITION_FAILED",
         `Invalid write-validation startup config for ${scenario.actionType}.`
       );
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         normalizedError.code,
         normalizedError.message,
         {
@@ -859,7 +859,7 @@ async function acquireWriteValidationRunLock(
 
       const existingLock = await readRunLockState(lockPath);
       if (existingLock && isProcessAlive(existingLock.pid)) {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
           `Write validation is already running for account "${accountId}" (pid ${existingLock.pid}, started ${existingLock.started_at}). Wait for that run to finish before starting another one.`,
           {
@@ -883,7 +883,7 @@ async function acquireWriteValidationRunLock(
     }
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `Could not acquire the write-validation run lock for account "${accountId}". Remove ${lockPath} manually if no other harness is active.`,
     {
@@ -906,7 +906,7 @@ async function runWriteValidationStageWithRetry<T>(input: {
   stage: WriteValidationActionStage;
 }): Promise<StageRetryResult<T>> {
   const maxAttempts = input.maxRetries + 1;
-  let lastError: LinkedInAssistantError | undefined;
+  let lastError: LinkedInBuddyError | undefined;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     input.logger.log("debug", "write_validation.action.attempt", {
@@ -932,7 +932,7 @@ async function runWriteValidationStageWithRetry<T>(input: {
         sessionName: input.sessionName,
         stage: input.stage
       });
-      lastError = new LinkedInAssistantError(
+      lastError = new LinkedInBuddyError(
         normalizedError.code,
         normalizedError.message,
         {
@@ -968,7 +968,7 @@ async function runWriteValidationStageWithRetry<T>(input: {
 
   throw (
     lastError ??
-    new LinkedInAssistantError(
+    new LinkedInBuddyError(
       "UNKNOWN",
       `Write validation exhausted retries while ${describeActionStage(input.stage)} for ${input.actionType}.`,
       {
@@ -1036,9 +1036,9 @@ async function captureScenarioScreenshotBestEffort(input: {
       warnings: recoveryWarning ? [recoveryWarning] : []
     };
   } catch (error) {
-    const normalizedError = asLinkedInAssistantError(
+    const normalizedError = asLinkedInBuddyError(
       error,
-      error instanceof LinkedInAssistantError ? error.code : "UNKNOWN",
+      error instanceof LinkedInBuddyError ? error.code : "UNKNOWN",
       `Failed to capture the ${input.stage} screenshot for ${input.actionType}.`
     );
     const warnings: string[] = [];
@@ -1072,7 +1072,7 @@ function buildCancelledActionResult(input: {
   scenario: WriteValidationScenarioDefinition;
   startedAt: string;
   cleanupGuidance: string[];
-  errorCode?: LinkedInAssistantErrorCode;
+  errorCode?: LinkedInBuddyErrorCode;
   errorDetails?: Record<string, unknown>;
   errorMessage?: string;
   warnings?: string[];
@@ -1161,7 +1161,7 @@ function buildCompletedActionResult(input: {
 }
 
 function buildFailedActionResult(input: {
-  error: LinkedInAssistantError;
+  error: LinkedInBuddyError;
   failureStage: WriteValidationActionStage;
   partial: PartialActionContext;
   scenario: WriteValidationScenarioDefinition;
@@ -1216,7 +1216,7 @@ function buildFailedActionResult(input: {
 }
 
 function buildRemainingScenarioSkipMessage(input: {
-  blockingCode: LinkedInAssistantErrorCode;
+  blockingCode: LinkedInBuddyErrorCode;
   blockedByActionType: string;
   sessionName: string;
 }): string {
@@ -1234,7 +1234,7 @@ function buildRemainingScenarioSkipMessage(input: {
 
 function buildSkippedActionResult(input: {
   blockedByActionType: string;
-  blockingCode: LinkedInAssistantErrorCode;
+  blockingCode: LinkedInBuddyErrorCode;
   scenario: WriteValidationScenarioDefinition;
   sessionName: string;
 }): WriteValidationActionResult {
@@ -1531,9 +1531,9 @@ async function executeWriteValidationScenario(input: {
       shouldStop: false
     };
   } catch (error) {
-    const normalizedError = asLinkedInAssistantError(
+    const normalizedError = asLinkedInBuddyError(
       error,
-      error instanceof LinkedInAssistantError ? error.code : "UNKNOWN",
+      error instanceof LinkedInBuddyError ? error.code : "UNKNOWN",
       `Write validation failed while executing ${input.scenario.actionType}.`
     );
     const failureStage = resolveFailureStage(
@@ -1620,7 +1620,7 @@ async function cleanupWriteValidationResources(input: {
   primaryError: unknown;
   runtimeHandle?: Awaited<ReturnType<typeof createWriteValidationRuntime>>;
 }): Promise<void> {
-  const cleanupErrors: LinkedInAssistantError[] = [];
+  const cleanupErrors: LinkedInBuddyError[] = [];
   const runtime = input.runtimeHandle?.runtime;
   const logger = runtime?.logger;
 
@@ -1628,7 +1628,7 @@ async function cleanupWriteValidationResources(input: {
     try {
       await input.runtimeHandle.profileManager.dispose();
     } catch (error) {
-      const cleanupError = new LinkedInAssistantError(
+      const cleanupError = new LinkedInBuddyError(
         "UNKNOWN",
         `Failed to dispose the write-validation browser for account "${input.accountId}".`,
         {
@@ -1655,7 +1655,7 @@ async function cleanupWriteValidationResources(input: {
       pid: input.lockHandle.state.pid
     });
   } catch (error) {
-    const cleanupError = new LinkedInAssistantError(
+    const cleanupError = new LinkedInBuddyError(
       "UNKNOWN",
       `Failed to release the write-validation run lock for account "${input.accountId}". Remove ${input.lockHandle.lockPath} manually if the next run is blocked.`,
       {
@@ -1678,7 +1678,7 @@ async function cleanupWriteValidationResources(input: {
     try {
       runtime.close();
     } catch (error) {
-      const cleanupError = new LinkedInAssistantError(
+      const cleanupError = new LinkedInBuddyError(
         "UNKNOWN",
         `Failed to close the write-validation runtime for account "${input.accountId}".`,
         {
@@ -1728,7 +1728,7 @@ export async function runLinkedInWriteValidation(
 
   const lockHandle = await acquireWriteValidationRunLock(paths, account.id);
   let runtimeHandle: Awaited<ReturnType<typeof createWriteValidationRuntime>> | undefined;
-  let primaryError: LinkedInAssistantError | undefined;
+  let primaryError: LinkedInBuddyError | undefined;
 
   try {
     runtimeHandle = await createWriteValidationRuntime({
@@ -1900,9 +1900,9 @@ export async function runLinkedInWriteValidation(
 
     return report;
   } catch (error) {
-    const normalizedError = asLinkedInAssistantError(
+    const normalizedError = asLinkedInBuddyError(
       withPlaywrightInstallHint(error),
-      error instanceof LinkedInAssistantError ? error.code : "UNKNOWN",
+      error instanceof LinkedInBuddyError ? error.code : "UNKNOWN",
       "Failed to run the LinkedIn write validation harness."
     );
     primaryError = normalizedError;

@@ -10,8 +10,8 @@ import {
 import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
 import {
-  LinkedInAssistantError,
-  asLinkedInAssistantError
+  LinkedInBuddyError,
+  asLinkedInBuddyError
 } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
@@ -36,7 +36,7 @@ import type {
 } from "./twoPhaseCommit.js";
 
 const LINKEDIN_FEED_URL = "https://www.linkedin.com/feed/";
-const LINKEDIN_ASSISTANT_CONFIG_FILENAME = "config.json";
+const LINKEDIN_BUDDY_CONFIG_FILENAME = "config.json";
 const DEFAULT_LINK_PREVIEW_VALIDATION_TIMEOUT_MS = 5_000;
 const MAX_LINK_PREVIEW_VALIDATION_TIMEOUT_MS = 30_000;
 const LINK_PREVIEW_BODY_BYTE_LIMIT = 64 * 1024;
@@ -279,7 +279,7 @@ function parseOptionalPositiveInteger(
   }
 
   if (typeof value !== "number" || !Number.isInteger(value)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be an integer.`,
       {
@@ -292,7 +292,7 @@ function parseOptionalPositiveInteger(
   const min = options.min ?? 1;
   const max = options.max;
   if (value < min || (max !== undefined && value > max)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       max === undefined
         ? `${label} must be at least ${min}.`
@@ -315,7 +315,7 @@ function parseOptionalBoolean(value: unknown, label: string): boolean | undefine
   }
 
   if (typeof value !== "boolean") {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a boolean.`,
       {
@@ -359,7 +359,7 @@ function parseOptionalBannedPhraseList(
   }
 
   if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be an array of strings.`,
       {
@@ -386,7 +386,7 @@ function parseBooleanEnv(value: string | undefined, label: string): boolean | un
     return false;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `${label} must be one of: true, false, 1, 0, yes, no, on, off.`,
     {
@@ -407,7 +407,7 @@ function parseIntegerEnv(
 
   const parsed = Number.parseInt(value, 10);
   if (!Number.isInteger(parsed)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be an integer.`,
       {
@@ -439,7 +439,7 @@ function parseBannedPhraseEnv(
     try {
       parsed = JSON.parse(trimmedValue);
     } catch (error) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `${label} must be a JSON string array or a comma/newline-separated list.`,
         {
@@ -458,7 +458,7 @@ function parseBannedPhraseEnv(
 }
 
 function readPostSafetyLintConfigShape(baseDir: string): PostSafetyLintConfigShape {
-  const configPath = path.join(baseDir, LINKEDIN_ASSISTANT_CONFIG_FILENAME);
+  const configPath = path.join(baseDir, LINKEDIN_BUDDY_CONFIG_FILENAME);
   if (!existsSync(configPath)) {
     return {};
   }
@@ -467,9 +467,9 @@ function readPostSafetyLintConfigShape(baseDir: string): PostSafetyLintConfigSha
   try {
     parsed = JSON.parse(readFileSync(configPath, "utf8"));
   } catch (error) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      `Failed to parse LinkedIn assistant config file at ${configPath}.`,
+      `Failed to parse LinkedIn Buddy config file at ${configPath}.`,
       {
         config_path: configPath,
         message: error instanceof Error ? error.message : String(error)
@@ -479,9 +479,9 @@ function readPostSafetyLintConfigShape(baseDir: string): PostSafetyLintConfigSha
   }
 
   if (!isRecord(parsed)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      `LinkedIn assistant config file at ${configPath} must contain a JSON object.`,
+      `LinkedIn Buddy config file at ${configPath} must contain a JSON object.`,
       {
         config_path: configPath
       }
@@ -494,7 +494,7 @@ function readPostSafetyLintConfigShape(baseDir: string): PostSafetyLintConfigSha
   }
 
   if (!isRecord(directLintConfig)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `postSafetyLint in ${configPath} must be a JSON object.`,
       {
@@ -512,13 +512,13 @@ export function resolveLinkedInPostSafetyLintConfig(
 ): LinkedInPostSafetyLintConfig {
   const fileConfig = baseDir ? readPostSafetyLintConfigShape(baseDir) : {};
   const fileLabel = baseDir
-    ? `${path.join(baseDir, LINKEDIN_ASSISTANT_CONFIG_FILENAME)} postSafetyLint`
+    ? `${path.join(baseDir, LINKEDIN_BUDDY_CONFIG_FILENAME)} postSafetyLint`
     : "postSafetyLint";
 
   const maxLength =
     parseIntegerEnv(
-      process.env.LINKEDIN_ASSISTANT_POST_SAFETY_MAX_LENGTH,
-      "LINKEDIN_ASSISTANT_POST_SAFETY_MAX_LENGTH",
+      process.env.LINKEDIN_BUDDY_POST_SAFETY_MAX_LENGTH,
+      "LINKEDIN_BUDDY_POST_SAFETY_MAX_LENGTH",
       {
       max: LINKEDIN_POST_MAX_LENGTH
       }
@@ -530,16 +530,16 @@ export function resolveLinkedInPostSafetyLintConfig(
 
   const bannedPhrases =
     parseBannedPhraseEnv(
-      process.env.LINKEDIN_ASSISTANT_POST_SAFETY_BANNED_PHRASES,
-      "LINKEDIN_ASSISTANT_POST_SAFETY_BANNED_PHRASES"
+      process.env.LINKEDIN_BUDDY_POST_SAFETY_BANNED_PHRASES,
+      "LINKEDIN_BUDDY_POST_SAFETY_BANNED_PHRASES"
     ) ??
     parseOptionalBannedPhraseList(fileConfig.bannedPhrases, `${fileLabel}.bannedPhrases`) ??
     DEFAULT_LINKEDIN_POST_SAFETY_LINT_CONFIG.bannedPhrases;
 
   const validateLinkPreviews =
     parseBooleanEnv(
-      process.env.LINKEDIN_ASSISTANT_POST_SAFETY_VALIDATE_LINK_PREVIEWS,
-      "LINKEDIN_ASSISTANT_POST_SAFETY_VALIDATE_LINK_PREVIEWS"
+      process.env.LINKEDIN_BUDDY_POST_SAFETY_VALIDATE_LINK_PREVIEWS,
+      "LINKEDIN_BUDDY_POST_SAFETY_VALIDATE_LINK_PREVIEWS"
     ) ??
     parseOptionalBoolean(
       fileConfig.validateLinkPreviews,
@@ -549,8 +549,8 @@ export function resolveLinkedInPostSafetyLintConfig(
 
   const linkPreviewValidationTimeoutMs =
     parseIntegerEnv(
-      process.env.LINKEDIN_ASSISTANT_POST_SAFETY_LINK_TIMEOUT_MS,
-      "LINKEDIN_ASSISTANT_POST_SAFETY_LINK_TIMEOUT_MS",
+      process.env.LINKEDIN_BUDDY_POST_SAFETY_LINK_TIMEOUT_MS,
+      "LINKEDIN_BUDDY_POST_SAFETY_LINK_TIMEOUT_MS",
       {
         max: MAX_LINK_PREVIEW_VALIDATION_TIMEOUT_MS
       }
@@ -612,14 +612,14 @@ export function validateLinkedInPostText(
   const normalizedText = normalizePostText(value);
 
   if (!normalizedText) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "Post text must not be empty."
     );
   }
 
   if (hasUnsupportedControlCharacters(normalizedText)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "Post text contains unsupported control characters."
     );
@@ -627,7 +627,7 @@ export function validateLinkedInPostText(
 
   const characterCount = normalizedText.length;
   if (characterCount > maxLength) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `Post text must be ${maxLength} characters or fewer.`,
       {
@@ -890,7 +890,7 @@ async function validateConfiguredLinkPreviews(
     return;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     failedLinks.length === 1
       ? `Link preview validation failed for ${firstFailedLink.url}.`
@@ -915,7 +915,7 @@ export async function lintLinkedInPostContent(
     config.bannedPhrases
   );
   if (matchedBannedPhrases.length > 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       matchedBannedPhrases.length === 1
         ? `Post text contains banned phrase "${matchedBannedPhrases[0]}".`
@@ -930,7 +930,7 @@ export async function lintLinkedInPostContent(
   const extractedLinks = extractUrlsFromPostText(validatedText.normalizedText);
   if (config.validateLinkPreviews) {
     if (extractedLinks.invalidUrls.length > 0) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         extractedLinks.invalidUrls.length === 1
           ? `Post text contains an invalid URL: ${extractedLinks.invalidUrls[0]}.`
@@ -974,7 +974,7 @@ export function normalizeLinkedInPostVisibility(
     return mapped;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `visibility must be one of: ${LINKEDIN_POST_VISIBILITY_TYPES.join(", ")}.`,
     {
@@ -1012,7 +1012,7 @@ function isAbsoluteUrl(value: string): boolean {
 function resolvePostUrl(postUrl: string): string {
   const trimmedPostUrl = normalizeText(postUrl);
   if (!trimmedPostUrl) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "postUrl is required."
     );
@@ -1023,7 +1023,7 @@ function resolvePostUrl(postUrl: string): string {
     try {
       parsedUrl = new URL(trimmedPostUrl);
     } catch (error) {
-      throw asLinkedInAssistantError(
+      throw asLinkedInBuddyError(
         error,
         "ACTION_PRECONDITION_FAILED",
         "Post URL must be a valid URL."
@@ -1130,14 +1130,14 @@ function validateLinkedInPostMediaAttachments(
   mediaPaths: string[]
 ): ValidatedMediaAttachment[] {
   if (!Array.isArray(mediaPaths) || mediaPaths.length === 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "mediaPaths must include at least one attachment."
     );
   }
 
   if (mediaPaths.length > LINKEDIN_POST_MAX_MEDIA_ATTACHMENTS) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `mediaPaths may include at most ${LINKEDIN_POST_MAX_MEDIA_ATTACHMENTS} files.`,
       {
@@ -1150,7 +1150,7 @@ function validateLinkedInPostMediaAttachments(
   const attachments = mediaPaths.map((rawPath) => {
     const normalizedPath = normalizeText(rawPath);
     if (!normalizedPath) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "mediaPaths must not contain empty entries."
       );
@@ -1158,7 +1158,7 @@ function validateLinkedInPostMediaAttachments(
 
     const absolutePath = path.resolve(normalizedPath);
     if (!existsSync(absolutePath)) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `Media file does not exist: ${normalizedPath}.`,
         {
@@ -1170,7 +1170,7 @@ function validateLinkedInPostMediaAttachments(
 
     const stats = statSync(absolutePath);
     if (!stats.isFile()) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `Media path must point to a file: ${normalizedPath}.`,
         {
@@ -1181,7 +1181,7 @@ function validateLinkedInPostMediaAttachments(
     }
 
     if (stats.size <= 0) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `Media file must not be empty: ${normalizedPath}.`,
         {
@@ -1194,7 +1194,7 @@ function validateLinkedInPostMediaAttachments(
     const extension = path.extname(absolutePath).toLowerCase();
     const kind = determineMediaKind(extension);
     if (!kind) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `Unsupported LinkedIn media file type: ${normalizedPath}.`,
         {
@@ -1221,7 +1221,7 @@ function validateLinkedInPostMediaAttachments(
 
   const kinds = new Set(attachments.map((attachment) => attachment.kind));
   if (kinds.size > 1) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "mediaPaths must contain only images or only a single video.",
       {
@@ -1232,7 +1232,7 @@ function validateLinkedInPostMediaAttachments(
 
   const kind = attachments[0]?.kind;
   if (kind === "video" && attachments.length > 1) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "LinkedIn post composer only supports one video attachment per post.",
       {
@@ -1247,7 +1247,7 @@ function validateLinkedInPostMediaAttachments(
 function normalizePollQuestion(question: string): string {
   const normalized = normalizeText(question);
   if (!normalized) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "question is required."
     );
@@ -1258,7 +1258,7 @@ function normalizePollQuestion(question: string): string {
 
 function normalizePollOptions(options: string[]): string[] {
   if (!Array.isArray(options)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `options must include ${LINKEDIN_POST_POLL_MIN_OPTIONS}-${LINKEDIN_POST_POLL_MAX_OPTIONS} entries.`
     );
@@ -1272,7 +1272,7 @@ function normalizePollOptions(options: string[]): string[] {
     normalizedOptions.length < LINKEDIN_POST_POLL_MIN_OPTIONS ||
     normalizedOptions.length > LINKEDIN_POST_POLL_MAX_OPTIONS
   ) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `options must include ${LINKEDIN_POST_POLL_MIN_OPTIONS}-${LINKEDIN_POST_POLL_MAX_OPTIONS} non-empty entries.`,
       {
@@ -1285,7 +1285,7 @@ function normalizePollOptions(options: string[]): string[] {
 
   const dedupeSet = new Set(normalizedOptions.map((option) => option.toLowerCase()));
   if (dedupeSet.size !== normalizedOptions.length) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "options must be distinct.",
       {
@@ -1308,7 +1308,7 @@ function normalizePollDurationDays(
     typeof durationDays !== "number" ||
     !LINKEDIN_POST_POLL_DURATION_DAYS.includes(durationDays as LinkedInPollDurationDays)
   ) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `durationDays must be one of: ${LINKEDIN_POST_POLL_DURATION_DAYS.join(", ")}.`,
       {
@@ -1341,7 +1341,7 @@ function getRequiredStringField(
     return value.trim();
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `Prepared action ${actionId} is missing ${location}.${key}.`,
     {
@@ -1356,25 +1356,25 @@ function toAutomationError(
   error: unknown,
   message: string,
   details: Record<string, unknown>
-): LinkedInAssistantError {
-  if (error instanceof LinkedInAssistantError) {
+): LinkedInBuddyError {
+  if (error instanceof LinkedInBuddyError) {
     return error;
   }
 
   if (error instanceof playwrightErrors.TimeoutError) {
-    return new LinkedInAssistantError("TIMEOUT", message, details, { cause: error });
+    return new LinkedInBuddyError("TIMEOUT", message, details, { cause: error });
   }
 
   if (
     error instanceof Error &&
     /(net::|ERR_|ECONN|ENOTFOUND|EAI_AGAIN|socket hang up)/i.test(error.message)
   ) {
-    return new LinkedInAssistantError("NETWORK_ERROR", message, details, {
+    return new LinkedInBuddyError("NETWORK_ERROR", message, details, {
       cause: error
     });
   }
 
-  return asLinkedInAssistantError(error, "UNKNOWN", message);
+  return asLinkedInBuddyError(error, "UNKNOWN", message);
 }
 
 function formatRateLimitState(
@@ -1485,7 +1485,7 @@ async function findVisibleLocatorOrThrow(
     }
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "UI_CHANGED_SELECTOR_FAILED",
     `Could not locate LinkedIn selector group "${selectorKey}".`,
     {
@@ -1514,7 +1514,7 @@ async function findVisibleScopedLocatorOrThrow(
     }
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "UI_CHANGED_SELECTOR_FAILED",
     `Could not locate LinkedIn selector group "${selectorKey}".`,
     {
@@ -1553,7 +1553,7 @@ async function findPresentLocatorOrThrow(
     }
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "UI_CHANGED_SELECTOR_FAILED",
     `Could not locate LinkedIn selector group "${selectorKey}".`,
     {
@@ -1623,7 +1623,7 @@ async function waitForFeedSurface(page: Page): Promise<void> {
     }
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "UI_CHANGED_SELECTOR_FAILED",
     "Could not locate LinkedIn feed surface.",
     {
@@ -2642,7 +2642,7 @@ async function setPostVisibility(
   }, 5_000);
 
   if (!updated) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UI_CHANGED_SELECTOR_FAILED",
       `LinkedIn post visibility could not be set to ${audienceLabel}.`,
       {
@@ -2782,7 +2782,7 @@ async function openTargetPostActionMenu(
   );
 
   if (!menuOpened) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UI_CHANGED_SELECTOR_FAILED",
       "Could not open the LinkedIn post action menu.",
       {
@@ -2851,7 +2851,7 @@ async function attachMediaToComposer(
   }, 12_000);
 
   if (!attachmentsReady) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UI_CHANGED_SELECTOR_FAILED",
       "LinkedIn media attachments did not appear ready in the composer.",
       {
@@ -2893,7 +2893,7 @@ async function resolvePollOptionInput(
     }
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "UI_CHANGED_SELECTOR_FAILED",
     `Could not locate LinkedIn poll option input ${optionIndex + 1}.`,
     {
@@ -2945,7 +2945,7 @@ async function setPollDuration(
       return null;
     }
 
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UI_CHANGED_SELECTOR_FAILED",
       `Could not locate LinkedIn poll duration control for ${durationDays} days.`,
       {
@@ -3038,7 +3038,7 @@ async function verifyUpdatedPostAtUrl(
 ): Promise<{ verified: true; postUrl: string }> {
   const snippet = createVerificationSnippet(text);
   if (!snippet) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "Cannot verify an updated post with empty text content."
     );
@@ -3053,7 +3053,7 @@ async function verifyUpdatedPostAtUrl(
   }, 12_000);
 
   if (!verified) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UNKNOWN",
       "Edited LinkedIn post could not be verified.",
       {
@@ -3089,7 +3089,7 @@ async function verifyDeletedPostAtUrl(
   }, 12_000);
 
   if (!deleted) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UNKNOWN",
       "Deleted LinkedIn post could not be verified.",
       {
@@ -3158,7 +3158,7 @@ async function verifyPublishedPost(
 ): Promise<{ verified: true; postUrl: string | null }> {
   const snippet = createVerificationSnippet(text);
   if (!snippet) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "Cannot verify a post with empty text content."
     );
@@ -3187,7 +3187,7 @@ async function verifyPublishedPost(
     }, 12_000);
 
     if (!verified) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "UNKNOWN",
         "Published LinkedIn post could not be verified on the feed.",
         {
@@ -3422,7 +3422,7 @@ export class LinkedInPostsService {
               ));
 
             if (!mediaSurface) {
-              throw new LinkedInAssistantError(
+              throw new LinkedInBuddyError(
                 "UI_CHANGED_SELECTOR_FAILED",
                 "Could not locate LinkedIn media controls in the post composer.",
                 {
@@ -4107,7 +4107,7 @@ function getOptionalStringField(
     return value.trim();
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `Prepared action ${actionId} has invalid ${location}.${key}.`,
     {
@@ -4132,7 +4132,7 @@ function getRequiredStringArrayField(
     return value.map((entry) => entry.trim());
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `Prepared action ${actionId} is missing ${location}.${key}.`,
     {
@@ -4154,7 +4154,7 @@ function getRequiredIntegerField(
     return value;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `Prepared action ${actionId} is missing ${location}.${key}.`,
     {
@@ -4209,7 +4209,7 @@ class CreatePostActionExecutor
             CREATE_POST_RATE_LIMIT_CONFIG
           );
           if (!rateLimitState.allowed) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "RATE_LIMITED",
               "LinkedIn create_post confirm is rate limited for the current window.",
               {
@@ -4269,7 +4269,7 @@ class CreatePostActionExecutor
           }, 5_000);
 
           if (!publishEnabled) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "UI_CHANGED_SELECTOR_FAILED",
               "LinkedIn publish button was not enabled after entering post content.",
               {
@@ -4402,7 +4402,7 @@ class CreateMediaPostActionExecutor
             CREATE_POST_RATE_LIMIT_CONFIG
           );
           if (!rateLimitState.allowed) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "RATE_LIMITED",
               "LinkedIn create_media_post confirm is rate limited for the current window.",
               {
@@ -4473,7 +4473,7 @@ class CreateMediaPostActionExecutor
           }, 5_000);
 
           if (!publishEnabled) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "UI_CHANGED_SELECTOR_FAILED",
               "LinkedIn publish button was not enabled after entering post content and media attachments.",
               {
@@ -4622,7 +4622,7 @@ class CreatePollPostActionExecutor
             CREATE_POST_RATE_LIMIT_CONFIG
           );
           if (!rateLimitState.allowed) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "RATE_LIMITED",
               "LinkedIn create_poll_post confirm is rate limited for the current window.",
               {
@@ -4699,7 +4699,7 @@ class CreatePollPostActionExecutor
           }, 5_000);
 
           if (!publishEnabled) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "UI_CHANGED_SELECTOR_FAILED",
               "LinkedIn publish button was not enabled after entering poll content.",
               {
@@ -4839,7 +4839,7 @@ class EditPostActionExecutor
 
           const rateLimitState = runtime.rateLimiter.consume(EDIT_POST_RATE_LIMIT_CONFIG);
           if (!rateLimitState.allowed) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "RATE_LIMITED",
               "LinkedIn edit_post confirm is rate limited for the current window.",
               {
@@ -4910,7 +4910,7 @@ class EditPostActionExecutor
           }, 5_000);
 
           if (!saveEnabled) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "UI_CHANGED_SELECTOR_FAILED",
               "LinkedIn save button was not enabled after editing the post.",
               {
@@ -5038,7 +5038,7 @@ class DeletePostActionExecutor
             DELETE_POST_RATE_LIMIT_CONFIG
           );
           if (!rateLimitState.allowed) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "RATE_LIMITED",
               "LinkedIn delete_post confirm is rate limited for the current window.",
               {

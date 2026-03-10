@@ -17,15 +17,15 @@ import {
   type EvasionLevel,
   type EvasionStatus
 } from "./evasion.js";
-import { LinkedInAssistantError } from "./errors.js";
+import { LinkedInBuddyError } from "./errors.js";
 
 /**
  * Default directory used for tool-owned state when no custom home is configured.
  */
-export const DEFAULT_LINKEDIN_ASSISTANT_HOME = path.join(
+export const DEFAULT_LINKEDIN_BUDDY_HOME = path.join(
   os.homedir(),
-  ".linkedin-assistant",
-  "linkedin-owa-agentools"
+  ".linkedin-buddy",
+  "linkedin-buddy"
 );
 
 /**
@@ -55,22 +55,22 @@ export interface ConfirmFailureArtifactConfig {
  *
  * @example
  * ```ts
- * process.env[LINKEDIN_ASSISTANT_EVASION_LEVEL_ENV] = "paranoid";
+ * process.env[LINKEDIN_BUDDY_EVASION_LEVEL_ENV] = "paranoid";
  * ```
  */
-export const LINKEDIN_ASSISTANT_EVASION_LEVEL_ENV =
-  "LINKEDIN_ASSISTANT_EVASION_LEVEL";
+export const LINKEDIN_BUDDY_EVASION_LEVEL_ENV =
+  "LINKEDIN_BUDDY_EVASION_LEVEL";
 
 /**
  * Environment variable that enables verbose evasion diagnostics in run logs.
  *
  * @example
  * ```ts
- * process.env[LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS_ENV] = "true";
+ * process.env[LINKEDIN_BUDDY_EVASION_DIAGNOSTICS_ENV] = "true";
  * ```
  */
-export const LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS_ENV =
-  "LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS";
+export const LINKEDIN_BUDDY_EVASION_DIAGNOSTICS_ENV =
+  "LINKEDIN_BUDDY_EVASION_DIAGNOSTICS";
 
 /**
  * Resolved evasion configuration shared across runtime/session diagnostics.
@@ -312,8 +312,8 @@ function compareClockTimes(left: string, right: string): number {
 function invalidSchedulerConfig(
   message: string,
   details: Record<string, unknown>
-): LinkedInAssistantError {
-  return new LinkedInAssistantError(
+): LinkedInBuddyError {
+  return new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     message,
     details
@@ -323,24 +323,24 @@ function invalidSchedulerConfig(
 function invalidActivityWebhookConfig(
   message: string,
   details: Record<string, unknown>
-): LinkedInAssistantError {
+): LinkedInBuddyError {
   const env = typeof details.env === "string" ? details.env : undefined;
   const guidance = env ? ACTIVITY_WEBHOOK_ENV_GUIDANCE[env] : undefined;
   let suggestion = guidance?.suggestion;
   let example = guidance ? `${env}=${guidance.exampleValue}` : undefined;
 
   if (
-    env === "LINKEDIN_ASSISTANT_ACTIVITY_MAX_BACKOFF_SECONDS" &&
+    env === "LINKEDIN_BUDDY_ACTIVITY_MAX_BACKOFF_SECONDS" &&
     typeof details.initial_backoff_ms === "number"
   ) {
     const minimumSeconds = Math.ceil(details.initial_backoff_ms / 1_000);
     suggestion =
-      `Increase ${env} to at least ${minimumSeconds}, or lower LINKEDIN_ASSISTANT_ACTIVITY_INITIAL_BACKOFF_SECONDS.`;
+      `Increase ${env} to at least ${minimumSeconds}, or lower LINKEDIN_BUDDY_ACTIVITY_INITIAL_BACKOFF_SECONDS.`;
     example = `${env}=${minimumSeconds}`;
   }
 
   if (
-    env === "LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_LEASE_SECONDS" &&
+    env === "LINKEDIN_BUDDY_ACTIVITY_DELIVERY_LEASE_SECONDS" &&
     typeof details.delivery_timeout_ms === "number" &&
     typeof details.clock_skew_allowance_ms === "number"
   ) {
@@ -351,26 +351,26 @@ function invalidActivityWebhookConfig(
       `Increase ${env} to at least ${minimumSeconds}, or lower the delivery timeout or clock skew allowance.`;
     example = `${env}=${minimumSeconds}`;
   } else if (
-    env === "LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_LEASE_SECONDS" &&
+    env === "LINKEDIN_BUDDY_ACTIVITY_DELIVERY_LEASE_SECONDS" &&
     typeof details.clock_skew_allowance_ms === "number"
   ) {
     const minimumSeconds = Math.floor(details.clock_skew_allowance_ms / 1_000) + 1;
     suggestion =
-      `Increase ${env} to more than ${Math.floor(details.clock_skew_allowance_ms / 1_000)}, or lower LINKEDIN_ASSISTANT_ACTIVITY_CLOCK_SKEW_SECONDS.`;
+      `Increase ${env} to more than ${Math.floor(details.clock_skew_allowance_ms / 1_000)}, or lower LINKEDIN_BUDDY_ACTIVITY_CLOCK_SKEW_SECONDS.`;
     example = `${env}=${minimumSeconds}`;
   }
 
   if (
-    env === "LINKEDIN_ASSISTANT_ACTIVITY_WATCH_LEASE_SECONDS" &&
+    env === "LINKEDIN_BUDDY_ACTIVITY_WATCH_LEASE_SECONDS" &&
     typeof details.clock_skew_allowance_ms === "number"
   ) {
     const minimumSeconds = Math.floor(details.clock_skew_allowance_ms / 1_000) + 1;
     suggestion =
-      `Increase ${env} to more than ${Math.floor(details.clock_skew_allowance_ms / 1_000)}, or lower LINKEDIN_ASSISTANT_ACTIVITY_CLOCK_SKEW_SECONDS.`;
+      `Increase ${env} to more than ${Math.floor(details.clock_skew_allowance_ms / 1_000)}, or lower LINKEDIN_BUDDY_ACTIVITY_CLOCK_SKEW_SECONDS.`;
     example = `${env}=${minimumSeconds}`;
   }
 
-  return new LinkedInAssistantError(
+  return new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     message,
     {
@@ -385,11 +385,11 @@ function invalidActivityWebhookConfig(
 function invalidEvasionConfig(
   message: string,
   details: Record<string, unknown>
-): LinkedInAssistantError {
+): LinkedInBuddyError {
   const env = typeof details.env === "string" ? details.env : undefined;
   const guidance = env ? EVASION_ENV_GUIDANCE[env] : undefined;
 
-  return new LinkedInAssistantError(
+  return new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     message,
     {
@@ -409,85 +409,85 @@ const ACTIVITY_WEBHOOK_ENV_GUIDANCE: Record<
     suggestion: string;
   }
 > = {
-  LINKEDIN_ASSISTANT_ACTIVITY_ENABLED: {
+  LINKEDIN_BUDDY_ACTIVITY_ENABLED: {
     defaultValue: "true",
     exampleValue: "false",
     suggestion:
       "Use true or false to enable or disable activity polling, or unset the variable to restore the default."
   },
-  LINKEDIN_ASSISTANT_ACTIVITY_DAEMON_POLL_INTERVAL_SECONDS: {
+  LINKEDIN_BUDDY_ACTIVITY_DAEMON_POLL_INTERVAL_SECONDS: {
     defaultValue: String(DEFAULT_ACTIVITY_DAEMON_POLL_INTERVAL_MS / 1_000),
     exampleValue: "120",
     suggestion:
       "Use a whole-number daemon interval in seconds, such as 120, or unset the variable to restore the default cadence."
   },
-  LINKEDIN_ASSISTANT_ACTIVITY_MAX_WATCHES_PER_TICK: {
+  LINKEDIN_BUDDY_ACTIVITY_MAX_WATCHES_PER_TICK: {
     defaultValue: String(DEFAULT_ACTIVITY_MAX_WATCHES_PER_TICK),
     exampleValue: "8",
     suggestion:
       "Use a whole-number watch batch size, or unset the variable to restore the default per-tick watch budget."
   },
-  LINKEDIN_ASSISTANT_ACTIVITY_MAX_CONCURRENT_WATCHES: {
+  LINKEDIN_BUDDY_ACTIVITY_MAX_CONCURRENT_WATCHES: {
     defaultValue: String(DEFAULT_ACTIVITY_MAX_CONCURRENT_WATCHES),
     exampleValue: "50",
     suggestion:
       "Use a whole-number per-profile watch limit, or pause existing watches before raising the limit."
   },
-  LINKEDIN_ASSISTANT_ACTIVITY_WATCH_LEASE_SECONDS: {
+  LINKEDIN_BUDDY_ACTIVITY_WATCH_LEASE_SECONDS: {
     defaultValue: String(DEFAULT_ACTIVITY_WATCH_LEASE_TTL_MS / 1_000),
     exampleValue: "180",
     suggestion:
       "Use a whole-number lease duration in seconds that comfortably exceeds clock skew and expected poll time."
   },
-  LINKEDIN_ASSISTANT_ACTIVITY_MIN_POLL_INTERVAL_SECONDS: {
+  LINKEDIN_BUDDY_ACTIVITY_MIN_POLL_INTERVAL_SECONDS: {
     defaultValue: String(DEFAULT_ACTIVITY_MIN_POLL_INTERVAL_MS / 1_000),
     exampleValue: "300",
     suggestion:
       "Use a whole-number minimum poll interval in seconds, or unset the variable to restore the default lower bound."
   },
-  LINKEDIN_ASSISTANT_ACTIVITY_MAX_DELIVERIES_PER_TICK: {
+  LINKEDIN_BUDDY_ACTIVITY_MAX_DELIVERIES_PER_TICK: {
     defaultValue: String(DEFAULT_ACTIVITY_MAX_DELIVERIES_PER_TICK),
     exampleValue: "20",
     suggestion:
       "Use a whole-number delivery batch size, or unset the variable to restore the default per-tick delivery budget."
   },
-  LINKEDIN_ASSISTANT_ACTIVITY_MAX_EVENT_QUEUE_DEPTH: {
+  LINKEDIN_BUDDY_ACTIVITY_MAX_EVENT_QUEUE_DEPTH: {
     defaultValue: String(DEFAULT_ACTIVITY_MAX_EVENT_QUEUE_DEPTH),
     exampleValue: "500",
     suggestion:
       "Use a whole-number queue depth large enough for bursts, or unset the variable to restore the default queue cap."
   },
-  LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_LEASE_SECONDS: {
+  LINKEDIN_BUDDY_ACTIVITY_DELIVERY_LEASE_SECONDS: {
     defaultValue: String(DEFAULT_ACTIVITY_DELIVERY_LEASE_TTL_MS / 1_000),
     exampleValue: "90",
     suggestion:
       "Use a whole-number delivery lease in seconds that exceeds the HTTP timeout and clock skew allowance."
   },
-  LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_TIMEOUT_SECONDS: {
+  LINKEDIN_BUDDY_ACTIVITY_DELIVERY_TIMEOUT_SECONDS: {
     defaultValue: String(DEFAULT_ACTIVITY_DELIVERY_TIMEOUT_MS / 1_000),
     exampleValue: "20",
     suggestion:
       "Use a whole-number webhook timeout in seconds that is lower than the delivery lease duration."
   },
-  LINKEDIN_ASSISTANT_ACTIVITY_CLOCK_SKEW_SECONDS: {
+  LINKEDIN_BUDDY_ACTIVITY_CLOCK_SKEW_SECONDS: {
     defaultValue: String(DEFAULT_ACTIVITY_CLOCK_SKEW_ALLOWANCE_MS / 1_000),
     exampleValue: "10",
     suggestion:
       "Use a whole-number clock-skew allowance in seconds, or unset the variable to restore the default tolerance."
   },
-  LINKEDIN_ASSISTANT_ACTIVITY_MAX_DELIVERY_ATTEMPTS: {
+  LINKEDIN_BUDDY_ACTIVITY_MAX_DELIVERY_ATTEMPTS: {
     defaultValue: String(DEFAULT_ACTIVITY_MAX_DELIVERY_ATTEMPTS),
     exampleValue: "8",
     suggestion:
       "Use a whole-number retry-attempt budget, or unset the variable to restore the default delivery retry count."
   },
-  LINKEDIN_ASSISTANT_ACTIVITY_INITIAL_BACKOFF_SECONDS: {
+  LINKEDIN_BUDDY_ACTIVITY_INITIAL_BACKOFF_SECONDS: {
     defaultValue: String(DEFAULT_ACTIVITY_INITIAL_BACKOFF_MS / 1_000),
     exampleValue: "120",
     suggestion:
       "Use a whole-number retry backoff in seconds, or unset the variable to restore the default initial backoff."
   },
-  LINKEDIN_ASSISTANT_ACTIVITY_MAX_BACKOFF_SECONDS: {
+  LINKEDIN_BUDDY_ACTIVITY_MAX_BACKOFF_SECONDS: {
     defaultValue: String(DEFAULT_ACTIVITY_MAX_BACKOFF_MS / 1_000),
     exampleValue: "3600",
     suggestion:
@@ -503,13 +503,13 @@ const EVASION_ENV_GUIDANCE: Record<
     suggestion: string;
   }
 > = {
-  [LINKEDIN_ASSISTANT_EVASION_LEVEL_ENV]: {
+  [LINKEDIN_BUDDY_EVASION_LEVEL_ENV]: {
     defaultValue: DEFAULT_EVASION_LEVEL,
     exampleValue: "paranoid",
     suggestion:
       "Use minimal for deterministic development and tests, moderate for the default balance, or paranoid for the fullest anti-bot profile."
   },
-  [LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS_ENV]: {
+  [LINKEDIN_BUDDY_EVASION_DIAGNOSTICS_ENV]: {
     defaultValue: "false",
     exampleValue: "true",
     suggestion:
@@ -647,9 +647,9 @@ function parseSchedulerEnabledLanes(value: string | undefined): SchedulerLane[] 
   const invalidEntries = rawEntries.filter((entry) => !supported.has(entry));
   if (invalidEntries.length > 0) {
     throw invalidSchedulerConfig(
-      "LINKEDIN_ASSISTANT_SCHEDULER_ENABLED_LANES must be a comma-separated list of supported scheduler lanes. Set it to an empty string to disable all lanes.",
+      "LINKEDIN_BUDDY_SCHEDULER_ENABLED_LANES must be a comma-separated list of supported scheduler lanes. Set it to an empty string to disable all lanes.",
       {
-        env: "LINKEDIN_ASSISTANT_SCHEDULER_ENABLED_LANES",
+        env: "LINKEDIN_BUDDY_SCHEDULER_ENABLED_LANES",
         invalid_lanes: invalidEntries,
         supported_lanes: SCHEDULER_LANES
       }
@@ -661,24 +661,24 @@ function parseSchedulerEnabledLanes(value: string | undefined): SchedulerLane[] 
 
 function resolveSchedulerBusinessHours(): SchedulerBusinessHoursConfig {
   const startTime = parseStrictClockTime(
-    process.env.LINKEDIN_ASSISTANT_SCHEDULER_BUSINESS_START,
+    process.env.LINKEDIN_BUDDY_SCHEDULER_BUSINESS_START,
     DEFAULT_SCHEDULER_BUSINESS_START,
-    "LINKEDIN_ASSISTANT_SCHEDULER_BUSINESS_START"
+    "LINKEDIN_BUDDY_SCHEDULER_BUSINESS_START"
   );
   const endTime = parseStrictClockTime(
-    process.env.LINKEDIN_ASSISTANT_SCHEDULER_BUSINESS_END,
+    process.env.LINKEDIN_BUDDY_SCHEDULER_BUSINESS_END,
     DEFAULT_SCHEDULER_BUSINESS_END,
-    "LINKEDIN_ASSISTANT_SCHEDULER_BUSINESS_END"
+    "LINKEDIN_BUDDY_SCHEDULER_BUSINESS_END"
   );
-  const rawTimeZone = process.env.LINKEDIN_ASSISTANT_SCHEDULER_TIMEZONE;
+  const rawTimeZone = process.env.LINKEDIN_BUDDY_SCHEDULER_TIMEZONE;
   const timeZone =
     rawTimeZone === undefined ? resolveDefaultSchedulerTimeZone() : rawTimeZone.trim();
 
   if (!timeZone || !isValidTimeZone(timeZone)) {
     throw invalidSchedulerConfig(
-      "LINKEDIN_ASSISTANT_SCHEDULER_TIMEZONE must be a valid IANA timezone, such as UTC or Europe/Copenhagen. Unset it to use the local system timezone.",
+      "LINKEDIN_BUDDY_SCHEDULER_TIMEZONE must be a valid IANA timezone, such as UTC or Europe/Copenhagen. Unset it to use the local system timezone.",
       {
-        env: "LINKEDIN_ASSISTANT_SCHEDULER_TIMEZONE",
+        env: "LINKEDIN_BUDDY_SCHEDULER_TIMEZONE",
         value: rawTimeZone
       }
     );
@@ -706,8 +706,8 @@ function resolveSchedulerBusinessHours(): SchedulerBusinessHoursConfig {
  * Environment variable that sets the default selector locale for the current
  * shell or process tree.
  */
-export const LINKEDIN_ASSISTANT_SELECTOR_LOCALE_ENV =
-  "LINKEDIN_ASSISTANT_SELECTOR_LOCALE";
+export const LINKEDIN_BUDDY_SELECTOR_LOCALE_ENV =
+  "LINKEDIN_BUDDY_SELECTOR_LOCALE";
 
 /**
  * Indicates where the effective selector-locale value came from.
@@ -761,8 +761,8 @@ function parsePositiveInteger(
 export function resolveConfigPaths(baseDir?: string): ConfigPaths {
   const resolvedBaseDir =
     baseDir ??
-    process.env.LINKEDIN_ASSISTANT_HOME ??
-    DEFAULT_LINKEDIN_ASSISTANT_HOME;
+    process.env.LINKEDIN_BUDDY_HOME ??
+    DEFAULT_LINKEDIN_BUDDY_HOME;
 
   return {
     baseDir: resolvedBaseDir,
@@ -788,7 +788,7 @@ export function ensureConfigPaths(paths: ConfigPaths): void {
 export function resolveConfirmFailureArtifactConfig(): ConfirmFailureArtifactConfig {
   return {
     traceMaxBytes: parsePositiveInteger(
-      process.env.LINKEDIN_ASSISTANT_CONFIRM_TRACE_MAX_BYTES,
+      process.env.LINKEDIN_BUDDY_CONFIRM_TRACE_MAX_BYTES,
       DEFAULT_CONFIRM_TRACE_MAX_BYTES
     )
   };
@@ -813,20 +813,20 @@ export function resolveEvasionConfig(options: {
   const rawLevel =
     typeof options.level === "string"
       ? options.level
-      : process.env[LINKEDIN_ASSISTANT_EVASION_LEVEL_ENV];
+      : process.env[LINKEDIN_BUDDY_EVASION_LEVEL_ENV];
   const source =
     typeof options.level === "string"
       ? "option"
-      : typeof process.env[LINKEDIN_ASSISTANT_EVASION_LEVEL_ENV] === "string"
+      : typeof process.env[LINKEDIN_BUDDY_EVASION_LEVEL_ENV] === "string"
         ? "env"
         : "default";
   const diagnosticsEnabled =
     typeof options.diagnosticsEnabled === "boolean"
       ? options.diagnosticsEnabled
       : parseStrictBoolean(
-          process.env[LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS_ENV],
+          process.env[LINKEDIN_BUDDY_EVASION_DIAGNOSTICS_ENV],
           false,
-          LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS_ENV,
+          LINKEDIN_BUDDY_EVASION_DIAGNOSTICS_ENV,
           invalidEvasionConfig
         );
 
@@ -836,15 +836,15 @@ export function resolveEvasionConfig(options: {
       rawLevel,
       source === "option"
         ? "evasionLevel"
-        : LINKEDIN_ASSISTANT_EVASION_LEVEL_ENV,
+        : LINKEDIN_BUDDY_EVASION_LEVEL_ENV,
       DEFAULT_EVASION_LEVEL
     );
   } catch (error) {
-    if (source === "env" && error instanceof LinkedInAssistantError) {
+    if (source === "env" && error instanceof LinkedInBuddyError) {
       throw invalidEvasionConfig(
-        `${LINKEDIN_ASSISTANT_EVASION_LEVEL_ENV} must be one of ${EVASION_LEVELS.join(", ")}. Unset it to use the default value.`,
+        `${LINKEDIN_BUDDY_EVASION_LEVEL_ENV} must be one of ${EVASION_LEVELS.join(", ")}. Unset it to use the default value.`,
         {
-          env: LINKEDIN_ASSISTANT_EVASION_LEVEL_ENV,
+          env: LINKEDIN_BUDDY_EVASION_LEVEL_ENV,
           supported_values: [...EVASION_LEVELS],
           value: rawLevel
         }
@@ -872,33 +872,33 @@ export function resolveEvasionConfig(options: {
 export function resolveSchedulerConfig(): SchedulerConfig {
   const pollIntervalMs =
     parseStrictPositiveInteger({
-      envName: "LINKEDIN_ASSISTANT_SCHEDULER_POLL_INTERVAL_SECONDS",
+      envName: "LINKEDIN_BUDDY_SCHEDULER_POLL_INTERVAL_SECONDS",
       fallback: DEFAULT_SCHEDULER_POLL_INTERVAL_MS / 1_000,
       max: 24 * 60 * 60
     }) * 1_000;
   const maxJobsPerTick = parseStrictPositiveInteger({
-    envName: "LINKEDIN_ASSISTANT_SCHEDULER_MAX_JOBS_PER_TICK",
+    envName: "LINKEDIN_BUDDY_SCHEDULER_MAX_JOBS_PER_TICK",
     fallback: DEFAULT_SCHEDULER_MAX_JOBS_PER_TICK,
     max: 100
   });
   const maxActiveJobsPerProfile = parseStrictPositiveInteger({
-    envName: "LINKEDIN_ASSISTANT_SCHEDULER_MAX_ACTIVE_JOBS_PER_PROFILE",
+    envName: "LINKEDIN_BUDDY_SCHEDULER_MAX_ACTIVE_JOBS_PER_PROFILE",
     fallback: DEFAULT_SCHEDULER_MAX_ACTIVE_JOBS_PER_PROFILE,
     max: 10_000
   });
   const leaseTtlMs =
     parseStrictPositiveInteger({
-      envName: "LINKEDIN_ASSISTANT_SCHEDULER_LEASE_SECONDS",
+      envName: "LINKEDIN_BUDDY_SCHEDULER_LEASE_SECONDS",
       fallback: DEFAULT_SCHEDULER_LEASE_TTL_MS / 1_000,
       max: 24 * 60 * 60
     }) * 1_000;
   const enabledLanes = parseSchedulerEnabledLanes(
-    process.env.LINKEDIN_ASSISTANT_SCHEDULER_ENABLED_LANES
+    process.env.LINKEDIN_BUDDY_SCHEDULER_ENABLED_LANES
   );
   const businessHours = resolveSchedulerBusinessHours();
   const followupDelayMs =
     parseStrictPositiveInteger({
-      envName: "LINKEDIN_ASSISTANT_SCHEDULER_FOLLOWUP_DELAY_MINUTES",
+      envName: "LINKEDIN_BUDDY_SCHEDULER_FOLLOWUP_DELAY_MINUTES",
       fallback: DEFAULT_SCHEDULER_FOLLOWUP_DELAY_MS / (60 * 1_000),
       max: 30 * 24 * 60
     }) *
@@ -906,7 +906,7 @@ export function resolveSchedulerConfig(): SchedulerConfig {
     1_000;
   const followupLookbackMs =
     parseStrictPositiveInteger({
-      envName: "LINKEDIN_ASSISTANT_SCHEDULER_FOLLOWUP_LOOKBACK_DAYS",
+      envName: "LINKEDIN_BUDDY_SCHEDULER_FOLLOWUP_LOOKBACK_DAYS",
       fallback: DEFAULT_SCHEDULER_FOLLOWUP_LOOKBACK_MS / (24 * 60 * 60 * 1_000),
       max: 365
     }) *
@@ -916,19 +916,19 @@ export function resolveSchedulerConfig(): SchedulerConfig {
     1_000;
   const retry = {
     maxAttempts: parseStrictPositiveInteger({
-      envName: "LINKEDIN_ASSISTANT_SCHEDULER_MAX_ATTEMPTS",
+      envName: "LINKEDIN_BUDDY_SCHEDULER_MAX_ATTEMPTS",
       fallback: DEFAULT_SCHEDULER_MAX_ATTEMPTS,
       max: 100
     }),
     initialBackoffMs:
       parseStrictPositiveInteger({
-        envName: "LINKEDIN_ASSISTANT_SCHEDULER_INITIAL_BACKOFF_SECONDS",
+        envName: "LINKEDIN_BUDDY_SCHEDULER_INITIAL_BACKOFF_SECONDS",
         fallback: DEFAULT_SCHEDULER_INITIAL_BACKOFF_MS / 1_000,
         max: 30 * 24 * 60 * 60
       }) * 1_000,
     maxBackoffMs:
       parseStrictPositiveInteger({
-        envName: "LINKEDIN_ASSISTANT_SCHEDULER_MAX_BACKOFF_SECONDS",
+        envName: "LINKEDIN_BUDDY_SCHEDULER_MAX_BACKOFF_SECONDS",
         fallback: DEFAULT_SCHEDULER_MAX_BACKOFF_MS / 1_000,
         max: 30 * 24 * 60 * 60
       }) * 1_000
@@ -936,9 +936,9 @@ export function resolveSchedulerConfig(): SchedulerConfig {
 
   if (maxJobsPerTick > maxActiveJobsPerProfile) {
     throw invalidSchedulerConfig(
-      "LINKEDIN_ASSISTANT_SCHEDULER_MAX_JOBS_PER_TICK must be less than or equal to LINKEDIN_ASSISTANT_SCHEDULER_MAX_ACTIVE_JOBS_PER_PROFILE.",
+      "LINKEDIN_BUDDY_SCHEDULER_MAX_JOBS_PER_TICK must be less than or equal to LINKEDIN_BUDDY_SCHEDULER_MAX_ACTIVE_JOBS_PER_PROFILE.",
       {
-        env: "LINKEDIN_ASSISTANT_SCHEDULER_MAX_JOBS_PER_TICK",
+        env: "LINKEDIN_BUDDY_SCHEDULER_MAX_JOBS_PER_TICK",
         max_jobs_per_tick: maxJobsPerTick,
         max_active_jobs_per_profile: maxActiveJobsPerProfile
       }
@@ -947,9 +947,9 @@ export function resolveSchedulerConfig(): SchedulerConfig {
 
   if (retry.maxBackoffMs < retry.initialBackoffMs) {
     throw invalidSchedulerConfig(
-      "LINKEDIN_ASSISTANT_SCHEDULER_MAX_BACKOFF_SECONDS must be greater than or equal to LINKEDIN_ASSISTANT_SCHEDULER_INITIAL_BACKOFF_SECONDS.",
+      "LINKEDIN_BUDDY_SCHEDULER_MAX_BACKOFF_SECONDS must be greater than or equal to LINKEDIN_BUDDY_SCHEDULER_INITIAL_BACKOFF_SECONDS.",
       {
-        env: "LINKEDIN_ASSISTANT_SCHEDULER_MAX_BACKOFF_SECONDS",
+        env: "LINKEDIN_BUDDY_SCHEDULER_MAX_BACKOFF_SECONDS",
         initial_backoff_ms: retry.initialBackoffMs,
         max_backoff_ms: retry.maxBackoffMs
       }
@@ -958,9 +958,9 @@ export function resolveSchedulerConfig(): SchedulerConfig {
 
   return {
     enabled: parseStrictBoolean(
-      process.env.LINKEDIN_ASSISTANT_SCHEDULER_ENABLED,
+      process.env.LINKEDIN_BUDDY_SCHEDULER_ENABLED,
       true,
-      "LINKEDIN_ASSISTANT_SCHEDULER_ENABLED"
+      "LINKEDIN_BUDDY_SCHEDULER_ENABLED"
     ),
     pollIntervalMs,
     maxJobsPerTick,
@@ -981,87 +981,87 @@ export function resolveSchedulerConfig(): SchedulerConfig {
 export function resolveActivityWebhookConfig(): ActivityWebhookConfig {
   const daemonPollIntervalMs =
     parseStrictPositiveInteger({
-      envName: "LINKEDIN_ASSISTANT_ACTIVITY_DAEMON_POLL_INTERVAL_SECONDS",
+      envName: "LINKEDIN_BUDDY_ACTIVITY_DAEMON_POLL_INTERVAL_SECONDS",
       fallback: DEFAULT_ACTIVITY_DAEMON_POLL_INTERVAL_MS / 1_000,
       max: 24 * 60 * 60,
       invalidConfig: invalidActivityWebhookConfig
     }) * 1_000;
   const maxWatchesPerTick = parseStrictPositiveInteger({
-    envName: "LINKEDIN_ASSISTANT_ACTIVITY_MAX_WATCHES_PER_TICK",
+    envName: "LINKEDIN_BUDDY_ACTIVITY_MAX_WATCHES_PER_TICK",
     fallback: DEFAULT_ACTIVITY_MAX_WATCHES_PER_TICK,
     max: 100,
     invalidConfig: invalidActivityWebhookConfig
   });
   const maxConcurrentWatches = parseStrictPositiveInteger({
-    envName: "LINKEDIN_ASSISTANT_ACTIVITY_MAX_CONCURRENT_WATCHES",
+    envName: "LINKEDIN_BUDDY_ACTIVITY_MAX_CONCURRENT_WATCHES",
     fallback: DEFAULT_ACTIVITY_MAX_CONCURRENT_WATCHES,
     max: 1_000,
     invalidConfig: invalidActivityWebhookConfig
   });
   const watchLeaseTtlMs =
     parseStrictPositiveInteger({
-      envName: "LINKEDIN_ASSISTANT_ACTIVITY_WATCH_LEASE_SECONDS",
+      envName: "LINKEDIN_BUDDY_ACTIVITY_WATCH_LEASE_SECONDS",
       fallback: DEFAULT_ACTIVITY_WATCH_LEASE_TTL_MS / 1_000,
       max: 24 * 60 * 60,
       invalidConfig: invalidActivityWebhookConfig
     }) * 1_000;
   const minPollIntervalMs =
     parseStrictPositiveInteger({
-      envName: "LINKEDIN_ASSISTANT_ACTIVITY_MIN_POLL_INTERVAL_SECONDS",
+      envName: "LINKEDIN_BUDDY_ACTIVITY_MIN_POLL_INTERVAL_SECONDS",
       fallback: DEFAULT_ACTIVITY_MIN_POLL_INTERVAL_MS / 1_000,
       max: 24 * 60 * 60,
       invalidConfig: invalidActivityWebhookConfig
     }) * 1_000;
   const maxDeliveriesPerTick = parseStrictPositiveInteger({
-    envName: "LINKEDIN_ASSISTANT_ACTIVITY_MAX_DELIVERIES_PER_TICK",
+    envName: "LINKEDIN_BUDDY_ACTIVITY_MAX_DELIVERIES_PER_TICK",
     fallback: DEFAULT_ACTIVITY_MAX_DELIVERIES_PER_TICK,
     max: 1_000,
     invalidConfig: invalidActivityWebhookConfig
   });
   const maxEventQueueDepth = parseStrictPositiveInteger({
-    envName: "LINKEDIN_ASSISTANT_ACTIVITY_MAX_EVENT_QUEUE_DEPTH",
+    envName: "LINKEDIN_BUDDY_ACTIVITY_MAX_EVENT_QUEUE_DEPTH",
     fallback: DEFAULT_ACTIVITY_MAX_EVENT_QUEUE_DEPTH,
     max: 10_000,
     invalidConfig: invalidActivityWebhookConfig
   });
   const deliveryLeaseTtlMs =
     parseStrictPositiveInteger({
-      envName: "LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_LEASE_SECONDS",
+      envName: "LINKEDIN_BUDDY_ACTIVITY_DELIVERY_LEASE_SECONDS",
       fallback: DEFAULT_ACTIVITY_DELIVERY_LEASE_TTL_MS / 1_000,
       max: 24 * 60 * 60,
       invalidConfig: invalidActivityWebhookConfig
     }) * 1_000;
   const deliveryTimeoutMs =
     parseStrictPositiveInteger({
-      envName: "LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_TIMEOUT_SECONDS",
+      envName: "LINKEDIN_BUDDY_ACTIVITY_DELIVERY_TIMEOUT_SECONDS",
       fallback: DEFAULT_ACTIVITY_DELIVERY_TIMEOUT_MS / 1_000,
       max: 5 * 60,
       invalidConfig: invalidActivityWebhookConfig
     }) * 1_000;
   const clockSkewAllowanceMs =
     parseStrictPositiveInteger({
-      envName: "LINKEDIN_ASSISTANT_ACTIVITY_CLOCK_SKEW_SECONDS",
+      envName: "LINKEDIN_BUDDY_ACTIVITY_CLOCK_SKEW_SECONDS",
       fallback: DEFAULT_ACTIVITY_CLOCK_SKEW_ALLOWANCE_MS / 1_000,
       max: 5 * 60,
       invalidConfig: invalidActivityWebhookConfig
     }) * 1_000;
   const retry: ActivityWebhookRetryConfig = {
     maxAttempts: parseStrictPositiveInteger({
-      envName: "LINKEDIN_ASSISTANT_ACTIVITY_MAX_DELIVERY_ATTEMPTS",
+      envName: "LINKEDIN_BUDDY_ACTIVITY_MAX_DELIVERY_ATTEMPTS",
       fallback: DEFAULT_ACTIVITY_MAX_DELIVERY_ATTEMPTS,
       max: 25,
       invalidConfig: invalidActivityWebhookConfig
     }),
     initialBackoffMs:
       parseStrictPositiveInteger({
-        envName: "LINKEDIN_ASSISTANT_ACTIVITY_INITIAL_BACKOFF_SECONDS",
+        envName: "LINKEDIN_BUDDY_ACTIVITY_INITIAL_BACKOFF_SECONDS",
         fallback: DEFAULT_ACTIVITY_INITIAL_BACKOFF_MS / 1_000,
         max: 24 * 60 * 60,
         invalidConfig: invalidActivityWebhookConfig
       }) * 1_000,
     maxBackoffMs:
       parseStrictPositiveInteger({
-        envName: "LINKEDIN_ASSISTANT_ACTIVITY_MAX_BACKOFF_SECONDS",
+        envName: "LINKEDIN_BUDDY_ACTIVITY_MAX_BACKOFF_SECONDS",
         fallback: DEFAULT_ACTIVITY_MAX_BACKOFF_MS / 1_000,
         max: 7 * 24 * 60 * 60,
         invalidConfig: invalidActivityWebhookConfig
@@ -1070,9 +1070,9 @@ export function resolveActivityWebhookConfig(): ActivityWebhookConfig {
 
   if (retry.maxBackoffMs < retry.initialBackoffMs) {
     throw invalidActivityWebhookConfig(
-      "LINKEDIN_ASSISTANT_ACTIVITY_MAX_BACKOFF_SECONDS must be greater than or equal to LINKEDIN_ASSISTANT_ACTIVITY_INITIAL_BACKOFF_SECONDS.",
+      "LINKEDIN_BUDDY_ACTIVITY_MAX_BACKOFF_SECONDS must be greater than or equal to LINKEDIN_BUDDY_ACTIVITY_INITIAL_BACKOFF_SECONDS.",
       {
-        env: "LINKEDIN_ASSISTANT_ACTIVITY_MAX_BACKOFF_SECONDS",
+        env: "LINKEDIN_BUDDY_ACTIVITY_MAX_BACKOFF_SECONDS",
         initial_backoff_ms: retry.initialBackoffMs,
         max_backoff_ms: retry.maxBackoffMs
       }
@@ -1081,9 +1081,9 @@ export function resolveActivityWebhookConfig(): ActivityWebhookConfig {
 
   if (deliveryLeaseTtlMs < deliveryTimeoutMs + clockSkewAllowanceMs) {
     throw invalidActivityWebhookConfig(
-      "LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_LEASE_SECONDS must be greater than or equal to LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_TIMEOUT_SECONDS plus LINKEDIN_ASSISTANT_ACTIVITY_CLOCK_SKEW_SECONDS.",
+      "LINKEDIN_BUDDY_ACTIVITY_DELIVERY_LEASE_SECONDS must be greater than or equal to LINKEDIN_BUDDY_ACTIVITY_DELIVERY_TIMEOUT_SECONDS plus LINKEDIN_BUDDY_ACTIVITY_CLOCK_SKEW_SECONDS.",
       {
-        env: "LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_LEASE_SECONDS",
+        env: "LINKEDIN_BUDDY_ACTIVITY_DELIVERY_LEASE_SECONDS",
         delivery_lease_ttl_ms: deliveryLeaseTtlMs,
         delivery_timeout_ms: deliveryTimeoutMs,
         clock_skew_allowance_ms: clockSkewAllowanceMs
@@ -1093,9 +1093,9 @@ export function resolveActivityWebhookConfig(): ActivityWebhookConfig {
 
   if (watchLeaseTtlMs <= clockSkewAllowanceMs) {
     throw invalidActivityWebhookConfig(
-      "LINKEDIN_ASSISTANT_ACTIVITY_WATCH_LEASE_SECONDS must be greater than LINKEDIN_ASSISTANT_ACTIVITY_CLOCK_SKEW_SECONDS.",
+      "LINKEDIN_BUDDY_ACTIVITY_WATCH_LEASE_SECONDS must be greater than LINKEDIN_BUDDY_ACTIVITY_CLOCK_SKEW_SECONDS.",
       {
-        env: "LINKEDIN_ASSISTANT_ACTIVITY_WATCH_LEASE_SECONDS",
+        env: "LINKEDIN_BUDDY_ACTIVITY_WATCH_LEASE_SECONDS",
         watch_lease_ttl_ms: watchLeaseTtlMs,
         clock_skew_allowance_ms: clockSkewAllowanceMs
       }
@@ -1104,9 +1104,9 @@ export function resolveActivityWebhookConfig(): ActivityWebhookConfig {
 
   if (deliveryLeaseTtlMs <= clockSkewAllowanceMs) {
     throw invalidActivityWebhookConfig(
-      "LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_LEASE_SECONDS must be greater than LINKEDIN_ASSISTANT_ACTIVITY_CLOCK_SKEW_SECONDS.",
+      "LINKEDIN_BUDDY_ACTIVITY_DELIVERY_LEASE_SECONDS must be greater than LINKEDIN_BUDDY_ACTIVITY_CLOCK_SKEW_SECONDS.",
       {
-        env: "LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_LEASE_SECONDS",
+        env: "LINKEDIN_BUDDY_ACTIVITY_DELIVERY_LEASE_SECONDS",
         delivery_lease_ttl_ms: deliveryLeaseTtlMs,
         clock_skew_allowance_ms: clockSkewAllowanceMs
       }
@@ -1115,9 +1115,9 @@ export function resolveActivityWebhookConfig(): ActivityWebhookConfig {
 
   return {
     enabled: parseStrictBoolean(
-      process.env.LINKEDIN_ASSISTANT_ACTIVITY_ENABLED,
+      process.env.LINKEDIN_BUDDY_ACTIVITY_ENABLED,
       true,
-      "LINKEDIN_ASSISTANT_ACTIVITY_ENABLED",
+      "LINKEDIN_BUDDY_ACTIVITY_ENABLED",
       invalidActivityWebhookConfig
     ),
     daemonPollIntervalMs,
@@ -1149,13 +1149,13 @@ export function resolveLinkedInSelectorLocaleConfig(
  *
  * @remarks
  * Explicit `selectorLocale` values win over
- * `LINKEDIN_ASSISTANT_SELECTOR_LOCALE`, which in turn wins over the default
+ * `LINKEDIN_BUDDY_SELECTOR_LOCALE`, which in turn wins over the default
  * English locale.
  */
 export function resolveLinkedInSelectorLocaleConfigResolution(
   selectorLocale?: string | LinkedInSelectorLocale
 ): LinkedInSelectorLocaleConfigResolution {
-  const envSelectorLocale = process.env[LINKEDIN_ASSISTANT_SELECTOR_LOCALE_ENV];
+  const envSelectorLocale = process.env[LINKEDIN_BUDDY_SELECTOR_LOCALE_ENV];
   const source: LinkedInSelectorLocaleConfigSource =
     selectorLocale === undefined
       ? envSelectorLocale === undefined
@@ -1177,7 +1177,7 @@ function formatSelectorLocaleSourceLabel(
   context: LinkedInSelectorLocaleConfigWarningContext
 ): string {
   if (source === "env") {
-    return LINKEDIN_ASSISTANT_SELECTOR_LOCALE_ENV;
+    return LINKEDIN_BUDDY_SELECTOR_LOCALE_ENV;
   }
 
   if (source === "option") {
@@ -1245,7 +1245,7 @@ function formatSelectorLocaleGuidance(
       return [
         supportedLocalesMessage,
         normalizedTagMessage,
-        `Update ${LINKEDIN_ASSISTANT_SELECTOR_LOCALE_ENV} or override it for one command with --selector-locale <locale>.`
+        `Update ${LINKEDIN_BUDDY_SELECTOR_LOCALE_ENV} or override it for one command with --selector-locale <locale>.`
       ].join(" ");
     }
 
@@ -1259,7 +1259,7 @@ function formatSelectorLocaleGuidance(
   return [
     supportedLocalesMessage,
     normalizedTagMessage,
-    `Pass a supported selectorLocale value or update ${LINKEDIN_ASSISTANT_SELECTOR_LOCALE_ENV}.`
+    `Pass a supported selectorLocale value or update ${LINKEDIN_BUDDY_SELECTOR_LOCALE_ENV}.`
   ].join(" ");
 }
 

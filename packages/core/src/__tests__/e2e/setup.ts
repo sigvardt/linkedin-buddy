@@ -363,22 +363,22 @@ export function getE2EBaseDir(): string {
 }
 
 /**
- * Temporarily overrides `LINKEDIN_ASSISTANT_HOME` while executing `callback`.
+ * Temporarily overrides `LINKEDIN_BUDDY_HOME` while executing `callback`.
  */
 export async function withAssistantHome<T>(
   assistantHome: string,
   callback: () => Promise<T>
 ): Promise<T> {
-  const previousHome = process.env.LINKEDIN_ASSISTANT_HOME;
-  process.env.LINKEDIN_ASSISTANT_HOME = assistantHome;
+  const previousHome = process.env.LINKEDIN_BUDDY_HOME;
+  process.env.LINKEDIN_BUDDY_HOME = assistantHome;
 
   try {
     return await callback();
   } finally {
     if (previousHome === undefined) {
-      delete process.env.LINKEDIN_ASSISTANT_HOME;
+      delete process.env.LINKEDIN_BUDDY_HOME;
     } else {
-      process.env.LINKEDIN_ASSISTANT_HOME = previousHome;
+      process.env.LINKEDIN_BUDDY_HOME = previousHome;
     }
   }
 }

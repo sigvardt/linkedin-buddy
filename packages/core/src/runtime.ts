@@ -98,7 +98,7 @@ function summarizeSelectorLocaleInput(
 }
 
 /**
- * Options for constructing a fully wired LinkedIn Assistant runtime.
+ * Options for constructing a fully wired LinkedIn Buddy runtime.
  *
  * @example
  * ```ts
@@ -169,7 +169,7 @@ export interface CoreRuntime {
 }
 
 /**
- * Creates the fully wired LinkedIn Assistant runtime and all supporting
+ * Creates the fully wired LinkedIn Buddy runtime and all supporting
  * services for one execution context.
  *
  * @example

@@ -1,12 +1,12 @@
-# linkedin-owa-agentools
+# LinkedIn Buddy
 
 LinkedIn automation monorepo with a shared TypeScript core, local CLI, and MCP stdio server.
 
 ## Monorepo Layout
 
-- `packages/core` (`@linkedin-assistant/core`)
-- `packages/cli` (`@linkedin-assistant/cli`) with `linkedin` bin
-- `packages/mcp` (`@linkedin-assistant/mcp`) with `linkedin-mcp` bin
+- `packages/core` (`@linkedin-buddy/core`)
+- `packages/cli` (`@linkedin-buddy/cli`) with `linkedin` bin
+- `packages/mcp` (`@linkedin-buddy/mcp`) with `linkedin-buddy-mcp` bin
 
 ## Requirements
 
@@ -33,50 +33,50 @@ export PLAYWRIGHT_EXECUTABLE_PATH=/path/to/chrome-or-chromium
 
 Default tool-owned state home (profiles, DB, artifacts):
 
-- `~/.linkedin-assistant/linkedin-owa-agentools`
-- Override with `LINKEDIN_ASSISTANT_HOME=/custom/path`
-- Confirm-failure trace size cap: `LINKEDIN_ASSISTANT_CONFIRM_TRACE_MAX_BYTES` (defaults to `26214400`)
-- Anti-bot evasion profile: `LINKEDIN_ASSISTANT_EVASION_LEVEL` (defaults to `moderate`; supports `minimal`, `moderate`, `paranoid`)
-- Verbose evasion diagnostics: `LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS` (defaults to `false`; when `true`, debug evasion events are written to the run log)
+- `~/.linkedin-buddy/linkedin-buddy`
+- Override with `LINKEDIN_BUDDY_HOME=/custom/path`
+- Confirm-failure trace size cap: `LINKEDIN_BUDDY_CONFIRM_TRACE_MAX_BYTES` (defaults to `26214400`)
+- Anti-bot evasion profile: `LINKEDIN_BUDDY_EVASION_LEVEL` (defaults to `moderate`; supports `minimal`, `moderate`, `paranoid`)
+- Verbose evasion diagnostics: `LINKEDIN_BUDDY_EVASION_DIAGNOSTICS` (defaults to `false`; when `true`, debug evasion events are written to the run log)
 - See `docs/evasion.md` for the evasion profiles, status output, and diagnostics hooks
-- Selector locale for UI-text fallbacks: `LINKEDIN_ASSISTANT_SELECTOR_LOCALE` (defaults to `en`; supports `en`, `da`; region tags like `da-DK` normalize to `da`; unsupported values fall back to `en` with a warning; see `docs/selector-locale.md`)
+- Selector locale for UI-text fallbacks: `LINKEDIN_BUDDY_SELECTOR_LOCALE` (defaults to `en`; supports `en`, `da`; region tags like `da-DK` normalize to `da`; unsupported values fall back to `en` with a warning; see `docs/selector-locale.md`)
 
 Scheduler / scheduled follow-up configuration:
 
-- `LINKEDIN_ASSISTANT_SCHEDULER_ENABLED=true|false` toggles local scheduler work (defaults to `true`)
-- `LINKEDIN_ASSISTANT_SCHEDULER_ENABLED_LANES=followup_preparation` controls enabled lanes; set it to an empty string to disable all lanes
-- `LINKEDIN_ASSISTANT_SCHEDULER_POLL_INTERVAL_SECONDS=300` controls daemon polling cadence
-- `LINKEDIN_ASSISTANT_SCHEDULER_BUSINESS_START=09:00`, `LINKEDIN_ASSISTANT_SCHEDULER_BUSINESS_END=17:00`, and `LINKEDIN_ASSISTANT_SCHEDULER_TIMEZONE=<IANA zone>` define the business-hours review window
-- `LINKEDIN_ASSISTANT_SCHEDULER_FOLLOWUP_DELAY_MINUTES=15` delays follow-up preparation after acceptance is detected
+- `LINKEDIN_BUDDY_SCHEDULER_ENABLED=true|false` toggles local scheduler work (defaults to `true`)
+- `LINKEDIN_BUDDY_SCHEDULER_ENABLED_LANES=followup_preparation` controls enabled lanes; set it to an empty string to disable all lanes
+- `LINKEDIN_BUDDY_SCHEDULER_POLL_INTERVAL_SECONDS=300` controls daemon polling cadence
+- `LINKEDIN_BUDDY_SCHEDULER_BUSINESS_START=09:00`, `LINKEDIN_BUDDY_SCHEDULER_BUSINESS_END=17:00`, and `LINKEDIN_BUDDY_SCHEDULER_TIMEZONE=<IANA zone>` define the business-hours review window
+- `LINKEDIN_BUDDY_SCHEDULER_FOLLOWUP_DELAY_MINUTES=15` delays follow-up preparation after acceptance is detected
 - See `docs/scheduler.md` for the full scheduler guide, architecture notes, and every scheduler env var
 
 Activity webhook / polling configuration:
 
-- `LINKEDIN_ASSISTANT_ACTIVITY_ENABLED=true|false` toggles local activity polling and webhook delivery work (defaults to `true`)
-- `LINKEDIN_ASSISTANT_ACTIVITY_DAEMON_POLL_INTERVAL_SECONDS=60` controls daemon wake-up cadence
-- `LINKEDIN_ASSISTANT_ACTIVITY_MAX_WATCHES_PER_TICK=4` bounds LinkedIn polling work per tick
-- `LINKEDIN_ASSISTANT_ACTIVITY_MAX_CONCURRENT_WATCHES=20` caps active watches per profile
-- `LINKEDIN_ASSISTANT_ACTIVITY_MIN_POLL_INTERVAL_SECONDS=60` sets the minimum interval schedule accepted for activity watches
-- `LINKEDIN_ASSISTANT_ACTIVITY_MAX_DELIVERIES_PER_TICK=12` bounds webhook delivery work per tick
-- `LINKEDIN_ASSISTANT_ACTIVITY_MAX_EVENT_QUEUE_DEPTH=250` bounds queued `pending` + `leased` webhook deliveries before new watch polling backs off
-- `LINKEDIN_ASSISTANT_ACTIVITY_WATCH_LEASE_SECONDS=120`, `LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_LEASE_SECONDS=60`, and `LINKEDIN_ASSISTANT_ACTIVITY_CLOCK_SKEW_SECONDS=5` control lease recovery under clock skew
-- `LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_TIMEOUT_SECONDS=10` caps one webhook POST attempt
-- `LINKEDIN_ASSISTANT_ACTIVITY_MAX_DELIVERY_ATTEMPTS=6` sets the default retry ceiling per subscription delivery
-- `LINKEDIN_ASSISTANT_ACTIVITY_INITIAL_BACKOFF_SECONDS=60` and `LINKEDIN_ASSISTANT_ACTIVITY_MAX_BACKOFF_SECONDS=86400` control exponential backoff for retryable delivery failures and watch poll failures
+- `LINKEDIN_BUDDY_ACTIVITY_ENABLED=true|false` toggles local activity polling and webhook delivery work (defaults to `true`)
+- `LINKEDIN_BUDDY_ACTIVITY_DAEMON_POLL_INTERVAL_SECONDS=60` controls daemon wake-up cadence
+- `LINKEDIN_BUDDY_ACTIVITY_MAX_WATCHES_PER_TICK=4` bounds LinkedIn polling work per tick
+- `LINKEDIN_BUDDY_ACTIVITY_MAX_CONCURRENT_WATCHES=20` caps active watches per profile
+- `LINKEDIN_BUDDY_ACTIVITY_MIN_POLL_INTERVAL_SECONDS=60` sets the minimum interval schedule accepted for activity watches
+- `LINKEDIN_BUDDY_ACTIVITY_MAX_DELIVERIES_PER_TICK=12` bounds webhook delivery work per tick
+- `LINKEDIN_BUDDY_ACTIVITY_MAX_EVENT_QUEUE_DEPTH=250` bounds queued `pending` + `leased` webhook deliveries before new watch polling backs off
+- `LINKEDIN_BUDDY_ACTIVITY_WATCH_LEASE_SECONDS=120`, `LINKEDIN_BUDDY_ACTIVITY_DELIVERY_LEASE_SECONDS=60`, and `LINKEDIN_BUDDY_ACTIVITY_CLOCK_SKEW_SECONDS=5` control lease recovery under clock skew
+- `LINKEDIN_BUDDY_ACTIVITY_DELIVERY_TIMEOUT_SECONDS=10` caps one webhook POST attempt
+- `LINKEDIN_BUDDY_ACTIVITY_MAX_DELIVERY_ATTEMPTS=6` sets the default retry ceiling per subscription delivery
+- `LINKEDIN_BUDDY_ACTIVITY_INITIAL_BACKOFF_SECONDS=60` and `LINKEDIN_BUDDY_ACTIVITY_MAX_BACKOFF_SECONDS=86400` control exponential backoff for retryable delivery failures and watch poll failures
 - See `docs/activity-webhooks.md` for quickstart steps, CLI workflows, diagnostics, and every activity env var
 
 Privacy / redaction controls:
 
-- `LINKEDIN_ASSISTANT_REDACTION_MODE=off|partial|full`
-- `LINKEDIN_ASSISTANT_STORAGE_MODE=full|excerpt`
-- `LINKEDIN_ASSISTANT_MESSAGE_EXCERPT_LENGTH=80`
-- `LINKEDIN_ASSISTANT_REDACTION_HASH_SALT=your-local-salt`
+- `LINKEDIN_BUDDY_REDACTION_MODE=off|partial|full`
+- `LINKEDIN_BUDDY_STORAGE_MODE=full|excerpt`
+- `LINKEDIN_BUDDY_MESSAGE_EXCERPT_LENGTH=80`
+- `LINKEDIN_BUDDY_REDACTION_HASH_SALT=your-local-salt`
 
 `partial` hashes names and stores/logs only short message excerpts. `full` replaces sensitive message bodies with fully redacted markers.
 
 Post safety lint configuration:
 
-- Optional config file: `~/.linkedin-assistant/linkedin-owa-agentools/config.json`
+- Optional config file: `~/.linkedin-buddy/linkedin-buddy/config.json`
 - JSON shape:
 
 ```json
@@ -91,14 +91,14 @@ Post safety lint configuration:
 ```
 
 - Environment overrides:
-  - `LINKEDIN_ASSISTANT_POST_SAFETY_MAX_LENGTH`
-  - `LINKEDIN_ASSISTANT_POST_SAFETY_BANNED_PHRASES` (JSON array or comma/newline-separated list)
-  - `LINKEDIN_ASSISTANT_POST_SAFETY_VALIDATE_LINK_PREVIEWS`
-  - `LINKEDIN_ASSISTANT_POST_SAFETY_LINK_TIMEOUT_MS`
+  - `LINKEDIN_BUDDY_POST_SAFETY_MAX_LENGTH`
+  - `LINKEDIN_BUDDY_POST_SAFETY_BANNED_PHRASES` (JSON array or comma/newline-separated list)
+  - `LINKEDIN_BUDDY_POST_SAFETY_VALIDATE_LINK_PREVIEWS`
+  - `LINKEDIN_BUDDY_POST_SAFETY_LINK_TIMEOUT_MS`
 
 Live write-validation account registry:
 
-- Optional config file: `~/.linkedin-assistant/linkedin-owa-agentools/config.json`
+- Optional config file: `~/.linkedin-buddy/linkedin-buddy/config.json`
 - JSON shape:
 
 ```json
@@ -165,7 +165,7 @@ Configuration surface:
 Basic usage:
 
 ```ts
-import { humanize } from "@linkedin-assistant/core";
+import { humanize } from "@linkedin-buddy/core";
 
 const hp = humanize(page, { typingProfile: "careful" });
 await hp.type('[role="textbox"]', "Thanks for sharing this update.", {
@@ -184,8 +184,8 @@ along with runtime-level status snapshots and debug diagnostics.
 Configuration surface:
 
 - default level: `moderate`
-- `LINKEDIN_ASSISTANT_EVASION_LEVEL=minimal|moderate|paranoid`
-- `LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS=true|false`
+- `LINKEDIN_BUDDY_EVASION_LEVEL=minimal|moderate|paranoid`
+- `LINKEDIN_BUDDY_EVASION_DIAGNOSTICS=true|false`
 - `createCoreRuntime({ evasionLevel, evasionDiagnostics })` for direct Core callers
 - precedence is runtime option → environment variable → built-in default
 
@@ -201,7 +201,7 @@ Diagnostics surface:
 - enabling diagnostics records `evasion.*` events in the run log for easier troubleshooting
 
 ```ts
-import { EvasionSession, createCoreRuntime } from "@linkedin-assistant/core";
+import { EvasionSession, createCoreRuntime } from "@linkedin-buddy/core";
 
 const runtime = createCoreRuntime({
   evasionLevel: "paranoid",
@@ -227,18 +227,18 @@ on supported non-English LinkedIn sessions.
 
 - Supported locales: `en`, `da`
 - Region tags normalize to their supported base locale (`da-DK` → `da`, `en-US` → `en`)
-- Precedence: explicit CLI / MCP / Core runtime input → `LINKEDIN_ASSISTANT_SELECTOR_LOCALE` → `en`
+- Precedence: explicit CLI / MCP / Core runtime input → `LINKEDIN_BUDDY_SELECTOR_LOCALE` → `en`
 - Unsupported, blank, malformed, or overly long locale values fall back to `en` with a warning
 - Browser language is diagnostic only; it does not silently override explicit config
 - Selector locale is not currently read from `config.json`; use the CLI flag, MCP input, runtime option, or env var
 
 ```bash
 # Default the current shell to Danish selector phrases
-export LINKEDIN_ASSISTANT_SELECTOR_LOCALE=da
-npm exec -w @linkedin-assistant/cli -- linkedin status --profile default
+export LINKEDIN_BUDDY_SELECTOR_LOCALE=da
+npm exec -w @linkedin-buddy/cli -- linkedin status --profile default
 
 # Override the locale for one command with a normalized region tag
-npm exec -w @linkedin-assistant/cli -- linkedin --selector-locale da-DK audit selectors --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin --selector-locale da-DK audit selectors --profile default
 ```
 
 MCP clients can pass `"selectorLocale": "da"` in tool arguments, and Core
@@ -252,9 +252,9 @@ migration guidance.
 Run commands via workspace binaries:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin status --profile default
-npm exec -w @linkedin-assistant/cli -- linkedin health --profile default
-npm exec -w @linkedin-assistant/cli -- linkedin login --profile default --timeout-minutes 10
+npm exec -w @linkedin-buddy/cli -- linkedin status --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin health --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin login --profile default --timeout-minutes 10
 ```
 
 - `linkedin status` and `linkedin health` now include the resolved anti-bot evasion snapshot in their JSON output so you can confirm the active level, enabled features, and diagnostics flag before reproducing session issues.
@@ -268,13 +268,13 @@ Isolation note:
 Session keepalive daemon (isolated profile):
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin keepalive start --profile default
-npm exec -w @linkedin-assistant/cli -- linkedin keepalive status --profile default --verbose
-npm exec -w @linkedin-assistant/cli -- linkedin keepalive status --profile default --json
-npm exec -w @linkedin-assistant/cli -- linkedin keepalive stop --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin keepalive start --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin keepalive status --profile default --verbose
+npm exec -w @linkedin-buddy/cli -- linkedin keepalive status --profile default --json
+npm exec -w @linkedin-buddy/cli -- linkedin keepalive stop --profile default
 ```
 
-- `start` spawns a detached daemon and returns after it writes the profile PID file plus `*.state.json` and `*.events.jsonl` files under `~/.linkedin-assistant/linkedin-owa-agentools/keepalive/`.
+- `start` spawns a detached daemon and returns after it writes the profile PID file plus `*.state.json` and `*.events.jsonl` files under `~/.linkedin-buddy/linkedin-buddy/keepalive/`.
 - `status` reads the saved daemon state instead of attaching to the browser directly. On interactive terminals it defaults to a human summary with `Summary`, `Session`, `Action Needed`, and `Next Steps` sections. Outside a TTY it defaults to JSON. Use `--quiet` for a one-line summary or `--verbose` for recent event history and extra diagnostics.
 - Health monitoring is persisted per profile: daemon status (`starting`, `running`, `degraded`, `stopped`), browser/session health, current LinkedIn URL and reason, last healthy tick, last error, and consecutive failure count all remain inspectable after the daemon stops.
 - Failure handling is operator-visible. Failed checks are recorded in the saved state and retried on the next scheduled interval. Once failures reach `--max-consecutive-failures`, the saved state flips to `degraded` until a later healthy check resets the counter.
@@ -285,52 +285,52 @@ npm exec -w @linkedin-assistant/cli -- linkedin keepalive stop --profile default
 Scheduled follow-up daemon:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin scheduler start --profile default
-npm exec -w @linkedin-assistant/cli -- linkedin scheduler status --profile default --jobs 10
-npm exec -w @linkedin-assistant/cli -- linkedin scheduler run-once --profile default
-npm exec -w @linkedin-assistant/cli -- linkedin scheduler stop --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin scheduler start --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin scheduler status --profile default --jobs 10
+npm exec -w @linkedin-buddy/cli -- linkedin scheduler run-once --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin scheduler stop --profile default
 ```
 
 - The scheduler is a local CLI daemon; there is no dedicated MCP scheduler tool.
 - It detects newly accepted sent invitations, queues due follow-up preparation jobs, and never auto-confirms prepared actions.
 - Default behavior is to poll every 5 minutes, wait 15 minutes after acceptance, and only prepare follow-ups during local 09:00-17:00 business hours.
-- Scheduler state/log files are stored under `~/.linkedin-assistant/linkedin-owa-agentools/scheduler/`.
+- Scheduler state/log files are stored under `~/.linkedin-buddy/linkedin-buddy/scheduler/`.
 - See `docs/scheduler.md` for quickstart steps, config details, and subsystem architecture.
 
 Activity webhook daemon:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin activity watch add --profile default --kind notifications --interval-seconds 600
-npm exec -w @linkedin-assistant/cli -- linkedin activity watch list --profile default
-npm exec -w @linkedin-assistant/cli -- linkedin activity webhook add --watch <watch-id> --url https://example.com/hooks/linkedin
-npm exec -w @linkedin-assistant/cli -- linkedin activity run-once --profile default
-npm exec -w @linkedin-assistant/cli -- linkedin activity events --profile default --limit 20
-npm exec -w @linkedin-assistant/cli -- linkedin activity deliveries --profile default --limit 20
-npm exec -w @linkedin-assistant/cli -- linkedin activity start --profile default
-npm exec -w @linkedin-assistant/cli -- linkedin activity status --profile default
-npm exec -w @linkedin-assistant/cli -- linkedin activity stop --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin activity watch add --profile default --kind notifications --interval-seconds 600
+npm exec -w @linkedin-buddy/cli -- linkedin activity watch list --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin activity webhook add --watch <watch-id> --url https://example.com/hooks/linkedin
+npm exec -w @linkedin-buddy/cli -- linkedin activity run-once --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin activity events --profile default --limit 20
+npm exec -w @linkedin-buddy/cli -- linkedin activity deliveries --profile default --limit 20
+npm exec -w @linkedin-buddy/cli -- linkedin activity start --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin activity status --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin activity stop --profile default
 ```
 
 - The activity daemon is a local CLI daemon backed by persistent watch, event, and delivery state in SQLite.
 - `run-once` has a `tick` alias when you want an immediate poll without leaving the daemon running.
 - MCP exposes watch/webhook CRUD plus `linkedin.activity_poller.run_once`, but daemon lifecycle stays in the CLI.
-- Activity state/log files are stored under `~/.linkedin-assistant/linkedin-owa-agentools/activity/`, and durable rows live in `~/.linkedin-assistant/linkedin-owa-agentools/state.sqlite`.
+- Activity state/log files are stored under `~/.linkedin-buddy/linkedin-buddy/activity/`, and durable rows live in `~/.linkedin-buddy/linkedin-buddy/state.sqlite`.
 - See `docs/activity-webhooks.md` for watch targets, event types, output diagnostics, and configuration, and `docs/activity-webhooks-architecture.md` for the polling-engine and schema details.
 
 Delete local tool state:
 
 ```bash
 # Preview the shared local runtime footprint (default dry-run)
-npm exec -w @linkedin-assistant/cli -- linkedin data delete
+npm exec -w @linkedin-buddy/cli -- linkedin data delete
 
 # Delete shared local runtime data after interactive confirmation
-npm exec -w @linkedin-assistant/cli -- linkedin data delete --confirm
+npm exec -w @linkedin-buddy/cli -- linkedin data delete --confirm
 
 # Preview the wider wipe that also includes tool-owned browser profiles
-npm exec -w @linkedin-assistant/cli -- linkedin data delete --include-profile
+npm exec -w @linkedin-buddy/cli -- linkedin data delete --include-profile
 
 # Delete shared data plus tool-owned browser profiles (second confirmation)
-npm exec -w @linkedin-assistant/cli -- linkedin data delete --include-profile --confirm
+npm exec -w @linkedin-buddy/cli -- linkedin data delete --include-profile --confirm
 ```
 
 - `linkedin data delete` is a dry-run preview by default.
@@ -356,22 +356,22 @@ See `docs/selector-audit.md` for the full guide.
 
 ```bash
 # Interactive summary with per-page progress
-npm exec -w @linkedin-assistant/cli -- linkedin audit selectors --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin audit selectors --profile default
 
 # Machine-readable report for CI or scripts
-npm exec -w @linkedin-assistant/cli -- linkedin audit selectors --profile default --json
+npm exec -w @linkedin-buddy/cli -- linkedin audit selectors --profile default --json
 
 # Expand the human summary with selector-by-selector detail
-npm exec -w @linkedin-assistant/cli -- linkedin audit selectors --profile default --verbose
+npm exec -w @linkedin-buddy/cli -- linkedin audit selectors --profile default --verbose
 
 # Audit an attached logged-in browser instead of the tool-owned profile
-npm exec -w @linkedin-assistant/cli -- linkedin audit selectors --profile default --cdp-url http://127.0.0.1:18800
+npm exec -w @linkedin-buddy/cli -- linkedin audit selectors --profile default --cdp-url http://127.0.0.1:18800
 
 # Force Danish selector fallbacks with English as a safety net
-npm exec -w @linkedin-assistant/cli -- linkedin audit selectors --profile default --selector-locale da
+npm exec -w @linkedin-buddy/cli -- linkedin audit selectors --profile default --selector-locale da
 
 # Show command help and doc reference
-npm exec -w @linkedin-assistant/cli -- linkedin audit selectors --help
+npm exec -w @linkedin-buddy/cli -- linkedin audit selectors --help
 ```
 
 Representative human-readable output:
@@ -415,7 +415,7 @@ Failures
 - Selector audit also supports `--selector-locale <locale>` for localized UI
   text fallbacks. Region tags such as `da-DK` normalize to `da`, and
   unsupported values fall back to `en` with a warning.
-- Set `LINKEDIN_ASSISTANT_SELECTOR_LOCALE` to change the default selector
+- Set `LINKEDIN_BUDDY_SELECTOR_LOCALE` to change the default selector
   locale for the current shell.
 
 ### Live read-only validation
@@ -426,25 +426,25 @@ read-only surfaces, blocks non-GET traffic during the run, and records a local
 report with selector matches, failures, timings, and regressions versus the
 previous run.
 
-Examples below use the `linkedin` binary; `owa` is an equivalent alias.
+Examples below use the `linkedin` binary; `buddy` is an equivalent alias.
 See `docs/live-validation.md` for the operator guide and
 `docs/live-validation-architecture.md` for the pipeline internals.
 
 ```bash
 # Capture or refresh an encrypted stored session from a manual login
-npm exec -w @linkedin-assistant/cli -- linkedin auth session --session smoke
+npm exec -w @linkedin-buddy/cli -- linkedin auth session --session smoke
 
 # Run the smoke test interactively with per-step prompts
-npm exec -w @linkedin-assistant/cli -- linkedin test live --read-only --session smoke
+npm exec -w @linkedin-buddy/cli -- linkedin test live --read-only --session smoke
 
 # Keep the human-readable summary and progress output, but skip prompts
-npm exec -w @linkedin-assistant/cli -- linkedin test live --read-only --session smoke --yes
+npm exec -w @linkedin-buddy/cli -- linkedin test live --read-only --session smoke --yes
 
 # Emit structured JSON for CI or scripts
-npm exec -w @linkedin-assistant/cli -- linkedin test live --read-only --session smoke --yes --json
+npm exec -w @linkedin-buddy/cli -- linkedin test live --read-only --session smoke --yes --json
 
 # Inspect one operation from the JSON output
-npm exec -w @linkedin-assistant/cli -- linkedin test live --read-only --session smoke --yes --json | jq '.operations[] | select(.operation == "notifications")'
+npm exec -w @linkedin-buddy/cli -- linkedin test live --read-only --session smoke --yes --json | jq '.operations[] | select(.operation == "notifications")'
 ```
 
 - `linkedin auth session` opens a dedicated browser window, waits for a manual
@@ -467,7 +467,7 @@ npm exec -w @linkedin-assistant/cli -- linkedin test live --read-only --session 
   `notifications`, `inbox`, and `connections`. To focus on one step, filter
   the JSON report or call the Core API from a custom harness.
 - Any session expiry, challenge, captcha, or unexpected redirect stops the run.
-- Reports live under `LINKEDIN_ASSISTANT_HOME`, including the run-scoped
+- Reports live under `LINKEDIN_BUDDY_HOME`, including the run-scoped
   `artifacts/<run-id>/live-readonly/report.json`, the corresponding
   `artifacts/<run-id>/events.jsonl`, and the rolling
   `artifacts/live-readonly/latest-report.json` snapshot used for regression
@@ -488,21 +488,21 @@ account. It uses the same stored-session capture flow as Tier 2, but it never
 runs unattended, never targets a primary account, and always requires typed
 confirmation before each write.
 
-Examples below use the `linkedin` binary; `owa` is an equivalent alias.
+Examples below use the `linkedin` binary; `buddy` is an equivalent alias.
 See `docs/write-validation.md` for the full operator guide.
 
 ```bash
 # Capture a stored session for the dedicated secondary account
-npm exec -w @linkedin-assistant/cli -- linkedin auth session --session secondary-session
+npm exec -w @linkedin-buddy/cli -- linkedin auth session --session secondary-session
 
 # Register the secondary account and approved write-validation targets
-npm exec -w @linkedin-assistant/cli -- linkedin accounts add secondary --designation secondary --session secondary-session --profile secondary --message-thread /messaging/thread/abc123/ --message-participant-pattern "Simon Miller" --invite-profile https://www.linkedin.com/in/test-target/ --invite-note "Quick validation hello" --followup-profile https://www.linkedin.com/in/test-target/ --reaction-post https://www.linkedin.com/feed/update/urn:li:activity:123/ --reaction like --post-visibility connections
+npm exec -w @linkedin-buddy/cli -- linkedin accounts add secondary --designation secondary --session secondary-session --profile secondary --message-thread /messaging/thread/abc123/ --message-participant-pattern "Simon Miller" --invite-profile https://www.linkedin.com/in/test-target/ --invite-note "Quick validation hello" --followup-profile https://www.linkedin.com/in/test-target/ --reaction-post https://www.linkedin.com/feed/update/urn:li:activity:123/ --reaction like --post-visibility connections
 
 # Run the real-action harness
-npm exec -w @linkedin-assistant/cli -- linkedin test live --write-validation --account secondary
+npm exec -w @linkedin-buddy/cli -- linkedin test live --write-validation --account secondary
 
 # Emit the final structured report as JSON while prompts stay interactive
-npm exec -w @linkedin-assistant/cli -- linkedin test live --write-validation --account secondary --json | jq '.actions[] | {action_type, status}'
+npm exec -w @linkedin-buddy/cli -- linkedin test live --write-validation --account secondary --json | jq '.actions[] | {action_type, status}'
 ```
 
 - The CLI prints `This will perform REAL actions on LinkedIn` at startup.
@@ -517,7 +517,7 @@ npm exec -w @linkedin-assistant/cli -- linkedin test live --write-validation --a
   `network.followup_after_accept`) use the human-like typing simulation layer
   during composition and still verify the final text if they degrade to direct
   input.
-- Registered accounts live in `LINKEDIN_ASSISTANT_HOME/config.json` under
+- Registered accounts live in `LINKEDIN_BUDDY_HOME/config.json` under
   `writeValidation.accounts`; use `linkedin accounts add` or
   `linkedin accounts:add` to manage them.
 - The selected account must be marked `secondary`; accounts marked `primary`
@@ -554,16 +554,16 @@ format, output semantics, core API, and CI examples.
 
 ```bash
 # Human-readable summary for a dataset with embedded candidates
-npm exec -w @linkedin-assistant/cli -- linkedin audit draft-quality --dataset eval/dataset.json
+npm exec -w @linkedin-buddy/cli -- linkedin audit draft-quality --dataset eval/dataset.json
 
 # Add an external candidates file and expand the summary with per-draft detail
-npm exec -w @linkedin-assistant/cli -- linkedin audit draft-quality --dataset eval/dataset.json --candidates eval/candidates.json --verbose
+npm exec -w @linkedin-buddy/cli -- linkedin audit draft-quality --dataset eval/dataset.json --candidates eval/candidates.json --verbose
 
 # Emit machine-readable JSON and save a copy to disk
-npm exec -w @linkedin-assistant/cli -- linkedin audit draft-quality --dataset eval/dataset.json --candidates eval/candidates.json --json --output reports/draft-quality.json
+npm exec -w @linkedin-buddy/cli -- linkedin audit draft-quality --dataset eval/dataset.json --candidates eval/candidates.json --json --output reports/draft-quality.json
 
 # Show command help and usage examples
-npm exec -w @linkedin-assistant/cli -- linkedin audit draft-quality --help
+npm exec -w @linkedin-buddy/cli -- linkedin audit draft-quality --help
 ```
 
 - `--dataset <path>` is required; `--candidates <path>` is optional when the
@@ -578,9 +578,9 @@ npm exec -w @linkedin-assistant/cli -- linkedin audit draft-quality --help
 Inbox MVP commands:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin inbox list --profile default --limit 20
-npm exec -w @linkedin-assistant/cli -- linkedin inbox show --profile default --thread <thread_id_or_url> --limit 20
-npm exec -w @linkedin-assistant/cli -- linkedin inbox prepare-reply --profile default --thread <thread_id_or_url> --text "Hi there"
+npm exec -w @linkedin-buddy/cli -- linkedin inbox list --profile default --limit 20
+npm exec -w @linkedin-buddy/cli -- linkedin inbox show --profile default --thread <thread_id_or_url> --limit 20
+npm exec -w @linkedin-buddy/cli -- linkedin inbox prepare-reply --profile default --thread <thread_id_or_url> --text "Hi there"
 ```
 
 Prepared replies, follow-ups, and posts use the same human-like typing layer at
@@ -589,9 +589,9 @@ confirm time. `linkedin login` also uses it when entering credentials.
 Follow-up flow after accepted invitations:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin followups list --profile default --since 7d
-npm exec -w @linkedin-assistant/cli -- linkedin followups prepare --profile default --since 7d
-npm exec -w @linkedin-assistant/cli -- linkedin scheduler run-once --profile default --json
+npm exec -w @linkedin-buddy/cli -- linkedin followups list --profile default --since 7d
+npm exec -w @linkedin-buddy/cli -- linkedin followups prepare --profile default --since 7d
+npm exec -w @linkedin-buddy/cli -- linkedin scheduler run-once --profile default --json
 ```
 
 - `followups prepare` is the manual, operator-invoked batch workflow.
@@ -601,8 +601,8 @@ npm exec -w @linkedin-assistant/cli -- linkedin scheduler run-once --profile def
 Profile seeding commands:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin profile editable --profile default
-npm exec -w @linkedin-assistant/cli -- linkedin profile apply-spec --profile default --spec docs/profile-seeds/sample-automation-profile.json --allow-partial --yes --delay-ms 4000
+npm exec -w @linkedin-buddy/cli -- linkedin profile editable --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin profile apply-spec --profile default --spec docs/profile-seeds/sample-automation-profile.json --allow-partial --yes --delay-ms 4000
 ```
 
 - `profile editable` mirrors the MCP editable-profile surface in the CLI.
@@ -636,7 +636,7 @@ npm exec -w @linkedin-assistant/cli -- linkedin seed activity --profile default 
 Confirm prepared actions by token:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin actions confirm --profile default --token ct_...
+npm exec -w @linkedin-buddy/cli -- linkedin actions confirm --profile default --token ct_...
 ```
 
 - Confirmation prints preview details and prompts for explicit operator approval.
@@ -651,7 +651,7 @@ Use the CLI for that workflow so the operator can review each preview, type
 Start MCP server:
 
 ```bash
-npm exec -w @linkedin-assistant/mcp -- linkedin-mcp
+npm exec -w @linkedin-buddy/mcp -- linkedin-buddy-mcp
 ```
 
 Exposed tools:
@@ -719,7 +719,7 @@ For anti-bot evasion, MCP surfaces the resolved snapshot through
 server reads evasion defaults from env vars at startup. See `docs/evasion.md`
 for the full integration and troubleshooting guide.
 
-- explicit `selectorLocale` wins over `LINKEDIN_ASSISTANT_SELECTOR_LOCALE`
+- explicit `selectorLocale` wins over `LINKEDIN_BUDDY_SELECTOR_LOCALE`
 - supported values are `en`, `da`, and region tags like `da-DK`
 - unsupported values fall back to English with a runtime warning
 
@@ -811,7 +811,7 @@ Record or refresh replay fixtures manually:
 
 ```bash
 linkedin fixtures record --page feed --page messaging
-owa fixtures:record --set da-dk --page profile,notifications --no-har
+buddy fixtures:record --set da-dk --page profile,notifications --no-har
 ```
 
 Custom recording example with an alternate manifest, profile, and viewport:
@@ -831,7 +831,7 @@ Check fixture freshness:
 
 ```bash
 linkedin fixtures check
-owa fixtures:check --set ci --max-age-days 14
+buddy fixtures:check --set ci --max-age-days 14
 ```
 
 Replay fixtures are stored under `test/fixtures/`. The manifest and committed

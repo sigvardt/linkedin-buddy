@@ -114,7 +114,7 @@ describe("write-validation account registry", () => {
     writeFileSync(configPath, "{ not-valid-json\n", "utf8");
 
     expect(() => loadWriteValidationAccounts(baseDir)).toThrow(
-      `Failed to parse LinkedIn assistant config file at ${configPath}.`
+      `Failed to parse LinkedIn Buddy config file at ${configPath}.`
     );
   });
 

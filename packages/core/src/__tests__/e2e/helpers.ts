@@ -2,10 +2,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { isFixtureReplayEnabled } from "../../fixtureReplay.js";
 import type { CoreRuntime } from "../../runtime.js";
-import { toLinkedInAssistantErrorPayload } from "../../errors.js";
+import { toLinkedInBuddyErrorPayload } from "../../errors.js";
 import { TEST_ECHO_ACTION_TYPE } from "../../twoPhaseCommit.js";
 import { runCli } from "../../../../cli/src/bin/linkedin.js";
-import { handleToolCall } from "../../../../mcp/src/bin/linkedin-mcp.js";
+import { handleToolCall } from "../../../../mcp/src/bin/linkedin-buddy-mcp.js";
 import { expect } from "vitest";
 import {
   LINKEDIN_ACTIONS_CONFIRM_TOOL,
@@ -519,7 +519,7 @@ async function captureCommandExecution(
     }
 
     stderrChunks.push(
-      `${JSON.stringify(toLinkedInAssistantErrorPayload(caught), null, 2)}\n`
+      `${JSON.stringify(toLinkedInBuddyErrorPayload(caught), null, 2)}\n`
     );
   } finally {
     process.stdout.write = originalStdoutWrite;

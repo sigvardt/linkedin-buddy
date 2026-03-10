@@ -1,6 +1,6 @@
 import type { BrowserContext, Page } from "playwright-core";
 import { resolveEvasionConfig, type EvasionConfig } from "../config.js";
-import { LinkedInAssistantError } from "../errors.js";
+import { LinkedInBuddyError } from "../errors.js";
 import { attachHumanizeLogger, detachHumanizeLogger, humanize } from "../humanize.js";
 import type { JsonEventLogger } from "../logging.js";
 import { ProfileManager } from "../profileManager.js";
@@ -214,7 +214,7 @@ export class LinkedInAuthService {
         rate_limit_active: status.rateLimitActive ?? false,
         reason: status.reason
       });
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         code,
         `${status.reason} ${guidance}`,
         {

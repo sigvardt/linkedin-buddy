@@ -29,7 +29,7 @@ The shipped implementation is split across these files:
   status, stop, and `run-once`
 - `packages/cli/src/activityOutput.ts`: human-readable activity summaries and
   structured error rendering
-- `packages/mcp/src/bin/linkedin-mcp.ts`: activity watch, webhook, history, and
+- `packages/mcp/src/bin/linkedin-buddy-mcp.ts`: activity watch, webhook, history, and
   `run_once` MCP tools
 
 ## Runtime shape
@@ -78,7 +78,7 @@ Important details:
 - an in-process per-profile lock prevents concurrent ticks from one process,
   while SQLite leases protect watch and delivery claims across processes
 - if queued `pending` + `leased` deliveries have already reached
-  `LINKEDIN_ASSISTANT_ACTIVITY_MAX_EVENT_QUEUE_DEPTH`, the tick skips watch
+  `LINKEDIN_BUDDY_ACTIVITY_MAX_EVENT_QUEUE_DEPTH`, the tick skips watch
   claiming and only works on delivery drain
 
 ## Watch execution model
@@ -236,7 +236,7 @@ If the retry budget is exhausted, the current leased row is finalized as
 
 ### Backpressure
 
-`LINKEDIN_ASSISTANT_ACTIVITY_MAX_EVENT_QUEUE_DEPTH` applies to queued
+`LINKEDIN_BUDDY_ACTIVITY_MAX_EVENT_QUEUE_DEPTH` applies to queued
 `pending` + `leased` attempts.
 
 When an event is emitted and no queue slot remains:
@@ -258,7 +258,7 @@ The background daemon is implemented in `packages/cli/src/bin/linkedin.ts`.
 - the daemon writes a profile-scoped pid file, state file, and JSONL event log
 - each loop iteration creates a **fresh core runtime**, runs one tick, then
   closes the runtime again
-- sleep between iterations uses `LINKEDIN_ASSISTANT_ACTIVITY_DAEMON_POLL_INTERVAL_SECONDS`
+- sleep between iterations uses `LINKEDIN_BUDDY_ACTIVITY_DAEMON_POLL_INTERVAL_SECONDS`
 
 Creating a fresh runtime on every loop keeps browser/session/resource cleanup
 behavior aligned with the rest of the CLI and avoids holding one long-lived

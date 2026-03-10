@@ -3,7 +3,7 @@ import * as fsPromises from "node:fs/promises";
 import path from "node:path";
 import { resolveRateLimitStateFilePaths } from "./auth/rateLimitState.js";
 import { resolveConfigPaths } from "./config.js";
-import { LinkedInAssistantError } from "./errors.js";
+import { LinkedInBuddyError } from "./errors.js";
 
 /**
  * Filesystem-first helpers for inventorying and deleting tool-owned local
@@ -95,7 +95,7 @@ function normalizePath(targetPath: string): string {
 
 function resolvePathInput(targetPath: string, label: string): string {
   if (targetPath.trim().length === 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must not be empty.`,
       {
@@ -124,7 +124,7 @@ function isMissingPathError(error: unknown): boolean {
 function assertSafeDeletePath(targetPath: string, label: string): void {
   const resolvedTargetPath = normalizePath(targetPath);
   if (resolvedTargetPath === path.parse(resolvedTargetPath).root) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `Refusing to delete ${label} because it resolves to the filesystem root.`,
       {
@@ -140,7 +140,7 @@ function resolveCanonicalDirectoryPath(targetPath: string): string {
   try {
     const existingTargetPath = realpathSync(normalizedTargetPath);
     if (!statSync(existingTargetPath).isDirectory()) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "Refusing to delete local data because its configured base directory is not a directory.",
         {
@@ -190,7 +190,7 @@ function assertTargetWithinBaseDir(targetPath: string, baseDir: string): void {
     return;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     "Refusing to delete a local-data target that escapes the configured base directory.",
     {
@@ -314,7 +314,7 @@ export function createLocalDataDeletionPlan(
  * @remarks
  * Missing paths are reported in `missingPaths` and do not fail the command.
  * Other filesystem errors are accumulated so the helper can continue deleting
- * remaining targets before throwing a `LinkedInAssistantError` with
+ * remaining targets before throwing a `LinkedInBuddyError` with
  * `failed_paths` details.
  */
 export async function deleteLocalData(
@@ -355,7 +355,7 @@ export async function deleteLocalData(
   };
 
   if (failedPaths.length > 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UNKNOWN",
       "Local data deletion completed with some failures. Review failed_paths and retry after following the recovery guidance.",
       {

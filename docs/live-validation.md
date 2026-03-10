@@ -4,9 +4,9 @@
 page-shape drift on real LinkedIn pages. It is designed for a human operator,
 stays strictly read-only, and favors local safety over broad automation.
 
-Examples below use the `linkedin` binary; `owa` is an equivalent alias.
+Examples below use the `linkedin` binary; `buddy` is an equivalent alias.
 
-The feature is also exported from `@linkedin-assistant/core` through
+The feature is also exported from `@linkedin-buddy/core` through
 `packages/core/src/liveValidation.ts` for custom harnesses.
 
 For pipeline internals, see `docs/live-validation-architecture.md`.
@@ -18,19 +18,19 @@ Tier 3 real-action validation is documented separately in `docs/write-validation
 Capture an encrypted stored session from a manual LinkedIn login:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin auth session --session smoke
+npm exec -w @linkedin-buddy/cli -- linkedin auth session --session smoke
 ```
 
 Run the live read-only validation interactively:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin test live --read-only --session smoke
+npm exec -w @linkedin-buddy/cli -- linkedin test live --read-only --session smoke
 ```
 
 Run the same validation in batch mode while keeping every guardrail enabled:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin test live --read-only --session smoke --yes --json
+npm exec -w @linkedin-buddy/cli -- linkedin test live --read-only --session smoke --yes --json
 ```
 
 ## What the validator checks
@@ -56,7 +56,7 @@ harness.
 Use the default human-readable summary and approve each step manually:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin test live --read-only --session smoke
+npm exec -w @linkedin-buddy/cli -- linkedin test live --read-only --session smoke
 ```
 
 ### Detailed human-readable output
@@ -67,7 +67,7 @@ you want the full human-readable output without stopping for step-by-step
 prompts:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin test live --read-only --session smoke --yes
+npm exec -w @linkedin-buddy/cli -- linkedin test live --read-only --session smoke --yes
 ```
 
 ### CI or script integration
@@ -76,7 +76,7 @@ Force JSON output and skip prompts so the command can run unattended:
 
 ```bash
 mkdir -p reports
-npm exec -w @linkedin-assistant/cli -- linkedin test live --read-only --session smoke --yes --json > reports/live-validation.json
+npm exec -w @linkedin-buddy/cli -- linkedin test live --read-only --session smoke --yes --json > reports/live-validation.json
 ```
 
 The command exits with `1` for selector or operation failures and `2` for
@@ -88,7 +88,7 @@ The CLI still runs the full suite, but you can isolate one operation in the
 structured output:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin test live --read-only --session smoke --yes --json | jq '.operations[] | select(.operation == "notifications")'
+npm exec -w @linkedin-buddy/cli -- linkedin test live --read-only --session smoke --yes --json | jq '.operations[] | select(.operation == "notifications")'
 ```
 
 ### Tune retries and pacing for a slower session
@@ -97,7 +97,7 @@ Increase the timeout and retry envelope without changing the read-only safety
 model:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin test live --read-only --session smoke --yes --timeout-seconds 45 --max-retries 3 --retry-max-delay-ms 15000
+npm exec -w @linkedin-buddy/cli -- linkedin test live --read-only --session smoke --yes --timeout-seconds 45 --max-retries 3 --retry-max-delay-ms 15000
 ```
 
 ## CLI options
@@ -117,13 +117,13 @@ npm exec -w @linkedin-assistant/cli -- linkedin test live --read-only --session 
 - `--json`: print the structured JSON report instead of the human-readable
   summary
 
-Use `npm exec -w @linkedin-assistant/cli -- linkedin test live --help` for the
+Use `npm exec -w @linkedin-buddy/cli -- linkedin test live --help` for the
 built-in help text and examples. The hidden `linkedin test:live` alias accepts
 the same options.
 
 ## Configuration
 
-- `LINKEDIN_ASSISTANT_HOME` controls where stored sessions, artifacts, and the
+- `LINKEDIN_BUDDY_HOME` controls where stored sessions, artifacts, and the
   rolling `latest-report.json` snapshot live.
 - `PLAYWRIGHT_EXECUTABLE_PATH` overrides the Chromium executable when
   Playwright cannot find one on the current machine.

@@ -13,7 +13,7 @@ import {
   type BrowserContext
 } from "playwright-core";
 import { ensureConfigPaths, resolveConfigPaths } from "../config.js";
-import { LinkedInAssistantError, asLinkedInAssistantError } from "../errors.js";
+import { LinkedInBuddyError, asLinkedInBuddyError } from "../errors.js";
 import {
   inspectLinkedInSession,
   type LinkedInSessionInspection
@@ -276,14 +276,14 @@ function withPlaywrightInstallHint(error: unknown): Error {
 function normalizeSessionName(sessionName: string | undefined): string {
   const normalized = (sessionName ?? "default").trim();
   if (normalized.length === 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "session name must not be empty."
     );
   }
 
   if (normalized === "." || normalized === ".." || /[\\/]/u.test(normalized)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "session name must not contain path separators or relative path segments.",
       {
@@ -341,8 +341,8 @@ function createStoredSessionValidationError(
   sessionName: string,
   filePath: string,
   cause?: Error
-): LinkedInAssistantError {
-  return new LinkedInAssistantError(
+): LinkedInBuddyError {
+  return new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     message,
     {
@@ -371,7 +371,7 @@ function decodeBase64Url(value: string, label: string): Buffer {
   try {
     return Buffer.from(value, "base64url");
   } catch (error) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `Stored LinkedIn session ${label} is malformed. Capture a fresh session and retry.`,
       {
@@ -759,9 +759,9 @@ export class LinkedInSessionStore {
       rawEnvelope = await readFile(filePath, "utf8");
     } catch (error) {
       if (isNotFoundError(error)) {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "AUTH_REQUIRED",
-          `No stored LinkedIn session named "${normalizedSessionName}" was found. Run "owa auth:session --session ${normalizedSessionName}" first.`,
+          `No stored LinkedIn session named "${normalizedSessionName}" was found. Run "buddy auth:session --session ${normalizedSessionName}" first.`,
           {
             file_path: filePath,
             session_name: normalizedSessionName
@@ -843,7 +843,7 @@ export class LinkedInSessionStore {
         };
       } catch (error) {
         if (
-          error instanceof LinkedInAssistantError &&
+          error instanceof LinkedInBuddyError &&
           ["AUTH_REQUIRED", "ACTION_PRECONDITION_FAILED"].includes(error.code)
         ) {
           lastValidationError = error;
@@ -854,7 +854,7 @@ export class LinkedInSessionStore {
       }
     }
 
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "AUTH_REQUIRED",
       `No non-expired stored LinkedIn session named "${normalizedSessionName}" was found. Capture a fresh session and retry.`,
       {
@@ -939,7 +939,7 @@ async function waitForManualLogin(
   }
 
   if (!lastStatus.authenticated) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "AUTH_REQUIRED",
       "Timed out waiting for a manual LinkedIn login. Finish the login in the opened browser and rerun the session capture command.",
       {
@@ -966,13 +966,13 @@ export async function captureLinkedInSession(
     options.pollIntervalMs ?? DEFAULT_CAPTURE_POLL_INTERVAL_MS;
 
   if (timeoutMs <= 0 || !Number.isFinite(timeoutMs)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "timeoutMs must be a positive number."
     );
   }
   if (pollIntervalMs <= 0 || !Number.isFinite(pollIntervalMs)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "pollIntervalMs must be a positive number."
     );
@@ -993,7 +993,7 @@ export async function captureLinkedInSession(
     const metadata = await store.save(sessionName, storageState);
 
     if (!metadata.hasLinkedInAuthCookie) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "AUTH_REQUIRED",
         "LinkedIn login appeared successful, but no authenticated session cookie was captured. Capture the session again after the home feed loads fully.",
         {
@@ -1010,9 +1010,9 @@ export async function captureLinkedInSession(
       currentUrl: status.currentUrl
     };
   } catch (error) {
-    throw asLinkedInAssistantError(
+    throw asLinkedInBuddyError(
       withPlaywrightInstallHint(error),
-      error instanceof LinkedInAssistantError ? error.code : "UNKNOWN",
+      error instanceof LinkedInBuddyError ? error.code : "UNKNOWN",
       "Failed to capture the LinkedIn browser session."
     );
   } finally {

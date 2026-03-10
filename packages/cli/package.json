@@ -1,5 +1,5 @@
 {
-  "name": "@linkedin-assistant/cli",
+  "name": "@linkedin-buddy/cli",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
@@ -9,7 +9,12 @@
   ],
   "bin": {
     "linkedin": "dist/bin/linkedin.js",
-    "owa": "dist/bin/linkedin.js"
+    "buddy": "dist/bin/linkedin.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sigvardt/linkedin-buddy.git",
+    "directory": "packages/cli"
   },
   "publishConfig": {
     "access": "public"
@@ -34,7 +39,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@linkedin-assistant/core": "0.1.0",
+    "@linkedin-buddy/core": "0.1.0",
     "commander": "^13.1.0"
   }
 }

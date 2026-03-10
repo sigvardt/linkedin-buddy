@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ActivityWebhookConfig } from "../config.js";
 import { AssistantDatabase } from "../db/database.js";
-import { LinkedInAssistantError } from "../errors.js";
+import { LinkedInBuddyError } from "../errors.js";
 import {
   ActivityWatchesService,
   getNextCronOccurrenceMs,
@@ -54,15 +54,15 @@ function createRuntime(
   };
 }
 
-function captureLinkedInError(action: () => unknown): LinkedInAssistantError {
+function captureLinkedInError(action: () => unknown): LinkedInBuddyError {
   try {
     action();
   } catch (error) {
-    expect(error).toBeInstanceOf(LinkedInAssistantError);
-    return error as LinkedInAssistantError;
+    expect(error).toBeInstanceOf(LinkedInBuddyError);
+    return error as LinkedInBuddyError;
   }
 
-  throw new Error("Expected LinkedInAssistantError to be thrown.");
+  throw new Error("Expected LinkedInBuddyError to be thrown.");
 }
 
 afterEach(() => {
@@ -642,8 +642,8 @@ describe("ActivityWatchesService", () => {
     vi.setSystemTime(FIXED_NOW);
 
     const previousMaxAttempts =
-      process.env.LINKEDIN_ASSISTANT_ACTIVITY_MAX_DELIVERY_ATTEMPTS;
-    process.env.LINKEDIN_ASSISTANT_ACTIVITY_MAX_DELIVERY_ATTEMPTS = "8";
+      process.env.LINKEDIN_BUDDY_ACTIVITY_MAX_DELIVERY_ATTEMPTS;
+    process.env.LINKEDIN_BUDDY_ACTIVITY_MAX_DELIVERY_ATTEMPTS = "8";
 
     try {
       const service = new ActivityWatchesService(createRuntime());
@@ -658,9 +658,9 @@ describe("ActivityWatchesService", () => {
       expect(subscription.maxAttempts).toBe(8);
     } finally {
       if (previousMaxAttempts === undefined) {
-        delete process.env.LINKEDIN_ASSISTANT_ACTIVITY_MAX_DELIVERY_ATTEMPTS;
+        delete process.env.LINKEDIN_BUDDY_ACTIVITY_MAX_DELIVERY_ATTEMPTS;
       } else {
-        process.env.LINKEDIN_ASSISTANT_ACTIVITY_MAX_DELIVERY_ATTEMPTS =
+        process.env.LINKEDIN_BUDDY_ACTIVITY_MAX_DELIVERY_ATTEMPTS =
           previousMaxAttempts;
       }
     }

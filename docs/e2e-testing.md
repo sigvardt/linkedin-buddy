@@ -152,7 +152,7 @@ Record or refresh pages manually:
 
 ```bash
 linkedin fixtures record --page feed --page messaging
-owa fixtures:record --set da-dk --page profile,notifications --no-har
+buddy fixtures:record --set da-dk --page profile,notifications --no-har
 ```
 
 Supported page types:
@@ -199,7 +199,7 @@ Validate fixture freshness:
 
 ```bash
 linkedin fixtures check
-owa fixtures:check --set ci --max-age-days 14
+buddy fixtures:check --set ci --max-age-days 14
 ```
 
 Checker options and defaults:

@@ -8,7 +8,7 @@ import {
 } from "./linkedinConnections.js";
 import { FOLLOWUP_AFTER_ACCEPT_ACTION_TYPE } from "./linkedinFollowups.js";
 import { CREATE_POST_ACTION_TYPE } from "./linkedinPosts.js";
-import type { LinkedInAssistantErrorCode } from "./errors.js";
+import type { LinkedInBuddyErrorCode } from "./errors.js";
 import type { JsonLogEntry } from "./logging.js";
 import type { CoreRuntime } from "./runtime.js";
 import type {
@@ -111,7 +111,7 @@ export interface WriteValidationActionResult {
   completed_at: string;
   confirm_artifacts: string[];
   duration_ms: number;
-  error_code?: LinkedInAssistantErrorCode;
+  error_code?: LinkedInBuddyErrorCode;
   error_details?: Record<string, unknown>;
   error_message?: string;
   expected_outcome: string;

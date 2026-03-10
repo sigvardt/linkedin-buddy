@@ -24,7 +24,7 @@ describe("Post Write E2E (2PC post.create)", () => {
     skipIfE2EUnavailable(e2e, context);
     const runtime = e2e.runtime();
     const timestamp = new Date().toISOString();
-    const postText = `E2E post from linkedin-owa-agentools [${timestamp}]`;
+    const postText = `E2E post from linkedin-buddy [${timestamp}]`;
 
     const prepared = await runtime.posts.prepareCreate({
       text: postText,

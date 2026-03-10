@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { LinkedInAssistantError } from "../errors.js";
+import { LinkedInBuddyError } from "../errors.js";
 import { LIKE_POST_ACTION_TYPE } from "../linkedinFeed.js";
 import {
   SEND_MESSAGE_ACTION_TYPE,
@@ -191,7 +191,7 @@ describe("runLinkedInWriteValidation execution flow", () => {
       riskClass: "private",
       summary: "Send a validation message.",
       prepare: vi.fn(async () => {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "TIMEOUT",
           "Timed out while loading the approved messaging thread."
         );
@@ -333,7 +333,7 @@ describe("runLinkedInWriteValidation execution flow", () => {
       riskClass: "private",
       summary: "Send a validation message.",
       prepare: vi.fn(async () => {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "RATE_LIMITED",
           "LinkedIn asked us to slow down before sending the validation message."
         );
@@ -393,7 +393,7 @@ describe("runLinkedInWriteValidation execution flow", () => {
       riskClass: "private",
       summary: "Send a validation message in the approved thread.",
       validateConfig: vi.fn(() => {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
           'Write-validation account "secondary" is missing targets.send_message in config.json.'
         );
@@ -426,10 +426,10 @@ describe("runLinkedInWriteValidation execution flow", () => {
 
     bundle.profileManager.capturePageScreenshot
       .mockRejectedValueOnce(
-        new LinkedInAssistantError("TIMEOUT", "before screenshot timed out")
+        new LinkedInBuddyError("TIMEOUT", "before screenshot timed out")
       )
       .mockRejectedValueOnce(
-        new LinkedInAssistantError("TIMEOUT", "before screenshot timed out")
+        new LinkedInBuddyError("TIMEOUT", "before screenshot timed out")
       )
       .mockResolvedValueOnce("send_message-after.png");
 

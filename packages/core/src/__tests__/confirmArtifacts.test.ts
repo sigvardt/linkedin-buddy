@@ -8,7 +8,7 @@ import { ArtifactHelpers } from "../artifacts.js";
 import { executeConfirmActionWithArtifacts } from "../confirmArtifacts.js";
 import type { ConfirmFailureArtifactConfig, ConfigPaths } from "../config.js";
 import { ensureConfigPaths, resolveConfigPaths } from "../config.js";
-import { LinkedInAssistantError, asLinkedInAssistantError } from "../errors.js";
+import { LinkedInBuddyError, asLinkedInBuddyError } from "../errors.js";
 
 interface TestRuntime {
   artifacts: ArtifactHelpers;
@@ -117,9 +117,9 @@ describe("executeConfirmActionWithArtifacts", () => {
           post_url: "https://www.linkedin.com/feed/update/urn:li:activity:123"
         },
         mapError: (error) =>
-          asLinkedInAssistantError(error, "UNKNOWN", "Like action failed."),
+          asLinkedInBuddyError(error, "UNKNOWN", "Like action failed."),
         execute: async () => {
-          throw new LinkedInAssistantError("UNKNOWN", "boom", {
+          throw new LinkedInBuddyError("UNKNOWN", "boom", {
             selector_key: "reaction_button"
           });
         }
@@ -128,8 +128,8 @@ describe("executeConfirmActionWithArtifacts", () => {
       thrownError = error;
     }
 
-    expect(thrownError).toBeInstanceOf(LinkedInAssistantError);
-    const assistantError = thrownError as LinkedInAssistantError;
+    expect(thrownError).toBeInstanceOf(LinkedInBuddyError);
+    const assistantError = thrownError as LinkedInBuddyError;
     const artifactPaths = assistantError.details.artifact_paths as string[];
 
     expect(assistantError.details.artifacts).toEqual(artifactPaths);
@@ -193,7 +193,7 @@ describe("executeConfirmActionWithArtifacts", () => {
       profileName: "default",
       targetUrl: "https://www.linkedin.com/messaging/thread/123/",
       persistTraceOnSuccess: true,
-      mapError: (error) => asLinkedInAssistantError(error, "UNKNOWN", "Send failed."),
+      mapError: (error) => asLinkedInBuddyError(error, "UNKNOWN", "Send failed."),
       execute: async () => ({
         ok: true,
         result: {

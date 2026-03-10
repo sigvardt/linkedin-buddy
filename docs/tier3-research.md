@@ -43,7 +43,7 @@ Key documents and code paths reviewed for this research:
 - `packages/cli/src/bin/linkedin.ts`
 - `packages/cli/src/liveValidationOutput.ts`
 - `packages/mcp/src/index.ts`
-- `packages/mcp/src/bin/linkedin-mcp.ts`
+- `packages/mcp/src/bin/linkedin-buddy-mcp.ts`
 
 ## What Tier 1 already establishes
 

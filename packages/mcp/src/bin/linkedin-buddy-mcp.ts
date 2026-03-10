@@ -13,7 +13,7 @@ import {
   LINKEDIN_INBOX_REACTION_TYPES,
   LINKEDIN_POST_VISIBILITY_TYPES,
   LINKEDIN_SELECTOR_LOCALES,
-  LinkedInAssistantError,
+  LinkedInBuddyError,
   buildLinkedInImagePersonaFromProfileSeed,
   createCoreRuntime,
   normalizeLinkedInFeedReaction,
@@ -22,7 +22,7 @@ import {
   resolveFollowupSinceWindow,
   redactStructuredValue,
   resolvePrivacyConfig,
-  toLinkedInAssistantErrorPayload,
+  toLinkedInBuddyErrorPayload,
   WEBHOOK_DELIVERY_ATTEMPT_STATUSES,
   WEBHOOK_SUBSCRIPTION_STATUSES,
   type ActivityEventType,
@@ -31,7 +31,7 @@ import {
   type SearchCategory,
   type WebhookDeliveryAttemptStatus,
   type WebhookSubscriptionStatus
-} from "@linkedin-assistant/core";
+} from "@linkedin-buddy/core";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -138,7 +138,7 @@ function readRequiredString(args: ToolArgs, key: string): string {
   if (typeof value === "string" && value.trim().length > 0) {
     return value.trim();
   }
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `${key} is required.`
   );
@@ -155,7 +155,7 @@ function readPositiveNumber(
   }
 
   if (!Number.isFinite(value) || value <= 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${key} must be a positive number.`
     );
@@ -175,7 +175,7 @@ function readNonNegativeNumber(
   }
 
   if (!Number.isFinite(value) || value < 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${key} must be zero or a positive number.`
     );
@@ -242,7 +242,7 @@ function readStringArray(args: ToolArgs, key: string): string[] | undefined {
     return items.length > 0 ? items : undefined;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `${key} must be a string or array of strings.`
   );
@@ -254,7 +254,7 @@ function readRequiredStringArray(args: ToolArgs, key: string): string[] {
     return values;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `${key} is required.`
   );
@@ -273,7 +273,7 @@ function readObject(
     return value as Record<string, unknown>;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `${key} must be an object.`
   );
@@ -289,7 +289,7 @@ async function readJsonInputFile(
   try {
     rawValue = await readFile(resolvedPath, "utf8");
   } catch (error) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `Could not read ${label}.`,
       {
@@ -302,7 +302,7 @@ async function readJsonInputFile(
   try {
     return JSON.parse(rawValue) as unknown;
   } catch (error) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must contain valid JSON.`,
       {
@@ -322,7 +322,7 @@ function coerceEnumValue<T extends string>(
     return value as T;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `${label} must be one of: ${allowed.join(", ")}.`
   );
@@ -414,7 +414,7 @@ function readSearchCategory(
     return category;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `${key} must be one of: people, companies, jobs.`
   );
@@ -442,7 +442,7 @@ function toErrorResult(error: unknown): ToolErrorResult {
       {
         type: "text",
         text: JSON.stringify(
-          toLinkedInAssistantErrorPayload(error, mcpPrivacyConfig),
+          toLinkedInBuddyErrorPayload(error, mcpPrivacyConfig),
           null,
           2
         )
@@ -1120,7 +1120,7 @@ async function handleProfilePrepareUpsertSectionItem(
     const operatorNote = readString(args, "operatorNote", "");
 
     if (!values) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "values is required."
       );
@@ -1363,7 +1363,7 @@ async function handleProfilePrepareFeaturedReorder(
     const operatorNote = readString(args, "operatorNote", "");
 
     if (!itemIds || itemIds.length === 0) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "itemIds is required."
       );
@@ -2320,7 +2320,7 @@ async function handlePostPrepareCreateMedia(args: ToolArgs): Promise<ToolResult>
     const text = readRequiredString(args, "text");
     const mediaPaths = readStringArray(args, "mediaPaths");
     if (!mediaPaths) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "mediaPaths is required."
       );
@@ -2370,7 +2370,7 @@ async function handlePostPrepareCreatePoll(args: ToolArgs): Promise<ToolResult> 
     const question = readRequiredString(args, "question");
     const options = readStringArray(args, "options");
     if (!options) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "options is required."
       );
@@ -2822,7 +2822,7 @@ async function handleConfirm(args: ToolArgs): Promise<ToolResult> {
 
     const preparedProfileName = readTargetProfileName(preview.target);
     if (preparedProfileName && preparedProfileName !== profileName) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `Prepared action belongs to profile "${preparedProfileName}", but "${profileName}" was provided.`,
         {
@@ -2854,7 +2854,7 @@ async function handleConfirm(args: ToolArgs): Promise<ToolResult> {
 
 const server = new Server(
   {
-    name: "linkedin-mcp",
+    name: "linkedin-buddy-mcp",
     version: packageJson.version
   },
   {
@@ -4740,7 +4740,7 @@ function isDirectExecution(moduleUrl: string): boolean {
 if (isDirectExecution(import.meta.url)) {
   startLinkedInMcpServer().catch((error: unknown) => {
     console.error(
-      JSON.stringify(toLinkedInAssistantErrorPayload(error, mcpPrivacyConfig), null, 2)
+      JSON.stringify(toLinkedInBuddyErrorPayload(error, mcpPrivacyConfig), null, 2)
     );
     process.exit(1);
   });

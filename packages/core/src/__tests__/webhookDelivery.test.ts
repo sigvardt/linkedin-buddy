@@ -8,7 +8,7 @@ import {
 } from "../webhookDelivery.js";
 
 afterEach(() => {
-  delete process.env.LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_TIMEOUT_SECONDS;
+  delete process.env.LINKEDIN_BUDDY_ACTIVITY_DELIVERY_TIMEOUT_SECONDS;
 });
 
 async function createResponseServer(statusCode: number, body: string): Promise<{

@@ -1,6 +1,6 @@
 import {
   LINKEDIN_PROFILE_SECTION_TYPES,
-  LinkedInAssistantError,
+  LinkedInBuddyError,
   type LinkedInEditableProfile,
   type LinkedInProfileEditableSection,
   type LinkedInProfileEditableSectionItem,
@@ -9,7 +9,7 @@ import {
   type PrepareRemoveSectionItemInput,
   type PrepareUpdateIntroInput,
   type PrepareUpsertSectionItemInput
-} from "@linkedin-assistant/core";
+} from "@linkedin-buddy/core";
 
 const SUPPORTED_SECTION_TYPES = LINKEDIN_PROFILE_SECTION_TYPES.filter(
   (section) => section !== "about"
@@ -118,7 +118,7 @@ export type ProfileSeedPlanAction =
 
 export function parseProfileSeedSpec(input: unknown): ProfileSeedSpec {
   if (!isRecord(input)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "Profile seed spec must be a JSON object."
     );
@@ -159,7 +159,7 @@ export function parseProfileSeedSpec(input: unknown): ProfileSeedSpec {
 
     const section = SECTION_KEY_ALIASES.get(normalizeKey(rawKey));
     if (!section || section === "about") {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `Unsupported profile seed spec key "".`
       );
@@ -304,7 +304,7 @@ function normalizeIntroSpec(
   }
 
   if (!isRecord(value)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "profile seed intro must be a JSON object."
     );
@@ -330,7 +330,7 @@ function normalizeIntroSpec(
       continue;
     }
 
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `Unsupported intro field "" in profile seed spec.`
     );
@@ -356,7 +356,7 @@ function normalizeAboutSpec(value: unknown): string | null | undefined {
     return value.text;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     'profile seed "about" must be a string, null, or an object with a string "text" field.'
   );
@@ -367,7 +367,7 @@ function normalizeSectionInputs(
   label: string
 ): ProfileSeedSectionInput[] {
   if (!Array.isArray(value)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a JSON array.`
     );
@@ -381,7 +381,7 @@ function normalizeSectionInput(
   label: string
 ): ProfileSeedSectionInput {
   if (!isRecord(value)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a JSON object.`
     );
@@ -403,7 +403,7 @@ function normalizeSectionInput(
   }
 
   if (Object.keys(values).length === 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must include at least one section value.`
     );
@@ -424,7 +424,7 @@ function normalizeMatch(
 
   for (const [key, rawValue] of Object.entries(value)) {
     if (typeof rawValue !== "string") {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `${label}.${key} must be a string.`
       );
@@ -437,7 +437,7 @@ function normalizeMatch(
       key !== "tertiaryText" &&
       key !== "rawText"
     ) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `${label}.${key} is not a supported match field.`
       );

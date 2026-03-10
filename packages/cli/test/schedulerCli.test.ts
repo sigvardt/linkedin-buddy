@@ -12,7 +12,7 @@ const schedulerCliMocks = vi.hoisted(() => ({
   spawn: vi.fn()
 }));
 
-vi.mock("@linkedin-assistant/core", async () => {
+vi.mock("@linkedin-buddy/core", async () => {
   const actual = await import("../../core/src/index.js");
 
   class MockSchedulerService {
@@ -34,12 +34,12 @@ vi.mock("node:child_process", () => ({
   spawn: schedulerCliMocks.spawn
 }));
 
-import { AssistantDatabase, resolveConfigPaths } from "@linkedin-assistant/core";
+import { AssistantDatabase, resolveConfigPaths } from "@linkedin-buddy/core";
 import { createCliProgram, runCli } from "../src/bin/linkedin.js";
 
 const SCHEDULER_ENV_KEYS = [
-  "LINKEDIN_ASSISTANT_HOME",
-  "LINKEDIN_ASSISTANT_SCHEDULER_TIMEZONE"
+  "LINKEDIN_BUDDY_HOME",
+  "LINKEDIN_BUDDY_SCHEDULER_TIMEZONE"
 ] as const;
 
 function setInteractiveMode(inputIsTty: boolean, outputIsTty: boolean): void {
@@ -93,7 +93,7 @@ describe("linkedin scheduler CLI UX", () => {
       delete process.env[key];
     }
 
-    process.env.LINKEDIN_ASSISTANT_HOME = path.join(tempDir, "assistant-home");
+    process.env.LINKEDIN_BUDDY_HOME = path.join(tempDir, "assistant-home");
     process.exitCode = undefined;
     setInteractiveMode(true, true);
     stderrChunks = [];
@@ -244,7 +244,7 @@ describe("linkedin scheduler CLI UX", () => {
 
   it("returns structured status JSON even when scheduler config is invalid", async () => {
     setInteractiveMode(false, false);
-    process.env.LINKEDIN_ASSISTANT_SCHEDULER_TIMEZONE = "Mars/Olympus";
+    process.env.LINKEDIN_BUDDY_SCHEDULER_TIMEZONE = "Mars/Olympus";
     await seedSchedulerJobs();
 
     await runCli(["node", "linkedin", "scheduler", "status", "--json"]);
@@ -268,7 +268,7 @@ describe("linkedin scheduler CLI UX", () => {
   });
 
   it("formats scheduler config failures in human mode", async () => {
-    process.env.LINKEDIN_ASSISTANT_SCHEDULER_TIMEZONE = "Mars/Olympus";
+    process.env.LINKEDIN_BUDDY_SCHEDULER_TIMEZONE = "Mars/Olympus";
 
     await runCli(["node", "linkedin", "scheduler", "run-once"]);
 
@@ -280,7 +280,7 @@ describe("linkedin scheduler CLI UX", () => {
       "Scheduler command failed [ACTION_PRECONDITION_FAILED]"
     );
     expect(stderrOutput).toContain(
-      "Setting: LINKEDIN_ASSISTANT_SCHEDULER_TIMEZONE"
+      "Setting: LINKEDIN_BUDDY_SCHEDULER_TIMEZONE"
     );
     expect(stderrOutput).toContain("Tip: run `linkedin scheduler --help`");
   });

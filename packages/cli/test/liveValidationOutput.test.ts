@@ -1,7 +1,7 @@
 import type {
-  LinkedInAssistantErrorPayload,
+  LinkedInBuddyErrorPayload,
   ReadOnlyValidationReport
-} from "@linkedin-assistant/core";
+} from "@linkedin-buddy/core";
 import { describe, expect, it } from "vitest";
 import {
   formatReadOnlyValidationError,
@@ -343,7 +343,7 @@ describe("live validation output helpers", () => {
   });
 
   it("formats friendly human-readable errors", () => {
-    const error: LinkedInAssistantErrorPayload = {
+    const error: LinkedInBuddyErrorPayload = {
       code: "ACTION_PRECONDITION_FAILED",
       message: "Live validation is currently restricted to read-only mode.",
       details: {
@@ -367,7 +367,7 @@ describe("live validation output helpers", () => {
   });
 
   it("matches the human-readable error snapshot", () => {
-    const error: LinkedInAssistantErrorPayload = {
+    const error: LinkedInBuddyErrorPayload = {
       code: "ACTION_PRECONDITION_FAILED",
       message: "Live validation is currently restricted to read-only mode.",
       details: {

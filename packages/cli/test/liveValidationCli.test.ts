@@ -22,7 +22,7 @@ vi.mock("node:readline/promises", async () => {
   };
 });
 
-vi.mock("@linkedin-assistant/core", async () => {
+vi.mock("@linkedin-buddy/core", async () => {
   const actual = await import("../../core/src/index.js");
 
   return {
@@ -33,7 +33,7 @@ vi.mock("@linkedin-assistant/core", async () => {
   };
 });
 
-import { LinkedInAssistantError } from "@linkedin-assistant/core";
+import { LinkedInBuddyError } from "@linkedin-buddy/core";
 import { runCli } from "../src/bin/linkedin.js";
 
 function setInteractiveMode(inputIsTty: boolean, outputIsTty: boolean): void {
@@ -262,7 +262,7 @@ describe("linkedin live validation CLI", () => {
 
   it("prints a human-readable error and exits when the live validation is rate limited", async () => {
     liveValidationCliMocks.runReadOnlyLinkedInLiveValidation.mockRejectedValue(
-      new LinkedInAssistantError(
+      new LinkedInBuddyError(
         "RATE_LIMITED",
         "Read-only live validation reached the per-session request cap (20) before inbox.",
         {
@@ -339,7 +339,7 @@ describe("linkedin live validation CLI", () => {
     });
     liveValidationCliMocks.runReadOnlyLinkedInLiveValidation
       .mockRejectedValueOnce(
-        new LinkedInAssistantError(
+        new LinkedInBuddyError(
           "AUTH_REQUIRED",
           "Stored session is expired.",
           { session_name: "smoke" }
@@ -383,14 +383,14 @@ describe("linkedin live validation CLI", () => {
     });
     liveValidationCliMocks.runReadOnlyLinkedInLiveValidation
       .mockRejectedValueOnce(
-        new LinkedInAssistantError(
+        new LinkedInBuddyError(
           "AUTH_REQUIRED",
           "Stored session is expired.",
           { session_name: "smoke" }
         )
       )
       .mockRejectedValueOnce(
-        new LinkedInAssistantError(
+        new LinkedInBuddyError(
           "RATE_LIMITED",
           "Read-only live validation reached the per-session request cap (20) before inbox.",
           {
@@ -477,7 +477,7 @@ describe("linkedin live validation CLI", () => {
     expect(liveHelp).toContain("docs/write-validation.md");
     expect(liveHelp).toContain("-s, --session <session>");
     expect(liveHelp).toMatch(/Stored session name captured by linkedin auth\s+session/);
-    expect(liveHelp).toContain("LINKEDIN_ASSISTANT_HOME");
+    expect(liveHelp).toContain("LINKEDIN_BUDDY_HOME");
     expect(liveHelp).toContain("PLAYWRIGHT_EXECUTABLE_PATH");
     expect(liveHelp).toContain("linkedin auth session --session smoke");
     expect(liveHelp).toContain("linkedin test live --read-only");
