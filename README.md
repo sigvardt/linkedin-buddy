@@ -602,7 +602,7 @@ Profile seeding commands:
 
 ```bash
 npm exec -w @linkedin-assistant/cli -- linkedin profile editable --profile default
-npm exec -w @linkedin-assistant/cli -- linkedin profile apply-spec --profile default --spec docs/profile-seeds/issue-210-signikant-test-profile.json --allow-partial --yes --delay-ms 4000
+npm exec -w @linkedin-assistant/cli -- linkedin profile apply-spec --profile default --spec docs/profile-seeds/sample-automation-profile.json --allow-partial --yes --delay-ms 4000
 ```
 
 - `profile editable` mirrors the MCP editable-profile surface in the CLI.

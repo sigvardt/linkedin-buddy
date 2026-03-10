@@ -59,7 +59,7 @@ describe("CLI profile commands", () => {
     profileCliMocks.viewEditableProfile.mockResolvedValue({
       profile_url: "https://www.linkedin.com/in/me/",
       intro: {
-        full_name: "Emil Sorensen",
+        full_name: "Avery Cole",
         headline: "Software Engineer",
         location: "Copenhagen, Denmark",
         supported_fields: ["firstName", "lastName", "headline", "location"]
@@ -67,10 +67,10 @@ describe("CLI profile commands", () => {
       sections: []
     });
     profileCliMocks.viewProfile.mockResolvedValue({
-      profile_url: "https://www.linkedin.com/in/emil-sorensen-signikant/",
-      vanity_name: "emil-sorensen-signikant",
-      full_name: "Emil Sorensen",
-      headline: "AI/ML Engineer at Signikant",
+      profile_url: "https://www.linkedin.com/in/avery-cole-example/",
+      vanity_name: "avery-cole-example",
+      full_name: "Avery Cole",
+      headline: "Automation Engineer at Example Labs",
       location: "Copenhagen, Capital Region of Denmark, Denmark",
       about: "Building production LLM systems.",
       connection_degree: "",
@@ -146,7 +146,7 @@ describe("CLI profile commands", () => {
 
     expect(output.profile_name).toBe("smoke");
     expect(output.run_id).toBe("run-profile-cli");
-    expect(output.profile.intro.full_name).toBe("Emil Sorensen");
+    expect(output.profile.intro.full_name).toBe("Avery Cole");
     expect(profileCliMocks.viewEditableProfile).toHaveBeenCalledWith({
       profileName: "smoke"
     });
@@ -159,7 +159,7 @@ describe("CLI profile commands", () => {
       JSON.stringify(
         {
           intro: {
-            headline: "AI/ML Engineer at Signikant",
+            headline: "Automation Engineer at Example Labs",
             location: "Copenhagen, Capital Region of Denmark, Denmark"
           },
           about: "Building production LLM systems.",
@@ -208,7 +208,7 @@ describe("CLI profile commands", () => {
     expect(profileCliMocks.prepareUpdateIntro).toHaveBeenCalledWith(
       expect.objectContaining({
         profileName: "smoke",
-        headline: "AI/ML Engineer at Signikant",
+        headline: "Automation Engineer at Example Labs",
         location: "Copenhagen, Capital Region of Denmark, Denmark"
       })
     );
@@ -229,7 +229,7 @@ describe("CLI profile commands", () => {
       JSON.stringify(
         {
           intro: {
-            headline: "AI/ML Engineer at Signikant"
+            headline: "Automation Engineer at Example Labs"
           },
           skills: ["TypeScript"]
         },

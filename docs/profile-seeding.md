@@ -8,7 +8,7 @@ profile edit actions.
 
 ```bash
 npm exec -w @linkedin-assistant/cli -- linkedin profile editable --profile <profile>
-npm exec -w @linkedin-assistant/cli -- linkedin profile apply-spec --profile <profile> --spec docs/profile-seeds/issue-210-signikant-test-profile.json --allow-partial --yes --delay-ms 4000 --output reports/profile-seed.json
+npm exec -w @linkedin-assistant/cli -- linkedin profile apply-spec --profile <profile> --spec docs/profile-seeds/sample-automation-profile.json --allow-partial --yes --delay-ms 4000 --output reports/profile-seed.json
 ```
 
 ## Intended issue-210 flow
@@ -20,7 +20,7 @@ npm exec -w @linkedin-assistant/cli -- linkedin profile apply-spec --profile <pr
    ```
 3. Apply the seeded profile spec:
    ```bash
-   npm exec -w @linkedin-assistant/cli -- linkedin profile apply-spec --profile <profile> --spec docs/profile-seeds/issue-210-signikant-test-profile.json --allow-partial --yes --delay-ms 4000
+   npm exec -w @linkedin-assistant/cli -- linkedin profile apply-spec --profile <profile> --spec docs/profile-seeds/sample-automation-profile.json --allow-partial --yes --delay-ms 4000
    ```
 4. Verify the rendered profile:
    ```bash
@@ -32,7 +32,7 @@ npm exec -w @linkedin-assistant/cli -- linkedin profile apply-spec --profile <pr
 - Skills are still unsupported by the MCP/CLI profile editing surface: #228.
 - Industry and custom public profile URL are now tracked separately: #252.
 - The current AO workspace does not yet have a provisioned authenticated session
-  for the dedicated `linkedin-mcp@signikant.com` test account: #253.
+  for the dedicated `linkedin-mcp@example.test` test account: #253.
 
 Because of those gaps, the example issue-210 spec includes the full desired
 state, but `linkedin profile apply-spec` currently requires `--allow-partial`

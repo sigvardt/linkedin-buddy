@@ -1,0 +1,9 @@
+1ac4646bc67c8877754ecd0ebd2fdf088b4b7d49:packages/core/src/keepAlive.ts:linkedin-client-secret:84
+3317a6a4424787dba85129b87d88d4a09cc07c0c:packages/core/src/keepAlive.ts:linkedin-client-secret:84
+7039025b9d187ecb54d206cdd7e01e046e362b2e:packages/core/src/activityPoller.ts:linkedin-client-secret:23
+b20fc85e640b4052d374458b71cf6daa029db295:packages/core/src/activityPoller.ts:linkedin-client-secret:23
+ab248649eb3dde01b627a4bbc5c9ce1706c7291f:packages/core/src/__tests__/e2eSetup.test.ts:linkedin-client-id:38
+c16c6f4f5cd705988a115bb6482d0fe9196dacf5:packages/core/src/__tests__/e2eSetup.test.ts:linkedin-client-id:38
+ad888c06445f6af0a1311c6219448d0fa02209f2:packages/core/src/__tests__/e2eSetup.test.ts:linkedin-client-id:37
+bd2c6543cc02b019c1cf9b73dc235d2418431284:packages/core/src/__tests__/e2eSetup.test.ts:linkedin-client-id:37
+6dc8a92d08ef830e4c0c73f6e9f15109bb026c2c:packages/core/src/linkedinFeed.ts:linkedin-client-secret:99

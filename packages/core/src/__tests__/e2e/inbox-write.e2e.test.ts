@@ -16,7 +16,7 @@ const messageConfirmTest = isOptInEnabled("LINKEDIN_E2E_ENABLE_MESSAGE_CONFIRM")
  * Inbox Write E2E — two-phase commit message send to Simon Miller.
  *
  * Safe test target: Simon Miller (linkedin.com/in/realsimonmiller)
- * Explicitly authorised by project owner (Joakim Sigvardt).
+ * Explicitly authorised by the project owner.
  *
  * Flow: inbox.prepareReply → twoPhaseCommit.confirmByToken
  *

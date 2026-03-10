@@ -1,0 +1,137 @@
+{
+  "intro": {
+    "firstName": "Avery",
+    "lastName": "Cole",
+    "headline": "Automation Engineer at Example Labs | TypeScript, Python, AI Workflows",
+    "location": "Remote, Denmark",
+    "industry": "Software Development",
+    "customProfileUrl": "avery-cole-example"
+  },
+  "about": "I build automation that has to hold up outside the happy path. My work tends to sit between product delivery and platform reliability, with a focus on practical developer tooling, clear observability, and systems that teams can trust in production.\n\nI enjoy shaping ambiguous requirements into maintainable workflows, especially when the work crosses application code, quality engineering, and human-in-the-loop AI features. The common thread is reducing operational drag while keeping the experience understandable for the people using and maintaining it.\n\nI care about thoughtful DX, incremental rollout plans, and making complex systems easier to operate. I like the work best when good tooling helps a small team move faster without giving up clarity or discipline.",
+  "experience": [
+    {
+      "title": "Automation Engineer",
+      "company": "Example Labs",
+      "employmentType": "Full-time",
+      "location": "Remote",
+      "currentlyWorkingHere": true,
+      "startMonth": "March",
+      "startYear": "2023",
+      "description": "Lead implementation of workflow automation, evaluation tooling, and operator-facing systems for AI-assisted product experiments."
+    },
+    {
+      "title": "Senior Software Engineer",
+      "company": "Northwind Cloud",
+      "employmentType": "Full-time",
+      "location": "Copenhagen, Denmark",
+      "startMonth": "January",
+      "startYear": "2021",
+      "endMonth": "February",
+      "endYear": "2023",
+      "description": "Built backend services and internal tooling that improved release confidence, debugging, and day-to-day delivery for application teams."
+    },
+    {
+      "title": "Software Engineer",
+      "company": "Blue Harbor Software",
+      "employmentType": "Full-time",
+      "location": "Copenhagen, Denmark",
+      "startMonth": "August",
+      "startYear": "2018",
+      "endMonth": "December",
+      "endYear": "2020",
+      "description": "Worked across product and platform surfaces in Node.js and frontend codebases, with a focus on developer experience and operational quality."
+    }
+  ],
+  "education": [
+    {
+      "school": "Example University",
+      "degree": "MSc",
+      "fieldOfStudy": "Computer Science",
+      "startMonth": "September",
+      "startYear": "2016",
+      "endMonth": "June",
+      "endYear": "2018",
+      "description": "Focused on distributed systems, machine learning, and data-intensive application design."
+    },
+    {
+      "school": "City Tech Institute",
+      "degree": "BSc",
+      "fieldOfStudy": "Software Development",
+      "startMonth": "September",
+      "startYear": "2013",
+      "endMonth": "June",
+      "endYear": "2016",
+      "description": "Coursework included algorithms, databases, human-computer interaction, and web engineering."
+    }
+  ],
+  "certifications": [
+    {
+      "name": "Google Cloud Professional Machine Learning Engineer",
+      "issuingOrganization": "Google Cloud",
+      "issueMonth": "May",
+      "issueYear": "2024",
+      "credentialId": "EX-ML-2024-1001"
+    },
+    {
+      "name": "AWS Certified Developer - Associate",
+      "issuingOrganization": "Amazon Web Services",
+      "issueMonth": "October",
+      "issueYear": "2022",
+      "credentialId": "EX-AWS-2022-2048"
+    }
+  ],
+  "languages": [
+    {
+      "name": "English",
+      "proficiency": "Full professional proficiency"
+    },
+    {
+      "name": "Danish",
+      "proficiency": "Professional working proficiency"
+    }
+  ],
+  "projects": [
+    {
+      "title": "Workflow Evaluation Toolkit",
+      "description": "Designed a lightweight evaluation harness for prompt, retrieval, and regression testing across automation workflows.",
+      "startMonth": "June",
+      "startYear": "2023"
+    },
+    {
+      "title": "Operator Feedback Console",
+      "description": "Built reusable intake and review surfaces for human-in-the-loop automation with traceability and observability built in.",
+      "startMonth": "November",
+      "startYear": "2023"
+    }
+  ],
+  "volunteerExperience": [
+    {
+      "role": "Technical Mentor",
+      "organization": "Code Club",
+      "cause": "Education",
+      "startMonth": "September",
+      "startYear": "2022",
+      "description": "Mentor students on programming fundamentals, creative problem-solving, and collaborative software projects."
+    }
+  ],
+  "skills": [
+    "TypeScript",
+    "JavaScript",
+    "Node.js",
+    "Python",
+    "Machine Learning",
+    "Applied AI",
+    "Prompt Engineering",
+    "Developer Tooling",
+    "Quality Engineering",
+    "Retrieval-Augmented Generation (RAG)",
+    "OpenAI API",
+    "FastAPI",
+    "PostgreSQL",
+    "Docker",
+    "Kubernetes",
+    "CI/CD",
+    "Observability",
+    "Playwright"
+  ]
+}
