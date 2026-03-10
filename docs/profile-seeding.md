@@ -30,14 +30,14 @@ npm exec -w @linkedin-assistant/cli -- linkedin profile apply-spec --profile <pr
 ## Current blockers
 
 - Skills are still unsupported by the MCP/CLI profile editing surface: #228.
-- Industry and custom public profile URL are now tracked separately: #252.
 - The current AO workspace does not yet have a provisioned authenticated session
   for the dedicated `linkedin-mcp@example.test` test account: #253.
 
 Because of those gaps, the example issue-210 spec includes the full desired
 state, but `linkedin profile apply-spec` currently requires `--allow-partial`
-to ignore unsupported fields while still applying the supported intro/about/
-experience/education/certifications/languages/projects/volunteer sections.
+to ignore unsupported skills while still applying the supported intro/settings/
+public-profile/about/experience/education/certifications/languages/projects/
+volunteer sections.
 
 ## Notes
 

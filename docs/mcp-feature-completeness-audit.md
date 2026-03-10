@@ -19,7 +19,7 @@ land in focused slices.
 | Domain | MCP tools | Coverage summary |
 | --- | --- | --- |
 | Session | `linkedin.session.status`, `linkedin.session.open_login`, `linkedin.session.health` | Session/auth health only |
-| Profile | `linkedin.profile.view`, `linkedin.profile.view_editable`, `linkedin.profile.prepare_update_intro`, `linkedin.profile.prepare_upsert_section_item`, `linkedin.profile.prepare_remove_section_item`, `linkedin.profile.prepare_upload_photo`, `linkedin.profile.prepare_upload_banner`, `linkedin.profile.prepare_featured_add`, `linkedin.profile.prepare_featured_remove`, `linkedin.profile.prepare_featured_reorder`, `linkedin.actions.confirm` | Read/write profile inspection plus intro, structured section editing, profile media uploads, and featured-section management |
+| Profile | `linkedin.profile.view`, `linkedin.profile.view_editable`, `linkedin.profile.prepare_update_intro`, `linkedin.profile.prepare_update_settings`, `linkedin.profile.prepare_update_public_profile`, `linkedin.profile.prepare_upsert_section_item`, `linkedin.profile.prepare_remove_section_item`, `linkedin.profile.prepare_upload_photo`, `linkedin.profile.prepare_upload_banner`, `linkedin.profile.prepare_featured_add`, `linkedin.profile.prepare_featured_remove`, `linkedin.profile.prepare_featured_reorder`, `linkedin.actions.confirm` | Read/write profile inspection plus intro/settings/public-profile updates, structured section editing, profile media uploads, and featured-section management |
 | Search | `linkedin.search` | Read-only search for `people`, `companies`, and `jobs` only |
 | Inbox | `linkedin.inbox.list_threads`, `linkedin.inbox.get_thread`, `linkedin.inbox.prepare_reply`, `linkedin.actions.confirm` | Read existing threads and send replies through two-phase confirm |
 | Connections | `linkedin.connections.list`, `linkedin.connections.pending`, `linkedin.connections.invite`, `linkedin.connections.accept`, `linkedin.connections.withdraw`, `linkedin.connections.prepare_ignore`, `linkedin.connections.prepare_remove`, `linkedin.connections.prepare_follow`, `linkedin.connections.prepare_unfollow`, `linkedin.network.prepare_followup_after_accept`, `linkedin.actions.confirm` | Basic network reads plus invite/accept/withdraw/ignore/remove/follow/unfollow and follow-up preparation |
@@ -36,11 +36,11 @@ land in focused slices.
   to `linkedin.connections.invite`, `linkedin.connections.accept`,
   `linkedin.connections.withdraw`, `linkedin.feed.like`, and
   `linkedin.feed.comment`.
-- Profile editing now covers intro updates plus editable about / experience /
-  education / certifications / languages / projects / volunteer / honors
-  section CRUD, profile photo/banner uploads, and featured add/remove/reorder
-  through two-phase prepare/confirm. There is still no MCP support for skills,
-  endorsements, or recommendations.
+- Profile editing now covers intro updates, industry/public profile URL
+  settings, editable about / experience / education / certifications /
+  languages / projects / volunteer / honors section CRUD, profile photo/banner
+  uploads, and featured add/remove/reorder through two-phase prepare/confirm.
+  There is still no MCP support for skills, endorsements, or recommendations.
 - `linkedin.inbox.prepare_reply` only works for existing threads. There is no
   new-thread compose flow, no inbox reactions, and no triage actions.
 - LinkedIn posts now cover text, media attachments, polls, and owned-post

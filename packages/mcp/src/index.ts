@@ -21,6 +21,10 @@ export const LINKEDIN_PROFILE_VIEW_TOOL = "linkedin.profile.view";
 export const LINKEDIN_PROFILE_VIEW_EDITABLE_TOOL = "linkedin.profile.view_editable";
 export const LINKEDIN_PROFILE_PREPARE_UPDATE_INTRO_TOOL =
   "linkedin.profile.prepare_update_intro";
+export const LINKEDIN_PROFILE_PREPARE_UPDATE_SETTINGS_TOOL =
+  "linkedin.profile.prepare_update_settings";
+export const LINKEDIN_PROFILE_PREPARE_UPDATE_PUBLIC_PROFILE_TOOL =
+  "linkedin.profile.prepare_update_public_profile";
 export const LINKEDIN_PROFILE_PREPARE_UPSERT_SECTION_ITEM_TOOL =
   "linkedin.profile.prepare_upsert_section_item";
 export const LINKEDIN_PROFILE_PREPARE_REMOVE_SECTION_ITEM_TOOL =

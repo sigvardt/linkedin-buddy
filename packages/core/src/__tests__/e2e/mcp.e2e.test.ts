@@ -384,6 +384,12 @@ describe.sequential("MCP E2E", () => {
       profile_name: profileName,
       profile: {
         profile_url: expect.stringContaining("linkedin.com"),
+        settings: {
+          supported_fields: ["industry"]
+        },
+        public_profile: {
+          supported_fields: ["vanityName"]
+        },
         featured: {
           items: expect.any(Array)
         },
@@ -440,6 +446,49 @@ describe.sequential("MCP E2E", () => {
           },
           upload: {
             file_name: "banner.png"
+          }
+        }
+      });
+
+      const updateSettings = await callMcpTool(
+        MCP_TOOL_NAMES.profilePrepareUpdateSettings,
+        {
+          profileName,
+          industry: "Software Development"
+        }
+      );
+      expect(updateSettings.isError).toBe(false);
+      expect(updateSettings.payload).toMatchObject({
+        profile_name: profileName,
+        preparedActionId: expect.stringMatching(/^pa_/),
+        confirmToken: expect.stringMatching(/^ct_/),
+        preview: {
+          settings_updates: {
+            industry: "Software Development"
+          },
+          target: {
+            profile_name: profileName
+          }
+        }
+      });
+
+      const updatePublicProfile = await callMcpTool(
+        MCP_TOOL_NAMES.profilePrepareUpdatePublicProfile,
+        {
+          profileName,
+          vanityName: "avery-automation"
+        }
+      );
+      expect(updatePublicProfile.isError).toBe(false);
+      expect(updatePublicProfile.payload).toMatchObject({
+        profile_name: profileName,
+        preparedActionId: expect.stringMatching(/^pa_/),
+        confirmToken: expect.stringMatching(/^ct_/),
+        preview: {
+          vanity_name: "avery-automation",
+          public_profile_url: "https://www.linkedin.com/in/avery-automation/",
+          target: {
+            profile_name: profileName
           }
         }
       });
