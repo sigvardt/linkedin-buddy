@@ -37,6 +37,7 @@ import {
   type LinkedInMessagingRuntime
 } from "./linkedinInbox.js";
 import {
+  createProfileActionExecutors,
   LinkedInProfileService,
   type LinkedInProfileRuntime
 } from "./linkedinProfile.js";
@@ -241,6 +242,10 @@ export function createCoreRuntime(
 
   const testAutoConfirm = createDefaultTestAutoConfirmConfig();
   const linkedInExecutors = createLinkedInActionExecutors();
+  const profileExecutors = createProfileActionExecutors() as unknown as Record<
+    string,
+    import("./twoPhaseCommit.js").ActionExecutor<LinkedInMessagingRuntime>
+  >;
   const connectionExecutors = createConnectionActionExecutors() as unknown as Record<
     string,
     import("./twoPhaseCommit.js").ActionExecutor<LinkedInMessagingRuntime>
@@ -262,6 +267,7 @@ export function createCoreRuntime(
     privacy,
     executors: {
       ...linkedInExecutors,
+      ...profileExecutors,
       ...connectionExecutors,
       ...followupExecutors,
       ...feedExecutors,

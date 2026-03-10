@@ -19,7 +19,7 @@ land in focused slices.
 | Domain | MCP tools | Coverage summary |
 | --- | --- | --- |
 | Session | `linkedin.session.status`, `linkedin.session.open_login`, `linkedin.session.health` | Session/auth health only |
-| Profile | `linkedin.profile.view` | Read-only profile inspection |
+| Profile | `linkedin.profile.view`, `linkedin.profile.view_editable`, `linkedin.profile.prepare_update_intro`, `linkedin.profile.prepare_upsert_section_item`, `linkedin.profile.prepare_remove_section_item`, `linkedin.actions.confirm` | Read/write profile inspection plus intro and structured section editing |
 | Search | `linkedin.search` | Read-only search for `people`, `companies`, and `jobs` only |
 | Inbox | `linkedin.inbox.list_threads`, `linkedin.inbox.get_thread`, `linkedin.inbox.prepare_reply`, `linkedin.actions.confirm` | Read existing threads and send replies through two-phase confirm |
 | Connections | `linkedin.connections.list`, `linkedin.connections.pending`, `linkedin.connections.invite`, `linkedin.connections.accept`, `linkedin.connections.withdraw`, `linkedin.network.prepare_followup_after_accept`, `linkedin.actions.confirm` | Basic network reads plus invite/accept/withdraw and follow-up preparation |
@@ -36,8 +36,10 @@ land in focused slices.
   to `linkedin.connections.invite`, `linkedin.connections.accept`,
   `linkedin.connections.withdraw`, `linkedin.feed.like`, and
   `linkedin.feed.comment`.
-- `linkedin.profile.view` is read-only. There is no MCP support for profile
-  editing, uploads, featured management, skills, endorsements, or
+- Profile editing now covers intro updates plus editable about / experience /
+  education / certifications / languages / projects / volunteer / honors
+  section CRUD through two-phase prepare/confirm. There is still no MCP support
+  for photo/banner uploads, featured management, skills, endorsements, or
   recommendations.
 - `linkedin.inbox.prepare_reply` only works for existing threads. There is no
   new-thread compose flow, no inbox reactions, and no triage actions.
@@ -54,7 +56,6 @@ land in focused slices.
 
 | Issue | Priority | Missing feature cluster | Suggested MCP surface |
 | --- | --- | --- | --- |
-| #226 | High | Profile intro and section editing | `linkedin.profile.prepare_update_intro`, `linkedin.profile.prepare_upsert_section_item`, `linkedin.profile.prepare_remove_section_item` |
 | #227 | Medium | Profile media uploads and featured section management | `linkedin.profile.prepare_upload_photo`, `linkedin.profile.prepare_upload_banner`, `linkedin.profile.prepare_featured_*` |
 | #228 | Medium | Skills, endorsements, and recommendations | `linkedin.profile.prepare_add_skill`, `linkedin.profile.prepare_endorse_skill`, `linkedin.profile.prepare_request_recommendation` |
 | #229 | High | Starting new LinkedIn message threads | `linkedin.inbox.search_recipients`, `linkedin.inbox.prepare_new_thread` |
