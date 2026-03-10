@@ -11,14 +11,19 @@ import {
   DEFAULT_FOLLOWUP_SINCE,
   LINKEDIN_FEED_REACTION_TYPES,
   LINKEDIN_INBOX_REACTION_TYPES,
+  LINKEDIN_MEMBER_REPORT_REASONS,
   LINKEDIN_POST_VISIBILITY_TYPES,
+  LINKEDIN_PRIVACY_SETTING_KEYS,
   LINKEDIN_SELECTOR_LOCALES,
   LinkedInAssistantError,
   buildLinkedInImagePersonaFromProfileSeed,
   createCoreRuntime,
   normalizeLinkedInFeedReaction,
   normalizeLinkedInInboxReaction,
+  normalizeLinkedInMemberReportReason,
   normalizeLinkedInPostVisibility,
+  normalizeLinkedInPrivacySettingKey,
+  normalizeLinkedInPrivacySettingValue,
   resolveFollowupSinceWindow,
   redactStructuredValue,
   resolvePrivacyConfig,
@@ -65,6 +70,9 @@ import {
   LINKEDIN_CONNECTIONS_PREPARE_UNFOLLOW_TOOL,
   LINKEDIN_CONNECTIONS_WITHDRAW_TOOL,
   LINKEDIN_NETWORK_PREPARE_FOLLOWUP_AFTER_ACCEPT_TOOL,
+  LINKEDIN_MEMBERS_PREPARE_BLOCK_TOOL,
+  LINKEDIN_MEMBERS_PREPARE_REPORT_TOOL,
+  LINKEDIN_MEMBERS_PREPARE_UNBLOCK_TOOL,
   LINKEDIN_FEED_COMMENT_TOOL,
   LINKEDIN_FEED_LIKE_TOOL,
   LINKEDIN_FEED_LIST_TOOL,
@@ -100,6 +108,8 @@ import {
   LINKEDIN_PROFILE_PREPARE_UPSERT_SECTION_ITEM_TOOL,
   LINKEDIN_PROFILE_VIEW_TOOL,
   LINKEDIN_PROFILE_VIEW_EDITABLE_TOOL,
+  LINKEDIN_PRIVACY_GET_SETTINGS_TOOL,
+  LINKEDIN_PRIVACY_PREPARE_UPDATE_SETTING_TOOL,
   LINKEDIN_JOBS_SEARCH_TOOL,
   LINKEDIN_JOBS_VIEW_TOOL,
   LINKEDIN_NOTIFICATIONS_LIST_TOOL,
@@ -423,6 +433,17 @@ function readSearchCategory(
     "ACTION_PRECONDITION_FAILED",
     `${key} must be one of: people, companies, jobs.`
   );
+}
+
+function readMemberReportReason(
+  args: ToolArgs,
+  key: string
+): ReturnType<typeof normalizeLinkedInMemberReportReason> {
+  return normalizeLinkedInMemberReportReason(readRequiredString(args, key));
+}
+
+function readPrivacySettingKey(args: ToolArgs, key: string) {
+  return normalizeLinkedInPrivacySettingKey(readRequiredString(args, key));
 }
 
 function toToolResult(payload: unknown): ToolResult {
@@ -2128,6 +2149,184 @@ async function handleConnectionsPrepareUnfollow(
     });
 
     runtime.logger.log("info", "mcp.connections.prepare_unfollow.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleMembersPrepareBlock(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const targetProfile = readRequiredString(args, "targetProfile");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.members.prepare_block.start", {
+      profileName,
+      targetProfile
+    });
+
+    const prepared = runtime.members.prepareBlockMember({
+      profileName,
+      targetProfile,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.members.prepare_block.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleMembersPrepareUnblock(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const targetProfile = readRequiredString(args, "targetProfile");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.members.prepare_unblock.start", {
+      profileName,
+      targetProfile
+    });
+
+    const prepared = runtime.members.prepareUnblockMember({
+      profileName,
+      targetProfile,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.members.prepare_unblock.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleMembersPrepareReport(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const targetProfile = readRequiredString(args, "targetProfile");
+    const reason = readMemberReportReason(args, "reason");
+    const details = readString(args, "details", "");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.members.prepare_report.start", {
+      profileName,
+      targetProfile,
+      reason
+    });
+
+    const prepared = runtime.members.prepareReportMember({
+      profileName,
+      targetProfile,
+      reason,
+      ...(details ? { details } : {}),
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.members.prepare_report.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handlePrivacyGetSettings(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+
+    runtime.logger.log("info", "mcp.privacy.get_settings.start", {
+      profileName
+    });
+
+    const settings = await runtime.privacySettings.getSettings({
+      profileName
+    });
+
+    runtime.logger.log("info", "mcp.privacy.get_settings.done", {
+      profileName,
+      count: settings.length
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      settings
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handlePrivacyPrepareUpdateSetting(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const settingKey = readPrivacySettingKey(args, "settingKey");
+    const value = normalizeLinkedInPrivacySettingValue(
+      settingKey,
+      readRequiredString(args, "value")
+    );
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.privacy.prepare_update_setting.start", {
+      profileName,
+      settingKey,
+      value
+    });
+
+    const prepared = runtime.privacySettings.prepareUpdateSetting({
+      profileName,
+      settingKey,
+      value,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.privacy.prepare_update_setting.done", {
       profileName,
       preparedActionId: prepared.preparedActionId
     });
@@ -4219,6 +4418,142 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
+        name: LINKEDIN_MEMBERS_PREPARE_BLOCK_TOOL,
+        description:
+          "Prepare to block a LinkedIn member (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["targetProfile"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            targetProfile: {
+              type: "string",
+              description:
+                "Vanity name or profile URL of the LinkedIn member to block."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_MEMBERS_PREPARE_UNBLOCK_TOOL,
+        description:
+          "Prepare to unblock a LinkedIn member from the blocked-members settings page (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["targetProfile"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            targetProfile: {
+              type: "string",
+              description:
+                "Vanity name or profile URL of the LinkedIn member to unblock."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_MEMBERS_PREPARE_REPORT_TOOL,
+        description:
+          "Prepare to report a LinkedIn member (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["targetProfile", "reason"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            targetProfile: {
+              type: "string",
+              description:
+                "Vanity name or profile URL of the LinkedIn member to report."
+            },
+            reason: {
+              type: "string",
+              enum: [...LINKEDIN_MEMBER_REPORT_REASONS],
+              description: "Structured report reason for the dialog flow."
+            },
+            details: {
+              type: "string",
+              description:
+                "Optional free-text details that will be filled when the dialog exposes a text field."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_PRIVACY_GET_SETTINGS_TOOL,
+        description:
+          withSelectorAuditHint(
+            "Read the supported LinkedIn privacy settings surfaced by the automation runtime, including profile viewing mode and related visibility controls."
+          ),
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_PRIVACY_PREPARE_UPDATE_SETTING_TOOL,
+        description:
+          "Prepare to update one supported LinkedIn privacy setting (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["settingKey", "value"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            settingKey: {
+              type: "string",
+              enum: [...LINKEDIN_PRIVACY_SETTING_KEYS],
+              description: "Supported LinkedIn privacy setting key."
+            },
+            value: {
+              type: "string",
+              description: "Requested setting value."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
         name: LINKEDIN_NETWORK_PREPARE_FOLLOWUP_AFTER_ACCEPT_TOOL,
         description:
           "Detect newly accepted sent invitations and prepare follow-up messages (two-phase: returns confirm tokens). Use linkedin.actions.confirm to execute each prepared follow-up.",
@@ -5065,6 +5400,12 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   [LINKEDIN_CONNECTIONS_PREPARE_REMOVE_TOOL]: handleConnectionsPrepareRemove,
   [LINKEDIN_CONNECTIONS_PREPARE_FOLLOW_TOOL]: handleConnectionsPrepareFollow,
   [LINKEDIN_CONNECTIONS_PREPARE_UNFOLLOW_TOOL]: handleConnectionsPrepareUnfollow,
+  [LINKEDIN_MEMBERS_PREPARE_BLOCK_TOOL]: handleMembersPrepareBlock,
+  [LINKEDIN_MEMBERS_PREPARE_UNBLOCK_TOOL]: handleMembersPrepareUnblock,
+  [LINKEDIN_MEMBERS_PREPARE_REPORT_TOOL]: handleMembersPrepareReport,
+  [LINKEDIN_PRIVACY_GET_SETTINGS_TOOL]: handlePrivacyGetSettings,
+  [LINKEDIN_PRIVACY_PREPARE_UPDATE_SETTING_TOOL]:
+    handlePrivacyPrepareUpdateSetting,
   [LINKEDIN_NETWORK_PREPARE_FOLLOWUP_AFTER_ACCEPT_TOOL]: handlePrepareFollowupAfterAccept,
   [LINKEDIN_FEED_LIST_TOOL]: handleFeedList,
   [LINKEDIN_FEED_VIEW_POST_TOOL]: handleFeedViewPost,
