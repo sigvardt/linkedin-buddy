@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { Locator, Page } from "playwright-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CREATE_POST_ACTION_TYPE,
@@ -17,6 +18,8 @@ import {
   lintLinkedInPostContent,
   normalizeLinkedInPostVisibility,
   resolveLinkedInPostSafetyLintConfig,
+  verifyPublishedPost,
+  waitForFeedSurface,
   validateLinkedInPostText
 } from "../linkedinPosts.js";
 
@@ -61,6 +64,136 @@ function createTempBaseDir(): string {
   const tempDir = mkdtempSync(path.join(tmpdir(), "linkedin-post-lint-"));
   tempDirs.push(tempDir);
   return tempDir;
+}
+
+interface MockPublishedPostPageState {
+  visibleSelectors: readonly string[];
+  hasSnippet?: boolean;
+  publishedPostUrl?: string | null;
+}
+
+type MockLocatorKind = "surface" | "snippet" | "text" | "anchor";
+
+class MockPublishedPostPage {
+  private currentUrl: string;
+
+  readonly goto = vi.fn(async (url: string) => {
+    this.currentUrl = url;
+    return null;
+  });
+
+  readonly waitForLoadState = vi.fn(async () => undefined);
+  readonly evaluate = vi.fn(async () => undefined);
+  readonly url = vi.fn(() => this.currentUrl);
+  readonly locator = vi.fn(
+    (selector: string) =>
+      new MockPublishedPostLocator(this, "surface", selector) as unknown as Locator
+  );
+  readonly getByText = vi.fn(
+    (text: string) =>
+      new MockPublishedPostLocator(this, "text", text) as unknown as Locator
+  );
+
+  constructor(
+    private readonly statesByUrl: Readonly<Record<string, MockPublishedPostPageState>>,
+    initialUrl: string
+  ) {
+    this.currentUrl = initialUrl;
+  }
+
+  state(): MockPublishedPostPageState {
+    return this.statesByUrl[this.currentUrl] ?? { visibleSelectors: [] };
+  }
+}
+
+class MockPublishedPostLocator {
+  constructor(
+    private readonly page: MockPublishedPostPage,
+    private readonly kind: MockLocatorKind,
+    private readonly selector: string
+  ) {}
+
+  first(): Locator {
+    return this as unknown as Locator;
+  }
+
+  nth(): Locator {
+    return this as unknown as Locator;
+  }
+
+  filter(options: { hasText?: string | RegExp }): Locator {
+    void options;
+    return new MockPublishedPostLocator(
+      this.page,
+      "snippet",
+      this.selector
+    ) as unknown as Locator;
+  }
+
+  locator(selector: string): Locator {
+    if (
+      (this.kind === "snippet" || this.kind === "text") &&
+      selector.includes("a[href*='/feed/update/']")
+    ) {
+      return new MockPublishedPostLocator(
+        this.page,
+        "anchor",
+        selector
+      ) as unknown as Locator;
+    }
+
+    if (this.kind === "text") {
+      return new MockPublishedPostLocator(
+        this.page,
+        "snippet",
+        selector
+      ) as unknown as Locator;
+    }
+
+    return new MockPublishedPostLocator(
+      this.page,
+      "surface",
+      selector
+    ) as unknown as Locator;
+  }
+
+  async count(): Promise<number> {
+    const state = this.page.state();
+    switch (this.kind) {
+      case "surface":
+        return state.visibleSelectors.includes(this.selector) ? 1 : 0;
+      case "snippet":
+      case "text":
+        return state.hasSnippet ? 1 : 0;
+      case "anchor":
+        return state.hasSnippet && state.publishedPostUrl ? 1 : 0;
+    }
+  }
+
+  async isVisible(): Promise<boolean> {
+    return (await this.count()) > 0;
+  }
+
+  async waitFor(): Promise<void> {
+    if (!(await this.isVisible())) {
+      throw new Error(`Locator not visible: ${this.selector}`);
+    }
+  }
+
+  async getAttribute(name: string): Promise<string | null> {
+    if (name !== "href" || this.kind !== "anchor") {
+      return null;
+    }
+
+    return this.page.state().publishedPostUrl ?? null;
+  }
+}
+
+function createMockPublishedPostPage(
+  statesByUrl: Readonly<Record<string, MockPublishedPostPageState>>,
+  initialUrl: string
+): Page {
+  return new MockPublishedPostPage(statesByUrl, initialUrl) as unknown as Page;
 }
 
 describe("Post action type constants", () => {
@@ -398,5 +531,49 @@ describe("post safety lint", () => {
     ).rejects.toThrow("postUrl is required");
 
     expect(ensureAuthenticated).not.toHaveBeenCalled();
+  });
+});
+
+describe("verifyPublishedPost", () => {
+  it("treats a visible role-main surface as a ready feed surface", async () => {
+    const feedUrl = "https://www.linkedin.com/feed/";
+    const page = createMockPublishedPostPage(
+      {
+        [feedUrl]: {
+          visibleSelectors: ["main[role='main']"]
+        }
+      },
+      feedUrl
+    );
+
+    await expect(waitForFeedSurface(page)).resolves.toBeUndefined();
+  });
+
+  it("falls back to the profile activity page when feed verification misses the new post", async () => {
+    const feedUrl = "https://www.linkedin.com/feed/";
+    const activityUrl = "https://www.linkedin.com/in/me/recent-activity/all/";
+    const publishedPostUrl = "https://www.linkedin.com/feed/update/urn:li:activity:123/";
+    const page = createMockPublishedPostPage(
+      {
+        [feedUrl]: {
+          visibleSelectors: ["main[role='main']"]
+        },
+        [activityUrl]: {
+          visibleSelectors: ["main[role='main']"],
+          hasSnippet: true,
+          publishedPostUrl
+        }
+      },
+      feedUrl
+    );
+
+    const result = await verifyPublishedPost(page, "Test post from LinkedIn Buddy", []);
+
+    expect(result.verified).toBe(true);
+    expect(result.surface).toBe("profile_activity");
+    expect(result.postUrl).toBe(publishedPostUrl);
+    expect(page.goto).toHaveBeenCalledWith(activityUrl, {
+      waitUntil: "domcontentloaded"
+    });
   });
 });
