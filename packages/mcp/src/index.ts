@@ -35,6 +35,16 @@ export const LINKEDIN_PROFILE_PREPARE_FEATURED_REMOVE_TOOL =
   "linkedin.profile.prepare_featured_remove";
 export const LINKEDIN_PROFILE_PREPARE_FEATURED_REORDER_TOOL =
   "linkedin.profile.prepare_featured_reorder";
+export const LINKEDIN_PROFILE_PREPARE_ADD_SKILL_TOOL =
+  "linkedin.profile.prepare_add_skill";
+export const LINKEDIN_PROFILE_PREPARE_REORDER_SKILLS_TOOL =
+  "linkedin.profile.prepare_reorder_skills";
+export const LINKEDIN_PROFILE_PREPARE_ENDORSE_SKILL_TOOL =
+  "linkedin.profile.prepare_endorse_skill";
+export const LINKEDIN_PROFILE_PREPARE_REQUEST_RECOMMENDATION_TOOL =
+  "linkedin.profile.prepare_request_recommendation";
+export const LINKEDIN_PROFILE_PREPARE_WRITE_RECOMMENDATION_TOOL =
+  "linkedin.profile.prepare_write_recommendation";
 export const LINKEDIN_ASSETS_GENERATE_PROFILE_IMAGES_TOOL =
   "linkedin.assets.generate_profile_images";
 export const LINKEDIN_SEARCH_TOOL = "linkedin.search";
