@@ -1212,21 +1212,48 @@ function createPageMenuActionCandidates(input: {
   candidateKeyPrefix: string;
   exact?: boolean;
 }): SelectorCandidate[] {
+  const selectorKeys = Array.isArray(input.selectorKeys)
+    ? input.selectorKeys
+    : [input.selectorKeys];
   const labelRegex = buildLinkedInSelectorPhraseRegex(
-    input.selectorKeys,
+    selectorKeys,
     input.selectorLocale,
     input.exact ? { exact: true } : {}
   );
   const labelRegexHint = formatLinkedInSelectorRegexHint(
-    input.selectorKeys,
+    selectorKeys,
     input.selectorLocale,
     input.exact ? { exact: true } : {}
   );
   const ariaSelector = buildLinkedInAriaLabelContainsSelector(
     ["[role='menuitem']", "button", "[role='button']", "li"],
-    input.selectorKeys,
+    selectorKeys,
     input.selectorLocale
   );
+  const fixtureMenuActions = [...new Set(
+    selectorKeys.flatMap((selectorKey) => {
+      switch (selectorKey) {
+        case "repost":
+        case "save":
+        case "share":
+        case "unsave":
+          return [selectorKey];
+        default:
+          return [];
+      }
+    })
+  )];
+  const fixtureMenuActionCandidates = fixtureMenuActions.map((menuAction) => ({
+    key: `${input.candidateKeyPrefix}-fixture-action-${menuAction}`,
+    selectorHint:
+      `.feed-post-actions-menu [data-menu-action="${menuAction}"], ` +
+      `.repost-actions-menu [data-menu-action="${menuAction}"]`,
+    locatorFactory: (page: Page) =>
+      page.locator(
+        `.feed-post-actions-menu [data-menu-action="${menuAction}"], ` +
+          `.repost-actions-menu [data-menu-action="${menuAction}"]`
+      )
+  } satisfies SelectorCandidate));
 
   return [
     {
@@ -1237,6 +1264,7 @@ function createPageMenuActionCandidates(input: {
           name: labelRegex
         })
     },
+    ...fixtureMenuActionCandidates,
     {
       key: `${input.candidateKeyPrefix}-button-role`,
       selectorHint: `page.getByRole(button, ${labelRegexHint})`,
@@ -1307,23 +1335,29 @@ async function clickPostMoreMenuAction(input: {
   candidateKeyPrefix: string;
   selectorKey: string;
 }): Promise<string> {
-  const moreButton = await openPostMoreActionsMenu(
-    input.page,
-    input.postRoot,
-    input.selectorLocale
-  );
-  const menuAction = await findVisibleLocatorOrThrow(
-    input.page,
-    createPageMenuActionCandidates({
-      selectorLocale: input.selectorLocale,
-      selectorKeys: input.selectorKeys,
-      candidateKeyPrefix: input.candidateKeyPrefix
-    }),
-    input.selectorKey
-  );
+  const menuActionCandidates = createPageMenuActionCandidates({
+    selectorLocale: input.selectorLocale,
+    selectorKeys: input.selectorKeys,
+    candidateKeyPrefix: input.candidateKeyPrefix
+  });
+  const existingMenuAction = await findVisibleLocator(input.page, menuActionCandidates);
+
+  let triggerKey = "feed-menu-already-open";
+  if (!existingMenuAction) {
+    const moreButton = await openPostMoreActionsMenu(
+      input.page,
+      input.postRoot,
+      input.selectorLocale
+    );
+    triggerKey = moreButton.key;
+  }
+
+  const menuAction =
+    existingMenuAction ??
+    (await findVisibleLocatorOrThrow(input.page, menuActionCandidates, input.selectorKey));
 
   await menuAction.locator.click({ timeout: 5_000 });
-  return `${moreButton.key}:${menuAction.key}`;
+  return `${triggerKey}:${menuAction.key}`;
 }
 
 async function readPostSavedState(

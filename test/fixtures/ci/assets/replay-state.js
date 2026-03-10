@@ -129,7 +129,7 @@
             data-post-id="${escapeHtml(post.id)}"
           >More</button>
           <div class="feed-post-actions-menu more-actions-menu" role="menu" data-post-id="${escapeHtml(post.id)}" hidden>
-            <button role="menuitem" data-post-id="${escapeHtml(post.id)}" data-menu-action="${saved ? "unsave" : "save"}">${saved ? "Unsave" : "Save"}</button>
+            <button role="menuitem" aria-label="${saved ? "Unsave" : "Save"}" class="feed-post-actions-menu__item" data-post-id="${escapeHtml(post.id)}" data-menu-action="${saved ? "unsave" : "save"}">${saved ? "Unsave" : "Save"}</button>
           </div>
         </div>
         <div>
@@ -148,8 +148,8 @@
           >${reposted ? "Reposted" : "Repost"}</button>
         </div>
         <div class="feed-post-actions-menu repost-actions-menu" role="menu" data-post-id="${escapeHtml(post.id)}" hidden>
-          <button role="menuitem" data-post-id="${escapeHtml(post.id)}" data-menu-action="repost">Repost</button>
-          <button role="menuitem" data-post-id="${escapeHtml(post.id)}" data-menu-action="share">Share in a post</button>
+          <button role="menuitem" aria-label="Repost" class="feed-post-actions-menu__item" data-post-id="${escapeHtml(post.id)}" data-menu-action="repost">Repost</button>
+          <button role="menuitem" aria-label="Share in a post" class="feed-post-actions-menu__item" data-post-id="${escapeHtml(post.id)}" data-menu-action="share">Share in a post</button>
         </div>
         <div class="comments-comment-box" data-post-id="${escapeHtml(post.id)}"${commentsHidden}>
           <div
@@ -236,6 +236,14 @@
         menu.setAttribute("hidden", "");
       });
     }
+
+    root.onkeydown = (event) => {
+      if (!(event instanceof KeyboardEvent) || event.key !== "Escape") {
+        return;
+      }
+
+      hideFeedMenus();
+    };
 
     root.querySelectorAll(".feed-shared-control-menu__trigger").forEach((button) => {
       button.addEventListener("click", () => {
