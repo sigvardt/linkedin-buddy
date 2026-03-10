@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   callMcpTool,
@@ -8,6 +11,20 @@ import {
   prepareEchoAction
 } from "./helpers.js";
 import { setupE2ESuite, skipIfE2EUnavailable } from "./setup.js";
+
+function createSyntheticFeaturedItemId(): string {
+  const payload = {
+    v: 1,
+    kind: "link",
+    sourceId: "",
+    url: "https://example.com/launch",
+    title: "Launch page",
+    subtitle: "",
+    rawText: "Launch page"
+  };
+
+  return `pfi_${Buffer.from(JSON.stringify(payload)).toString("base64url")}`;
+}
 
 describe.sequential("MCP E2E", () => {
   const e2e = setupE2ESuite({
@@ -358,6 +375,144 @@ describe.sequential("MCP E2E", () => {
         profile_url: expect.stringContaining("linkedin.com")
       }
     });
+
+    const editableProfile = await callMcpTool(MCP_TOOL_NAMES.profileViewEditable, {
+      profileName
+    });
+    expect(editableProfile.isError).toBe(false);
+    expect(editableProfile.payload).toMatchObject({
+      profile_name: profileName,
+      profile: {
+        profile_url: expect.stringContaining("linkedin.com"),
+        featured: {
+          items: expect.any(Array)
+        },
+        sections: expect.any(Array)
+      }
+    });
+
+    const tempDir = mkdtempSync(path.join(tmpdir(), "linkedin-mcp-profile-"));
+    const photoPath = path.join(tempDir, "photo.png");
+    const bannerPath = path.join(tempDir, "banner.png");
+    writeFileSync(photoPath, "fake-profile-photo", "utf8");
+    writeFileSync(bannerPath, "fake-profile-banner", "utf8");
+
+    try {
+      const uploadPhoto = await callMcpTool(
+        MCP_TOOL_NAMES.profilePrepareUploadPhoto,
+        {
+          profileName,
+          filePath: photoPath
+        }
+      );
+      expect(uploadPhoto.isError).toBe(false);
+      expect(uploadPhoto.payload).toMatchObject({
+        profile_name: profileName,
+        preparedActionId: expect.stringMatching(/^pa_/),
+        confirmToken: expect.stringMatching(/^ct_/),
+        preview: {
+          target: {
+            media_kind: "photo",
+            profile_name: profileName
+          },
+          upload: {
+            file_name: "photo.png"
+          }
+        }
+      });
+
+      const uploadBanner = await callMcpTool(
+        MCP_TOOL_NAMES.profilePrepareUploadBanner,
+        {
+          profileName,
+          filePath: bannerPath
+        }
+      );
+      expect(uploadBanner.isError).toBe(false);
+      expect(uploadBanner.payload).toMatchObject({
+        profile_name: profileName,
+        preparedActionId: expect.stringMatching(/^pa_/),
+        confirmToken: expect.stringMatching(/^ct_/),
+        preview: {
+          target: {
+            media_kind: "banner",
+            profile_name: profileName
+          },
+          upload: {
+            file_name: "banner.png"
+          }
+        }
+      });
+
+      const featuredAdd = await callMcpTool(MCP_TOOL_NAMES.profilePrepareFeaturedAdd, {
+        profileName,
+        kind: "link",
+        url: "https://example.com/launch",
+        title: "Launch page"
+      });
+      expect(featuredAdd.isError).toBe(false);
+      expect(featuredAdd.payload).toMatchObject({
+        profile_name: profileName,
+        preparedActionId: expect.stringMatching(/^pa_/),
+        confirmToken: expect.stringMatching(/^ct_/),
+        preview: {
+          target: {
+            kind: "link",
+            profile_name: profileName
+          },
+          title: "Launch page",
+          url: "https://example.com/launch"
+        }
+      });
+
+      const featuredRemove = await callMcpTool(
+        MCP_TOOL_NAMES.profilePrepareFeaturedRemove,
+        {
+          profileName,
+          match: {
+            title: "Launch page",
+            url: "https://example.com/launch"
+          }
+        }
+      );
+      expect(featuredRemove.isError).toBe(false);
+      expect(featuredRemove.payload).toMatchObject({
+        profile_name: profileName,
+        preparedActionId: expect.stringMatching(/^pa_/),
+        confirmToken: expect.stringMatching(/^ct_/),
+        preview: {
+          match: {
+            title: "Launch page",
+            url: "https://example.com/launch"
+          },
+          target: {
+            profile_name: profileName
+          }
+        }
+      });
+
+      const featuredReorder = await callMcpTool(
+        MCP_TOOL_NAMES.profilePrepareFeaturedReorder,
+        {
+          profileName,
+          itemIds: [createSyntheticFeaturedItemId()]
+        }
+      );
+      expect(featuredReorder.isError).toBe(false);
+      expect(featuredReorder.payload).toMatchObject({
+        profile_name: profileName,
+        preparedActionId: expect.stringMatching(/^pa_/),
+        confirmToken: expect.stringMatching(/^ct_/),
+        preview: {
+          item_ids: expect.any(Array),
+          target: {
+            profile_name: profileName
+          }
+        }
+      });
+    } finally {
+      rmSync(tempDir, { force: true, recursive: true });
+    }
 
     const search = await callMcpTool(MCP_TOOL_NAMES.search, {
       profileName,
