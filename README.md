@@ -187,12 +187,17 @@ Configuration surface:
 - `LINKEDIN_ASSISTANT_EVASION_LEVEL=minimal|moderate|paranoid`
 - `LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS=true|false`
 - `createCoreRuntime({ evasionLevel, evasionDiagnostics })` for direct Core callers
+- precedence is runtime option → environment variable → built-in default
 
 Diagnostics surface:
 
+- there is no standalone `linkedin evasion` CLI group or `linkedin.evasion.*` MCP tool today
 - `linkedin status` includes a top-level `evasion` block
 - `linkedin health` includes `session.evasion`
+- `linkedin.session.status` includes `status.evasion`
+- `linkedin.session.health` includes `session.evasion`
 - read-only status and health checks report the resolved config without injecting synthetic input
+- CLI and MCP do not expose evasion-specific flags or tool args; use env vars or direct Core runtime options
 - enabling diagnostics records `evasion.*` events in the run log for easier troubleshooting
 
 ```ts
@@ -210,8 +215,8 @@ const session = new EvasionSession(page, runtime.evasion.level, {
 });
 ```
 
-See `docs/evasion.md` for the profile matrix, CLI/MCP diagnostics notes, and
-API examples.
+See `docs/evasion.md` for the profile matrix, configuration reference,
+CLI/MCP JSON paths, and troubleshooting guide.
 
 ## Selector Locale Support
 
@@ -253,6 +258,7 @@ npm exec -w @linkedin-assistant/cli -- linkedin login --profile default --timeou
 ```
 
 - `linkedin status` and `linkedin health` now include the resolved anti-bot evasion snapshot in their JSON output so you can confirm the active level, enabled features, and diagnostics flag before reproducing session issues.
+- There is no dedicated `linkedin evasion` command group yet; configure evasion through env vars and inspect it through `status` / `health`. See `docs/evasion.md` for the exact JSON paths and troubleshooting workflow.
 
 Isolation note:
 
@@ -652,6 +658,12 @@ Example tool arguments:
 
 See `docs/selector-locale.md` for the full locale configuration guide and
 `docs/selector-audit.md` for the CLI-only selector audit workflow.
+
+For anti-bot evasion, MCP surfaces the resolved snapshot through
+`linkedin.session.status` (`status.evasion`) and `linkedin.session.health`
+(`session.evasion`). There is no `linkedin.evasion.*` tool family yet, and the
+server reads evasion defaults from env vars at startup. See `docs/evasion.md`
+for the full integration and troubleshooting guide.
 
 - explicit `selectorLocale` wins over `LINKEDIN_ASSISTANT_SELECTOR_LOCALE`
 - supported values are `en`, `da`, and region tags like `da-DK`

@@ -95,7 +95,17 @@ function summarizeSelectorLocaleInput(
   };
 }
 
-/** Options for constructing a fully wired LinkedIn Assistant runtime. */
+/**
+ * Options for constructing a fully wired LinkedIn Assistant runtime.
+ *
+ * @example
+ * ```ts
+ * const options: CreateCoreRuntimeOptions = {
+ *   evasionLevel: "moderate",
+ *   evasionDiagnostics: true
+ * };
+ * ```
+ */
 export interface CreateCoreRuntimeOptions {
   baseDir?: string;
   dbPath?: string;
@@ -112,6 +122,13 @@ export interface CreateCoreRuntimeOptions {
 /**
  * Fully wired service graph used by the CLI, MCP server, and real-session E2E
  * suites. `close()` is safe to call repeatedly.
+ *
+ * @example
+ * ```ts
+ * const runtime = createCoreRuntime();
+ * console.log(runtime.evasion.level);
+ * runtime.close();
+ * ```
  */
 export interface CoreRuntime {
   paths: ConfigPaths;
@@ -151,6 +168,17 @@ export interface CoreRuntime {
 /**
  * Creates the fully wired LinkedIn Assistant runtime and all supporting
  * services for one execution context.
+ *
+ * @example
+ * ```ts
+ * const runtime = createCoreRuntime({
+ *   evasionLevel: "paranoid",
+ *   evasionDiagnostics: true
+ * });
+ *
+ * console.log(runtime.evasion.summary);
+ * runtime.close();
+ * ```
  */
 export function createCoreRuntime(
   options: CreateCoreRuntimeOptions = {}

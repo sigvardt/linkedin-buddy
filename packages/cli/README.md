@@ -27,6 +27,30 @@ Useful reminders:
 See `../../docs/activity-webhooks.md` for the full operator guide and
 `../../docs/activity-webhooks-architecture.md` for the underlying design.
 
+## Anti-bot evasion diagnostics
+
+The CLI does not expose a dedicated `linkedin evasion ...` command group.
+
+Instead, evasion is configured globally and surfaced through the session
+diagnostics commands:
+
+```bash
+npm exec -w @linkedin-assistant/cli -- linkedin status --profile default
+npm exec -w @linkedin-assistant/cli -- linkedin health --profile default
+```
+
+Important details:
+
+- `linkedin status` returns a top-level `evasion` block
+- `linkedin health` returns `session.evasion`
+- there are no CLI flags for evasion level or evasion diagnostics today
+- use `LINKEDIN_ASSISTANT_EVASION_LEVEL` and
+  `LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS` to change the default behavior
+- enabling diagnostics writes `evasion.*` events to the run log
+
+See `../../docs/evasion.md` for the profile matrix, exact JSON paths, and the
+troubleshooting guide.
+
 ## Tier 3 write validation
 
 Use the CLI for the Tier 3 live write-validation harness:

@@ -50,15 +50,36 @@ export interface ConfirmFailureArtifactConfig {
   traceMaxBytes: number;
 }
 
-/** Environment variable that configures the default anti-bot evasion level. */
+/**
+ * Environment variable that configures the default anti-bot evasion level.
+ *
+ * @example
+ * ```ts
+ * process.env[LINKEDIN_ASSISTANT_EVASION_LEVEL_ENV] = "paranoid";
+ * ```
+ */
 export const LINKEDIN_ASSISTANT_EVASION_LEVEL_ENV =
   "LINKEDIN_ASSISTANT_EVASION_LEVEL";
 
-/** Environment variable that enables verbose evasion diagnostics in run logs. */
+/**
+ * Environment variable that enables verbose evasion diagnostics in run logs.
+ *
+ * @example
+ * ```ts
+ * process.env[LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS_ENV] = "true";
+ * ```
+ */
 export const LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS_ENV =
   "LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS";
 
-/** Resolved evasion configuration shared across runtime/session diagnostics. */
+/**
+ * Resolved evasion configuration shared across runtime/session diagnostics.
+ *
+ * @example
+ * ```ts
+ * const config: EvasionConfig = resolveEvasionConfig({ level: "moderate" });
+ * ```
+ */
 export type EvasionConfig = EvasionStatus;
 
 /**
@@ -776,6 +797,14 @@ export function resolveConfirmFailureArtifactConfig(): ConfirmFailureArtifactCon
 /**
  * Resolves the effective anti-bot evasion configuration from runtime options
  * and environment variables.
+ *
+ * @example
+ * ```ts
+ * const evasion = resolveEvasionConfig({
+ *   level: "paranoid",
+ *   diagnosticsEnabled: true
+ * });
+ * ```
  */
 export function resolveEvasionConfig(options: {
   diagnosticsEnabled?: boolean;

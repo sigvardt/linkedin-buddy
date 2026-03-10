@@ -142,6 +142,7 @@ Key entry points:
 - `EvasionSession` for page-level behavioral helpers and optional diagnostics
 - `DEFAULT_EVASION_LEVEL`, `EVASION_LEVELS`, and `EVASION_PROFILES` for profile selection
 - `createEvasionStatus()` and `resolveEvasionConfig()` for resolved config snapshots
+- `computeBezierPath()`, `samplePoissonInterval()`, and the other low-level helpers for custom automation flows
 
 Example:
 
@@ -168,8 +169,11 @@ Use `runtime.evasion.summary` for a human-readable snapshot, and inspect
 `linkedin status`, `linkedin health`, `linkedin.session.status`, or
 `linkedin.session.health` when you want to confirm the resolved runtime config.
 
-See `../../docs/evasion.md` for the environment variables, profile behavior,
-and diagnostics guidance.
+`runtime.evasion.source` shows whether the active level came from the built-in
+default, an environment variable, or an explicit runtime option.
+
+See `../../docs/evasion.md` for the profile matrix, configuration precedence,
+CLI/MCP integration details, and troubleshooting guidance.
 
 ## Tier 3 write validation
 

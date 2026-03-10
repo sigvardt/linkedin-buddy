@@ -25,6 +25,15 @@ const RATE_LIMIT_STATUS_CODES = new Set([429, 999]);
  * @param options - Optional tuning and seed.
  * @returns Read-only array of points along the curved path, including both
  *          endpoints.
+ *
+ * @example
+ * ```ts
+ * const path = computeBezierPath(
+ *   { x: 0, y: 0 },
+ *   { x: 200, y: 120 },
+ *   { steps: 16, overshootFactor: 0.15, seed: 7 }
+ * );
+ * ```
  */
 export function computeBezierPath(
   from: Readonly<Point2D>,
@@ -89,6 +98,15 @@ export function computeBezierPath(
  * @param meanMs - Expected average interval in milliseconds.
  * @param options - Optional bounds and rate-limit hints.
  * @returns Sampled interval in milliseconds (≥ 0).
+ *
+ * @example
+ * ```ts
+ * const waitMs = samplePoissonInterval(800, {
+ *   minIntervalMs: 300,
+ *   maxIntervalMs: 2_000,
+ *   responseStatus: 429
+ * });
+ * ```
  */
 export function samplePoissonInterval(meanMs: number, options?: IntervalSampleOptions): number {
   const safeMeanMs = Math.max(0, normalizeFiniteNumber(meanMs, 0));
@@ -111,6 +129,11 @@ export function samplePoissonInterval(meanMs: number, options?: IntervalSampleOp
  * @param charCount - Number of visible characters to "read".
  * @param wpm - Reading speed in words per minute (1–1000).
  * @returns Estimated reading time in milliseconds (≥ 0).
+ *
+ * @example
+ * ```ts
+ * const pauseMs = computeReadingPauseMs(450, 230);
+ * ```
  */
 export function computeReadingPauseMs(charCount: number, wpm: number): number {
   const safeCharCount = Math.max(0, normalizeFiniteNumber(charCount, 0));
@@ -131,6 +154,11 @@ export function computeReadingPauseMs(charCount: number, wpm: number): number {
  * @param totalPixels - Total distance to scroll.
  * @param steps - Number of momentum steps to generate.
  * @returns Array of per-step scroll deltas.
+ *
+ * @example
+ * ```ts
+ * const steps = computeMomentumSteps(320, 6);
+ * ```
  */
 export function computeMomentumSteps(totalPixels: number, steps: number): number[] {
   const safeTotalPixels = normalizeFiniteNumber(totalPixels, 0);
@@ -163,6 +191,14 @@ export function computeMomentumSteps(totalPixels: number, steps: number): number
  * @param baseMs - Base interval in milliseconds.
  * @param options - Optional bounds and rate-limit hints.
  * @returns Resolved interval in milliseconds.
+ *
+ * @example
+ * ```ts
+ * const nextDelayMs = resolveIntervalMs(1_000, {
+ *   keepAliveIntervalMs: 5_000,
+ *   retryAfterMs: 2_000
+ * });
+ * ```
  */
 export function resolveIntervalMs(baseMs: number, options?: IntervalSampleOptions): number {
   const safeBaseMs = Math.max(0, normalizeFiniteNumber(baseMs, 0));
