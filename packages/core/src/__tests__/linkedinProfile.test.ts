@@ -21,6 +21,7 @@ import {
   WRITE_PROFILE_RECOMMENDATION_ACTION_TYPE,
   LinkedInProfileService,
   createProfileActionExecutors,
+  isProfileIntroEditHref,
   resolveProfileUrl,
   type LinkedInProfileRuntime
 } from "../linkedinProfile.js";
@@ -133,6 +134,36 @@ describe("resolveProfileUrl", () => {
     expect(resolveProfileUrl("john doe")).toBe(
       "https://www.linkedin.com/in/john%20doe/"
     );
+  });
+});
+
+describe("isProfileIntroEditHref", () => {
+  it("accepts the classic intro editor URL", () => {
+    expect(
+      isProfileIntroEditHref("/in/me/edit/intro/?profileFormEntryPoint=PROFILE_SECTION")
+    ).toBe(true);
+  });
+
+  it("accepts the current intro form URL", () => {
+    expect(
+      isProfileIntroEditHref(
+        "https://www.linkedin.com/in/me/edit/forms/intro/new/?profileFormEntryPoint=PROFILE_SECTION"
+      )
+    ).toBe(true);
+  });
+
+  it("rejects the job opportunities edit URL", () => {
+    expect(
+      isProfileIntroEditHref(
+        "https://www.linkedin.com/in/me/opportunities/job-opportunities/edit/?jobOpportunitiesOrigin=PROFILE_TOP_CARD"
+      )
+    ).toBe(false);
+  });
+
+  it("rejects empty and unrelated URLs", () => {
+    expect(isProfileIntroEditHref("")).toBe(false);
+    expect(isProfileIntroEditHref("/in/me/overlay/contact-info/")).toBe(false);
+    expect(isProfileIntroEditHref(undefined)).toBe(false);
   });
 });
 

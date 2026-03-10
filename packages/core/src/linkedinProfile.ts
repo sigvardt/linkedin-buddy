@@ -405,6 +405,15 @@ const PROFILE_ACTION_LABELS = {
   }
 } as const;
 
+const PROFILE_INTRO_ACTION_LABELS = {
+  edit: {
+    en: ["Edit intro", "Edit profile intro", "Edit introduction"],
+    da: ["Rediger intro", "Rediger profilintro", "Rediger introduktion"]
+  }
+} as const;
+
+const PROFILE_INTRO_EDIT_HREF_PATTERNS = ["/edit/intro/", "/edit/forms/intro/"] as const;
+
 const PROFILE_FEATURED_LABELS = {
   section: {
     en: ["Featured"],
@@ -1953,6 +1962,34 @@ function escapeCssAttributeValue(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
+export function isProfileIntroEditHref(href: string | null | undefined): boolean {
+  if (typeof href !== "string") {
+    return false;
+  }
+
+  const normalizedHref = normalizeText(href);
+  if (!normalizedHref) {
+    return false;
+  }
+
+  try {
+    const resolvedUrl = new URL(normalizedHref, "https://www.linkedin.com");
+    return PROFILE_INTRO_EDIT_HREF_PATTERNS.some((pattern) =>
+      resolvedUrl.pathname.includes(pattern)
+    );
+  } catch {
+    return PROFILE_INTRO_EDIT_HREF_PATTERNS.some((pattern) =>
+      normalizedHref.includes(pattern)
+    );
+  }
+}
+
+function buildProfileIntroEditHrefSelector(): string {
+  return PROFILE_INTRO_EDIT_HREF_PATTERNS.map(
+    (pattern) => `a[href*="${escapeCssAttributeValue(pattern)}"]`
+  ).join(", ");
+}
+
 function buildTextRegex(labels: readonly string[], exact = false): RegExp {
   const normalizedLabels = dedupeStrings(labels);
   const pattern = normalizedLabels.map((label) => escapeRegExp(label)).join("|");
@@ -1983,6 +2020,13 @@ function getUiActionLabels(
   locale: LinkedInSelectorLocale
 ): string[] {
   return getLocalizedLabels(PROFILE_ACTION_LABELS[action], locale);
+}
+
+function getIntroActionLabels(
+  action: keyof typeof PROFILE_INTRO_ACTION_LABELS,
+  locale: LinkedInSelectorLocale
+): string[] {
+  return getLocalizedLabels(PROFILE_INTRO_ACTION_LABELS[action], locale);
 }
 
 function getFeaturedActionLabels(
@@ -2552,8 +2596,35 @@ async function navigateToOwnProfile(page: Page): Promise<void> {
   await waitForProfilePageReady(page);
 }
 
-function getTopCardRoot(page: Page): Locator {
-  return page.locator("main .pv-top-card, main .top-card-layout, main section, main").first();
+async function getTopCardRoot(page: Page): Promise<Locator> {
+  const candidateRoots: LocatorCandidate[] = [
+    {
+      key: "top-card-section-with-heading",
+      locator: page
+        .locator("main section, main .pv-top-card, main .top-card-layout")
+        .filter({
+          has: page.locator("h1").first()
+        })
+        .first()
+    },
+    {
+      key: "top-card-pv",
+      locator: page.locator("main .pv-top-card").first()
+    },
+    {
+      key: "top-card-layout",
+      locator: page.locator("main .top-card-layout").first()
+    }
+  ];
+  const resolved = await findFirstVisibleLocator(candidateRoots);
+  if (!resolved) {
+    throw new LinkedInAssistantError(
+      "TARGET_NOT_FOUND",
+      "Could not find the profile top card on the profile page."
+    );
+  }
+
+  return resolved.locator;
 }
 
 async function findProfileSectionRoot(
@@ -2871,12 +2942,38 @@ async function openIntroEditDialog(
   page: Page,
   selectorLocale: LinkedInSelectorLocale
 ): Promise<Locator> {
-  const topCardRoot = getTopCardRoot(page);
-  const editCandidates = createActionCandidates(
-    topCardRoot,
-    getUiActionLabels("edit", selectorLocale),
-    "intro-edit"
-  );
+  const topCardRoot = await getTopCardRoot(page);
+  const introEditLabels = getIntroActionLabels("edit", selectorLocale);
+  const editCandidates: LocatorCandidate[] = [
+    {
+      key: "intro-edit-link-href",
+      locator: topCardRoot.locator(buildProfileIntroEditHrefSelector())
+    },
+    {
+      key: "intro-edit-button-aria",
+      locator: topCardRoot.locator(
+        buildAriaLabelContainsSelector("button", introEditLabels)
+      )
+    },
+    {
+      key: "intro-edit-link-aria",
+      locator: topCardRoot.locator(
+        buildAriaLabelContainsSelector("a", introEditLabels)
+      )
+    },
+    {
+      key: "intro-edit-button-role",
+      locator: topCardRoot.getByRole("button", {
+        name: buildTextRegex(introEditLabels)
+      })
+    },
+    {
+      key: "intro-edit-link-role",
+      locator: topCardRoot.getByRole("link", {
+        name: buildTextRegex(introEditLabels)
+      })
+    }
+  ];
   const resolved = await findFirstVisibleLocator(editCandidates);
   if (!resolved) {
     throw new LinkedInAssistantError(
@@ -2892,7 +2989,7 @@ async function openGlobalAddSectionDialog(
   page: Page,
   selectorLocale: LinkedInSelectorLocale
 ): Promise<Locator> {
-  const topCardRoot = getTopCardRoot(page);
+  const topCardRoot = await getTopCardRoot(page);
   const addCandidates = createActionCandidates(
     topCardRoot,
     getUiActionLabels("addProfileSection", selectorLocale),
@@ -4422,7 +4519,7 @@ async function openTopCardMoreMenu(
   page: Page,
   selectorLocale: LinkedInSelectorLocale
 ): Promise<Locator> {
-  const topCardRoot = getTopCardRoot(page);
+  const topCardRoot = await getTopCardRoot(page);
   const moreCandidates = createActionCandidates(
     topCardRoot,
     getUiActionLabels("more", selectorLocale),
@@ -4606,7 +4703,7 @@ async function openProfileMediaAndUpload(
   kind: "photo" | "banner",
   upload: PreparedUploadArtifact
 ): Promise<Locator | null> {
-  const topCardRoot = getTopCardRoot(page);
+  const topCardRoot = await getTopCardRoot(page);
   const openCandidates: LocatorCandidate[] = [
     ...createActionCandidates(
       topCardRoot,
