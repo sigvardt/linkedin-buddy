@@ -1,5 +1,9 @@
 import type { BrowserContext, Page } from "playwright-core";
-import { inspectLinkedInSession } from "./auth/sessionInspection.js";
+import {
+  inspectAuthenticatedLinkedInIdentity,
+  inspectLinkedInSession,
+  type LinkedInSessionIdentity
+} from "./auth/sessionInspection.js";
 import { resolveEvasionConfig, type EvasionConfig } from "./config.js";
 import {
   getLinkedInSessionFingerprint,
@@ -27,6 +31,7 @@ export interface SessionHealthStatus {
   cookieExpiringSoon: boolean;
   /** Resolved anti-bot evasion status for the current runtime. */
   evasion: EvasionConfig;
+  identity?: LinkedInSessionIdentity;
   loginWallDetected: boolean;
   nextCookieExpiryAt: string | null;
   rateLimited: boolean;
@@ -95,6 +100,9 @@ export async function checkLinkedInSession(
     });
 
     const inspection = await inspectLinkedInSession(page);
+    const identity = inspection.authenticated
+      ? await inspectAuthenticatedLinkedInIdentity(page)
+      : undefined;
     const cookies = await context.cookies("https://www.linkedin.com");
     const sessionCookies = summarizeLinkedInSessionCookies(cookies);
     const nextCookieExpiryAt = sessionCookies.find(
@@ -111,6 +119,7 @@ export async function checkLinkedInSession(
       ...inspection,
       cookieExpiringSoon,
       evasion,
+      ...(identity ? { identity } : {}),
       nextCookieExpiryAt,
       sessionCookieFingerprint:
         sessionCookies.length > 0
