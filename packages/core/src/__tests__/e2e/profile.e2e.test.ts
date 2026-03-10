@@ -31,6 +31,8 @@ describe("Profile E2E", () => {
     const runtime = e2e.runtime();
     const profile = await runtime.profile.viewEditableProfile();
 
+    expect(profile.settings.supported_fields).toContain("industry");
+    expect(profile.public_profile.supported_fields).toContain("vanityName");
     expect(profile.featured).toMatchObject({
       can_add: expect.any(Boolean),
       can_remove: expect.any(Boolean),

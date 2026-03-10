@@ -14,6 +14,8 @@ import {
   UPLOAD_PROFILE_PHOTO_ACTION_TYPE,
   UPSERT_PROFILE_SECTION_ITEM_ACTION_TYPE,
   UPDATE_PROFILE_INTRO_ACTION_TYPE,
+  UPDATE_PROFILE_SETTINGS_ACTION_TYPE,
+  UPDATE_PUBLIC_PROFILE_ACTION_TYPE,
   LinkedInProfileService,
   createProfileActionExecutors,
   resolveProfileUrl,
@@ -134,6 +136,10 @@ describe("resolveProfileUrl", () => {
 describe("profile action type constants", () => {
   it("exposes the expected action type names", () => {
     expect(UPDATE_PROFILE_INTRO_ACTION_TYPE).toBe("profile.update_intro");
+    expect(UPDATE_PROFILE_SETTINGS_ACTION_TYPE).toBe("profile.update_settings");
+    expect(UPDATE_PUBLIC_PROFILE_ACTION_TYPE).toBe(
+      "profile.update_public_profile"
+    );
     expect(UPSERT_PROFILE_SECTION_ITEM_ACTION_TYPE).toBe(
       "profile.upsert_section_item"
     );
@@ -168,6 +174,8 @@ describe("createProfileActionExecutors", () => {
     const executors = createProfileActionExecutors();
 
     expect(executors[UPDATE_PROFILE_INTRO_ACTION_TYPE]).toBeDefined();
+    expect(executors[UPDATE_PROFILE_SETTINGS_ACTION_TYPE]).toBeDefined();
+    expect(executors[UPDATE_PUBLIC_PROFILE_ACTION_TYPE]).toBeDefined();
     expect(executors[UPSERT_PROFILE_SECTION_ITEM_ACTION_TYPE]).toBeDefined();
     expect(executors[REMOVE_PROFILE_SECTION_ITEM_ACTION_TYPE]).toBeDefined();
     expect(executors[UPLOAD_PROFILE_PHOTO_ACTION_TYPE]).toBeDefined();
@@ -206,6 +214,57 @@ describe("LinkedInProfileService prepare helpers", () => {
           intro_updates: {
             headline: "Automation Engineer",
             location: "Copenhagen"
+          }
+        }
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("prepares profile settings updates through two-phase confirm", () => {
+    const db = new AssistantDatabase(":memory:");
+
+    try {
+      const service = new LinkedInProfileService(createTestRuntime(db));
+      const prepared = service.prepareUpdateSettings({
+        profileName: "default",
+        industry: "Software Development"
+      });
+
+      expect(prepared).toMatchObject({
+        preparedActionId: expect.stringMatching(/^pa_/),
+        confirmToken: expect.stringMatching(/^ct_/),
+        preview: {
+          summary: "Update LinkedIn profile settings (industry)",
+          settings_updates: {
+            industry: "Software Development"
+          }
+        }
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("prepares public profile URL updates through two-phase confirm", () => {
+    const db = new AssistantDatabase(":memory:");
+
+    try {
+      const service = new LinkedInProfileService(createTestRuntime(db));
+      const prepared = service.prepareUpdatePublicProfile({
+        profileName: "default",
+        vanityName: "avery-cole-example"
+      });
+
+      expect(prepared).toMatchObject({
+        preparedActionId: expect.stringMatching(/^pa_/),
+        confirmToken: expect.stringMatching(/^ct_/),
+        preview: {
+          summary: "Update LinkedIn public profile URL (avery-cole-example)",
+          public_profile: {
+            vanity_name: "avery-cole-example",
+            public_profile_url: "https://www.linkedin.com/in/avery-cole-example/"
           }
         }
       });

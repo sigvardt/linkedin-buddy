@@ -8,6 +8,8 @@ import {
   type LinkedInProfileSectionType,
   type PrepareRemoveSectionItemInput,
   type PrepareUpdateIntroInput,
+  type PrepareUpdatePublicProfileInput,
+  type PrepareUpdateSettingsInput,
   type PrepareUpsertSectionItemInput
 } from "@linkedin-assistant/core";
 
@@ -29,39 +31,14 @@ const SECTION_KEY_ALIASES = new Map<string, LinkedInProfileSectionType>([
 ]);
 
 const INTRO_FIELD_KEYS = new Set(["firstName", "lastName", "headline", "location"]);
-const INTRO_UNSUPPORTED_FIELD_KEYS = new Map<string, { reason: string; issueNumber: number }>([
-  [
-    "industry",
-    {
-      reason: "Industry is not exposed by the current LinkedIn profile edit automation.",
-      issueNumber: 252
-    }
-  ],
-  [
-    "customProfileUrl",
-    {
-      reason:
-        "Custom public profile URL is not exposed by the current LinkedIn profile edit automation.",
-      issueNumber: 252
-    }
-  ],
-  [
-    "publicProfileUrl",
-    {
-      reason:
-        "Custom public profile URL is not exposed by the current LinkedIn profile edit automation.",
-      issueNumber: 252
-    }
-  ],
-  [
-    "vanityUrl",
-    {
-      reason:
-        "Custom public profile URL is not exposed by the current LinkedIn profile edit automation.",
-      issueNumber: 252
-    }
-  ]
+const SETTINGS_FIELD_KEYS = new Set(["industry"]);
+const PUBLIC_PROFILE_FIELD_ALIASES = new Map<string, "vanityName" | "publicProfileUrl">([
+  ["customprofileurl", "publicProfileUrl"],
+  ["publicprofileurl", "publicProfileUrl"],
+  ["vanityurl", "publicProfileUrl"],
+  ["vanityname", "vanityName"]
 ]);
+const LINKEDIN_PUBLIC_PROFILE_URL_PREFIX = "https://www.linkedin.com/in/";
 
 const SECTION_IDENTITY_FIELDS: Record<Exclude<LinkedInProfileSectionType, "about">, string[]> = {
   experience: ["title", "company"],
@@ -89,6 +66,8 @@ export interface ProfileSeedSectionInput {
 
 export interface ProfileSeedSpec {
   intro?: Record<string, unknown>;
+  settings?: Record<string, unknown>;
+  publicProfile?: Record<string, unknown>;
   about?: string | null;
   sections: Partial<Record<SeedSectionType, ProfileSeedSectionInput[]>>;
   unsupportedFields: ProfileSeedUnsupportedField[];
@@ -104,6 +83,16 @@ export type ProfileSeedPlanAction =
       kind: "update_intro";
       summary: string;
       input: PrepareUpdateIntroInput;
+    }
+  | {
+      kind: "update_settings";
+      summary: string;
+      input: PrepareUpdateSettingsInput;
+    }
+  | {
+      kind: "update_public_profile";
+      summary: string;
+      input: PrepareUpdatePublicProfileInput;
     }
   | {
       kind: "upsert_section_item";
@@ -125,12 +114,27 @@ export function parseProfileSeedSpec(input: unknown): ProfileSeedSpec {
   }
 
   const unsupportedFields: ProfileSeedUnsupportedField[] = [];
-  const intro = normalizeIntroSpec(input.intro, unsupportedFields);
+  const header = normalizeIntroSpec(input.intro);
   const about = normalizeAboutSpec(input.about);
   const sections: Partial<Record<SeedSectionType, ProfileSeedSectionInput[]>> = {};
+  const settings: Record<string, unknown> = {
+    ...(header.settings ?? {}),
+    ...(normalizeSettingsSpec(input.settings, "profile seed settings") ?? {})
+  };
+  const publicProfile: Record<string, unknown> = {
+    ...(header.publicProfile ?? {}),
+    ...(normalizePublicProfileSpec(input.publicProfile, "profile seed publicProfile") ?? {})
+  };
 
   for (const [rawKey, rawValue] of Object.entries(input)) {
-    if (rawKey === "intro" || rawKey === "about" || rawKey === "metadata" || rawKey === "notes") {
+    if (
+      rawKey === "intro" ||
+      rawKey === "settings" ||
+      rawKey === "publicProfile" ||
+      rawKey === "about" ||
+      rawKey === "metadata" ||
+      rawKey === "notes"
+    ) {
       continue;
     }
 
@@ -145,15 +149,14 @@ export function parseProfileSeedSpec(input: unknown): ProfileSeedSpec {
       continue;
     }
 
-    if (rawKey === "industry" || rawKey === "customProfileUrl" || rawKey === "publicProfileUrl") {
-      unsupportedFields.push({
-        path: rawKey,
-        reason:
-          rawKey === "industry"
-            ? "Industry is not exposed by the current LinkedIn profile edit automation."
-            : "Custom public profile URL is not exposed by the current LinkedIn profile edit automation.",
-        issueNumber: 252
-      });
+    if (SETTINGS_FIELD_KEYS.has(rawKey)) {
+      settings[rawKey] = rawValue;
+      continue;
+    }
+
+    const publicProfileField = PUBLIC_PROFILE_FIELD_ALIASES.get(normalizeKey(rawKey));
+    if (publicProfileField) {
+      publicProfile[publicProfileField] = rawValue;
       continue;
     }
 
@@ -161,7 +164,7 @@ export function parseProfileSeedSpec(input: unknown): ProfileSeedSpec {
     if (!section || section === "about") {
       throw new LinkedInAssistantError(
         "ACTION_PRECONDITION_FAILED",
-        `Unsupported profile seed spec key "".`
+        `Unsupported profile seed spec key "${rawKey}".`
       );
     }
 
@@ -169,7 +172,9 @@ export function parseProfileSeedSpec(input: unknown): ProfileSeedSpec {
   }
 
   return {
-    ...(intro ? { intro } : {}),
+    ...(header.intro ? { intro: header.intro } : {}),
+    ...(Object.keys(settings).length > 0 ? { settings } : {}),
+    ...(Object.keys(publicProfile).length > 0 ? { publicProfile } : {}),
     ...(about !== undefined ? { about } : {}),
     sections,
     unsupportedFields
@@ -199,6 +204,36 @@ export function createProfileSeedPlan(
         input: {
           profileName: options.profileName,
           ...introUpdates,
+          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
+        }
+      });
+    }
+  }
+
+  if (spec.settings) {
+    const settingsUpdates = createSettingsUpdates(current, spec.settings);
+    if (Object.keys(settingsUpdates).length > 0) {
+      actions.push({
+        kind: "update_settings",
+        summary: `Update settings (${Object.keys(settingsUpdates).join(", ")})`,
+        input: {
+          profileName: options.profileName,
+          ...settingsUpdates,
+          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
+        }
+      });
+    }
+  }
+
+  if (spec.publicProfile) {
+    const publicProfileUpdates = createPublicProfileUpdates(current, spec.publicProfile);
+    if (Object.keys(publicProfileUpdates).length > 0) {
+      actions.push({
+        kind: "update_public_profile",
+        summary: "Update public profile URL",
+        input: {
+          profileName: options.profileName,
+          ...publicProfileUpdates,
           ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
         }
       });
@@ -296,11 +331,14 @@ export function createProfileSeedPlan(
 }
 
 function normalizeIntroSpec(
-  value: unknown,
-  unsupportedFields: ProfileSeedUnsupportedField[]
-): Record<string, unknown> | undefined {
+  value: unknown
+): {
+  intro?: Record<string, unknown>;
+  settings?: Record<string, unknown>;
+  publicProfile?: Record<string, unknown>;
+} {
   if (value === undefined) {
-    return undefined;
+    return {};
   }
 
   if (!isRecord(value)) {
@@ -311,6 +349,8 @@ function normalizeIntroSpec(
   }
 
   const intro: Record<string, unknown> = {};
+  const settings: Record<string, unknown> = {};
+  const publicProfile: Record<string, unknown> = {};
 
   for (const [key, rawValue] of Object.entries(value)) {
     if (INTRO_FIELD_KEYS.has(key)) {
@@ -318,25 +358,89 @@ function normalizeIntroSpec(
       continue;
     }
 
-    const unsupported = INTRO_UNSUPPORTED_FIELD_KEYS.get(key);
-    if (unsupported) {
-      if (rawValue !== undefined && rawValue !== null && rawValue !== "") {
-        unsupportedFields.push({
-          path: `intro.${key}`,
-          reason: unsupported.reason,
-          issueNumber: unsupported.issueNumber
-        });
-      }
+    if (SETTINGS_FIELD_KEYS.has(key)) {
+      settings[key] = rawValue;
+      continue;
+    }
+
+    const publicProfileField = PUBLIC_PROFILE_FIELD_ALIASES.get(normalizeKey(key));
+    if (publicProfileField) {
+      publicProfile[publicProfileField] = rawValue;
       continue;
     }
 
     throw new LinkedInAssistantError(
       "ACTION_PRECONDITION_FAILED",
-      `Unsupported intro field "" in profile seed spec.`
+      `Unsupported intro field "${key}" in profile seed spec.`
     );
   }
 
-  return Object.keys(intro).length > 0 ? intro : undefined;
+  return {
+    ...(Object.keys(intro).length > 0 ? { intro } : {}),
+    ...(Object.keys(settings).length > 0 ? { settings } : {}),
+    ...(Object.keys(publicProfile).length > 0 ? { publicProfile } : {})
+  };
+}
+
+function normalizeSettingsSpec(
+  value: unknown,
+  label: string
+): Record<string, unknown> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!isRecord(value)) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `${label} must be a JSON object.`
+    );
+  }
+
+  const settings: Record<string, unknown> = {};
+  for (const [key, rawValue] of Object.entries(value)) {
+    if (!SETTINGS_FIELD_KEYS.has(key)) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        `Unsupported settings field "${key}" in profile seed spec.`
+      );
+    }
+
+    settings[key] = rawValue;
+  }
+
+  return Object.keys(settings).length > 0 ? settings : undefined;
+}
+
+function normalizePublicProfileSpec(
+  value: unknown,
+  label: string
+): Record<string, unknown> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!isRecord(value)) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `${label} must be a JSON object.`
+    );
+  }
+
+  const publicProfile: Record<string, unknown> = {};
+  for (const [key, rawValue] of Object.entries(value)) {
+    const normalizedKey = PUBLIC_PROFILE_FIELD_ALIASES.get(normalizeKey(key));
+    if (!normalizedKey) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        `Unsupported public profile field "${key}" in profile seed spec.`
+      );
+    }
+
+    publicProfile[normalizedKey] = rawValue;
+  }
+
+  return Object.keys(publicProfile).length > 0 ? publicProfile : undefined;
 }
 
 function normalizeAboutSpec(value: unknown): string | null | undefined {
@@ -472,6 +576,59 @@ function createIntroUpdates(
 
     if (normalizeForCompare(desiredValue) !== currentValue) {
       updates[key] = desiredValue;
+    }
+  }
+
+  return updates;
+}
+
+function createSettingsUpdates(
+  current: LinkedInEditableProfile,
+  desiredSettings: Record<string, unknown>
+): Record<string, string> {
+  const updates: Record<string, string> = {};
+
+  for (const [key, rawValue] of Object.entries(desiredSettings)) {
+    const desiredValue = readString(rawValue);
+    if (!desiredValue) {
+      continue;
+    }
+
+    const currentValue =
+      key === "industry" ? normalizeForCompare(current.settings.industry) : "";
+    if (normalizeForCompare(desiredValue) !== currentValue) {
+      updates[key] = desiredValue;
+    }
+  }
+
+  return updates;
+}
+
+function createPublicProfileUpdates(
+  current: LinkedInEditableProfile,
+  desiredPublicProfile: Record<string, unknown>
+): Record<string, string> {
+  const updates: Record<string, string> = {};
+
+  if (typeof desiredPublicProfile.vanityName === "string") {
+    const desiredVanityName = readString(desiredPublicProfile.vanityName);
+    if (
+      desiredVanityName &&
+      normalizeForCompare(desiredVanityName) !==
+        normalizeForCompare(current.public_profile.vanity_name)
+    ) {
+      updates.vanityName = desiredVanityName;
+    }
+  }
+
+  if (typeof desiredPublicProfile.publicProfileUrl === "string") {
+    const desiredPublicProfileUrl = readString(desiredPublicProfile.publicProfileUrl);
+    if (
+      desiredPublicProfileUrl &&
+      normalizePublicProfileUrlForCompare(desiredPublicProfileUrl) !==
+        normalizePublicProfileUrlForCompare(current.public_profile.public_profile_url)
+    ) {
+      updates.publicProfileUrl = desiredPublicProfileUrl;
     }
   }
 
@@ -636,4 +793,48 @@ function readString(value: unknown): string {
 
 function normalizeForCompare(value: unknown): string {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function normalizePublicProfileUrlForCompare(value: unknown): string {
+  const normalizedValue = readString(value);
+  if (!normalizedValue) {
+    return "";
+  }
+
+  const vanityName = extractPublicProfileVanityName(normalizedValue);
+  if (vanityName) {
+    return `${LINKEDIN_PUBLIC_PROFILE_URL_PREFIX}${vanityName}`;
+  }
+
+  return normalizedValue.toLowerCase().replace(/\/+$/, "");
+}
+
+function extractPublicProfileVanityName(value: string): string {
+  const normalizedValue = value.trim();
+  if (!normalizedValue) {
+    return "";
+  }
+
+  if (/^[a-z0-9-]{3,100}$/i.test(normalizedValue)) {
+    return normalizedValue.toLowerCase();
+  }
+
+  const directPathMatch = normalizedValue.match(/^\/?in\/([^/?#]+)/i);
+  if (directPathMatch) {
+    return directPathMatch[1]?.toLowerCase() ?? "";
+  }
+
+  try {
+    const candidateUrl = normalizedValue.startsWith("http")
+      ? new URL(normalizedValue)
+      : new URL(normalizedValue, "https://www.linkedin.com");
+    const linkedInPathMatch = candidateUrl.pathname.match(/^\/in\/([^/?#]+)/i);
+    if (linkedInPathMatch) {
+      return linkedInPathMatch[1]?.toLowerCase() ?? "";
+    }
+  } catch {
+    return "";
+  }
+
+  return "";
 }

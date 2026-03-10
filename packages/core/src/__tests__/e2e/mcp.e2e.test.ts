@@ -384,6 +384,12 @@ describe.sequential("MCP E2E", () => {
       profile_name: profileName,
       profile: {
         profile_url: expect.stringContaining("linkedin.com"),
+        settings: {
+          supported_fields: expect.arrayContaining(["industry"])
+        },
+        public_profile: {
+          supported_fields: expect.arrayContaining(["vanityName", "publicProfileUrl"])
+        },
         featured: {
           items: expect.any(Array)
         },
@@ -398,6 +404,50 @@ describe.sequential("MCP E2E", () => {
     writeFileSync(bannerPath, "fake-profile-banner", "utf8");
 
     try {
+      const updateSettings = await callMcpTool(
+        MCP_TOOL_NAMES.profilePrepareUpdateSettings,
+        {
+          profileName,
+          industry: "Software Development"
+        }
+      );
+      expect(updateSettings.isError).toBe(false);
+      expect(updateSettings.payload).toMatchObject({
+        profile_name: profileName,
+        preparedActionId: expect.stringMatching(/^pa_/),
+        confirmToken: expect.stringMatching(/^ct_/),
+        preview: {
+          settings_updates: {
+            industry: "Software Development"
+          },
+          target: {
+            profile_name: profileName
+          }
+        }
+      });
+
+      const updatePublicProfile = await callMcpTool(
+        MCP_TOOL_NAMES.profilePrepareUpdatePublicProfile,
+        {
+          profileName,
+          vanityName: "linkedin-mcp-signikant-test"
+        }
+      );
+      expect(updatePublicProfile.isError).toBe(false);
+      expect(updatePublicProfile.payload).toMatchObject({
+        profile_name: profileName,
+        preparedActionId: expect.stringMatching(/^pa_/),
+        confirmToken: expect.stringMatching(/^ct_/),
+        preview: {
+          public_profile: {
+            vanity_name: "linkedin-mcp-signikant-test"
+          },
+          target: {
+            profile_name: profileName
+          }
+        }
+      });
+
       const uploadPhoto = await callMcpTool(
         MCP_TOOL_NAMES.profilePrepareUploadPhoto,
         {

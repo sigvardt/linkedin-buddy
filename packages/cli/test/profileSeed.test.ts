@@ -13,6 +13,15 @@ const baseEditableProfile = {
     location: "Copenhagen, Denmark",
     supported_fields: ["firstName", "lastName", "headline", "location"]
   },
+  settings: {
+    industry: "Technology, Information and Internet",
+    supported_fields: ["industry"]
+  },
+  public_profile: {
+    vanity_name: "avery-cole",
+    public_profile_url: "https://www.linkedin.com/in/avery-cole/",
+    supported_fields: ["vanityName", "publicProfileUrl"]
+  },
   sections: [
     {
       section: "about",
@@ -46,7 +55,15 @@ const baseEditableProfile = {
         }
       ]
     }
-  ]
+  ],
+  featured: {
+    label: "Featured",
+    can_add: true,
+    can_remove: true,
+    can_reorder: false,
+    supported_kinds: ["link", "media", "post"],
+    items: []
+  }
 } as const;
 
 describe("profile seed planner", () => {
@@ -55,7 +72,8 @@ describe("profile seed planner", () => {
       intro: {
         firstName: "Avery",
         headline: "Automation Engineer at Example Labs",
-        industry: "Software Development"
+        industry: "Software Development",
+        customProfileUrl: "avery-cole-example"
       },
       about: "Building production LLM systems.",
       certifications: [
@@ -73,14 +91,15 @@ describe("profile seed planner", () => {
       firstName: "Avery",
       headline: "Automation Engineer at Example Labs"
     });
+    expect(spec.settings).toMatchObject({
+      industry: "Software Development"
+    });
     expect(spec.about).toBe("Building production LLM systems.");
+    expect(spec.publicProfile).toMatchObject({
+      publicProfileUrl: "avery-cole-example"
+    });
     expect(spec.sections.certifications).toHaveLength(1);
     expect(spec.unsupportedFields).toEqual([
-      {
-        path: "intro.industry",
-        reason: "Industry is not exposed by the current LinkedIn profile edit automation.",
-        issueNumber: 252
-      },
       {
         path: "skills",
         reason: "Skills are not exposed by the current LinkedIn profile edit automation.",
@@ -89,11 +108,23 @@ describe("profile seed planner", () => {
     ]);
   });
 
+  it("includes unsupported field names in validation errors", () => {
+    expect(() =>
+      parseProfileSeedSpec({
+        intro: {
+          unknownField: "unexpected"
+        }
+      })
+    ).toThrow('Unsupported intro field "unknownField" in profile seed spec.');
+  });
+
   it("builds intro, about, upsert, and replace actions", () => {
     const spec = parseProfileSeedSpec({
       intro: {
         headline: "Automation Engineer at Example Labs",
-        location: "Copenhagen, Capital Region of Denmark, Denmark"
+        location: "Copenhagen, Capital Region of Denmark, Denmark",
+        industry: "Software Development",
+        customProfileUrl: "avery-cole-example"
       },
       about: "Building production LLM systems.",
       certifications: [],
@@ -113,6 +144,8 @@ describe("profile seed planner", () => {
 
     expect(plan.actions.map((action) => action.kind)).toEqual([
       "update_intro",
+      "update_settings",
+      "update_public_profile",
       "upsert_section_item",
       "remove_section_item",
       "upsert_section_item"
@@ -126,6 +159,20 @@ describe("profile seed planner", () => {
       }
     });
     expect(plan.actions[1]).toMatchObject({
+      kind: "update_settings",
+      input: {
+        profileName: "smoke",
+        industry: "Software Development"
+      }
+    });
+    expect(plan.actions[2]).toMatchObject({
+      kind: "update_public_profile",
+      input: {
+        profileName: "smoke",
+        publicProfileUrl: "avery-cole-example"
+      }
+    });
+    expect(plan.actions[3]).toMatchObject({
       kind: "upsert_section_item",
       input: {
         profileName: "smoke",
@@ -145,5 +192,26 @@ describe("profile seed planner", () => {
         })
       })
     );
+  });
+
+  it("treats vanity and LinkedIn public profile URL forms as no-op equivalents", () => {
+    for (const publicProfileUrl of [
+      "avery-cole",
+      "/in/avery-cole/",
+      "https://www.linkedin.com/in/avery-cole/"
+    ]) {
+      const spec = parseProfileSeedSpec({
+        publicProfile: {
+          publicProfileUrl
+        }
+      }) as ProfileSeedSpec;
+
+      const plan = createProfileSeedPlan(baseEditableProfile, spec, {
+        profileName: "smoke",
+        replace: false
+      });
+
+      expect(plan.actions).toEqual([]);
+    }
   });
 });

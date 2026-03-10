@@ -10,6 +10,8 @@ const profileCliMocks = vi.hoisted(() => ({
   loggerLog: vi.fn(),
   prepareRemoveSectionItem: vi.fn(),
   prepareUpdateIntro: vi.fn(),
+  prepareUpdatePublicProfile: vi.fn(),
+  prepareUpdateSettings: vi.fn(),
   prepareUpsertSectionItem: vi.fn(),
   viewEditableProfile: vi.fn(),
   viewProfile: vi.fn()
@@ -47,6 +49,8 @@ describe("CLI profile commands", () => {
         viewEditableProfile: profileCliMocks.viewEditableProfile,
         viewProfile: profileCliMocks.viewProfile,
         prepareUpdateIntro: profileCliMocks.prepareUpdateIntro,
+        prepareUpdateSettings: profileCliMocks.prepareUpdateSettings,
+        prepareUpdatePublicProfile: profileCliMocks.prepareUpdatePublicProfile,
         prepareUpsertSectionItem: profileCliMocks.prepareUpsertSectionItem,
         prepareRemoveSectionItem: profileCliMocks.prepareRemoveSectionItem
       },
@@ -63,6 +67,15 @@ describe("CLI profile commands", () => {
         headline: "Software Engineer",
         location: "Copenhagen, Denmark",
         supported_fields: ["firstName", "lastName", "headline", "location"]
+      },
+      settings: {
+        industry: "Technology, Information and Internet",
+        supported_fields: ["industry"]
+      },
+      public_profile: {
+        vanity_name: "avery-cole",
+        public_profile_url: "https://www.linkedin.com/in/avery-cole/",
+        supported_fields: ["vanityName", "publicProfileUrl"]
       },
       sections: []
     });
@@ -89,6 +102,18 @@ describe("CLI profile commands", () => {
       expiresAtMs: 1,
       preview: { summary: "Update about" }
     });
+    profileCliMocks.prepareUpdateSettings.mockReturnValue({
+      preparedActionId: "pa_settings",
+      confirmToken: "ct_settings",
+      expiresAtMs: 1,
+      preview: { summary: "Update settings" }
+    });
+    profileCliMocks.prepareUpdatePublicProfile.mockReturnValue({
+      preparedActionId: "pa_public_profile",
+      confirmToken: "ct_public_profile",
+      expiresAtMs: 1,
+      preview: { summary: "Update public profile" }
+    });
     profileCliMocks.prepareRemoveSectionItem.mockReturnValue({
       preparedActionId: "pa_remove",
       confirmToken: "ct_remove",
@@ -101,6 +126,20 @@ describe("CLI profile commands", () => {
         status: "executed",
         actionType: "profile.update_intro",
         result: { status: "profile_intro_updated" },
+        artifacts: []
+      })
+      .mockResolvedValueOnce({
+        preparedActionId: "pa_settings",
+        status: "executed",
+        actionType: "profile.update_settings",
+        result: { status: "profile_settings_updated" },
+        artifacts: []
+      })
+      .mockResolvedValueOnce({
+        preparedActionId: "pa_public_profile",
+        status: "executed",
+        actionType: "profile.update_public_profile",
+        result: { status: "profile_public_profile_updated" },
         artifacts: []
       })
       .mockResolvedValueOnce({
@@ -152,6 +191,58 @@ describe("CLI profile commands", () => {
     });
   });
 
+  it("prepares a profile settings update", async () => {
+    await runCli([
+      "node",
+      "linkedin",
+      "profile",
+      "prepare-update-settings",
+      "--profile",
+      "smoke",
+      "--industry",
+      "Software Development"
+    ]);
+
+    const output = JSON.parse(stdoutChunks.join("\n")) as {
+      confirmToken: string;
+      preparedActionId: string;
+      profile_name: string;
+    };
+
+    expect(output.profile_name).toBe("smoke");
+    expect(output.preparedActionId).toBe("pa_settings");
+    expect(profileCliMocks.prepareUpdateSettings).toHaveBeenCalledWith({
+      profileName: "smoke",
+      industry: "Software Development"
+    });
+  });
+
+  it("prepares a public profile URL update", async () => {
+    await runCli([
+      "node",
+      "linkedin",
+      "profile",
+      "prepare-update-public-profile",
+      "--profile",
+      "smoke",
+      "--vanity-name",
+      "avery-cole-example"
+    ]);
+
+    const output = JSON.parse(stdoutChunks.join("\n")) as {
+      confirmToken: string;
+      preparedActionId: string;
+      profile_name: string;
+    };
+
+    expect(output.profile_name).toBe("smoke");
+    expect(output.preparedActionId).toBe("pa_public_profile");
+    expect(profileCliMocks.prepareUpdatePublicProfile).toHaveBeenCalledWith({
+      profileName: "smoke",
+      vanityName: "avery-cole-example"
+    });
+  });
+
   it("applies a profile seed spec and reports unsupported fields when partial mode is enabled", async () => {
     const specPath = path.join(tempDir, "profile-spec.json");
     await writeFile(
@@ -160,7 +251,9 @@ describe("CLI profile commands", () => {
         {
           intro: {
             headline: "Automation Engineer at Example Labs",
-            location: "Copenhagen, Capital Region of Denmark, Denmark"
+            location: "Copenhagen, Capital Region of Denmark, Denmark",
+            industry: "Software Development",
+            customProfileUrl: "avery-cole-example"
           },
           about: "Building production LLM systems.",
           skills: ["TypeScript", "Python"]
@@ -193,9 +286,11 @@ describe("CLI profile commands", () => {
     };
 
     expect(output.profile_name).toBe("smoke");
-    expect(output.executed_action_count).toBe(2);
+    expect(output.executed_action_count).toBe(4);
     expect(output.actions.map((action) => action.action_type)).toEqual([
       "profile.update_intro",
+      "profile.update_settings",
+      "profile.update_public_profile",
       "profile.upsert_section_item"
     ]);
     expect(output.unsupported_fields).toEqual([
@@ -210,6 +305,18 @@ describe("CLI profile commands", () => {
         profileName: "smoke",
         headline: "Automation Engineer at Example Labs",
         location: "Copenhagen, Capital Region of Denmark, Denmark"
+      })
+    );
+    expect(profileCliMocks.prepareUpdateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profileName: "smoke",
+        industry: "Software Development"
+      })
+    );
+    expect(profileCliMocks.prepareUpdatePublicProfile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profileName: "smoke",
+        publicProfileUrl: "avery-cole-example"
       })
     );
     expect(profileCliMocks.prepareUpsertSectionItem).toHaveBeenCalledWith(
