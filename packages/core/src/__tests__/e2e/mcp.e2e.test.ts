@@ -510,6 +510,117 @@ describe.sequential("MCP E2E", () => {
           }
         }
       });
+
+      const addSkill = await callMcpTool(MCP_TOOL_NAMES.profilePrepareAddSkill, {
+        profileName,
+        skill: "TypeScript"
+      });
+      expect(addSkill.isError).toBe(false);
+      expect(addSkill.payload).toMatchObject({
+        profile_name: profileName,
+        preparedActionId: expect.stringMatching(/^pa_/),
+        confirmToken: expect.stringMatching(/^ct_/),
+        preview: {
+          skill: "TypeScript",
+          target: {
+            profile_name: profileName
+          }
+        }
+      });
+
+      const reorderSkills = await callMcpTool(
+        MCP_TOOL_NAMES.profilePrepareReorderSkills,
+        {
+          profileName,
+          skillNames: ["TypeScript", "Playwright", "Automation"]
+        }
+      );
+      expect(reorderSkills.isError).toBe(false);
+      expect(reorderSkills.payload).toMatchObject({
+        profile_name: profileName,
+        preparedActionId: expect.stringMatching(/^pa_/),
+        confirmToken: expect.stringMatching(/^ct_/),
+        preview: {
+          skill_names: ["TypeScript", "Playwright", "Automation"],
+          target: {
+            profile_name: profileName
+          }
+        }
+      });
+
+      const endorseSkill = await callMcpTool(
+        MCP_TOOL_NAMES.profilePrepareEndorseSkill,
+        {
+          profileName,
+          targetProfile: fixtures.connectionTarget,
+          skill: "TypeScript"
+        }
+      );
+      expect(endorseSkill.isError).toBe(false);
+      expect(endorseSkill.payload).toMatchObject({
+        profile_name: profileName,
+        preparedActionId: expect.stringMatching(/^pa_/),
+        confirmToken: expect.stringMatching(/^ct_/),
+        preview: {
+          skill: "TypeScript",
+          target: {
+            profile_name: profileName,
+            profile_url: expect.stringContaining("linkedin.com/in/")
+          }
+        }
+      });
+
+      const requestRecommendation = await callMcpTool(
+        MCP_TOOL_NAMES.profilePrepareRequestRecommendation,
+        {
+          profileName,
+          targetProfile: fixtures.connectionTarget,
+          relationship: "Worked with this person in the same group",
+          positionAtTheTime: "Automation Engineer",
+          message: "Happy to return the favor."
+        }
+      );
+      expect(requestRecommendation.isError).toBe(false);
+      expect(requestRecommendation.payload).toMatchObject({
+        profile_name: profileName,
+        preparedActionId: expect.stringMatching(/^pa_/),
+        confirmToken: expect.stringMatching(/^ct_/),
+        preview: {
+          relationship: "Worked with this person in the same group",
+          position_at_the_time: "Automation Engineer",
+          message: "Happy to return the favor.",
+          target: {
+            profile_name: profileName,
+            profile_url: expect.stringContaining("linkedin.com/in/")
+          }
+        }
+      });
+
+      const writeRecommendation = await callMcpTool(
+        MCP_TOOL_NAMES.profilePrepareWriteRecommendation,
+        {
+          profileName,
+          targetProfile: fixtures.connectionTarget,
+          relationship: "Managed this person directly",
+          positionAtTheTime: "Engineering Manager",
+          text: "Steady, thoughtful, and excellent at execution."
+        }
+      );
+      expect(writeRecommendation.isError).toBe(false);
+      expect(writeRecommendation.payload).toMatchObject({
+        profile_name: profileName,
+        preparedActionId: expect.stringMatching(/^pa_/),
+        confirmToken: expect.stringMatching(/^ct_/),
+        preview: {
+          relationship: "Managed this person directly",
+          position_at_the_time: "Engineering Manager",
+          text: "Steady, thoughtful, and excellent at execution.",
+          target: {
+            profile_name: profileName,
+            profile_url: expect.stringContaining("linkedin.com/in/")
+          }
+        }
+      });
     } finally {
       rmSync(tempDir, { force: true, recursive: true });
     }

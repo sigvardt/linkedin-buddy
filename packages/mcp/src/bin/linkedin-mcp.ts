@@ -75,6 +75,11 @@ import {
   LINKEDIN_PROFILE_PREPARE_FEATURED_ADD_TOOL,
   LINKEDIN_PROFILE_PREPARE_FEATURED_REMOVE_TOOL,
   LINKEDIN_PROFILE_PREPARE_FEATURED_REORDER_TOOL,
+  LINKEDIN_PROFILE_PREPARE_ADD_SKILL_TOOL,
+  LINKEDIN_PROFILE_PREPARE_REORDER_SKILLS_TOOL,
+  LINKEDIN_PROFILE_PREPARE_ENDORSE_SKILL_TOOL,
+  LINKEDIN_PROFILE_PREPARE_REQUEST_RECOMMENDATION_TOOL,
+  LINKEDIN_PROFILE_PREPARE_WRITE_RECOMMENDATION_TOOL,
   LINKEDIN_PROFILE_PREPARE_REMOVE_SECTION_ITEM_TOOL,
   LINKEDIN_PROFILE_PREPARE_UPLOAD_BANNER_TOOL,
   LINKEDIN_PROFILE_PREPARE_UPLOAD_PHOTO_TOOL,
@@ -1118,6 +1123,212 @@ async function handleProfilePrepareFeaturedReorder(
     runtime.logger.log("info", "mcp.profile.prepare_featured_reorder.done", {
       profileName,
       itemCount: itemIds.length,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleProfilePrepareAddSkill(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const skill = readRequiredString(args, "skill");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.profile.prepare_add_skill.start", {
+      profileName,
+      skill
+    });
+
+    const prepared = runtime.profile.prepareAddSkill({
+      profileName,
+      skill,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.profile.prepare_add_skill.done", {
+      profileName,
+      skill,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleProfilePrepareReorderSkills(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const skillNames = readRequiredStringArray(args, "skillNames");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.profile.prepare_reorder_skills.start", {
+      profileName,
+      skillCount: skillNames.length
+    });
+
+    const prepared = runtime.profile.prepareReorderSkills({
+      profileName,
+      skillNames,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.profile.prepare_reorder_skills.done", {
+      profileName,
+      skillCount: skillNames.length,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleProfilePrepareEndorseSkill(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const targetProfile = readRequiredString(args, "targetProfile");
+    const skill = readRequiredString(args, "skill");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.profile.prepare_endorse_skill.start", {
+      profileName,
+      skill
+    });
+
+    const prepared = runtime.profile.prepareEndorseSkill({
+      profileName,
+      target: targetProfile,
+      skill,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.profile.prepare_endorse_skill.done", {
+      profileName,
+      skill,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleProfilePrepareRequestRecommendation(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const targetProfile = readRequiredString(args, "targetProfile");
+    const relationship = readRequiredString(args, "relationship");
+    const positionAtTheTime = readRequiredString(args, "positionAtTheTime");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log(
+      "info",
+      "mcp.profile.prepare_request_recommendation.start",
+      {
+        profileName
+      }
+    );
+
+    const prepared = runtime.profile.prepareRequestRecommendation({
+      profileName,
+      target: targetProfile,
+      relationship,
+      positionAtTheTime,
+      ...(typeof args.message === "string"
+        ? { message: readString(args, "message", "") }
+        : {}),
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log(
+      "info",
+      "mcp.profile.prepare_request_recommendation.done",
+      {
+        profileName,
+        preparedActionId: prepared.preparedActionId
+      }
+    );
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleProfilePrepareWriteRecommendation(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const targetProfile = readRequiredString(args, "targetProfile");
+    const relationship = readRequiredString(args, "relationship");
+    const positionAtTheTime = readRequiredString(args, "positionAtTheTime");
+    const text = readRequiredString(args, "text");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log(
+      "info",
+      "mcp.profile.prepare_write_recommendation.start",
+      {
+        profileName
+      }
+    );
+
+    const prepared = runtime.profile.prepareWriteRecommendation({
+      profileName,
+      target: targetProfile,
+      relationship,
+      positionAtTheTime,
+      text,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.profile.prepare_write_recommendation.done", {
+      profileName,
       preparedActionId: prepared.preparedActionId
     });
 
@@ -3081,6 +3292,158 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
+        name: LINKEDIN_PROFILE_PREPARE_ADD_SKILL_TOOL,
+        description:
+          "Prepare to add one skill to the logged-in member's LinkedIn profile (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["skill"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            },
+            skill: {
+              type: "string",
+              description: "Skill name to add to the logged-in member profile."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Optional note attached to the prepared action."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_PROFILE_PREPARE_REORDER_SKILLS_TOOL,
+        description:
+          "Prepare to reorder the top skills shown on the logged-in member's LinkedIn profile (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["skillNames"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            },
+            skillNames: {
+              type: "array",
+              items: {
+                type: "string"
+              },
+              description:
+                "Ordered skill names to move to the top of the Skills section in the provided order."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Optional note attached to the prepared action."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_PROFILE_PREPARE_ENDORSE_SKILL_TOOL,
+        description:
+          "Prepare to endorse one skill on another LinkedIn member's profile (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["targetProfile", "skill"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            },
+            targetProfile: {
+              type: "string",
+              description: "LinkedIn profile URL, /in/ path, or vanity name for the endorsement target."
+            },
+            skill: {
+              type: "string",
+              description: "Skill name to endorse on the target profile."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Optional note attached to the prepared action."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_PROFILE_PREPARE_REQUEST_RECOMMENDATION_TOOL,
+        description:
+          "Prepare to request a recommendation from another LinkedIn member (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["targetProfile", "relationship", "positionAtTheTime"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            },
+            targetProfile: {
+              type: "string",
+              description: "LinkedIn profile URL, /in/ path, or vanity name for the recommendation target."
+            },
+            relationship: {
+              type: "string",
+              description: "Relationship value to select in LinkedIn's recommendation request dialog."
+            },
+            positionAtTheTime: {
+              type: "string",
+              description: "Position/title value to select in LinkedIn's recommendation request dialog."
+            },
+            message: {
+              type: "string",
+              description: "Optional personalized message to send with the recommendation request."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Optional note attached to the prepared action."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_PROFILE_PREPARE_WRITE_RECOMMENDATION_TOOL,
+        description:
+          "Prepare to write a recommendation for another LinkedIn member (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["targetProfile", "relationship", "positionAtTheTime", "text"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            },
+            targetProfile: {
+              type: "string",
+              description: "LinkedIn profile URL, /in/ path, or vanity name for the recommendation target."
+            },
+            relationship: {
+              type: "string",
+              description: "Relationship value to select in LinkedIn's write recommendation dialog."
+            },
+            positionAtTheTime: {
+              type: "string",
+              description: "Position/title value to select in LinkedIn's write recommendation dialog."
+            },
+            text: {
+              type: "string",
+              description: "Recommendation text to send."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Optional note attached to the prepared action."
+            }
+          })
+        }
+      },
+      {
         name: LINKEDIN_SEARCH_TOOL,
         description: withSelectorAuditHint(
           "Search LinkedIn for people, companies, or jobs."
@@ -4164,6 +4527,15 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
     handleProfilePrepareFeaturedRemove,
   [LINKEDIN_PROFILE_PREPARE_FEATURED_REORDER_TOOL]:
     handleProfilePrepareFeaturedReorder,
+  [LINKEDIN_PROFILE_PREPARE_ADD_SKILL_TOOL]: handleProfilePrepareAddSkill,
+  [LINKEDIN_PROFILE_PREPARE_REORDER_SKILLS_TOOL]:
+    handleProfilePrepareReorderSkills,
+  [LINKEDIN_PROFILE_PREPARE_ENDORSE_SKILL_TOOL]:
+    handleProfilePrepareEndorseSkill,
+  [LINKEDIN_PROFILE_PREPARE_REQUEST_RECOMMENDATION_TOOL]:
+    handleProfilePrepareRequestRecommendation,
+  [LINKEDIN_PROFILE_PREPARE_WRITE_RECOMMENDATION_TOOL]:
+    handleProfilePrepareWriteRecommendation,
   [LINKEDIN_SEARCH_TOOL]: handleSearch,
   [LINKEDIN_CONNECTIONS_LIST_TOOL]: handleConnectionsList,
   [LINKEDIN_CONNECTIONS_PENDING_TOOL]: handleConnectionsPending,

@@ -4,16 +4,21 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AssistantDatabase } from "../db/database.js";
 import {
+  ADD_PROFILE_SKILL_ACTION_TYPE,
   ADD_PROFILE_FEATURED_ACTION_TYPE,
+  ENDORSE_PROFILE_SKILL_ACTION_TYPE,
   LINKEDIN_PROFILE_SECTION_TYPES,
   LINKEDIN_PROFILE_FEATURED_ITEM_KINDS,
   REMOVE_PROFILE_SECTION_ITEM_ACTION_TYPE,
   REMOVE_PROFILE_FEATURED_ACTION_TYPE,
   REORDER_PROFILE_FEATURED_ACTION_TYPE,
+  REORDER_PROFILE_SKILLS_ACTION_TYPE,
+  REQUEST_PROFILE_RECOMMENDATION_ACTION_TYPE,
   UPLOAD_PROFILE_BANNER_ACTION_TYPE,
   UPLOAD_PROFILE_PHOTO_ACTION_TYPE,
   UPSERT_PROFILE_SECTION_ITEM_ACTION_TYPE,
   UPDATE_PROFILE_INTRO_ACTION_TYPE,
+  WRITE_PROFILE_RECOMMENDATION_ACTION_TYPE,
   LinkedInProfileService,
   createProfileActionExecutors,
   resolveProfileUrl,
@@ -145,6 +150,15 @@ describe("profile action type constants", () => {
     expect(ADD_PROFILE_FEATURED_ACTION_TYPE).toBe("profile.featured_add");
     expect(REMOVE_PROFILE_FEATURED_ACTION_TYPE).toBe("profile.featured_remove");
     expect(REORDER_PROFILE_FEATURED_ACTION_TYPE).toBe("profile.featured_reorder");
+    expect(ADD_PROFILE_SKILL_ACTION_TYPE).toBe("profile.skill_add");
+    expect(REORDER_PROFILE_SKILLS_ACTION_TYPE).toBe("profile.skills_reorder");
+    expect(ENDORSE_PROFILE_SKILL_ACTION_TYPE).toBe("profile.skill_endorse");
+    expect(REQUEST_PROFILE_RECOMMENDATION_ACTION_TYPE).toBe(
+      "profile.recommendation_request"
+    );
+    expect(WRITE_PROFILE_RECOMMENDATION_ACTION_TYPE).toBe(
+      "profile.recommendation_write"
+    );
   });
 
   it("lists the supported editable profile sections", () => {
@@ -175,6 +189,11 @@ describe("createProfileActionExecutors", () => {
     expect(executors[ADD_PROFILE_FEATURED_ACTION_TYPE]).toBeDefined();
     expect(executors[REMOVE_PROFILE_FEATURED_ACTION_TYPE]).toBeDefined();
     expect(executors[REORDER_PROFILE_FEATURED_ACTION_TYPE]).toBeDefined();
+    expect(executors[ADD_PROFILE_SKILL_ACTION_TYPE]).toBeDefined();
+    expect(executors[REORDER_PROFILE_SKILLS_ACTION_TYPE]).toBeDefined();
+    expect(executors[ENDORSE_PROFILE_SKILL_ACTION_TYPE]).toBeDefined();
+    expect(executors[REQUEST_PROFILE_RECOMMENDATION_ACTION_TYPE]).toBeDefined();
+    expect(executors[WRITE_PROFILE_RECOMMENDATION_ACTION_TYPE]).toBeDefined();
   });
 
   it("exposes execute methods for each profile action executor", () => {
@@ -407,6 +426,127 @@ describe("LinkedInProfileService prepare helpers", () => {
           itemIds: ["not-a-featured-id"]
         })
       ).toThrow("view_editable.featured.items");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("prepares profile skill additions", () => {
+    const db = new AssistantDatabase(":memory:");
+
+    try {
+      const service = new LinkedInProfileService(createTestRuntime(db));
+      const prepared = service.prepareAddSkill({
+        profileName: "default",
+        skill: "TypeScript"
+      });
+
+      expect(prepared.preview).toMatchObject({
+        summary: "Add LinkedIn profile skill",
+        target: {
+          profile_name: "default"
+        },
+        skill: "TypeScript"
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("prepares profile skill reorders", () => {
+    const db = new AssistantDatabase(":memory:");
+
+    try {
+      const service = new LinkedInProfileService(createTestRuntime(db));
+      const prepared = service.prepareReorderSkills({
+        profileName: "default",
+        skillNames: ["TypeScript", "Playwright", "Automation"]
+      });
+
+      expect(prepared.preview).toMatchObject({
+        summary: "Reorder LinkedIn profile skills (3)",
+        skill_names: ["TypeScript", "Playwright", "Automation"]
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("prepares skill endorsements for another profile", () => {
+    const db = new AssistantDatabase(":memory:");
+
+    try {
+      const service = new LinkedInProfileService(createTestRuntime(db));
+      const prepared = service.prepareEndorseSkill({
+        profileName: "default",
+        target: "https://www.linkedin.com/in/realsimonmiller/",
+        skill: "TypeScript"
+      });
+
+      expect(prepared.preview).toMatchObject({
+        summary: "Endorse LinkedIn profile skill",
+        target: {
+          profile_name: "default",
+          profile_url: "https://www.linkedin.com/in/realsimonmiller/"
+        },
+        skill: "TypeScript"
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("prepares recommendation requests", () => {
+    const db = new AssistantDatabase(":memory:");
+
+    try {
+      const service = new LinkedInProfileService(createTestRuntime(db));
+      const prepared = service.prepareRequestRecommendation({
+        profileName: "default",
+        target: "realsimonmiller",
+        relationship: "Worked with Simon on the same team",
+        positionAtTheTime: "Automation Engineer",
+        message: "Happy to return the favor."
+      });
+
+      expect(prepared.preview).toMatchObject({
+        summary: "Request LinkedIn recommendation",
+        target: {
+          profile_name: "default",
+          profile_url: "https://www.linkedin.com/in/realsimonmiller/"
+        },
+        relationship: "Worked with Simon on the same team",
+        position_at_the_time: "Automation Engineer",
+        message: "Happy to return the favor."
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("prepares written recommendations", () => {
+    const db = new AssistantDatabase(":memory:");
+
+    try {
+      const service = new LinkedInProfileService(createTestRuntime(db));
+      const prepared = service.prepareWriteRecommendation({
+        profileName: "default",
+        target: "/in/realsimonmiller",
+        relationship: "Managed Simon directly",
+        positionAtTheTime: "Engineering Manager",
+        text: "Simon consistently turned ambiguous problems into calm, reliable delivery."
+      });
+
+      expect(prepared.preview).toMatchObject({
+        summary: "Write LinkedIn recommendation",
+        target: {
+          profile_name: "default",
+          profile_url: "https://www.linkedin.com/in/realsimonmiller/"
+        },
+        relationship: "Managed Simon directly",
+        position_at_the_time: "Engineering Manager",
+        text: "Simon consistently turned ambiguous problems into calm, reliable delivery."
+      });
     } finally {
       db.close();
     }
