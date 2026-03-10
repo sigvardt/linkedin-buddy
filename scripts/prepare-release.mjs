@@ -11,7 +11,7 @@ import {
 } from "./release-utils.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const canonicalPackageName = "@linkedin-assistant/cli";
+const canonicalPackageName = "@linkedin-buddy/cli";
 const releaseTagPrefix = "v";
 const rootPackageJsonPath = path.join(repoRoot, "package.json");
 const workspacePackageJsonPaths = [
@@ -145,11 +145,11 @@ function applyVersion(version) {
     packageJson.version = version;
 
     if (workspacePath.endsWith("/packages/cli/package.json")) {
-      packageJson.dependencies["@linkedin-assistant/core"] = version;
+      packageJson.dependencies["@linkedin-buddy/core"] = version;
     }
 
     if (workspacePath.endsWith("/packages/mcp/package.json")) {
-      packageJson.dependencies["@linkedin-assistant/core"] = version;
+      packageJson.dependencies["@linkedin-buddy/core"] = version;
     }
 
     writeJson(workspacePath, packageJson);

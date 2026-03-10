@@ -9,9 +9,9 @@ defaults:
     - desktop
     - webhook
 projects:
-  linkedin-owa-agentools:
-    name: linkedin-owa-agentools
-    sessionPrefix: loa
+  linkedin-buddy:
+    name: linkedin-buddy
+    sessionPrefix: lb
     repo: sigvardt/linkedin-buddy
     path: /Users/user/Repositories/linkedin-owa-agentools
     defaultBranch: main

@@ -613,7 +613,7 @@ npm exec -w @linkedin-buddy/cli -- linkedin profile apply-spec --profile default
 Profile image generation commands:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin assets generate-profile-images --profile default --spec docs/profile-seeds/issue-210-signikant-test-profile.json --post-count 6 --upload-profile-media --upload-delay-ms 4500 --output reports/profile-images.json
+npm exec -w @linkedin-buddy/cli -- linkedin assets generate-profile-images --profile default --spec docs/profile-seeds/issue-210-signikant-test-profile.json --post-count 6 --upload-profile-media --upload-delay-ms 4500 --output reports/profile-images.json
 ```
 
 - `assets generate-profile-images` uses OpenAI image generation to create a cohesive profile photo, banner, and reusable post-image bundle from the seeded persona.

@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { PNG } from "pngjs";
 import type { ArtifactHelpers } from "./artifacts.js";
-import { LinkedInAssistantError } from "./errors.js";
+import { LinkedInBuddyError } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import type { LinkedInProfileService } from "./linkedinProfile.js";
 
@@ -296,7 +296,7 @@ function normalizeRecord(
     return value as Record<string, unknown>;
   }
 
-  throw new LinkedInAssistantError("ACTION_PRECONDITION_FAILED", message);
+  throw new LinkedInBuddyError("ACTION_PRECONDITION_FAILED", message);
 }
 
 function readRequiredText(
@@ -309,7 +309,7 @@ function readRequiredText(
     return value.trim();
   }
 
-  throw new LinkedInAssistantError("ACTION_PRECONDITION_FAILED", message, {
+  throw new LinkedInBuddyError("ACTION_PRECONDITION_FAILED", message, {
     field: key
   });
 }
@@ -410,14 +410,14 @@ function validatePostImageCount(value: number | undefined): number {
   }
 
   if (!Number.isInteger(value) || value <= 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "postImageCount must be a whole number greater than 0."
     );
   }
 
   if (value > MAX_LINKEDIN_PERSONA_POST_IMAGE_COUNT) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `postImageCount must be ${MAX_LINKEDIN_PERSONA_POST_IMAGE_COUNT} or fewer.`,
       {
@@ -638,7 +638,7 @@ async function readOpenAiImageBuffer(
 ): Promise<{ buffer: Buffer; revisedPrompt: string | null }> {
   const firstImage = response.data?.[0];
   if (!firstImage) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "NETWORK_ERROR",
       "OpenAI image generation returned no images."
     );
@@ -659,7 +659,7 @@ async function readOpenAiImageBuffer(
       signal: AbortSignal.timeout(120_000)
     });
     if (!downloadResponse.ok) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "NETWORK_ERROR",
         "OpenAI image download URL could not be fetched.",
         {
@@ -677,7 +677,7 @@ async function readOpenAiImageBuffer(
     };
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "NETWORK_ERROR",
     "OpenAI image generation returned an unsupported payload."
   );
@@ -774,7 +774,7 @@ export class LinkedInImageAssetsService {
   ): Promise<GeneratedLinkedInPersonaImageSet> {
     const apiKey = this.config.apiKey?.trim();
     if (!apiKey) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "OpenAI image generation requires OPENAI_API_KEY to be configured."
       );
@@ -828,7 +828,7 @@ export class LinkedInImageAssetsService {
         }),
         signal: AbortSignal.timeout(180_000)
       }).catch((error: unknown) => {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "NETWORK_ERROR",
           "OpenAI image generation request failed.",
           {
@@ -849,7 +849,7 @@ export class LinkedInImageAssetsService {
 
         const errorPayload = parseJsonResponseBody(responseBody);
         if (response.status === 401) {
-          throw new LinkedInAssistantError(
+          throw new LinkedInBuddyError(
             "ACTION_PRECONDITION_FAILED",
             "OpenAI image generation was rejected. Check OPENAI_API_KEY.",
             {
@@ -861,7 +861,7 @@ export class LinkedInImageAssetsService {
         }
 
         if (response.status === 429) {
-          throw new LinkedInAssistantError(
+          throw new LinkedInBuddyError(
             "RATE_LIMITED",
             "OpenAI image generation is rate limited right now.",
             {
@@ -872,7 +872,7 @@ export class LinkedInImageAssetsService {
           );
         }
 
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "NETWORK_ERROR",
           "OpenAI image generation failed.",
           {
@@ -950,7 +950,7 @@ export class LinkedInImageAssetsService {
     );
 
     if (!profilePhoto || !banner) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "UNKNOWN",
         "Image generation plan did not produce the required profile media."
       );
