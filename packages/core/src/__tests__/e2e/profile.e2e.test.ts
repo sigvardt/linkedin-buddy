@@ -25,4 +25,17 @@ describe("Profile E2E", () => {
     expect(Array.isArray(profile.experience)).toBe(true);
     expect(Array.isArray(profile.education)).toBe(true);
   });
+
+  it("view editable profile returns a featured collection shape", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
+    const runtime = e2e.runtime();
+    const profile = await runtime.profile.viewEditableProfile();
+
+    expect(profile.featured).toMatchObject({
+      can_add: expect.any(Boolean),
+      can_remove: expect.any(Boolean),
+      can_reorder: expect.any(Boolean),
+      items: expect.any(Array)
+    });
+  });
 });

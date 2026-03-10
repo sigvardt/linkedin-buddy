@@ -1,8 +1,17 @@
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AssistantDatabase } from "../db/database.js";
 import {
+  ADD_PROFILE_FEATURED_ACTION_TYPE,
   LINKEDIN_PROFILE_SECTION_TYPES,
+  LINKEDIN_PROFILE_FEATURED_ITEM_KINDS,
   REMOVE_PROFILE_SECTION_ITEM_ACTION_TYPE,
+  REMOVE_PROFILE_FEATURED_ACTION_TYPE,
+  REORDER_PROFILE_FEATURED_ACTION_TYPE,
+  UPLOAD_PROFILE_BANNER_ACTION_TYPE,
+  UPLOAD_PROFILE_PHOTO_ACTION_TYPE,
   UPSERT_PROFILE_SECTION_ITEM_ACTION_TYPE,
   UPDATE_PROFILE_INTRO_ACTION_TYPE,
   LinkedInProfileService,
@@ -12,7 +21,41 @@ import {
 } from "../linkedinProfile.js";
 import { TwoPhaseCommitService } from "../twoPhaseCommit.js";
 
-function createTestRuntime(db: AssistantDatabase): LinkedInProfileRuntime {
+const tempDirs: string[] = [];
+
+function createTempArtifactsDir(): string {
+  const tempDir = mkdtempSync(path.join(tmpdir(), "linkedin-profile-test-"));
+  tempDirs.push(tempDir);
+  return tempDir;
+}
+
+function createFeaturedItemId(
+  kind: "link" | "media" | "post",
+  data: {
+    sourceId?: string;
+    url?: string;
+    title?: string;
+    subtitle?: string;
+    rawText?: string;
+  }
+): string {
+  return `pfi_${Buffer.from(
+    JSON.stringify({
+      v: 1,
+      kind,
+      sourceId: data.sourceId ?? "",
+      url: data.url ?? "",
+      title: data.title ?? "",
+      subtitle: data.subtitle ?? "",
+      rawText: data.rawText ?? ""
+    })
+  ).toString("base64url")}`;
+}
+
+function createTestRuntime(
+  db: AssistantDatabase,
+  artifactsRoot: string = createTempArtifactsDir()
+): LinkedInProfileRuntime {
   return {
     auth: {
       ensureAuthenticated: vi.fn(async () => undefined)
@@ -26,8 +69,9 @@ function createTestRuntime(db: AssistantDatabase): LinkedInProfileRuntime {
       log: vi.fn()
     },
     artifacts: {
-      resolve: vi.fn((relativePath: string) => relativePath),
-      registerArtifact: vi.fn()
+      resolve: vi.fn((relativePath: string) => path.join(artifactsRoot, relativePath)),
+      registerArtifact: vi.fn(),
+      getRunDir: vi.fn(() => artifactsRoot)
     },
     confirmFailureArtifacts: {
       traceMaxBytes: 2 * 1024 * 1024
@@ -38,6 +82,15 @@ function createTestRuntime(db: AssistantDatabase): LinkedInProfileRuntime {
 
 afterEach(() => {
   vi.restoreAllMocks();
+
+  while (tempDirs.length > 0) {
+    const tempDir = tempDirs.pop();
+    if (!tempDir) {
+      continue;
+    }
+
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 });
 
 describe("resolveProfileUrl", () => {
@@ -87,6 +140,11 @@ describe("profile action type constants", () => {
     expect(REMOVE_PROFILE_SECTION_ITEM_ACTION_TYPE).toBe(
       "profile.remove_section_item"
     );
+    expect(UPLOAD_PROFILE_PHOTO_ACTION_TYPE).toBe("profile.upload_photo");
+    expect(UPLOAD_PROFILE_BANNER_ACTION_TYPE).toBe("profile.upload_banner");
+    expect(ADD_PROFILE_FEATURED_ACTION_TYPE).toBe("profile.featured_add");
+    expect(REMOVE_PROFILE_FEATURED_ACTION_TYPE).toBe("profile.featured_remove");
+    expect(REORDER_PROFILE_FEATURED_ACTION_TYPE).toBe("profile.featured_reorder");
   });
 
   it("lists the supported editable profile sections", () => {
@@ -100,17 +158,23 @@ describe("profile action type constants", () => {
       "volunteer_experience",
       "honors_awards"
     ]);
+    expect(LINKEDIN_PROFILE_SECTION_TYPES).not.toContain("featured");
+    expect(LINKEDIN_PROFILE_FEATURED_ITEM_KINDS).toEqual(["link", "media", "post"]);
   });
 });
 
 describe("createProfileActionExecutors", () => {
-  it("registers all three profile action executors", () => {
+  it("registers the profile action executors", () => {
     const executors = createProfileActionExecutors();
 
-    expect(Object.keys(executors)).toHaveLength(3);
     expect(executors[UPDATE_PROFILE_INTRO_ACTION_TYPE]).toBeDefined();
     expect(executors[UPSERT_PROFILE_SECTION_ITEM_ACTION_TYPE]).toBeDefined();
     expect(executors[REMOVE_PROFILE_SECTION_ITEM_ACTION_TYPE]).toBeDefined();
+    expect(executors[UPLOAD_PROFILE_PHOTO_ACTION_TYPE]).toBeDefined();
+    expect(executors[UPLOAD_PROFILE_BANNER_ACTION_TYPE]).toBeDefined();
+    expect(executors[ADD_PROFILE_FEATURED_ACTION_TYPE]).toBeDefined();
+    expect(executors[REMOVE_PROFILE_FEATURED_ACTION_TYPE]).toBeDefined();
+    expect(executors[REORDER_PROFILE_FEATURED_ACTION_TYPE]).toBeDefined();
   });
 
   it("exposes execute methods for each profile action executor", () => {
@@ -213,6 +277,136 @@ describe("LinkedInProfileService prepare helpers", () => {
           section: "experience"
         })
       ).toThrow("requires itemId or match details");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("stages profile photo uploads into artifacts during prepare", async () => {
+    const db = new AssistantDatabase(":memory:");
+    const artifactsRoot = createTempArtifactsDir();
+    const sourcePath = path.join(artifactsRoot, "photo.png");
+    writeFileSync(sourcePath, "fake-image-bytes", "utf8");
+
+    try {
+      const service = new LinkedInProfileService(createTestRuntime(db, artifactsRoot));
+      const prepared = await service.prepareUploadPhoto({
+        profileName: "default",
+        filePath: sourcePath
+      });
+
+      const uploadPreview = prepared.preview.upload as Record<string, unknown>;
+      const artifactPath = String(uploadPreview.artifact_path ?? "");
+
+      expect(prepared.preview).toMatchObject({
+        summary: "Upload LinkedIn profile photo (photo.png)",
+        upload: {
+          file_name: "photo.png",
+          mime_type: "image/png",
+          size_bytes: "fake-image-bytes".length
+        }
+      });
+      expect(artifactPath).toContain("linkedin/input-profile-photo-");
+      expect(existsSync(path.join(artifactsRoot, artifactPath))).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("rejects unsupported profile photo upload file types", async () => {
+    const db = new AssistantDatabase(":memory:");
+    const artifactsRoot = createTempArtifactsDir();
+    const sourcePath = path.join(artifactsRoot, "photo.txt");
+    writeFileSync(sourcePath, "not-an-image", "utf8");
+
+    try {
+      const service = new LinkedInProfileService(createTestRuntime(db, artifactsRoot));
+
+      await expect(
+        service.prepareUploadPhoto({
+          profileName: "default",
+          filePath: sourcePath
+        })
+      ).rejects.toThrow("not supported");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("prepares featured link additions", async () => {
+    const db = new AssistantDatabase(":memory:");
+
+    try {
+      const service = new LinkedInProfileService(createTestRuntime(db));
+      const prepared = await service.prepareFeaturedAdd({
+        profileName: "default",
+        kind: "link",
+        url: "https://example.com/launch",
+        title: "Launch page"
+      });
+
+      expect(prepared.preview).toMatchObject({
+        summary: "Add link item to LinkedIn Featured section",
+        target: {
+          profile_name: "default",
+          kind: "link"
+        },
+        title: "Launch page"
+      });
+      expect(String(prepared.preview.url ?? "")).toContain("https://example.com/launch");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("requires item matching details when removing featured items", () => {
+    const db = new AssistantDatabase(":memory:");
+
+    try {
+      const service = new LinkedInProfileService(createTestRuntime(db));
+
+      expect(() => service.prepareFeaturedRemove({ profileName: "default" })).toThrow(
+        "requires itemId or match details"
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  it("rejects duplicate featured reorder item ids", () => {
+    const db = new AssistantDatabase(":memory:");
+    const featuredItemId = createFeaturedItemId("link", {
+      url: "https://example.com/launch",
+      title: "Launch page",
+      rawText: "Launch page"
+    });
+
+    try {
+      const service = new LinkedInProfileService(createTestRuntime(db));
+
+      expect(() =>
+        service.prepareFeaturedReorder({
+          profileName: "default",
+          itemIds: [featuredItemId, featuredItemId]
+        })
+      ).toThrow("must be unique");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("rejects featured reorder item ids that were not issued by view_editable", () => {
+    const db = new AssistantDatabase(":memory:");
+
+    try {
+      const service = new LinkedInProfileService(createTestRuntime(db));
+
+      expect(() =>
+        service.prepareFeaturedReorder({
+          profileName: "default",
+          itemIds: ["not-a-featured-id"]
+        })
+      ).toThrow("view_editable.featured.items");
     } finally {
       db.close();
     }

@@ -19,6 +19,16 @@ export const LINKEDIN_PROFILE_PREPARE_UPSERT_SECTION_ITEM_TOOL =
   "linkedin.profile.prepare_upsert_section_item";
 export const LINKEDIN_PROFILE_PREPARE_REMOVE_SECTION_ITEM_TOOL =
   "linkedin.profile.prepare_remove_section_item";
+export const LINKEDIN_PROFILE_PREPARE_UPLOAD_PHOTO_TOOL =
+  "linkedin.profile.prepare_upload_photo";
+export const LINKEDIN_PROFILE_PREPARE_UPLOAD_BANNER_TOOL =
+  "linkedin.profile.prepare_upload_banner";
+export const LINKEDIN_PROFILE_PREPARE_FEATURED_ADD_TOOL =
+  "linkedin.profile.prepare_featured_add";
+export const LINKEDIN_PROFILE_PREPARE_FEATURED_REMOVE_TOOL =
+  "linkedin.profile.prepare_featured_remove";
+export const LINKEDIN_PROFILE_PREPARE_FEATURED_REORDER_TOOL =
+  "linkedin.profile.prepare_featured_reorder";
 export const LINKEDIN_SEARCH_TOOL = "linkedin.search";
 export const LINKEDIN_CONNECTIONS_LIST_TOOL = "linkedin.connections.list";
 export const LINKEDIN_CONNECTIONS_PENDING_TOOL = "linkedin.connections.pending";
