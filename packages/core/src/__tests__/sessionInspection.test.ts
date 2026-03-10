@@ -195,5 +195,9 @@ describe("inspectLinkedInSession", () => {
       profileUrl: "https://www.linkedin.com/in/test-member/",
       vanityName: "test-member"
     });
+    expect(page.goto).toHaveBeenCalledWith("https://www.linkedin.com/in/me/", {
+      waitUntil: "domcontentloaded",
+      timeout: 10_000
+    });
   });
 });

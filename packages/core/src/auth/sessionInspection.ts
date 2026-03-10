@@ -43,6 +43,7 @@ const LOGIN_WALL_SELECTOR = [
   "a[href*='/login'][data-tracking-control-name]"
 ].join(", ");
 const LINKEDIN_PROFILE_SELF_URL = "https://www.linkedin.com/in/me/";
+const LINKEDIN_PROFILE_SELF_NAVIGATION_TIMEOUT_MS = 10_000;
 
 async function isVisibleSafe(page: Page, selector: string): Promise<boolean> {
   try {
@@ -260,7 +261,8 @@ export async function inspectAuthenticatedLinkedInIdentity(
 ): Promise<LinkedInSessionIdentity | undefined> {
   try {
     await page.goto(LINKEDIN_PROFILE_SELF_URL, {
-      waitUntil: "domcontentloaded"
+      waitUntil: "domcontentloaded",
+      timeout: LINKEDIN_PROFILE_SELF_NAVIGATION_TIMEOUT_MS
     });
   } catch {
     return undefined;
