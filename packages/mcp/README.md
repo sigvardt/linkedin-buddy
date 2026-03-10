@@ -40,6 +40,25 @@ Important details:
 See `../../docs/evasion.md` for the JSON path reference, configuration model,
 and troubleshooting guide.
 
+## Member safety and privacy tools
+
+The MCP server now exposes:
+
+- `linkedin.members.prepare_block`
+- `linkedin.members.prepare_unblock`
+- `linkedin.members.prepare_report`
+- `linkedin.privacy.get_settings`
+- `linkedin.privacy.prepare_update_setting`
+
+Current privacy-setting coverage focuses on:
+
+- `profile_viewing_mode`
+- `connections_visibility`
+- `last_name_visibility`
+
+All member-safety writes and privacy-setting updates use the existing
+two-phase prepare/confirm flow through `linkedin.actions.confirm`.
+
 ## Tier 3 write validation boundary
 
 Tier 3 live write validation is intentionally not exposed as an MCP surface.

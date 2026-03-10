@@ -42,7 +42,9 @@ import {
   FIXTURE_REPLAY_ENV_KEYS,
   LINKEDIN_FEED_REACTION_TYPES,
   LINKEDIN_FIXTURE_MANIFEST_FORMAT_VERSION,
+  LINKEDIN_MEMBER_REPORT_REASONS,
   LINKEDIN_POST_VISIBILITY_TYPES,
+  LINKEDIN_PRIVACY_SETTING_KEYS,
   LINKEDIN_SELECTOR_LOCALES,
   LINKEDIN_WRITE_VALIDATION_ACTIONS,
   LinkedInAssistantError,
@@ -56,6 +58,9 @@ import {
   normalizeLinkedInFeedReaction,
   normalizeFixtureRouteHeaders,
   normalizeLinkedInPostVisibility,
+  normalizeLinkedInMemberReportReason,
+  normalizeLinkedInPrivacySettingKey,
+  normalizeLinkedInPrivacySettingValue,
   parseDraftQualityCandidateSet,
   parseDraftQualityDataset,
   ProfileManager,
@@ -5094,6 +5099,174 @@ async function runConnectionsWithdraw(input: {
   }
 }
 
+async function runMembersPrepareBlock(input: {
+  profileName: string;
+  targetProfile: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.members.prepare_block.start", {
+      profileName: input.profileName,
+      targetProfile: input.targetProfile
+    });
+
+    const prepared = runtime.members.prepareBlockMember({
+      profileName: input.profileName,
+      targetProfile: input.targetProfile
+    });
+
+    runtime.logger.log("info", "cli.members.prepare_block.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runMembersPrepareUnblock(input: {
+  profileName: string;
+  targetProfile: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.members.prepare_unblock.start", {
+      profileName: input.profileName,
+      targetProfile: input.targetProfile
+    });
+
+    const prepared = runtime.members.prepareUnblockMember({
+      profileName: input.profileName,
+      targetProfile: input.targetProfile
+    });
+
+    runtime.logger.log("info", "cli.members.prepare_unblock.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runMembersPrepareReport(input: {
+  profileName: string;
+  targetProfile: string;
+  reason: string;
+  details?: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+  const reason = normalizeLinkedInMemberReportReason(input.reason);
+
+  try {
+    runtime.logger.log("info", "cli.members.prepare_report.start", {
+      profileName: input.profileName,
+      targetProfile: input.targetProfile,
+      reason
+    });
+
+    const prepared = runtime.members.prepareReportMember({
+      profileName: input.profileName,
+      targetProfile: input.targetProfile,
+      reason,
+      ...(input.details ? { details: input.details } : {})
+    });
+
+    runtime.logger.log("info", "cli.members.prepare_report.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runPrivacyGetSettings(input: {
+  profileName: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.privacy.get_settings.start", {
+      profileName: input.profileName
+    });
+
+    const settings = await runtime.privacySettings.getSettings({
+      profileName: input.profileName
+    });
+
+    runtime.logger.log("info", "cli.privacy.get_settings.done", {
+      profileName: input.profileName,
+      count: settings.length
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      settings
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runPrivacyPrepareUpdateSetting(input: {
+  profileName: string;
+  settingKey: string;
+  value: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+  const settingKey = normalizeLinkedInPrivacySettingKey(input.settingKey);
+  const value = normalizeLinkedInPrivacySettingValue(settingKey, input.value);
+
+  try {
+    runtime.logger.log("info", "cli.privacy.prepare_update_setting.start", {
+      profileName: input.profileName,
+      settingKey,
+      value
+    });
+
+    const prepared = runtime.privacySettings.prepareUpdateSetting({
+      profileName: input.profileName,
+      settingKey,
+      value
+    });
+
+    runtime.logger.log("info", "cli.privacy.prepare_update_setting.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 async function runFollowupsList(input: {
   profileName: string;
   since: string;
@@ -7821,6 +7994,96 @@ export function createCliProgram(): Command {
         targetProfile: target
       }, readCdpUrl());
     });
+
+  const membersCommand = program
+    .command("members")
+    .description("Prepare LinkedIn member safety actions");
+
+  membersCommand
+    .command("block")
+    .description("Prepare to block a LinkedIn member (two-phase)")
+    .argument("<target>", "Vanity name or profile URL")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(async (target: string, options: { profile: string }) => {
+      await runMembersPrepareBlock({
+        profileName: options.profile,
+        targetProfile: target
+      }, readCdpUrl());
+    });
+
+  membersCommand
+    .command("unblock")
+    .description("Prepare to unblock a LinkedIn member (two-phase)")
+    .argument("<target>", "Vanity name or profile URL")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(async (target: string, options: { profile: string }) => {
+      await runMembersPrepareUnblock({
+        profileName: options.profile,
+        targetProfile: target
+      }, readCdpUrl());
+    });
+
+  membersCommand
+    .command("report")
+    .description("Prepare to report a LinkedIn member (two-phase)")
+    .argument("<target>", "Vanity name or profile URL")
+    .requiredOption(
+      "-r, --reason <reason>",
+      `Report reason (${LINKEDIN_MEMBER_REPORT_REASONS.join(", ")})`
+    )
+    .option("-d, --details <details>", "Optional report details for free-text steps")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(
+      async (
+        target: string,
+        options: {
+          details?: string;
+          profile: string;
+          reason: string;
+        }
+      ) => {
+        await runMembersPrepareReport({
+          profileName: options.profile,
+          targetProfile: target,
+          reason: options.reason,
+          ...(options.details ? { details: options.details } : {})
+        }, readCdpUrl());
+      }
+    );
+
+  const privacyCommand = program
+    .command("privacy")
+    .description("Inspect and prepare LinkedIn privacy setting changes");
+
+  privacyCommand
+    .command("settings")
+    .description("Read supported LinkedIn privacy settings")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(async (options: { profile: string }) => {
+      await runPrivacyGetSettings({
+        profileName: options.profile
+      }, readCdpUrl());
+    });
+
+  privacyCommand
+    .command("update")
+    .description("Prepare to update a LinkedIn privacy setting (two-phase)")
+    .argument("<settingKey>", `Setting key (${LINKEDIN_PRIVACY_SETTING_KEYS.join(", ")})`)
+    .argument("<value>", "Requested setting value")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(
+      async (
+        settingKey: string,
+        value: string,
+        options: { profile: string }
+      ) => {
+        await runPrivacyPrepareUpdateSetting({
+          profileName: options.profile,
+          settingKey,
+          value
+        }, readCdpUrl());
+      }
+    );
 
   const followupsCommand = program
     .command("followups")

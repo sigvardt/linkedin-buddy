@@ -45,6 +45,16 @@ export const LINKEDIN_CONNECTIONS_PREPARE_FOLLOW_TOOL =
   "linkedin.connections.prepare_follow";
 export const LINKEDIN_CONNECTIONS_PREPARE_UNFOLLOW_TOOL =
   "linkedin.connections.prepare_unfollow";
+export const LINKEDIN_MEMBERS_PREPARE_BLOCK_TOOL =
+  "linkedin.members.prepare_block";
+export const LINKEDIN_MEMBERS_PREPARE_UNBLOCK_TOOL =
+  "linkedin.members.prepare_unblock";
+export const LINKEDIN_MEMBERS_PREPARE_REPORT_TOOL =
+  "linkedin.members.prepare_report";
+export const LINKEDIN_PRIVACY_GET_SETTINGS_TOOL =
+  "linkedin.privacy.get_settings";
+export const LINKEDIN_PRIVACY_PREPARE_UPDATE_SETTING_TOOL =
+  "linkedin.privacy.prepare_update_setting";
 export const LINKEDIN_NETWORK_PREPARE_FOLLOWUP_AFTER_ACCEPT_TOOL =
   "linkedin.network.prepare_followup_after_accept";
 export const LINKEDIN_FEED_LIST_TOOL = "linkedin.feed.list";
