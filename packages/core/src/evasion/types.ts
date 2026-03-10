@@ -5,10 +5,22 @@
  * - `moderate`: Bezier mouse paths, momentum scroll, and navigator fingerprint hardening.
  * - `paranoid`: All `moderate` techniques plus tab simulation, viewport jitter, and
  *   canvas noise hardening.
+ *
+ * @example
+ * ```ts
+ * const level: EvasionLevel = "moderate";
+ * ```
  */
 export type EvasionLevel = "minimal" | "moderate" | "paranoid";
 
-/** 2D coordinate used for Bezier path computation. */
+/**
+ * 2D coordinate used for Bezier path computation.
+ *
+ * @example
+ * ```ts
+ * const point: Point2D = { x: 120, y: 48 };
+ * ```
+ */
 export interface Point2D {
   /** Horizontal coordinate in pixels. */
   x: number;
@@ -16,7 +28,18 @@ export interface Point2D {
   y: number;
 }
 
-/** Options for {@link computeBezierPath}. */
+/**
+ * Options for {@link computeBezierPath}.
+ *
+ * @example
+ * ```ts
+ * const options: BezierPathOptions = {
+ *   steps: 24,
+ *   overshootFactor: 0.2,
+ *   seed: 7
+ * };
+ * ```
+ */
 export interface BezierPathOptions {
   /**
    * Number of intermediate coordinate points to generate (min 2, max 200).
@@ -36,7 +59,19 @@ export interface BezierPathOptions {
   seed?: number;
 }
 
-/** Optional guards and backoff hints for sampled action intervals. */
+/**
+ * Optional guards and backoff hints for sampled action intervals.
+ *
+ * @example
+ * ```ts
+ * const options: IntervalSampleOptions = {
+ *   minIntervalMs: 300,
+ *   maxIntervalMs: 1_500,
+ *   responseStatus: 429,
+ *   retryAfterMs: 2_000
+ * };
+ * ```
+ */
 export interface IntervalSampleOptions {
   /** Lower bound for the returned interval in milliseconds. */
   minIntervalMs?: number;
@@ -54,7 +89,16 @@ export interface IntervalSampleOptions {
   rateLimitBackoffMultiplier?: number;
 }
 
-/** Configurable detection-evasion parameters. */
+/**
+ * Configurable detection-evasion parameters.
+ *
+ * @example
+ * ```ts
+ * import { EVASION_PROFILES } from "@linkedin-assistant/core";
+ *
+ * const profile: EvasionProfile = EVASION_PROFILES.moderate;
+ * ```
+ */
 export interface EvasionProfile {
   /** Whether to use cubic Bezier curves instead of straight-line mouse moves. */
   bezierMouseMovement: boolean;
@@ -87,10 +131,24 @@ export interface EvasionProfile {
   fingerprintHardening: boolean;
 }
 
-/** Source used to resolve the effective evasion level. */
+/**
+ * Source used to resolve the effective evasion level.
+ *
+ * @example
+ * ```ts
+ * const source: EvasionConfigSource = "env";
+ * ```
+ */
 export type EvasionConfigSource = "default" | "env" | "option";
 
-/** Stable feature names surfaced in status output and diagnostics. */
+/**
+ * Stable feature names surfaced in status output and diagnostics.
+ *
+ * @example
+ * ```ts
+ * const feature: EvasionFeatureName = "fingerprint_hardening";
+ * ```
+ */
 export type EvasionFeatureName =
   | "bezier_mouse_movement"
   | "momentum_scroll"
@@ -101,7 +159,18 @@ export type EvasionFeatureName =
   | "poisson_timing"
   | "fingerprint_hardening";
 
-/** Minimal logger surface used by optional evasion diagnostics. */
+/**
+ * Minimal logger surface used by optional evasion diagnostics.
+ *
+ * @example
+ * ```ts
+ * const logger: EvasionDiagnosticsLogger = {
+ *   log(level, event, payload) {
+ *     console.log(level, event, payload);
+ *   }
+ * };
+ * ```
+ */
 export interface EvasionDiagnosticsLogger {
   log(
     level: "debug" | "info" | "warn" | "error",
@@ -110,7 +179,20 @@ export interface EvasionDiagnosticsLogger {
   ): unknown;
 }
 
-/** Resolved evasion status exposed through runtime/session diagnostics. */
+/**
+ * Resolved evasion status exposed through runtime/session diagnostics.
+ *
+ * @example
+ * ```ts
+ * import { createEvasionStatus } from "@linkedin-assistant/core";
+ *
+ * const status: EvasionStatus = createEvasionStatus({
+ *   level: "paranoid",
+ *   diagnosticsEnabled: true,
+ *   source: "option"
+ * });
+ * ```
+ */
 export interface EvasionStatus {
   /** Whether verbose evasion diagnostics are enabled for this run. */
   diagnosticsEnabled: boolean;
@@ -128,7 +210,22 @@ export interface EvasionStatus {
   summary: string;
 }
 
-/** Optional diagnostics controls for {@link EvasionSession}. */
+/**
+ * Optional diagnostics controls for {@link EvasionSession}.
+ *
+ * @example
+ * ```ts
+ * const options: EvasionSessionOptions = {
+ *   diagnosticsEnabled: true,
+ *   diagnosticsLabel: "feed",
+ *   logger: {
+ *     log(level, event) {
+ *       console.log(level, event);
+ *     }
+ *   }
+ * };
+ * ```
+ */
 export interface EvasionSessionOptions {
   /** Override whether debug diagnostics are emitted for this session. */
   diagnosticsEnabled?: boolean;

@@ -52,6 +52,11 @@ type ScrollInstruction = {
  *
  * @param page - Playwright Page to harden.
  * @param level - Desired evasion level (defaults to `"moderate"`).
+ *
+ * @example
+ * ```ts
+ * await applyFingerprintHardening(page, "paranoid");
+ * ```
  */
 export async function applyFingerprintHardening(
   page: Page,
@@ -76,6 +81,11 @@ export async function applyFingerprintHardening(
  * @param pixels - Total scroll distance in pixels (positive = down,
  *   negative = up).
  * @param steps - Number of deceleration steps (2–20, default 6).
+ *
+ * @example
+ * ```ts
+ * await simulateMomentumScroll(page, 320);
+ * ```
  */
 export async function simulateMomentumScroll(
   page: Page,
@@ -107,6 +117,11 @@ export async function simulateMomentumScroll(
  * @param currentY - Current mouse Y coordinate.
  * @param driftCount - Number of micro-moves to perform (1–20, default 3).
  * @param radius - Maximum drift radius in pixels (0–100, default 5).
+ *
+ * @example
+ * ```ts
+ * await simulateIdleDrift(page, 240, 160, 4, 6);
+ * ```
  */
 export async function simulateIdleDrift(
   page: Page,
@@ -153,6 +168,11 @@ export async function simulateIdleDrift(
  * @param page - Playwright Page.
  * @param blurDurationMs - Duration of the simulated blur in milliseconds
  *   (100–30 000, default 2 000).
+ *
+ * @example
+ * ```ts
+ * await simulateTabBlur(page, 1_500);
+ * ```
  */
 export async function simulateTabBlur(page: Page, blurDurationMs = 2_000): Promise<void> {
   const duration = Math.round(clamp(blurDurationMs, MIN_BLUR_DURATION_MS, MAX_BLUR_DURATION_MS));
@@ -168,6 +188,11 @@ export async function simulateTabBlur(page: Page, blurDurationMs = 2_000): Promi
  * resize event may flag the session.
  *
  * @param page - Playwright Page.
+ *
+ * @example
+ * ```ts
+ * await simulateViewportJitter(page);
+ * ```
  */
 export async function simulateViewportJitter(page: Page): Promise<void> {
   await dispatchWindowEvents(page, ["resize"]);
@@ -181,6 +206,13 @@ export async function simulateViewportJitter(page: Page): Promise<void> {
  * operator when this returns `true`.
  *
  * @param page - Playwright Page to inspect.
+ *
+ * @example
+ * ```ts
+ * if (await detectCaptcha(page)) {
+ *   throw new Error("Operator intervention required");
+ * }
+ * ```
  */
 export async function detectCaptcha(page: Page): Promise<boolean> {
   return (await findMatchingSelectors(page, CAPTCHA_SELECTORS, true)).length > 0;
@@ -194,6 +226,11 @@ export async function detectCaptcha(page: Page): Promise<boolean> {
  * an array of CSS selectors for any suspected honeypot fields found.
  *
  * @param page - Playwright Page to inspect.
+ *
+ * @example
+ * ```ts
+ * const selectors = await findHoneypotFields(page);
+ * ```
  */
 export async function findHoneypotFields(page: Page): Promise<readonly string[]> {
   return findMatchingSelectors(page, HONEYPOT_SELECTORS);

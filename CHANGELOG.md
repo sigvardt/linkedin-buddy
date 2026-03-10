@@ -12,6 +12,9 @@ All notable changes to this project will be documented in this file.
 - Human-like typing simulation documentation across the README surfaces,
   write-validation guide, public API JSDoc, and usage examples for speed,
   variance, and pause-pattern tuning.
+- Anti-bot evasion documentation covering architecture, configuration
+  precedence, CLI and MCP integration, troubleshooting guidance, and public API
+  examples.
 
 ### Changed
 

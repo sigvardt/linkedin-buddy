@@ -7,10 +7,27 @@ import type {
   EvasionStatus
 } from "./types.js";
 
-/** Default evasion level applied when no explicit override is configured. */
+/**
+ * Default evasion level applied when no explicit override is configured.
+ *
+ * @example
+ * ```ts
+ * console.log(DEFAULT_EVASION_LEVEL);
+ * // "moderate"
+ * ```
+ */
 export const DEFAULT_EVASION_LEVEL: EvasionLevel = "moderate";
 
-/** Supported evasion levels in ascending order of intensity. */
+/**
+ * Supported evasion levels in ascending order of intensity.
+ *
+ * @example
+ * ```ts
+ * if (EVASION_LEVELS.includes("paranoid")) {
+ *   console.log("supported");
+ * }
+ * ```
+ */
 export const EVASION_LEVELS = ["minimal", "moderate", "paranoid"] as const;
 
 const MINIMAL_PROFILE: Readonly<EvasionProfile> = Object.freeze({
@@ -57,6 +74,11 @@ const PARANOID_PROFILE: Readonly<EvasionProfile> = Object.freeze({
  *
  * Most production workflows should use `"moderate"`. Reserve `"paranoid"` for
  * environments with aggressive bot detection.
+ *
+ * @example
+ * ```ts
+ * const overshoot = EVASION_PROFILES.paranoid.mouseOvershootFactor;
+ * ```
  */
 export const EVASION_PROFILES: Readonly<Record<EvasionLevel, Readonly<EvasionProfile>>> =
   Object.freeze({
@@ -103,7 +125,16 @@ const EVASION_FEATURES = [
   enabled: (profile: Readonly<EvasionProfile>) => boolean;
 }[];
 
-/** Returns whether `value` is one of the supported evasion levels. */
+/**
+ * Returns whether `value` is one of the supported evasion levels.
+ *
+ * @example
+ * ```ts
+ * if (isEvasionLevel(input)) {
+ *   console.log(`Using ${input}`);
+ * }
+ * ```
+ */
 export function isEvasionLevel(value: string): value is EvasionLevel {
   return EVASION_LEVELS.includes(value as EvasionLevel);
 }
@@ -111,6 +142,11 @@ export function isEvasionLevel(value: string): value is EvasionLevel {
 /**
  * Resolves a user-supplied evasion level and throws a clear error when the
  * value is unsupported.
+ *
+ * @example
+ * ```ts
+ * const level = resolveEvasionLevel(process.env.LINKEDIN_ASSISTANT_EVASION_LEVEL);
+ * ```
  */
 export function resolveEvasionLevel(
   value: string | EvasionLevel | undefined,
@@ -140,12 +176,27 @@ export function resolveEvasionLevel(
   );
 }
 
-/** Returns the immutable evasion profile for `level`. */
+/**
+ * Returns the immutable evasion profile for `level`.
+ *
+ * @example
+ * ```ts
+ * const profile = resolveEvasionProfile("moderate");
+ * console.log(profile.fingerprintHardening);
+ * ```
+ */
 export function resolveEvasionProfile(level: EvasionLevel): Readonly<EvasionProfile> {
   return EVASION_PROFILES[level];
 }
 
-/** Returns the stable feature names enabled by `profile`. */
+/**
+ * Returns the stable feature names enabled by `profile`.
+ *
+ * @example
+ * ```ts
+ * const enabled = getEnabledEvasionFeatures(EVASION_PROFILES.moderate);
+ * ```
+ */
 export function getEnabledEvasionFeatures(
   profile: Readonly<EvasionProfile>
 ): readonly EvasionFeatureName[] {
@@ -154,7 +205,14 @@ export function getEnabledEvasionFeatures(
   );
 }
 
-/** Returns the stable feature names disabled by `profile`. */
+/**
+ * Returns the stable feature names disabled by `profile`.
+ *
+ * @example
+ * ```ts
+ * const disabled = getDisabledEvasionFeatures(EVASION_PROFILES.minimal);
+ * ```
+ */
 export function getDisabledEvasionFeatures(
   profile: Readonly<EvasionProfile>
 ): readonly EvasionFeatureName[] {
@@ -163,7 +221,14 @@ export function getDisabledEvasionFeatures(
   );
 }
 
-/** Returns a human-readable summary for the supplied evasion level. */
+/**
+ * Returns a human-readable summary for the supplied evasion level.
+ *
+ * @example
+ * ```ts
+ * console.log(describeEvasionLevel("paranoid"));
+ * ```
+ */
 export function describeEvasionLevel(level: EvasionLevel): string {
   switch (level) {
     case "minimal":
@@ -175,7 +240,18 @@ export function describeEvasionLevel(level: EvasionLevel): string {
   }
 }
 
-/** Builds a structured evasion status snapshot for diagnostics and status output. */
+/**
+ * Builds a structured evasion status snapshot for diagnostics and status output.
+ *
+ * @example
+ * ```ts
+ * const status = createEvasionStatus({
+ *   level: "moderate",
+ *   diagnosticsEnabled: true,
+ *   source: "option"
+ * });
+ * ```
+ */
 export function createEvasionStatus(input: {
   diagnosticsEnabled?: boolean;
   level?: string | EvasionLevel;

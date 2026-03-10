@@ -19,6 +19,27 @@ or stop the local background activity daemon.
 See `../../docs/activity-webhooks.md` for command workflows and
 `../../docs/activity-webhooks-architecture.md` for the implementation details.
 
+## Anti-bot evasion visibility
+
+The MCP server does not expose a dedicated `linkedin.evasion.*` tool family.
+
+Instead, MCP clients inspect the resolved evasion snapshot through the existing
+session tools:
+
+- `linkedin.session.status` returns `status.evasion`
+- `linkedin.session.health` returns `session.evasion`
+
+Important details:
+
+- tool inputs do not accept evasion-specific args today
+- the MCP process inherits evasion defaults from
+  `LINKEDIN_ASSISTANT_EVASION_LEVEL` and
+  `LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS` when the server starts
+- enabling diagnostics affects the run log, not the MCP tool schema
+
+See `../../docs/evasion.md` for the JSON path reference, configuration model,
+and troubleshooting guide.
+
 ## Tier 3 write validation boundary
 
 Tier 3 live write validation is intentionally not exposed as an MCP surface.
