@@ -36,6 +36,7 @@ import {
   buildLinkedInImagePersonaFromProfileSeed,
   evaluateDraftQuality,
   getLinkedInSelectorLocaleConfigWarning,
+  isSearchCategory,
   isInRateLimitCooldown,
   isLinkedInFixtureReplayUrl,
   LINKEDIN_REPLAY_PAGE_TYPES,
@@ -47,6 +48,7 @@ import {
   LINKEDIN_PRIVACY_SETTING_KEYS,
   LINKEDIN_SELECTOR_LOCALES,
   LINKEDIN_WRITE_VALIDATION_ACTIONS,
+  SEARCH_CATEGORIES,
   LinkedInAssistantError,
   LinkedInSchedulerService,
   DEFAULT_FIXTURE_STALENESS_DAYS,
@@ -294,13 +296,13 @@ function coerceNonNegativeInt(value: string, label: string): number {
 }
 
 function coerceSearchCategory(value: string): SearchCategory {
-  if (value === "people" || value === "companies" || value === "jobs") {
+  if (isSearchCategory(value)) {
     return value;
   }
 
   throw new LinkedInAssistantError(
     "ACTION_PRECONDITION_FAILED",
-    "category must be one of: people, companies, jobs."
+    `category must be one of: ${SEARCH_CATEGORIES.join(", ")}.`
   );
 }
 
@@ -5734,6 +5736,106 @@ async function runProfileView(input: {
   }
 }
 
+async function runCompanyPageView(input: {
+  profileName: string;
+  target: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.company.view.start", {
+      profileName: input.profileName,
+      target: input.target
+    });
+
+    const company = await runtime.companyPages.viewCompanyPage({
+      profileName: input.profileName,
+      target: input.target
+    });
+
+    runtime.logger.log("info", "cli.company.view.done", {
+      profileName: input.profileName,
+      companyName: company.name
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      company
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runCompanyPrepareFollow(input: {
+  profileName: string;
+  targetCompany: string;
+  operatorNote?: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.company.prepare_follow.start", {
+      profileName: input.profileName,
+      targetCompany: input.targetCompany
+    });
+
+    const prepared = runtime.companyPages.prepareFollowCompanyPage({
+      profileName: input.profileName,
+      targetCompany: input.targetCompany,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "cli.company.prepare_follow.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runCompanyPrepareUnfollow(input: {
+  profileName: string;
+  targetCompany: string;
+  operatorNote?: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.company.prepare_unfollow.start", {
+      profileName: input.profileName,
+      targetCompany: input.targetCompany
+    });
+
+    const prepared = runtime.companyPages.prepareUnfollowCompanyPage({
+      profileName: input.profileName,
+      targetCompany: input.targetCompany,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "cli.company.prepare_unfollow.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 async function runProfileViewEditable(input: {
   profileName: string;
 }, cdpUrl?: string): Promise<void> {
@@ -8416,7 +8518,7 @@ export function createCliProgram(): Command {
     .option("-p, --profile <profile>", "Profile name", "default")
     .option(
       "-c, --category <category>",
-      "Search category: people, companies, or jobs",
+      `Search category: ${SEARCH_CATEGORIES.join(", ")}`,
       "people"
     )
     .option("-l, --limit <limit>", "Max results", "10")
@@ -9050,6 +9152,60 @@ export function createCliProgram(): Command {
         target
       }, readCdpUrl());
     });
+
+  const companyCommand = program
+    .command("company")
+    .description("View LinkedIn company pages and prepare follow changes");
+
+  companyCommand
+    .command("view")
+    .description("View a LinkedIn company page")
+    .argument("<target>", "Company slug, /company/ path, or company URL")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(async (target: string, options: { profile: string }) => {
+      await runCompanyPageView({
+        profileName: options.profile,
+        target
+      }, readCdpUrl());
+    });
+
+  companyCommand
+    .command("follow")
+    .description("Prepare to follow a LinkedIn company page (two-phase)")
+    .argument("<target>", "Company slug, /company/ path, or company URL")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("--operator-note <note>", "Optional note attached to the prepared action")
+    .action(
+      async (
+        target: string,
+        options: { operatorNote?: string; profile: string }
+      ) => {
+        await runCompanyPrepareFollow({
+          profileName: options.profile,
+          targetCompany: target,
+          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
+        }, readCdpUrl());
+      }
+    );
+
+  companyCommand
+    .command("unfollow")
+    .description("Prepare to unfollow a LinkedIn company page (two-phase)")
+    .argument("<target>", "Company slug, /company/ path, or company URL")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("--operator-note <note>", "Optional note attached to the prepared action")
+    .action(
+      async (
+        target: string,
+        options: { operatorNote?: string; profile: string }
+      ) => {
+        await runCompanyPrepareUnfollow({
+          profileName: options.profile,
+          targetCompany: target,
+          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
+        }, readCdpUrl());
+      }
+    );
 
   profileCommand
     .command("editable")
