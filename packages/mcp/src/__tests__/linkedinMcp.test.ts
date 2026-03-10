@@ -1,8 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  LINKEDIN_ARTICLE_PREPARE_CREATE_TOOL,
+  LINKEDIN_ARTICLE_PREPARE_PUBLISH_TOOL,
   LINKEDIN_COMPANY_PREPARE_FOLLOW_TOOL,
   LINKEDIN_COMPANY_VIEW_TOOL,
   LINKEDIN_MEMBERS_PREPARE_REPORT_TOOL,
+  LINKEDIN_NEWSLETTER_LIST_TOOL,
+  LINKEDIN_NEWSLETTER_PREPARE_CREATE_TOOL,
+  LINKEDIN_NEWSLETTER_PREPARE_PUBLISH_ISSUE_TOOL,
   LINKEDIN_PRIVACY_GET_SETTINGS_TOOL
 } from "../index.js";
 
@@ -22,6 +27,13 @@ vi.mock("@linkedin-assistant/core", async () => {
 
 interface FakeRuntime {
   close: ReturnType<typeof vi.fn>;
+  articles: {
+    listNewsletters: ReturnType<typeof vi.fn>;
+    prepareCreateArticle: ReturnType<typeof vi.fn>;
+    preparePublishArticle: ReturnType<typeof vi.fn>;
+    prepareCreateNewsletter: ReturnType<typeof vi.fn>;
+    preparePublishNewsletterIssue: ReturnType<typeof vi.fn>;
+  };
   companyPages: {
     prepareFollowCompanyPage: ReturnType<typeof vi.fn>;
     viewCompanyPage: ReturnType<typeof vi.fn>;
@@ -42,6 +54,13 @@ function createFakeRuntime(): FakeRuntime {
   return {
     runId: "run_test",
     close: vi.fn(),
+    articles: {
+      listNewsletters: vi.fn(),
+      prepareCreateArticle: vi.fn(),
+      preparePublishArticle: vi.fn(),
+      prepareCreateNewsletter: vi.fn(),
+      preparePublishNewsletterIssue: vi.fn()
+    },
     companyPages: {
       prepareFollowCompanyPage: vi.fn(),
       viewCompanyPage: vi.fn()
@@ -112,6 +131,66 @@ describe("handleToolCall", () => {
       profileName: "default"
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("prepares article draft actions through the MCP contract", async () => {
+    fakeRuntime.articles.prepareCreateArticle.mockResolvedValue({
+      preparedActionId: "pa_article",
+      confirmToken: "ct_article",
+      expiresAtMs: 123,
+      preview: {
+        summary: "Create article draft"
+      }
+    });
+
+    const result = await handleToolCall(LINKEDIN_ARTICLE_PREPARE_CREATE_TOOL, {
+      profileName: "default",
+      title: "Issue 235 article",
+      body: "Long-form body"
+    });
+
+    expect("isError" in result && result.isError).toBe(false);
+    expect(parseToolPayload(result)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      preparedActionId: "pa_article",
+      confirmToken: "ct_article"
+    });
+    expect(fakeRuntime.articles.prepareCreateArticle).toHaveBeenCalledWith({
+      profileName: "default",
+      title: "Issue 235 article",
+      body: "Long-form body"
+    });
+  });
+
+  it("prepares article publish actions through the MCP contract", async () => {
+    fakeRuntime.articles.preparePublishArticle.mockResolvedValue({
+      preparedActionId: "pa_publish_article",
+      confirmToken: "ct_publish_article",
+      expiresAtMs: 456,
+      preview: {
+        summary: "Publish article draft"
+      }
+    });
+
+    const result = await handleToolCall(LINKEDIN_ARTICLE_PREPARE_PUBLISH_TOOL, {
+      profileName: "default",
+      articleUrl: "https://www.linkedin.com/article/edit/123/",
+      shareText: "A quick summary"
+    });
+
+    expect("isError" in result && result.isError).toBe(false);
+    expect(parseToolPayload(result)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      preparedActionId: "pa_publish_article",
+      confirmToken: "ct_publish_article"
+    });
+    expect(fakeRuntime.articles.preparePublishArticle).toHaveBeenCalledWith({
+      profileName: "default",
+      articleUrl: "https://www.linkedin.com/article/edit/123/",
+      shareText: "A quick summary"
+    });
   });
 
   it("prepares member report actions through the MCP contract", async () => {
@@ -185,6 +264,111 @@ describe("handleToolCall", () => {
       target: "openai"
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("lists newsletters through the MCP contract", async () => {
+    fakeRuntime.articles.listNewsletters.mockResolvedValue([
+      {
+        title: "Issue 235 Weekly",
+        newsletter_url: "https://www.linkedin.com/newsletters/issue-235-weekly/",
+        cadence: "Weekly",
+        subscriber_count: "3 subscribers",
+        edition_count: "1 edition",
+        description: "Weekly updates"
+      }
+    ]);
+
+    const result = await handleToolCall(LINKEDIN_NEWSLETTER_LIST_TOOL, {
+      profileName: "default",
+      limit: 5
+    });
+
+    expect("isError" in result && result.isError).toBe(false);
+    expect(parseToolPayload(result)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      count: 1,
+      newsletters: [
+        expect.objectContaining({
+          title: "Issue 235 Weekly"
+        })
+      ]
+    });
+    expect(fakeRuntime.articles.listNewsletters).toHaveBeenCalledWith({
+      profileName: "default",
+      limit: 5
+    });
+  });
+
+  it("prepares newsletter creation actions through the MCP contract", async () => {
+    fakeRuntime.articles.prepareCreateNewsletter.mockResolvedValue({
+      preparedActionId: "pa_newsletter",
+      confirmToken: "ct_newsletter",
+      expiresAtMs: 789,
+      preview: {
+        summary: "Create newsletter"
+      }
+    });
+
+    const result = await handleToolCall(LINKEDIN_NEWSLETTER_PREPARE_CREATE_TOOL, {
+      profileName: "default",
+      title: "Issue 235 NL",
+      description: "Weekly updates",
+      cadence: "weekly"
+    });
+
+    expect("isError" in result && result.isError).toBe(false);
+    expect(parseToolPayload(result)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      preparedActionId: "pa_newsletter",
+      confirmToken: "ct_newsletter"
+    });
+    expect(fakeRuntime.articles.prepareCreateNewsletter).toHaveBeenCalledWith({
+      profileName: "default",
+      title: "Issue 235 NL",
+      description: "Weekly updates",
+      cadence: "weekly"
+    });
+  });
+
+  it("prepares newsletter issue publish actions through the MCP contract", async () => {
+    fakeRuntime.articles.preparePublishNewsletterIssue.mockResolvedValue({
+      preparedActionId: "pa_issue",
+      confirmToken: "ct_issue",
+      expiresAtMs: 987,
+      preview: {
+        summary: "Publish newsletter issue"
+      }
+    });
+
+    const result = await handleToolCall(
+      LINKEDIN_NEWSLETTER_PREPARE_PUBLISH_ISSUE_TOOL,
+      {
+        profileName: "default",
+        newsletterUrl: "https://www.linkedin.com/newsletters/issue-235-weekly/",
+        title: "Edition one",
+        body: "Body copy",
+        shareText: "Teaser"
+      }
+    );
+
+    expect("isError" in result && result.isError).toBe(false);
+    expect(parseToolPayload(result)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      preparedActionId: "pa_issue",
+      confirmToken: "ct_issue"
+    });
+    expect(
+      fakeRuntime.articles.preparePublishNewsletterIssue
+    ).toHaveBeenCalledWith({
+      profileName: "default",
+      newsletterUrl: "https://www.linkedin.com/newsletters/issue-235-weekly/",
+      title: "Edition one",
+      body: "Body copy",
+      shareText: "Teaser"
+    });
   });
 
   it("prepares company follow actions through the MCP contract", async () => {

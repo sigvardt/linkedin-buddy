@@ -12,6 +12,7 @@ import {
   LINKEDIN_FEED_REACTION_TYPES,
   LINKEDIN_INBOX_REACTION_TYPES,
   LINKEDIN_MEMBER_REPORT_REASONS,
+  LINKEDIN_NEWSLETTER_CADENCES,
   LINKEDIN_POST_VISIBILITY_TYPES,
   LINKEDIN_PRIVACY_SETTING_KEYS,
   LINKEDIN_SELECTOR_LOCALES,
@@ -87,6 +88,8 @@ import {
   LINKEDIN_FEED_SAVE_POST_TOOL,
   LINKEDIN_FEED_UNSAVE_POST_TOOL,
   LINKEDIN_FEED_VIEW_POST_TOOL,
+  LINKEDIN_ARTICLE_PREPARE_CREATE_TOOL,
+  LINKEDIN_ARTICLE_PREPARE_PUBLISH_TOOL,
   LINKEDIN_INBOX_GET_THREAD_TOOL,
   LINKEDIN_INBOX_ARCHIVE_THREAD_TOOL,
   LINKEDIN_INBOX_LIST_THREADS_TOOL,
@@ -118,6 +121,9 @@ import {
   LINKEDIN_JOBS_SEARCH_TOOL,
   LINKEDIN_JOBS_VIEW_TOOL,
   LINKEDIN_NOTIFICATIONS_LIST_TOOL,
+  LINKEDIN_NEWSLETTER_LIST_TOOL,
+  LINKEDIN_NEWSLETTER_PREPARE_CREATE_TOOL,
+  LINKEDIN_NEWSLETTER_PREPARE_PUBLISH_ISSUE_TOOL,
   LINKEDIN_POST_PREPARE_CREATE_TOOL,
   LINKEDIN_POST_PREPARE_CREATE_MEDIA_TOOL,
   LINKEDIN_POST_PREPARE_CREATE_POLL_TOOL,
@@ -445,6 +451,14 @@ function readMemberReportReason(
   key: string
 ): ReturnType<typeof normalizeLinkedInMemberReportReason> {
   return normalizeLinkedInMemberReportReason(readRequiredString(args, key));
+}
+
+function readNewsletterCadence(args: ToolArgs, key: string): string {
+  return coerceEnumValue(
+    readRequiredString(args, key).toLowerCase(),
+    LINKEDIN_NEWSLETTER_CADENCES,
+    key
+  );
 }
 
 function readPrivacySettingKey(args: ToolArgs, key: string) {
@@ -2805,6 +2819,193 @@ async function handleFeedPrepareRemoveReaction(
   }
 }
 
+async function handleArticlePrepareCreate(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const title = readRequiredString(args, "title");
+    const body = readRequiredString(args, "body");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.article.prepare_create.start", {
+      profileName,
+      titleLength: title.length
+    });
+
+    const prepared = await runtime.articles.prepareCreateArticle({
+      profileName,
+      title,
+      body,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.article.prepare_create.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleArticlePreparePublish(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const articleUrl = readRequiredString(args, "articleUrl");
+    const shareText = readString(args, "shareText", "");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.article.prepare_publish.start", {
+      profileName,
+      articleUrl
+    });
+
+    const prepared = await runtime.articles.preparePublishArticle({
+      profileName,
+      articleUrl,
+      ...(shareText ? { shareText } : {}),
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.article.prepare_publish.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleNewsletterList(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const limit = readPositiveNumber(args, "limit", 20);
+
+    runtime.logger.log("info", "mcp.newsletter.list.start", {
+      profileName,
+      limit
+    });
+
+    const newsletters = await runtime.articles.listNewsletters({
+      profileName,
+      limit
+    });
+
+    runtime.logger.log("info", "mcp.newsletter.list.done", {
+      profileName,
+      count: newsletters.length
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      count: newsletters.length,
+      newsletters
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleNewsletterPrepareCreate(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const title = readRequiredString(args, "title");
+    const description = readRequiredString(args, "description");
+    const cadence = readNewsletterCadence(args, "cadence");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.newsletter.prepare_create.start", {
+      profileName,
+      cadence
+    });
+
+    const prepared = await runtime.articles.prepareCreateNewsletter({
+      profileName,
+      title,
+      description,
+      cadence,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.newsletter.prepare_create.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleNewsletterPreparePublishIssue(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const newsletterUrl = readRequiredString(args, "newsletterUrl");
+    const title = readRequiredString(args, "title");
+    const body = readRequiredString(args, "body");
+    const shareText = readString(args, "shareText", "");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.newsletter.prepare_publish_issue.start", {
+      profileName,
+      newsletterUrl
+    });
+
+    const prepared = await runtime.articles.preparePublishNewsletterIssue({
+      profileName,
+      newsletterUrl,
+      title,
+      body,
+      ...(shareText ? { shareText } : {}),
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.newsletter.prepare_publish_issue.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 async function handlePostPrepareCreate(args: ToolArgs): Promise<ToolResult> {
   const runtime = createRuntime(args);
 
@@ -4988,6 +5189,158 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
+        name: LINKEDIN_ARTICLE_PREPARE_CREATE_TOOL,
+        description:
+          "Prepare a LinkedIn long-form article draft (two-phase: returns confirm token). Use linkedin.actions.confirm to create the draft.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["title", "body"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            title: {
+              type: "string",
+              description: "Article title to save into a draft."
+            },
+            body: {
+              type: "string",
+              description: "Article body content to save into a draft."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_ARTICLE_PREPARE_PUBLISH_TOOL,
+        description:
+          "Prepare to publish an existing LinkedIn article draft (two-phase: returns confirm token). Use linkedin.actions.confirm to publish.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["articleUrl"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            articleUrl: {
+              type: "string",
+              description: "LinkedIn article draft URL from /article/edit/."
+            },
+            shareText: {
+              type: "string",
+              description:
+                "Optional teaser text shown in the publish dialog above the article."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_NEWSLETTER_LIST_TOOL,
+        description: "List newsletters you manage on LinkedIn.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            limit: {
+              type: "number",
+              description: "Maximum newsletters to return. Defaults to 20."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_NEWSLETTER_PREPARE_CREATE_TOOL,
+        description:
+          "Prepare a new LinkedIn newsletter shell (two-phase: returns confirm token). Use linkedin.actions.confirm to create the newsletter.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["title", "description", "cadence"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            title: {
+              type: "string",
+              description:
+                "Newsletter title. LinkedIn currently limits this to 30 characters."
+            },
+            description: {
+              type: "string",
+              description:
+                "Newsletter description. LinkedIn currently limits this to 120 characters."
+            },
+            cadence: {
+              type: "string",
+              enum: [...LINKEDIN_NEWSLETTER_CADENCES],
+              description: "Publishing cadence for the newsletter."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_NEWSLETTER_PREPARE_PUBLISH_ISSUE_TOOL,
+        description:
+          "Prepare to publish a new LinkedIn newsletter issue (two-phase: returns confirm token). Use linkedin.actions.confirm to publish the issue.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["newsletterUrl", "title", "body"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            newsletterUrl: {
+              type: "string",
+              description: "LinkedIn newsletter URL from /newsletters/."
+            },
+            title: {
+              type: "string",
+              description: "Issue title to publish."
+            },
+            body: {
+              type: "string",
+              description: "Long-form issue body to publish."
+            },
+            shareText: {
+              type: "string",
+              description:
+                "Optional teaser text shown in the publish dialog before publishing."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
         name: LINKEDIN_POST_PREPARE_CREATE_TOOL,
         description:
           "Prepare a new LinkedIn post (two-phase: returns confirm token). Use linkedin.actions.confirm to publish.",
@@ -5596,6 +5949,12 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   [LINKEDIN_FEED_SAVE_POST_TOOL]: handleFeedSavePost,
   [LINKEDIN_FEED_UNSAVE_POST_TOOL]: handleFeedUnsavePost,
   [LINKEDIN_FEED_PREPARE_REMOVE_REACTION_TOOL]: handleFeedPrepareRemoveReaction,
+  [LINKEDIN_ARTICLE_PREPARE_CREATE_TOOL]: handleArticlePrepareCreate,
+  [LINKEDIN_ARTICLE_PREPARE_PUBLISH_TOOL]: handleArticlePreparePublish,
+  [LINKEDIN_NEWSLETTER_LIST_TOOL]: handleNewsletterList,
+  [LINKEDIN_NEWSLETTER_PREPARE_CREATE_TOOL]: handleNewsletterPrepareCreate,
+  [LINKEDIN_NEWSLETTER_PREPARE_PUBLISH_ISSUE_TOOL]:
+    handleNewsletterPreparePublishIssue,
   [LINKEDIN_POST_PREPARE_CREATE_TOOL]: handlePostPrepareCreate,
   [LINKEDIN_POST_PREPARE_CREATE_MEDIA_TOOL]: handlePostPrepareCreateMedia,
   [LINKEDIN_POST_PREPARE_CREATE_POLL_TOOL]: handlePostPrepareCreatePoll,

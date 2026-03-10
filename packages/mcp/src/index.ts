@@ -88,6 +88,15 @@ export const LINKEDIN_FEED_SAVE_POST_TOOL = "linkedin.feed.save_post";
 export const LINKEDIN_FEED_UNSAVE_POST_TOOL = "linkedin.feed.unsave_post";
 export const LINKEDIN_FEED_PREPARE_REMOVE_REACTION_TOOL =
   "linkedin.feed.prepare_remove_reaction";
+export const LINKEDIN_ARTICLE_PREPARE_CREATE_TOOL =
+  "linkedin.article.prepare_create";
+export const LINKEDIN_ARTICLE_PREPARE_PUBLISH_TOOL =
+  "linkedin.article.prepare_publish";
+export const LINKEDIN_NEWSLETTER_LIST_TOOL = "linkedin.newsletter.list";
+export const LINKEDIN_NEWSLETTER_PREPARE_CREATE_TOOL =
+  "linkedin.newsletter.prepare_create";
+export const LINKEDIN_NEWSLETTER_PREPARE_PUBLISH_ISSUE_TOOL =
+  "linkedin.newsletter.prepare_publish_issue";
 export const LINKEDIN_POST_PREPARE_CREATE_TOOL = "linkedin.post.prepare_create";
 export const LINKEDIN_POST_PREPARE_CREATE_MEDIA_TOOL =
   "linkedin.post.prepare_create_media";

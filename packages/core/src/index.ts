@@ -24,6 +24,7 @@ export * from "./linkedinConnections.js";
 export * from "./linkedinCompanyPages.js";
 export * from "./linkedinFeed.js";
 export * from "./linkedinFollowups.js";
+export * from "./linkedinArticles.js";
 export * from "./linkedinImageAssets.js";
 export * from "./linkedinInbox.js";
 export * from "./linkedinMembers.js";
