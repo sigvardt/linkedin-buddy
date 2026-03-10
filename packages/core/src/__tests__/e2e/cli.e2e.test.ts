@@ -179,11 +179,10 @@ describe.sequential("CLI E2E", () => {
       "--recipient",
       fixtures.connectionTarget
     ]);
-    expect(prepareAddRecipients.error).toBeUndefined();
-    expect(getLastJsonObject(prepareAddRecipients.stdout)).toMatchObject({
-      profile_name: profileName,
-      preparedActionId: expect.stringMatching(/^pa_/),
-      confirmToken: expect.stringMatching(/^ct_/)
+    expect(prepareAddRecipients.exitCode).toBe(1);
+    expect(getLastJsonObject(prepareAddRecipients.stderr)).toMatchObject({
+      code: "ACTION_PRECONDITION_FAILED",
+      message: "All requested recipients are already present in the thread."
     });
 
     const runtime = e2e.runtime();

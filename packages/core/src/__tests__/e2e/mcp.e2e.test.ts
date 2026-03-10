@@ -131,11 +131,10 @@ describe.sequential("MCP E2E", () => {
         recipients: [fixtures.connectionTarget]
       }
     );
-    expect(prepareAddRecipients.isError).toBe(false);
+    expect(prepareAddRecipients.isError).toBe(true);
     expect(prepareAddRecipients.payload).toMatchObject({
-      profile_name: profileName,
-      preparedActionId: expect.stringMatching(/^pa_/),
-      confirmToken: expect.stringMatching(/^ct_/)
+      code: "ACTION_PRECONDITION_FAILED",
+      message: "All requested recipients are already present in the thread."
     });
 
     const connectionsList = await callMcpTool(MCP_TOOL_NAMES.connectionsList, {
