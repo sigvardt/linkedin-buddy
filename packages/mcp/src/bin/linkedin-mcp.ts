@@ -72,7 +72,12 @@ import {
   LINKEDIN_INBOX_PREPARE_NEW_THREAD_TOOL,
   LINKEDIN_INBOX_PREPARE_REPLY_TOOL,
   LINKEDIN_INBOX_SEARCH_RECIPIENTS_TOOL,
+  LINKEDIN_PROFILE_PREPARE_FEATURED_ADD_TOOL,
+  LINKEDIN_PROFILE_PREPARE_FEATURED_REMOVE_TOOL,
+  LINKEDIN_PROFILE_PREPARE_FEATURED_REORDER_TOOL,
   LINKEDIN_PROFILE_PREPARE_REMOVE_SECTION_ITEM_TOOL,
+  LINKEDIN_PROFILE_PREPARE_UPLOAD_BANNER_TOOL,
+  LINKEDIN_PROFILE_PREPARE_UPLOAD_PHOTO_TOOL,
   LINKEDIN_PROFILE_PREPARE_UPDATE_INTRO_TOOL,
   LINKEDIN_PROFILE_PREPARE_UPSERT_SECTION_ITEM_TOOL,
   LINKEDIN_PROFILE_VIEW_TOOL,
@@ -916,6 +921,203 @@ async function handleProfilePrepareRemoveSectionItem(
     runtime.logger.log("info", "mcp.profile.prepare_remove_section_item.done", {
       profileName,
       section,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleProfilePrepareUploadPhoto(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const filePath = readRequiredString(args, "filePath");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.profile.prepare_upload_photo.start", {
+      profileName
+    });
+
+    const prepared = await runtime.profile.prepareUploadPhoto({
+      profileName,
+      filePath,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.profile.prepare_upload_photo.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleProfilePrepareUploadBanner(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const filePath = readRequiredString(args, "filePath");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.profile.prepare_upload_banner.start", {
+      profileName
+    });
+
+    const prepared = await runtime.profile.prepareUploadBanner({
+      profileName,
+      filePath,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.profile.prepare_upload_banner.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleProfilePrepareFeaturedAdd(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const kind = readRequiredString(args, "kind");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.profile.prepare_featured_add.start", {
+      profileName,
+      kind
+    });
+
+    const prepared = await runtime.profile.prepareFeaturedAdd({
+      profileName,
+      kind,
+      ...(typeof args.url === "string" ? { url: readString(args, "url", "") } : {}),
+      ...(typeof args.filePath === "string"
+        ? { filePath: readString(args, "filePath", "") }
+        : {}),
+      ...(typeof args.title === "string" ? { title: readString(args, "title", "") } : {}),
+      ...(typeof args.description === "string"
+        ? { description: readString(args, "description", "") }
+        : {}),
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.profile.prepare_featured_add.done", {
+      profileName,
+      kind,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleProfilePrepareFeaturedRemove(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const itemId = readString(args, "itemId", "");
+    const match = readObject(args, "match");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.profile.prepare_featured_remove.start", {
+      profileName,
+      hasItemId: itemId.length > 0
+    });
+
+    const prepared = runtime.profile.prepareFeaturedRemove({
+      profileName,
+      ...(itemId ? { itemId } : {}),
+      ...(match ? { match } : {}),
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.profile.prepare_featured_remove.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleProfilePrepareFeaturedReorder(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const itemIds = readStringArray(args, "itemIds");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    if (!itemIds || itemIds.length === 0) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        "itemIds is required."
+      );
+    }
+
+    runtime.logger.log("info", "mcp.profile.prepare_featured_reorder.start", {
+      profileName,
+      itemCount: itemIds.length
+    });
+
+    const prepared = runtime.profile.prepareFeaturedReorder({
+      profileName,
+      itemIds,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.profile.prepare_featured_reorder.done", {
+      profileName,
+      itemCount: itemIds.length,
       preparedActionId: prepared.preparedActionId
     });
 
@@ -2579,7 +2781,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: LINKEDIN_PROFILE_VIEW_EDITABLE_TOOL,
         description: withSelectorAuditHint(
-          "Inspect the logged-in member's editable LinkedIn profile surface. Returns intro metadata, supported editable fields, and stable-ish section item identifiers for about, experience, education, certifications, languages, projects, volunteer work, and honors."
+          "Inspect the logged-in member's editable LinkedIn profile surface. Returns intro metadata, supported editable fields, stable-ish section item identifiers for structured profile sections, and featured item identifiers for remove/reorder workflows."
         ),
         inputSchema: {
           type: "object",
@@ -2721,6 +2923,155 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               },
               description:
                 "Optional optimistic matching object for legacy items when itemId is unavailable. Supported keys include sourceId, primaryText, secondaryText, tertiaryText, and rawText."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Optional note attached to the prepared action."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_PROFILE_PREPARE_UPLOAD_PHOTO_TOOL,
+        description:
+          "Prepare a LinkedIn profile photo upload (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["filePath"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            },
+            filePath: {
+              type: "string",
+              description: "Local path to a JPG or PNG file that will be staged into artifacts before confirm."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Optional note attached to the prepared action."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_PROFILE_PREPARE_UPLOAD_BANNER_TOOL,
+        description:
+          "Prepare a LinkedIn profile banner upload (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["filePath"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            },
+            filePath: {
+              type: "string",
+              description: "Local path to a JPG or PNG file that will be staged into artifacts before confirm."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Optional note attached to the prepared action."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_PROFILE_PREPARE_FEATURED_ADD_TOOL,
+        description:
+          "Prepare to add a Featured item (link, media, or post) on the logged-in member's LinkedIn profile. Returns a confirm token; use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["kind"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            },
+            kind: {
+              type: "string",
+              enum: ["link", "media", "post"],
+              description: "Featured item type to add."
+            },
+            url: {
+              type: "string",
+              description: "Required for link/post. External absolute URL for links, or a LinkedIn post/article/newsletter URL for post."
+            },
+            filePath: {
+              type: "string",
+              description: "Required for media. Local path to a supported document or image file that will be staged into artifacts before confirm."
+            },
+            title: {
+              type: "string",
+              description: "Optional title override for link/media flows when the dialog exposes it."
+            },
+            description: {
+              type: "string",
+              description: "Optional description override for link/media flows when the dialog exposes it."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Optional note attached to the prepared action."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_PROFILE_PREPARE_FEATURED_REMOVE_TOOL,
+        description:
+          "Prepare to remove one item from the LinkedIn Featured section (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            },
+            itemId: {
+              type: "string",
+              description:
+                "Stable-ish featured item identifier returned by linkedin.profile.view_editable.featured.items. Provide this or match."
+            },
+            match: {
+              type: "object",
+              additionalProperties: {
+                anyOf: [{ type: "string" }]
+              },
+              description:
+                "Optional optimistic matching object when itemId is unavailable. Supported keys include sourceId, url, title, subtitle, and rawText."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Optional note attached to the prepared action."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_PROFILE_PREPARE_FEATURED_REORDER_TOOL,
+        description:
+          "Prepare to reorder Featured items on the logged-in member's LinkedIn profile (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["itemIds"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            },
+            itemIds: {
+              type: "array",
+              items: {
+                type: "string"
+              },
+              description:
+                "Ordered featured item ids from linkedin.profile.view_editable.featured.items. The specified ids are moved to the top in the provided order."
             },
             operatorNote: {
               type: "string",
@@ -3806,6 +4157,13 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
     handleProfilePrepareUpsertSectionItem,
   [LINKEDIN_PROFILE_PREPARE_REMOVE_SECTION_ITEM_TOOL]:
     handleProfilePrepareRemoveSectionItem,
+  [LINKEDIN_PROFILE_PREPARE_UPLOAD_PHOTO_TOOL]: handleProfilePrepareUploadPhoto,
+  [LINKEDIN_PROFILE_PREPARE_UPLOAD_BANNER_TOOL]: handleProfilePrepareUploadBanner,
+  [LINKEDIN_PROFILE_PREPARE_FEATURED_ADD_TOOL]: handleProfilePrepareFeaturedAdd,
+  [LINKEDIN_PROFILE_PREPARE_FEATURED_REMOVE_TOOL]:
+    handleProfilePrepareFeaturedRemove,
+  [LINKEDIN_PROFILE_PREPARE_FEATURED_REORDER_TOOL]:
+    handleProfilePrepareFeaturedReorder,
   [LINKEDIN_SEARCH_TOOL]: handleSearch,
   [LINKEDIN_CONNECTIONS_LIST_TOOL]: handleConnectionsList,
   [LINKEDIN_CONNECTIONS_PENDING_TOOL]: handleConnectionsPending,

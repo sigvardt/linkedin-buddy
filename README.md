@@ -641,6 +641,11 @@ Exposed tools:
 - `linkedin.profile.prepare_update_intro`
 - `linkedin.profile.prepare_upsert_section_item`
 - `linkedin.profile.prepare_remove_section_item`
+- `linkedin.profile.prepare_upload_photo`
+- `linkedin.profile.prepare_upload_banner`
+- `linkedin.profile.prepare_featured_add`
+- `linkedin.profile.prepare_featured_remove`
+- `linkedin.profile.prepare_featured_reorder`
 - `linkedin.search`
 - `linkedin.inbox.list_threads`
 - `linkedin.inbox.get_thread`
