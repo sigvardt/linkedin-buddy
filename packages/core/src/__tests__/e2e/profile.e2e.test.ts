@@ -35,7 +35,7 @@ describe("Profile E2E", () => {
       supported_fields: ["industry"]
     });
     expect(profile.public_profile).toMatchObject({
-      supported_fields: ["vanityName"]
+      supported_fields: ["vanityName", "publicProfileUrl"]
     });
     expect(profile.featured).toMatchObject({
       can_add: expect.any(Boolean),

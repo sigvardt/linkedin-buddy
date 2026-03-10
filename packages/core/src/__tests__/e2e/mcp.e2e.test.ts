@@ -388,7 +388,7 @@ describe.sequential("MCP E2E", () => {
           supported_fields: ["industry"]
         },
         public_profile: {
-          supported_fields: ["vanityName"]
+          supported_fields: ["vanityName", "publicProfileUrl"]
         },
         featured: {
           items: expect.any(Array)

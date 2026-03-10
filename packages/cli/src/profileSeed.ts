@@ -33,9 +33,9 @@ const SECTION_KEY_ALIASES = new Map<string, LinkedInProfileSectionType>([
 const INTRO_FIELD_KEYS = new Set(["firstName", "lastName", "headline", "location"]);
 const SETTINGS_FIELD_KEYS = new Set(["industry"]);
 const PUBLIC_PROFILE_FIELD_ALIASES = new Map<string, "customProfileUrl">([
-  ["customProfileUrl", "customProfileUrl"],
-  ["publicProfileUrl", "customProfileUrl"],
-  ["vanityUrl", "customProfileUrl"]
+  ["customprofileurl", "customProfileUrl"],
+  ["publicprofileurl", "customProfileUrl"],
+  ["vanityurl", "customProfileUrl"]
 ]);
 
 const SECTION_IDENTITY_FIELDS: Record<Exclude<LinkedInProfileSectionType, "about">, string[]> = {
@@ -135,12 +135,9 @@ export function parseProfileSeedSpec(input: unknown): ProfileSeedSpec {
       continue;
     }
 
-    if (
-      rawKey === "customProfileUrl" ||
-      rawKey === "publicProfileUrl" ||
-      rawKey === "vanityUrl"
-    ) {
-      intro.customProfileUrl = rawValue;
+    const publicProfileKey = PUBLIC_PROFILE_FIELD_ALIASES.get(normalizeKey(rawKey));
+    if (publicProfileKey) {
+      intro[publicProfileKey] = rawValue;
       continue;
     }
 
@@ -148,7 +145,7 @@ export function parseProfileSeedSpec(input: unknown): ProfileSeedSpec {
     if (!section || section === "about") {
       throw new LinkedInAssistantError(
         "ACTION_PRECONDITION_FAILED",
-        `Unsupported profile seed spec key "".`
+        `Unsupported profile seed spec key "${rawKey}".`
       );
     }
 
@@ -333,7 +330,7 @@ function normalizeIntroSpec(value: unknown): Record<string, unknown> | undefined
       continue;
     }
 
-    const publicProfileKey = PUBLIC_PROFILE_FIELD_ALIASES.get(key);
+    const publicProfileKey = PUBLIC_PROFILE_FIELD_ALIASES.get(normalizeKey(key));
     if (publicProfileKey) {
       intro[publicProfileKey] = rawValue;
       continue;
@@ -341,7 +338,7 @@ function normalizeIntroSpec(value: unknown): Record<string, unknown> | undefined
 
     throw new LinkedInAssistantError(
       "ACTION_PRECONDITION_FAILED",
-      `Unsupported intro field "" in profile seed spec.`
+      `Unsupported intro field "${key}" in profile seed spec.`
     );
   }
 

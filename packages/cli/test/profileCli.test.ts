@@ -75,7 +75,7 @@ describe("CLI profile commands", () => {
       public_profile: {
         vanity_name: "avery-cole-example",
         public_profile_url: "https://www.linkedin.com/in/avery-cole-example/",
-        supported_fields: ["vanityName"]
+        supported_fields: ["vanityName", "publicProfileUrl"]
       },
       sections: []
     });
