@@ -480,19 +480,38 @@ const PROFILE_MEDIA_LABELS = {
       "Upload photo",
       "Upload image",
       "Upload media",
+      "Update photo",
+      "Update image",
       "Add photo",
       "Change photo",
+      "Edit photo",
       "Select photo",
       "Select image"
     ],
     da: [
       "Upload billede",
       "Upload medie",
+      "Opdater billede",
       "Tilføj billede",
       "Skift billede",
+      "Rediger billede",
       "Vælg billede"
     ]
   }
+} as const;
+
+export const PROFILE_MEDIA_STRUCTURAL_SELECTORS = {
+  photo: [
+    "button.profile-photo-edit__edit-btn",
+    ".profile-photo-edit button",
+    ".pv-top-card__photo-wrapper .profile-photo-edit button",
+    ".pv-top-card__edit-photo button"
+  ],
+  banner: [
+    ".profile-topcard-background-image-edit__icon button",
+    ".profile-topcard-background-image-edit__button button",
+    "[id^='cover-photo-dropdown-button-trigger-']"
+  ]
 } as const;
 
 const PROFILE_SKILL_LABELS = {
@@ -2478,6 +2497,26 @@ async function findFirstVisibleLocator(
   return null;
 }
 
+async function waitForFirstVisibleLocator(
+  candidates: readonly LocatorCandidate[],
+  timeoutMs: number
+): Promise<LocatorCandidate | null> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const resolved = await findFirstVisibleLocator(candidates);
+    if (resolved) {
+      return resolved;
+    }
+
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 200);
+    });
+  }
+
+  return findFirstVisibleLocator(candidates);
+}
+
 function createActionCandidates(
   root: Page | Locator,
   labels: readonly string[],
@@ -2508,6 +2547,19 @@ function createActionCandidates(
         .filter({ hasText: textRegex })
     }
   ];
+}
+
+function createCssLocatorCandidates(
+  root: Page | Locator,
+  selectors: readonly string[],
+  keyPrefix: string
+): LocatorCandidate[] {
+  return [...new Set(selectors.map((selector) => selector.trim()).filter(Boolean))].map(
+    (selector, index) => ({
+      key: `${keyPrefix}-css-${index + 1}`,
+      locator: root.locator(selector)
+    })
+  );
 }
 
 async function waitForProfilePageReady(page: Page): Promise<void> {
@@ -3125,7 +3177,7 @@ async function clickSaveInDialog(
       locator: dialog.locator("button[type='submit']")
     }
   ];
-  const resolved = await findFirstVisibleLocator(saveCandidates);
+  const resolved = await waitForFirstVisibleLocator(saveCandidates, 10_000);
   if (!resolved) {
     throw new LinkedInAssistantError(
       "TARGET_NOT_FOUND",
@@ -3502,7 +3554,13 @@ async function clickLocatorForUpload(
   const fileChooserPromise = page.waitForEvent("filechooser", { timeout: 1_200 }).catch(
     () => null
   );
-  await locator.first().click();
+  try {
+    await locator.first().click({ timeout: 5_000 });
+  } catch {
+    // Some LinkedIn edit affordances open a modal quickly enough that the new
+    // overlay starts intercepting pointer events before Playwright declares the
+    // click complete. Continue by inspecting the resulting UI state.
+  }
   const fileChooser = await fileChooserPromise;
 
   if (fileChooser) {
@@ -4618,6 +4676,13 @@ async function openProfileMediaAndUpload(
       getProfileMediaActionLabels(kind, selectorLocale),
       `profile-${kind}-link`,
       "link"
+    ),
+    // LinkedIn currently renders the profile-photo entry point as an unlabeled
+    // edit button around the avatar preview, so keep structural fallbacks.
+    ...createCssLocatorCandidates(
+      topCardRoot,
+      PROFILE_MEDIA_STRUCTURAL_SELECTORS[kind],
+      `profile-${kind}-structural`
     ),
     {
       key: `profile-${kind}-generic`,
