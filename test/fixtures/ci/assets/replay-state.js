@@ -38,7 +38,9 @@
           [POST_ID]: ["Love this direction."]
         },
         posts: [],
-        reactions: {}
+        reactions: {},
+        reposts: {},
+        saved: {}
       },
       messaging: {
         [THREAD_ID]: {
@@ -99,8 +101,12 @@
     const comments = state.feed.comments[post.id] ?? [];
     const reaction = state.feed.reactions[post.id] ?? null;
     const reacted = reaction !== null;
+    const reposted = Boolean(state.feed.reposts[post.id]);
+    const saved = Boolean(state.feed.saved[post.id]);
     const commentsHidden = singleView ? "" : " hidden";
     const safeText = escapeHtml(post.text);
+    const baseReactionCount = Number(post.reactionsCount) || 0;
+    const baseRepostCount = Number(post.repostsCount) || 0;
 
     return `
       <article class="feed-shared-update-v2 occludable-update" data-urn="${escapeHtml(post.id)}">
@@ -113,9 +119,19 @@
         <div class="update-components-actor__description">${escapeHtml(post.authorHeadline)}</div>
         <time>${escapeHtml(post.postedAt)}</time>
         <div class="update-components-text">${safeText}</div>
-        <div class="social-details-social-counts__reactions-count">${BASE_POST.reactionsCount + (reacted ? 1 : 0)} reactions</div>
+        <div class="social-details-social-counts__reactions-count">${baseReactionCount + (reacted ? 1 : 0)} reactions</div>
         <div class="social-details-social-counts__comments">${comments.length} comments</div>
-        <div class="social-details-social-counts__reposts">${escapeHtml(post.repostsCount)} reposts</div>
+        <div class="social-details-social-counts__reposts">${baseRepostCount + (reposted ? 1 : 0)} reposts</div>
+        <div>
+          <button
+            class="feed-shared-control-menu__trigger"
+            aria-label="More actions"
+            data-post-id="${escapeHtml(post.id)}"
+          >More</button>
+          <div class="feed-post-actions-menu more-actions-menu" role="menu" data-post-id="${escapeHtml(post.id)}" hidden>
+            <button role="menuitem" aria-label="${saved ? "Unsave" : "Save"}" class="feed-post-actions-menu__item" data-post-id="${escapeHtml(post.id)}" data-menu-action="${saved ? "unsave" : "save"}">${saved ? "Unsave" : "Save"}</button>
+          </div>
+        </div>
         <div>
           <button
             class="social-actions-button react-button__trigger${reacted ? " react-button--active" : ""}"
@@ -124,6 +140,16 @@
             data-post-id="${escapeHtml(post.id)}"
           >Like</button>
           <button class="social-actions-button comment-button" data-post-id="${escapeHtml(post.id)}">Comment</button>
+          <button
+            class="social-actions-button repost-button${reposted ? " repost-button--active" : ""}"
+            aria-label="${reposted ? "Reposted" : "Repost"}"
+            aria-pressed="${reposted ? "true" : "false"}"
+            data-post-id="${escapeHtml(post.id)}"
+          >${reposted ? "Reposted" : "Repost"}</button>
+        </div>
+        <div class="feed-post-actions-menu repost-actions-menu" role="menu" data-post-id="${escapeHtml(post.id)}" hidden>
+          <button role="menuitem" aria-label="Repost" class="feed-post-actions-menu__item" data-post-id="${escapeHtml(post.id)}" data-menu-action="repost">Repost</button>
+          <button role="menuitem" aria-label="Share in a post" class="feed-post-actions-menu__item" data-post-id="${escapeHtml(post.id)}" data-menu-action="share">Share in a post</button>
         </div>
         <div class="comments-comment-box" data-post-id="${escapeHtml(post.id)}"${commentsHidden}>
           <div
@@ -205,6 +231,73 @@
       });
     });
 
+    function hideFeedMenus() {
+      root.querySelectorAll(".feed-post-actions-menu").forEach((menu) => {
+        menu.setAttribute("hidden", "");
+      });
+    }
+
+    root.onkeydown = (event) => {
+      if (!(event instanceof KeyboardEvent) || event.key !== "Escape") {
+        return;
+      }
+
+      hideFeedMenus();
+    };
+
+    root.querySelectorAll(".feed-shared-control-menu__trigger").forEach((button) => {
+      button.addEventListener("click", () => {
+        const postId = button.getAttribute("data-post-id");
+        const menu = root.querySelector(`.more-actions-menu[data-post-id="${postId}"]`);
+        if (!menu) {
+          return;
+        }
+
+        const isHidden = menu.hasAttribute("hidden");
+        hideFeedMenus();
+        if (isHidden) {
+          menu.removeAttribute("hidden");
+        }
+      });
+    });
+
+    root.querySelectorAll(".more-actions-menu [data-menu-action]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const freshState = loadState();
+        const postId = button.getAttribute("data-post-id");
+        const action = button.getAttribute("data-menu-action");
+        if (!postId || !action) {
+          return;
+        }
+
+        if (action === "save") {
+          freshState.feed.saved[postId] = true;
+        }
+        if (action === "unsave") {
+          delete freshState.feed.saved[postId];
+        }
+
+        saveState(freshState);
+        renderFeed(singleView);
+      });
+    });
+
+    root.querySelectorAll(".repost-button").forEach((button) => {
+      button.addEventListener("click", () => {
+        const postId = button.getAttribute("data-post-id");
+        const menu = root.querySelector(`.repost-actions-menu[data-post-id="${postId}"]`);
+        if (!menu) {
+          return;
+        }
+
+        const isHidden = menu.hasAttribute("hidden");
+        hideFeedMenus();
+        if (isHidden) {
+          menu.removeAttribute("hidden");
+        }
+      });
+    });
+
     root.querySelectorAll(".comment-button").forEach((button) => {
       button.addEventListener("click", () => {
         const postId = button.getAttribute("data-post-id");
@@ -256,8 +349,45 @@
     const publish = root.querySelector(".share-actions__primary-action");
     const close = root.querySelector(".composer-close");
     if (trigger && dialog && editor && publish && close) {
+      function resetComposerDialog() {
+        dialog.setAttribute("hidden", "");
+        dialog.removeAttribute("data-shared-post-id");
+        editor.textContent = "";
+        publish.disabled = true;
+      }
+
       trigger.addEventListener("click", () => {
+        hideFeedMenus();
+        dialog.removeAttribute("data-shared-post-id");
+        editor.textContent = "";
+        publish.disabled = true;
         dialog.removeAttribute("hidden");
+      });
+
+      root.querySelectorAll(".repost-actions-menu [data-menu-action]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const freshState = loadState();
+          const postId = button.getAttribute("data-post-id");
+          const action = button.getAttribute("data-menu-action");
+          if (!postId || !action) {
+            return;
+          }
+
+          if (action === "repost") {
+            freshState.feed.reposts[postId] = true;
+            saveState(freshState);
+            renderFeed(singleView);
+            return;
+          }
+
+          if (action === "share") {
+            hideFeedMenus();
+            dialog.setAttribute("data-shared-post-id", postId);
+            editor.textContent = "";
+            publish.disabled = true;
+            dialog.removeAttribute("hidden");
+          }
+        });
       });
 
       editor.addEventListener("input", () => {
@@ -265,7 +395,7 @@
       });
 
       close.addEventListener("click", () => {
-        dialog.setAttribute("hidden", "");
+        resetComposerDialog();
       });
 
       publish.addEventListener("click", () => {
@@ -278,7 +408,7 @@
         const nextIndex = freshState.feed.posts.length + 1;
         freshState.feed.posts.unshift(createPublishedPost(text, nextIndex));
         saveState(freshState);
-        dialog.setAttribute("hidden", "");
+        resetComposerDialog();
         renderFeed(singleView);
       });
     }

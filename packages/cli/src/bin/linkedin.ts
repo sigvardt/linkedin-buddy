@@ -5309,6 +5309,178 @@ async function runFeedComment(input: {
   }
 }
 
+async function runFeedRepost(input: {
+  profileName: string;
+  postUrl: string;
+  operatorNote?: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.feed.repost.start", {
+      profileName: input.profileName,
+      postUrl: input.postUrl
+    });
+
+    const prepared = runtime.feed.prepareRepostPost({
+      profileName: input.profileName,
+      postUrl: input.postUrl,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "cli.feed.repost.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runFeedShare(input: {
+  profileName: string;
+  postUrl: string;
+  text: string;
+  operatorNote?: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.feed.share.start", {
+      profileName: input.profileName,
+      postUrl: input.postUrl
+    });
+
+    const prepared = runtime.feed.prepareSharePost({
+      profileName: input.profileName,
+      postUrl: input.postUrl,
+      text: input.text,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "cli.feed.share.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runFeedSave(input: {
+  profileName: string;
+  postUrl: string;
+  operatorNote?: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.feed.save.start", {
+      profileName: input.profileName,
+      postUrl: input.postUrl
+    });
+
+    const prepared = runtime.feed.prepareSavePost({
+      profileName: input.profileName,
+      postUrl: input.postUrl,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "cli.feed.save.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runFeedUnsave(input: {
+  profileName: string;
+  postUrl: string;
+  operatorNote?: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.feed.unsave.start", {
+      profileName: input.profileName,
+      postUrl: input.postUrl
+    });
+
+    const prepared = runtime.feed.prepareUnsavePost({
+      profileName: input.profileName,
+      postUrl: input.postUrl,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "cli.feed.unsave.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runFeedRemoveReaction(input: {
+  profileName: string;
+  postUrl: string;
+  operatorNote?: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.feed.remove_reaction.start", {
+      profileName: input.profileName,
+      postUrl: input.postUrl
+    });
+
+    const prepared = runtime.feed.prepareRemoveReaction({
+      profileName: input.profileName,
+      postUrl: input.postUrl,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "cli.feed.remove_reaction.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 async function runPostPrepare(input: {
   profileName: string;
   text: string;
@@ -7703,6 +7875,103 @@ export function createCliProgram(): Command {
           profileName: options.profile,
           postUrl: post,
           text: options.text,
+          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
+        }, readCdpUrl());
+      }
+    );
+
+  feedCommand
+    .command("repost")
+    .description("Prepare to repost a LinkedIn post (two-phase)")
+    .argument("<post>", "Post URL, URN, or activity id")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-o, --operator-note <note>", "Optional operator note")
+    .action(
+      async (
+        post: string,
+        options: { profile: string; operatorNote?: string }
+      ) => {
+        await runFeedRepost({
+          profileName: options.profile,
+          postUrl: post,
+          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
+        }, readCdpUrl());
+      }
+    );
+
+  feedCommand
+    .command("share")
+    .description("Prepare to share a LinkedIn post with your own text (two-phase)")
+    .argument("<post>", "Post URL, URN, or activity id")
+    .requiredOption("--text <text>", "Share text")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-o, --operator-note <note>", "Optional operator note")
+    .action(
+      async (
+        post: string,
+        options: { profile: string; text: string; operatorNote?: string }
+      ) => {
+        await runFeedShare({
+          profileName: options.profile,
+          postUrl: post,
+          text: options.text,
+          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
+        }, readCdpUrl());
+      }
+    );
+
+  feedCommand
+    .command("save")
+    .description("Prepare to save a LinkedIn post for later (two-phase)")
+    .argument("<post>", "Post URL, URN, or activity id")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-o, --operator-note <note>", "Optional operator note")
+    .action(
+      async (
+        post: string,
+        options: { profile: string; operatorNote?: string }
+      ) => {
+        await runFeedSave({
+          profileName: options.profile,
+          postUrl: post,
+          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
+        }, readCdpUrl());
+      }
+    );
+
+  feedCommand
+    .command("unsave")
+    .description("Prepare to remove a LinkedIn post from saved items (two-phase)")
+    .argument("<post>", "Post URL, URN, or activity id")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-o, --operator-note <note>", "Optional operator note")
+    .action(
+      async (
+        post: string,
+        options: { profile: string; operatorNote?: string }
+      ) => {
+        await runFeedUnsave({
+          profileName: options.profile,
+          postUrl: post,
+          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
+        }, readCdpUrl());
+      }
+    );
+
+  feedCommand
+    .command("remove-reaction")
+    .description("Prepare to remove your current reaction from a LinkedIn post (two-phase)")
+    .argument("<post>", "Post URL, URN, or activity id")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-o, --operator-note <note>", "Optional operator note")
+    .action(
+      async (
+        post: string,
+        options: { profile: string; operatorNote?: string }
+      ) => {
+        await runFeedRemoveReaction({
+          profileName: options.profile,
+          postUrl: post,
           ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
         }, readCdpUrl());
       }

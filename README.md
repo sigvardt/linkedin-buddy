@@ -658,6 +658,11 @@ Exposed tools:
 - `linkedin.feed.view_post`
 - `linkedin.feed.like`
 - `linkedin.feed.comment`
+- `linkedin.feed.prepare_repost`
+- `linkedin.feed.prepare_share`
+- `linkedin.feed.save_post`
+- `linkedin.feed.unsave_post`
+- `linkedin.feed.prepare_remove_reaction`
 - `linkedin.post.prepare_create`
 - `linkedin.notifications.list`
 - `linkedin.jobs.search`

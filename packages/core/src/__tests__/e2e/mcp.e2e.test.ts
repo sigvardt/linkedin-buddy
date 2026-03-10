@@ -241,6 +241,65 @@ describe.sequential("MCP E2E", () => {
       confirmToken: expect.stringMatching(/^ct_/)
     });
 
+    const feedRepost = await callMcpTool(MCP_TOOL_NAMES.feedPrepareRepost, {
+      profileName,
+      postUrl: fixtures.postUrl
+    });
+    expect(feedRepost.isError).toBe(false);
+    expect(feedRepost.payload).toMatchObject({
+      profile_name: profileName,
+      preparedActionId: expect.stringMatching(/^pa_/),
+      confirmToken: expect.stringMatching(/^ct_/)
+    });
+
+    const feedShare = await callMcpTool(MCP_TOOL_NAMES.feedPrepareShare, {
+      profileName,
+      postUrl: fixtures.postUrl,
+      text: `MCP preview share [${Date.now()}]`
+    });
+    expect(feedShare.isError).toBe(false);
+    expect(feedShare.payload).toMatchObject({
+      profile_name: profileName,
+      preparedActionId: expect.stringMatching(/^pa_/),
+      confirmToken: expect.stringMatching(/^ct_/)
+    });
+
+    const feedSave = await callMcpTool(MCP_TOOL_NAMES.feedSavePost, {
+      profileName,
+      postUrl: fixtures.postUrl
+    });
+    expect(feedSave.isError).toBe(false);
+    expect(feedSave.payload).toMatchObject({
+      profile_name: profileName,
+      preparedActionId: expect.stringMatching(/^pa_/),
+      confirmToken: expect.stringMatching(/^ct_/)
+    });
+
+    const feedUnsave = await callMcpTool(MCP_TOOL_NAMES.feedUnsavePost, {
+      profileName,
+      postUrl: fixtures.postUrl
+    });
+    expect(feedUnsave.isError).toBe(false);
+    expect(feedUnsave.payload).toMatchObject({
+      profile_name: profileName,
+      preparedActionId: expect.stringMatching(/^pa_/),
+      confirmToken: expect.stringMatching(/^ct_/)
+    });
+
+    const feedRemoveReaction = await callMcpTool(
+      MCP_TOOL_NAMES.feedPrepareRemoveReaction,
+      {
+        profileName,
+        postUrl: fixtures.postUrl
+      }
+    );
+    expect(feedRemoveReaction.isError).toBe(false);
+    expect(feedRemoveReaction.payload).toMatchObject({
+      profile_name: profileName,
+      preparedActionId: expect.stringMatching(/^pa_/),
+      confirmToken: expect.stringMatching(/^ct_/)
+    });
+
     const postPrepare = await callMcpTool(MCP_TOOL_NAMES.postPrepareCreate, {
       profileName,
       text: `MCP preview post [${Date.now()}]`,

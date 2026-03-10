@@ -39,6 +39,12 @@ export const LINKEDIN_FEED_LIST_TOOL = "linkedin.feed.list";
 export const LINKEDIN_FEED_VIEW_POST_TOOL = "linkedin.feed.view_post";
 export const LINKEDIN_FEED_LIKE_TOOL = "linkedin.feed.like";
 export const LINKEDIN_FEED_COMMENT_TOOL = "linkedin.feed.comment";
+export const LINKEDIN_FEED_PREPARE_REPOST_TOOL = "linkedin.feed.prepare_repost";
+export const LINKEDIN_FEED_PREPARE_SHARE_TOOL = "linkedin.feed.prepare_share";
+export const LINKEDIN_FEED_SAVE_POST_TOOL = "linkedin.feed.save_post";
+export const LINKEDIN_FEED_UNSAVE_POST_TOOL = "linkedin.feed.unsave_post";
+export const LINKEDIN_FEED_PREPARE_REMOVE_REACTION_TOOL =
+  "linkedin.feed.prepare_remove_reaction";
 export const LINKEDIN_POST_PREPARE_CREATE_TOOL = "linkedin.post.prepare_create";
 export const LINKEDIN_POST_PREPARE_CREATE_MEDIA_TOOL =
   "linkedin.post.prepare_create_media";

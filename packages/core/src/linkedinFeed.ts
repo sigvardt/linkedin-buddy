@@ -7,6 +7,7 @@ import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
 import type { ConfirmFailureArtifactConfig } from "./config.js";
 import { LinkedInAssistantError, asLinkedInAssistantError } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
+import { validateLinkedInPostText } from "./linkedinPosts.js";
 import type { ProfileManager } from "./profileManager.js";
 import type { RateLimiter, RateLimiterState } from "./rateLimiter.js";
 import type {
@@ -63,6 +64,37 @@ export interface CommentOnPostInput {
   operatorNote?: string;
 }
 
+export interface RepostPostInput {
+  profileName?: string;
+  postUrl: string;
+  operatorNote?: string;
+}
+
+export interface SharePostInput {
+  profileName?: string;
+  postUrl: string;
+  text: string;
+  operatorNote?: string;
+}
+
+export interface SavePostInput {
+  profileName?: string;
+  postUrl: string;
+  operatorNote?: string;
+}
+
+export interface UnsavePostInput {
+  profileName?: string;
+  postUrl: string;
+  operatorNote?: string;
+}
+
+export interface RemoveReactionInput {
+  profileName?: string;
+  postUrl: string;
+  operatorNote?: string;
+}
+
 export interface LinkedInFeedExecutorRuntime {
   auth: LinkedInAuthService;
   cdpUrl?: string | undefined;
@@ -81,6 +113,11 @@ export interface LinkedInFeedRuntime extends LinkedInFeedExecutorRuntime {
 const LINKEDIN_FEED_URL = "https://www.linkedin.com/feed/";
 export const LIKE_POST_ACTION_TYPE = "feed.like_post";
 export const COMMENT_ON_POST_ACTION_TYPE = "feed.comment_on_post";
+export const REPOST_POST_ACTION_TYPE = "feed.repost_post";
+export const SHARE_POST_ACTION_TYPE = "feed.share_post";
+export const SAVE_POST_ACTION_TYPE = "feed.save_post";
+export const UNSAVE_POST_ACTION_TYPE = "feed.unsave_post";
+export const REMOVE_REACTION_ACTION_TYPE = "feed.remove_reaction";
 
 export const LINKEDIN_FEED_REACTION_TYPES = [
   "like",
@@ -103,6 +140,36 @@ const COMMENT_RATE_LIMIT_CONFIG = {
   counterKey: "linkedin.feed.comment_on_post",
   windowSizeMs: 60 * 60 * 1000,
   limit: 15
+} as const;
+
+const REPOST_RATE_LIMIT_CONFIG = {
+  counterKey: "linkedin.feed.repost_post",
+  windowSizeMs: 60 * 60 * 1000,
+  limit: 10
+} as const;
+
+const SHARE_RATE_LIMIT_CONFIG = {
+  counterKey: "linkedin.feed.share_post",
+  windowSizeMs: 60 * 60 * 1000,
+  limit: 10
+} as const;
+
+const SAVE_RATE_LIMIT_CONFIG = {
+  counterKey: "linkedin.feed.save_post",
+  windowSizeMs: 60 * 60 * 1000,
+  limit: 40
+} as const;
+
+const UNSAVE_RATE_LIMIT_CONFIG = {
+  counterKey: "linkedin.feed.unsave_post",
+  windowSizeMs: 60 * 60 * 1000,
+  limit: 40
+} as const;
+
+const REMOVE_REACTION_RATE_LIMIT_CONFIG = {
+  counterKey: "linkedin.feed.remove_reaction",
+  windowSizeMs: 60 * 60 * 1000,
+  limit: 30
 } as const;
 
 interface ReactionUiConfig {
@@ -194,8 +261,26 @@ interface TargetPostLocator {
   activityId: string;
 }
 
+interface ScopedSelectorCandidate {
+  key: string;
+  selectorHint: string;
+  locatorFactory: (root: Locator) => Locator;
+}
+
+interface PostRepostButtonState {
+  reposted: boolean;
+  ariaLabel: string;
+  ariaPressed: string;
+  buttonText: string;
+  className: string;
+}
+
 function normalizeText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function createVerificationSnippet(text: string): string {
+  return normalizeText(text).slice(0, 120);
 }
 
 function normalizeReactionKey(value: string): string {
@@ -768,6 +853,60 @@ async function findVisibleLocatorOrThrow(
   );
 }
 
+async function findVisibleLocator(
+  page: Page,
+  candidates: SelectorCandidate[]
+): Promise<{ locator: Locator; key: string } | null> {
+  for (const candidate of candidates) {
+    const locator = candidate.locatorFactory(page).first();
+    if (await isLocatorVisible(locator)) {
+      return {
+        locator,
+        key: candidate.key
+      };
+    }
+  }
+
+  return null;
+}
+
+async function findVisibleScopedLocatorOrThrow(
+  root: Locator,
+  candidates: ScopedSelectorCandidate[],
+  selectorKey: string,
+  currentUrl: string
+): Promise<{ locator: Locator; key: string }> {
+  for (const candidate of candidates) {
+    const locator = candidate.locatorFactory(root).first();
+    try {
+      await locator.waitFor({ state: "visible", timeout: 2_500 });
+      return {
+        locator,
+        key: candidate.key
+      };
+    } catch {
+      // Try next selector candidate.
+    }
+  }
+
+  throw new LinkedInAssistantError(
+    "UI_CHANGED_SELECTOR_FAILED",
+    `Could not locate LinkedIn selector group "${selectorKey}".`,
+    {
+      selector_key: selectorKey,
+      current_url: currentUrl,
+      attempted_selectors: candidates.map((candidate) => candidate.selectorHint)
+    }
+  );
+}
+
+async function waitForNetworkIdleBestEffort(
+  page: Page,
+  timeoutMs: number = 8_000
+): Promise<void> {
+  await page.waitForLoadState("networkidle", { timeout: timeoutMs }).catch(() => undefined);
+}
+
 async function waitForCondition(
   condition: () => Promise<boolean>,
   timeoutMs: number,
@@ -959,6 +1098,698 @@ async function selectReactionFromMenu(
   const reactionButton = await findVisibleLocatorOrThrow(page, candidateButtons, "reaction_menu_button");
   await reactionButton.locator.click({ timeout: 5_000 });
   return reactionButton.key;
+}
+
+function createReactionButtonCandidates(
+  postRoot: Locator,
+  selectorLocale: LinkedInSelectorLocale
+): SelectorCandidate[] {
+  const likeOrReactRegex = buildLinkedInSelectorPhraseRegex(
+    ["like", "react"],
+    selectorLocale
+  );
+  const likeOrReactRegexHint = formatLinkedInSelectorRegexHint(
+    ["like", "react"],
+    selectorLocale
+  );
+  const likeReactAriaSelector = buildLinkedInAriaLabelContainsSelector(
+    "button",
+    ["like", "react", "reaction"],
+    selectorLocale
+  );
+
+  return [
+    {
+      key: "post-social-action-like",
+      selectorHint: "button.social-actions-button.react-button__trigger",
+      locatorFactory: () =>
+        postRoot.locator("button.social-actions-button.react-button__trigger")
+    },
+    {
+      key: "post-react-button",
+      selectorHint: "button.react-button__trigger",
+      locatorFactory: () => postRoot.locator("button.react-button__trigger")
+    },
+    {
+      key: "post-aria-like-button",
+      selectorHint: likeReactAriaSelector,
+      locatorFactory: () => postRoot.locator(likeReactAriaSelector)
+    },
+    {
+      key: "post-role-button-like",
+      selectorHint: `getByRole(button, ${likeOrReactRegexHint})`,
+      locatorFactory: () =>
+        postRoot.getByRole("button", {
+          name: likeOrReactRegex
+        })
+    }
+  ];
+}
+
+async function resolveReactionButton(
+  page: Page,
+  postRoot: Locator,
+  selectorLocale: LinkedInSelectorLocale
+): Promise<{ locator: Locator; key: string }> {
+  return findVisibleLocatorOrThrow(
+    page,
+    createReactionButtonCandidates(postRoot, selectorLocale),
+    "reaction_button"
+  );
+}
+
+function createPostActionButtonCandidates(input: {
+  postRoot: Locator;
+  selectorLocale: LinkedInSelectorLocale;
+  selectorKeys: LinkedInSelectorPhraseKey | readonly LinkedInSelectorPhraseKey[];
+  candidateKeyPrefix: string;
+  exact?: boolean;
+}): SelectorCandidate[] {
+  const labelRegex = buildLinkedInSelectorPhraseRegex(
+    input.selectorKeys,
+    input.selectorLocale,
+    input.exact ? { exact: true } : {}
+  );
+  const labelRegexHint = formatLinkedInSelectorRegexHint(
+    input.selectorKeys,
+    input.selectorLocale,
+    input.exact ? { exact: true } : {}
+  );
+  const ariaSelector = buildLinkedInAriaLabelContainsSelector(
+    ["button", "[role='button']"],
+    input.selectorKeys,
+    input.selectorLocale
+  );
+
+  return [
+    {
+      key: `${input.candidateKeyPrefix}-post-role`,
+      selectorHint: `post.getByRole(button, ${labelRegexHint})`,
+      locatorFactory: () =>
+        input.postRoot.getByRole("button", {
+          name: labelRegex
+        })
+    },
+    {
+      key: `${input.candidateKeyPrefix}-post-aria`,
+      selectorHint: `post ${ariaSelector}`,
+      locatorFactory: () => input.postRoot.locator(ariaSelector)
+    },
+    {
+      key: `${input.candidateKeyPrefix}-post-text`,
+      selectorHint: `post button,[role='button'] hasText ${labelRegexHint}`,
+      locatorFactory: () =>
+        input.postRoot
+          .locator("button, [role='button']")
+          .filter({ hasText: labelRegex })
+    }
+  ];
+}
+
+function createPageMenuActionCandidates(input: {
+  selectorLocale: LinkedInSelectorLocale;
+  selectorKeys: LinkedInSelectorPhraseKey | readonly LinkedInSelectorPhraseKey[];
+  candidateKeyPrefix: string;
+  exact?: boolean;
+}): SelectorCandidate[] {
+  const selectorKeys = Array.isArray(input.selectorKeys)
+    ? input.selectorKeys
+    : [input.selectorKeys];
+  const labelRegex = buildLinkedInSelectorPhraseRegex(
+    selectorKeys,
+    input.selectorLocale,
+    input.exact ? { exact: true } : {}
+  );
+  const labelRegexHint = formatLinkedInSelectorRegexHint(
+    selectorKeys,
+    input.selectorLocale,
+    input.exact ? { exact: true } : {}
+  );
+  const ariaSelector = buildLinkedInAriaLabelContainsSelector(
+    ["[role='menuitem']", "button", "[role='button']", "li"],
+    selectorKeys,
+    input.selectorLocale
+  );
+  const fixtureMenuActions = [...new Set(
+    selectorKeys.flatMap((selectorKey) => {
+      switch (selectorKey) {
+        case "repost":
+        case "save":
+        case "share":
+        case "unsave":
+          return [selectorKey];
+        default:
+          return [];
+      }
+    })
+  )];
+  const fixtureMenuActionCandidates = fixtureMenuActions.map((menuAction) => ({
+    key: `${input.candidateKeyPrefix}-fixture-action-${menuAction}`,
+    selectorHint:
+      `.feed-post-actions-menu [data-menu-action="${menuAction}"], ` +
+      `.repost-actions-menu [data-menu-action="${menuAction}"]`,
+    locatorFactory: (page: Page) =>
+      page.locator(
+        `.feed-post-actions-menu [data-menu-action="${menuAction}"], ` +
+          `.repost-actions-menu [data-menu-action="${menuAction}"]`
+      )
+  } satisfies SelectorCandidate));
+
+  return [
+    {
+      key: `${input.candidateKeyPrefix}-menuitem-role`,
+      selectorHint: `page.getByRole(menuitem, ${labelRegexHint})`,
+      locatorFactory: (page) =>
+        page.getByRole("menuitem", {
+          name: labelRegex
+        })
+    },
+    ...fixtureMenuActionCandidates,
+    {
+      key: `${input.candidateKeyPrefix}-button-role`,
+      selectorHint: `page.getByRole(button, ${labelRegexHint})`,
+      locatorFactory: (page) =>
+        page.getByRole("button", {
+          name: labelRegex
+        })
+    },
+    {
+      key: `${input.candidateKeyPrefix}-dropdown-text`,
+      selectorHint: `.artdeco-dropdown__content-inner * hasText ${labelRegexHint}`,
+      locatorFactory: (page) =>
+        page
+          .locator(
+            ".artdeco-dropdown__content-inner [role='menuitem'], .artdeco-dropdown__content-inner [role='button'], .artdeco-dropdown__content-inner button, .artdeco-dropdown__content-inner li, [role='dialog'] [role='menuitem'], [role='dialog'] button, .feed-post-actions-menu [role='menuitem'], .feed-post-actions-menu button"
+          )
+          .filter({ hasText: labelRegex })
+    },
+    {
+      key: `${input.candidateKeyPrefix}-generic-text`,
+      selectorHint: `[role='menuitem'], button, [role='button'], li hasText ${labelRegexHint}`,
+      locatorFactory: (page) =>
+        page
+          .locator("[role='menuitem'], button, [role='button'], li")
+          .filter({ hasText: labelRegex })
+    },
+    {
+      key: `${input.candidateKeyPrefix}-aria`,
+      selectorHint: ariaSelector,
+      locatorFactory: (page) => page.locator(ariaSelector)
+    }
+  ];
+}
+
+async function openPostMoreActionsMenu(
+  page: Page,
+  postRoot: Locator,
+  selectorLocale: LinkedInSelectorLocale
+): Promise<{ locator: Locator; key: string }> {
+  const moreButton = await findVisibleLocatorOrThrow(
+    page,
+    [
+      {
+        key: "post-more-menu-trigger",
+        selectorHint: "button.feed-shared-control-menu__trigger",
+        locatorFactory: () => postRoot.locator("button.feed-shared-control-menu__trigger")
+      },
+      ...createPostActionButtonCandidates({
+        postRoot,
+        selectorLocale,
+        selectorKeys: ["more_actions", "more"],
+        candidateKeyPrefix: "post-more"
+      })
+    ],
+    "feed_post_more_actions_button"
+  );
+
+  await moreButton.locator.click({ timeout: 5_000 });
+  await page.waitForTimeout(600);
+  return moreButton;
+}
+
+async function clickPostMoreMenuAction(input: {
+  page: Page;
+  postRoot: Locator;
+  selectorLocale: LinkedInSelectorLocale;
+  selectorKeys: LinkedInSelectorPhraseKey | readonly LinkedInSelectorPhraseKey[];
+  candidateKeyPrefix: string;
+  selectorKey: string;
+}): Promise<string> {
+  const menuActionCandidates = createPageMenuActionCandidates({
+    selectorLocale: input.selectorLocale,
+    selectorKeys: input.selectorKeys,
+    candidateKeyPrefix: input.candidateKeyPrefix
+  });
+  const existingMenuAction = await findVisibleLocator(input.page, menuActionCandidates);
+
+  let triggerKey = "feed-menu-already-open";
+  if (!existingMenuAction) {
+    const moreButton = await openPostMoreActionsMenu(
+      input.page,
+      input.postRoot,
+      input.selectorLocale
+    );
+    triggerKey = moreButton.key;
+  }
+
+  const menuAction =
+    existingMenuAction ??
+    (await findVisibleLocatorOrThrow(input.page, menuActionCandidates, input.selectorKey));
+
+  await menuAction.locator.click({ timeout: 5_000 });
+  return `${triggerKey}:${menuAction.key}`;
+}
+
+async function readPostSavedState(
+  page: Page,
+  postRoot: Locator,
+  selectorLocale: LinkedInSelectorLocale
+): Promise<boolean | null> {
+  await openPostMoreActionsMenu(page, postRoot, selectorLocale);
+
+  const unsaveAction = await findVisibleLocator(
+    page,
+    createPageMenuActionCandidates({
+      selectorLocale,
+      selectorKeys: "unsave",
+      candidateKeyPrefix: "feed-unsave"
+    })
+  );
+  if (unsaveAction) {
+    await page.keyboard.press("Escape").catch(() => undefined);
+    return true;
+  }
+
+  const saveAction = await findVisibleLocator(
+    page,
+    createPageMenuActionCandidates({
+      selectorLocale,
+      selectorKeys: "save",
+      candidateKeyPrefix: "feed-save"
+    })
+  );
+  if (saveAction) {
+    await page.keyboard.press("Escape").catch(() => undefined);
+    return false;
+  }
+
+  await page.keyboard.press("Escape").catch(() => undefined);
+  return null;
+}
+
+function createRepostButtonCandidates(
+  postRoot: Locator,
+  selectorLocale: LinkedInSelectorLocale
+): SelectorCandidate[] {
+  return [
+    {
+      key: "post-social-action-repost",
+      selectorHint: "button.social-actions-button.repost-button",
+      locatorFactory: () => postRoot.locator("button.social-actions-button.repost-button")
+    },
+    ...createPostActionButtonCandidates({
+      postRoot,
+      selectorLocale,
+      selectorKeys: ["repost", "share"],
+      candidateKeyPrefix: "feed-repost"
+    })
+  ];
+}
+
+async function resolveRepostButton(
+  page: Page,
+  postRoot: Locator,
+  selectorLocale: LinkedInSelectorLocale
+): Promise<{ locator: Locator; key: string }> {
+  return findVisibleLocatorOrThrow(
+    page,
+    createRepostButtonCandidates(postRoot, selectorLocale),
+    "feed_repost_button"
+  );
+}
+
+async function getRepostButtonState(
+  repostButton: Locator
+): Promise<PostRepostButtonState> {
+  const ariaLabel = normalizeText(await repostButton.getAttribute("aria-label"));
+  const ariaPressed = normalizeText(await repostButton.getAttribute("aria-pressed")).toLowerCase();
+  const buttonText = normalizeText(await repostButton.innerText().catch(() => ""));
+  const className = normalizeText(await repostButton.getAttribute("class"));
+
+  const reposted =
+    ariaPressed === "true" ||
+    className.toLowerCase().includes("active") ||
+    /reposted|undo\s+repost/i.test(`${ariaLabel} ${buttonText}`);
+
+  return {
+    reposted,
+    ariaLabel,
+    ariaPressed,
+    buttonText,
+    className
+  };
+}
+
+async function isPostReposted(repostButton: Locator): Promise<boolean> {
+  const state = await getRepostButtonState(repostButton);
+  return state.reposted;
+}
+
+async function selectRepostMenuAction(input: {
+  page: Page;
+  postRoot: Locator;
+  selectorLocale: LinkedInSelectorLocale;
+  selectorKeys: LinkedInSelectorPhraseKey | readonly LinkedInSelectorPhraseKey[];
+  candidateKeyPrefix: string;
+  selectorKey: string;
+}): Promise<string> {
+  const repostButton = await resolveRepostButton(
+    input.page,
+    input.postRoot,
+    input.selectorLocale
+  );
+  await repostButton.locator.click({ timeout: 5_000 });
+  await input.page.waitForTimeout(600);
+
+  const menuAction = await findVisibleLocatorOrThrow(
+    input.page,
+    createPageMenuActionCandidates({
+      selectorLocale: input.selectorLocale,
+      selectorKeys: input.selectorKeys,
+      candidateKeyPrefix: input.candidateKeyPrefix
+    }),
+    input.selectorKey
+  );
+
+  await menuAction.locator.click({ timeout: 5_000 });
+  return `${repostButton.key}:${menuAction.key}`;
+}
+
+function createComposerRootCandidates(
+  selectorLocale: LinkedInSelectorLocale
+): SelectorCandidate[] {
+  const postExactRegex = buildLinkedInSelectorPhraseRegex(
+    "post",
+    selectorLocale,
+    { exact: true }
+  );
+  const postExactRegexHint = formatLinkedInSelectorRegexHint(
+    "post",
+    selectorLocale,
+    { exact: true }
+  );
+  const composerPromptRegex = buildLinkedInSelectorPhraseRegex(
+    "what_do_you_want_to_talk_about",
+    selectorLocale
+  );
+  const composerPromptRegexHint = formatLinkedInSelectorRegexHint(
+    "what_do_you_want_to_talk_about",
+    selectorLocale
+  );
+
+  return [
+    {
+      key: "dialog-with-textbox",
+      selectorHint: "[role='dialog'] has [contenteditable='true'] or textarea",
+      locatorFactory: (page) =>
+        page
+          .locator("[role='dialog']")
+          .filter({ has: page.locator("[contenteditable='true'], textarea") })
+    },
+    {
+      key: "dialog-with-post-button",
+      selectorHint: `[role='dialog'] has getByRole(button, ${postExactRegexHint})`,
+      locatorFactory: (page) =>
+        page
+          .locator("[role='dialog']")
+          .filter({ has: page.getByRole("button", { name: postExactRegex }) })
+    },
+    {
+      key: "dialog-with-prompt",
+      selectorHint: `[role='dialog'] hasText ${composerPromptRegexHint}`,
+      locatorFactory: (page) =>
+        page
+          .locator("[role='dialog']")
+          .filter({ has: page.getByText(composerPromptRegex) })
+    },
+    {
+      key: "share-box-open",
+      selectorHint: ".share-box__open, .share-creation-state, .composer-dialog",
+      locatorFactory: (page) =>
+        page.locator(".share-box__open, .share-creation-state, .composer-dialog")
+    }
+  ];
+}
+
+function createComposerInputCandidates(
+  selectorLocale: LinkedInSelectorLocale
+): ScopedSelectorCandidate[] {
+  const composerInputRegex = buildLinkedInSelectorPhraseRegex(
+    ["what_do_you_want_to_talk_about", "start_post"],
+    selectorLocale
+  );
+  const composerInputRegexHint = formatLinkedInSelectorRegexHint(
+    ["what_do_you_want_to_talk_about", "start_post"],
+    selectorLocale
+  );
+
+  return [
+    {
+      key: "role-textbox-prompt",
+      selectorHint: `getByRole(textbox, ${composerInputRegexHint})`,
+      locatorFactory: (root) =>
+        root.getByRole("textbox", {
+          name: composerInputRegex
+        })
+    },
+    {
+      key: "ql-editor",
+      selectorHint: ".ql-editor[contenteditable='true']",
+      locatorFactory: (root) => root.locator(".ql-editor[contenteditable='true']")
+    },
+    {
+      key: "contenteditable-role-textbox",
+      selectorHint: "[contenteditable='true'][role='textbox']",
+      locatorFactory: (root) => root.locator("[contenteditable='true'][role='textbox']")
+    },
+    {
+      key: "contenteditable",
+      selectorHint: "[contenteditable='true']",
+      locatorFactory: (root) => root.locator("[contenteditable='true']")
+    },
+    {
+      key: "textarea",
+      selectorHint: "textarea",
+      locatorFactory: (root) => root.locator("textarea")
+    }
+  ];
+}
+
+function createPublishButtonCandidates(
+  selectorLocale: LinkedInSelectorLocale
+): ScopedSelectorCandidate[] {
+  const postExactRegex = buildLinkedInSelectorPhraseRegex(
+    "post",
+    selectorLocale,
+    { exact: true }
+  );
+  const postExactRegexHint = formatLinkedInSelectorRegexHint(
+    "post",
+    selectorLocale,
+    { exact: true }
+  );
+
+  return [
+    {
+      key: "role-button-post",
+      selectorHint: `getByRole(button, ${postExactRegexHint})`,
+      locatorFactory: (root) => root.getByRole("button", { name: postExactRegex })
+    },
+    {
+      key: "share-actions-primary",
+      selectorHint: ".share-actions__primary-action",
+      locatorFactory: (root) => root.locator(".share-actions__primary-action")
+    },
+    {
+      key: "submit-button",
+      selectorHint: "button[type='submit']",
+      locatorFactory: (root) => root.locator("button[type='submit']")
+    }
+  ];
+}
+
+async function setComposerText(
+  page: Page,
+  composerRoot: Locator,
+  selectorLocale: LinkedInSelectorLocale,
+  text: string
+): Promise<string> {
+  const composerInput = await findVisibleScopedLocatorOrThrow(
+    composerRoot,
+    createComposerInputCandidates(selectorLocale),
+    "feed_share_composer_input",
+    page.url()
+  );
+
+  await composerInput.locator.click({ timeout: 5_000 });
+
+  try {
+    await composerInput.locator.fill(text, { timeout: 5_000 });
+  } catch {
+    await composerInput.locator.press("Control+A").catch(() => undefined);
+    await composerInput.locator.press("Meta+A").catch(() => undefined);
+    await composerInput.locator.press("Backspace").catch(() => undefined);
+    await page.keyboard.insertText(text);
+  }
+
+  return composerInput.key;
+}
+
+async function findVisiblePostBySnippet(
+  page: Page,
+  snippet: string
+): Promise<Locator | null> {
+  const postCandidates = [
+    page
+      .locator("article, .feed-shared-update-v2, .occludable-update")
+      .filter({ hasText: snippet }),
+    page
+      .getByText(snippet)
+      .locator(
+        "xpath=ancestor-or-self::*[self::article or contains(@class, 'feed-shared-update-v2') or contains(@class, 'occludable-update')]"
+      )
+  ];
+
+  for (const candidate of postCandidates) {
+    if (await isAnyLocatorVisible(candidate)) {
+      return candidate.first();
+    }
+  }
+
+  return null;
+}
+
+async function extractPublishedPostUrl(
+  page: Page,
+  postRoot: Locator | null
+): Promise<string | null> {
+  if (!postRoot) {
+    return null;
+  }
+
+  const href = await postRoot
+    .locator("a[href*='/feed/update/'], a[href*='/posts/'], a[href*='/activity/']")
+    .first()
+    .getAttribute("href")
+    .catch(() => null);
+
+  if (!href) {
+    return null;
+  }
+
+  try {
+    return new URL(href, page.url()).toString();
+  } catch {
+    return href;
+  }
+}
+
+async function verifySharedPost(
+  page: Page,
+  text: string
+): Promise<{ verified: true; postUrl: string | null }> {
+  const snippet = createVerificationSnippet(text);
+  if (!snippet) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      "Cannot verify a shared post with empty text content."
+    );
+  }
+
+  const locatePost = async (): Promise<Locator | null> => {
+    await page.evaluate(() => {
+      globalThis.scrollTo({ top: 0, behavior: "auto" });
+    });
+    await waitForFeedSurface(page);
+    return findVisiblePostBySnippet(page, snippet);
+  };
+
+  let postRoot = await locatePost();
+  if (!postRoot) {
+    await page.goto(LINKEDIN_FEED_URL, { waitUntil: "domcontentloaded" });
+    await waitForNetworkIdleBestEffort(page);
+    postRoot = await locatePost();
+  }
+
+  if (!postRoot) {
+    const verified = await waitForCondition(async () => {
+      const located = await locatePost();
+      postRoot = located;
+      return located !== null;
+    }, 12_000);
+
+    if (!verified) {
+      throw new LinkedInAssistantError(
+        "UNKNOWN",
+        "Shared LinkedIn post could not be verified on the feed.",
+        {
+          current_url: page.url(),
+          verification_snippet: snippet
+        }
+      );
+    }
+  }
+
+  return {
+    verified: true,
+    postUrl: await extractPublishedPostUrl(page, postRoot)
+  };
+}
+
+async function openShareComposerFromPost(
+  page: Page,
+  postRoot: Locator,
+  selectorLocale: LinkedInSelectorLocale
+): Promise<{ composerRoot: Locator; triggerKey: string; rootKey: string }> {
+  const repostButton = await resolveRepostButton(page, postRoot, selectorLocale);
+  await repostButton.locator.click({ timeout: 5_000 });
+  await page.waitForTimeout(600);
+
+  const directComposer = await findVisibleLocator(
+    page,
+    createComposerRootCandidates(selectorLocale)
+  );
+  if (directComposer) {
+    return {
+      composerRoot: directComposer.locator,
+      triggerKey: repostButton.key,
+      rootKey: directComposer.key
+    };
+  }
+
+  const shareAction = await findVisibleLocatorOrThrow(
+    page,
+    createPageMenuActionCandidates({
+      selectorLocale,
+      selectorKeys: "share",
+      candidateKeyPrefix: "feed-share"
+    }),
+    "feed_share_menu_action"
+  );
+
+  await shareAction.locator.click({ timeout: 5_000 });
+
+  const composerRoot = await findVisibleLocatorOrThrow(
+    page,
+    createComposerRootCandidates(selectorLocale),
+    "feed_share_composer_root"
+  );
+
+  return {
+    composerRoot: composerRoot.locator,
+    triggerKey: `${repostButton.key}:${shareAction.key}`,
+    rootKey: composerRoot.key
+  };
 }
 
 async function findTargetPostLocator(page: Page, postUrl: string): Promise<TargetPostLocator> {
@@ -1682,13 +2513,797 @@ export class CommentOnPostActionExecutor
   }
 }
 
+export class RepostPostActionExecutor
+  implements ActionExecutor<LinkedInFeedExecutorRuntime>
+{
+  async execute(
+    input: ActionExecutorInput<LinkedInFeedExecutorRuntime>
+  ): Promise<ActionExecutorResult> {
+    const runtime = input.runtime;
+    const action = input.action;
+    const profileName = getProfileName(action.target);
+    const postUrl = getRequiredStringField(
+      action.target,
+      "post_url",
+      action.id,
+      "target"
+    );
+
+    await runtime.auth.ensureAuthenticated({
+      profileName,
+      cdpUrl: runtime.cdpUrl
+    });
+
+    return runtime.profileManager.runWithContext(
+      {
+        cdpUrl: runtime.cdpUrl,
+        profileName,
+        headless: true
+      },
+      async (context) => {
+        const page = await getOrCreatePage(context);
+
+        return executeConfirmActionWithArtifacts({
+          runtime,
+          context,
+          page,
+          actionId: action.id,
+          actionType: REPOST_POST_ACTION_TYPE,
+          profileName,
+          targetUrl: postUrl,
+          metadata: {
+            post_url: postUrl
+          },
+          errorDetails: {
+            post_url: postUrl
+          },
+          mapError: (error) =>
+            asLinkedInAssistantError(
+              error,
+              "UNKNOWN",
+              "Failed to execute LinkedIn repost_post action."
+            ),
+          execute: async () => {
+            const rateLimitState = runtime.rateLimiter.consume(REPOST_RATE_LIMIT_CONFIG);
+            if (!rateLimitState.allowed) {
+              throw new LinkedInAssistantError(
+                "RATE_LIMITED",
+                "LinkedIn repost_post confirm is rate limited for the current window.",
+                {
+                  action_id: action.id,
+                  profile_name: profileName,
+                  post_url: postUrl,
+                  rate_limit: formatRateLimitState(rateLimitState)
+                }
+              );
+            }
+
+            await page.goto(postUrl, { waitUntil: "domcontentloaded" });
+            await waitForPostSurface(page);
+
+            let targetPost = await findTargetPostLocator(page, postUrl);
+            let repostButton = await resolveRepostButton(
+              page,
+              targetPost.locator,
+              runtime.selectorLocale
+            );
+            const alreadyReposted = await isPostReposted(repostButton.locator);
+
+            let selectorKey = repostButton.key;
+            if (!alreadyReposted) {
+              selectorKey = await selectRepostMenuAction({
+                page,
+                postRoot: targetPost.locator,
+                selectorLocale: runtime.selectorLocale,
+                selectorKeys: "repost",
+                candidateKeyPrefix: "feed-repost-menu",
+                selectorKey: "feed_repost_menu_action"
+              });
+
+              let verified = await waitForCondition(async () => {
+                try {
+                  repostButton = await resolveRepostButton(
+                    page,
+                    targetPost.locator,
+                    runtime.selectorLocale
+                  );
+                  return await isPostReposted(repostButton.locator);
+                } catch {
+                  return false;
+                }
+              }, 8_000);
+
+              if (!verified) {
+                await page.reload({ waitUntil: "domcontentloaded" });
+                await waitForPostSurface(page);
+                targetPost = await findTargetPostLocator(page, postUrl);
+                repostButton = await resolveRepostButton(
+                  page,
+                  targetPost.locator,
+                  runtime.selectorLocale
+                );
+                verified = await isPostReposted(repostButton.locator);
+              }
+
+              if (!verified) {
+                throw new LinkedInAssistantError(
+                  "UNKNOWN",
+                  "Repost action could not be verified on the target post.",
+                  {
+                    action_id: action.id,
+                    profile_name: profileName,
+                    post_url: postUrl,
+                    post_identity: targetPost.postIdentity,
+                    activity_id: targetPost.activityId,
+                    selector_key: selectorKey
+                  }
+                );
+              }
+            }
+
+            const screenshotPath = `linkedin/screenshot-feed-repost-${Date.now()}.png`;
+            await captureScreenshotArtifact(runtime, page, screenshotPath, {
+              action: REPOST_POST_ACTION_TYPE,
+              action_id: action.id,
+              profile_name: profileName,
+              post_url: postUrl,
+              selector_key: selectorKey,
+              post_selector_key: targetPost.key
+            });
+
+            return {
+              ok: true,
+              result: {
+                reposted: true,
+                already_reposted: alreadyReposted,
+                post_url: postUrl,
+                rate_limit: formatRateLimitState(rateLimitState)
+              },
+              artifacts: [screenshotPath]
+            };
+          }
+        });
+      }
+    );
+  }
+}
+
+export class SharePostActionExecutor
+  implements ActionExecutor<LinkedInFeedExecutorRuntime>
+{
+  async execute(
+    input: ActionExecutorInput<LinkedInFeedExecutorRuntime>
+  ): Promise<ActionExecutorResult> {
+    const runtime = input.runtime;
+    const action = input.action;
+    const profileName = getProfileName(action.target);
+    const postUrl = getRequiredStringField(
+      action.target,
+      "post_url",
+      action.id,
+      "target"
+    );
+    const text = validateLinkedInPostText(
+      getRequiredStringField(action.payload, "text", action.id, "payload")
+    ).normalizedText;
+
+    await runtime.auth.ensureAuthenticated({
+      profileName,
+      cdpUrl: runtime.cdpUrl
+    });
+
+    return runtime.profileManager.runWithContext(
+      {
+        cdpUrl: runtime.cdpUrl,
+        profileName,
+        headless: true
+      },
+      async (context) => {
+        const page = await getOrCreatePage(context);
+
+        return executeConfirmActionWithArtifacts({
+          runtime,
+          context,
+          page,
+          actionId: action.id,
+          actionType: SHARE_POST_ACTION_TYPE,
+          profileName,
+          targetUrl: postUrl,
+          metadata: {
+            post_url: postUrl,
+            text
+          },
+          errorDetails: {
+            post_url: postUrl,
+            text
+          },
+          mapError: (error) =>
+            asLinkedInAssistantError(
+              error,
+              "UNKNOWN",
+              "Failed to execute LinkedIn share_post action."
+            ),
+          execute: async () => {
+            const rateLimitState = runtime.rateLimiter.consume(SHARE_RATE_LIMIT_CONFIG);
+            if (!rateLimitState.allowed) {
+              throw new LinkedInAssistantError(
+                "RATE_LIMITED",
+                "LinkedIn share_post confirm is rate limited for the current window.",
+                {
+                  action_id: action.id,
+                  profile_name: profileName,
+                  post_url: postUrl,
+                  rate_limit: formatRateLimitState(rateLimitState)
+                }
+              );
+            }
+
+            await page.goto(postUrl, { waitUntil: "domcontentloaded" });
+            await waitForPostSurface(page);
+
+            const targetPost = await findTargetPostLocator(page, postUrl);
+            const composer = await openShareComposerFromPost(
+              page,
+              targetPost.locator,
+              runtime.selectorLocale
+            );
+            const inputKey = await setComposerText(
+              page,
+              composer.composerRoot,
+              runtime.selectorLocale,
+              text
+            );
+
+            const publishButton = await findVisibleScopedLocatorOrThrow(
+              composer.composerRoot,
+              createPublishButtonCandidates(runtime.selectorLocale),
+              "feed_share_publish_button",
+              page.url()
+            );
+
+            const publishEnabled = await waitForCondition(async () => {
+              try {
+                return await publishButton.locator.isEnabled();
+              } catch {
+                return false;
+              }
+            }, 5_000);
+
+            if (!publishEnabled) {
+              throw new LinkedInAssistantError(
+                "UI_CHANGED_SELECTOR_FAILED",
+                "Share publish button was not enabled after entering share text.",
+                {
+                  action_id: action.id,
+                  profile_name: profileName,
+                  post_url: postUrl,
+                  selector_key: publishButton.key
+                }
+              );
+            }
+
+            const beforeScreenshotPath = `linkedin/screenshot-feed-share-before-${Date.now()}.png`;
+            await captureScreenshotArtifact(runtime, page, beforeScreenshotPath, {
+              action: SHARE_POST_ACTION_TYPE,
+              action_id: action.id,
+              profile_name: profileName,
+              post_url: postUrl,
+              trigger_selector_key: composer.triggerKey,
+              composer_selector_key: composer.rootKey,
+              input_selector_key: inputKey,
+              publish_selector_key: publishButton.key
+            });
+
+            await publishButton.locator.click({ timeout: 5_000 });
+            await waitForCondition(
+              async () => !(await isAnyLocatorVisible(composer.composerRoot)),
+              10_000
+            );
+            await waitForNetworkIdleBestEffort(page);
+
+            const verification = await verifySharedPost(page, text);
+
+            const afterScreenshotPath = `linkedin/screenshot-feed-share-after-${Date.now()}.png`;
+            await captureScreenshotArtifact(runtime, page, afterScreenshotPath, {
+              action: SHARE_POST_ACTION_TYPE,
+              action_id: action.id,
+              profile_name: profileName,
+              post_url: postUrl,
+              shared_post_url: verification.postUrl
+            });
+
+            return {
+              ok: true,
+              result: {
+                shared: true,
+                post_url: postUrl,
+                shared_post_url: verification.postUrl,
+                text,
+                verification_snippet: createVerificationSnippet(text),
+                rate_limit: formatRateLimitState(rateLimitState)
+              },
+              artifacts: [beforeScreenshotPath, afterScreenshotPath]
+            };
+          }
+        });
+      }
+    );
+  }
+}
+
+export class SavePostActionExecutor
+  implements ActionExecutor<LinkedInFeedExecutorRuntime>
+{
+  async execute(
+    input: ActionExecutorInput<LinkedInFeedExecutorRuntime>
+  ): Promise<ActionExecutorResult> {
+    const runtime = input.runtime;
+    const action = input.action;
+    const profileName = getProfileName(action.target);
+    const postUrl = getRequiredStringField(
+      action.target,
+      "post_url",
+      action.id,
+      "target"
+    );
+
+    await runtime.auth.ensureAuthenticated({
+      profileName,
+      cdpUrl: runtime.cdpUrl
+    });
+
+    return runtime.profileManager.runWithContext(
+      {
+        cdpUrl: runtime.cdpUrl,
+        profileName,
+        headless: true
+      },
+      async (context) => {
+        const page = await getOrCreatePage(context);
+
+        return executeConfirmActionWithArtifacts({
+          runtime,
+          context,
+          page,
+          actionId: action.id,
+          actionType: SAVE_POST_ACTION_TYPE,
+          profileName,
+          targetUrl: postUrl,
+          metadata: {
+            post_url: postUrl
+          },
+          errorDetails: {
+            post_url: postUrl
+          },
+          mapError: (error) =>
+            asLinkedInAssistantError(
+              error,
+              "UNKNOWN",
+              "Failed to execute LinkedIn save_post action."
+            ),
+          execute: async () => {
+            const rateLimitState = runtime.rateLimiter.consume(SAVE_RATE_LIMIT_CONFIG);
+            if (!rateLimitState.allowed) {
+              throw new LinkedInAssistantError(
+                "RATE_LIMITED",
+                "LinkedIn save_post confirm is rate limited for the current window.",
+                {
+                  action_id: action.id,
+                  profile_name: profileName,
+                  post_url: postUrl,
+                  rate_limit: formatRateLimitState(rateLimitState)
+                }
+              );
+            }
+
+            await page.goto(postUrl, { waitUntil: "domcontentloaded" });
+            await waitForPostSurface(page);
+
+            let targetPost = await findTargetPostLocator(page, postUrl);
+            const initialSavedState = await readPostSavedState(
+              page,
+              targetPost.locator,
+              runtime.selectorLocale
+            );
+
+            let selectorKey = "feed-save-existing-state";
+            if (initialSavedState !== true) {
+              selectorKey = await clickPostMoreMenuAction({
+                page,
+                postRoot: targetPost.locator,
+                selectorLocale: runtime.selectorLocale,
+                selectorKeys: "save",
+                candidateKeyPrefix: "feed-save",
+                selectorKey: "feed_save_menu_action"
+              });
+            }
+
+            let verified = initialSavedState === true;
+            if (!verified) {
+              verified = await waitForCondition(async () => {
+                try {
+                  return (await readPostSavedState(
+                    page,
+                    targetPost.locator,
+                    runtime.selectorLocale
+                  )) === true;
+                } catch {
+                  return false;
+                }
+              }, 6_000);
+            }
+
+            if (!verified) {
+              await page.reload({ waitUntil: "domcontentloaded" });
+              await waitForPostSurface(page);
+              targetPost = await findTargetPostLocator(page, postUrl);
+              verified =
+                (await readPostSavedState(page, targetPost.locator, runtime.selectorLocale)) === true;
+            }
+
+            if (!verified) {
+              throw new LinkedInAssistantError(
+                "UNKNOWN",
+                "Save post action could not be verified on the target post.",
+                {
+                  action_id: action.id,
+                  profile_name: profileName,
+                  post_url: postUrl,
+                  selector_key: selectorKey,
+                  post_identity: targetPost.postIdentity,
+                  activity_id: targetPost.activityId
+                }
+              );
+            }
+
+            const screenshotPath = `linkedin/screenshot-feed-save-${Date.now()}.png`;
+            await captureScreenshotArtifact(runtime, page, screenshotPath, {
+              action: SAVE_POST_ACTION_TYPE,
+              action_id: action.id,
+              profile_name: profileName,
+              post_url: postUrl,
+              selector_key: selectorKey,
+              post_selector_key: targetPost.key
+            });
+
+            return {
+              ok: true,
+              result: {
+                saved: true,
+                already_saved: initialSavedState === true,
+                post_url: postUrl,
+                rate_limit: formatRateLimitState(rateLimitState)
+              },
+              artifacts: [screenshotPath]
+            };
+          }
+        });
+      }
+    );
+  }
+}
+
+export class UnsavePostActionExecutor
+  implements ActionExecutor<LinkedInFeedExecutorRuntime>
+{
+  async execute(
+    input: ActionExecutorInput<LinkedInFeedExecutorRuntime>
+  ): Promise<ActionExecutorResult> {
+    const runtime = input.runtime;
+    const action = input.action;
+    const profileName = getProfileName(action.target);
+    const postUrl = getRequiredStringField(
+      action.target,
+      "post_url",
+      action.id,
+      "target"
+    );
+
+    await runtime.auth.ensureAuthenticated({
+      profileName,
+      cdpUrl: runtime.cdpUrl
+    });
+
+    return runtime.profileManager.runWithContext(
+      {
+        cdpUrl: runtime.cdpUrl,
+        profileName,
+        headless: true
+      },
+      async (context) => {
+        const page = await getOrCreatePage(context);
+
+        return executeConfirmActionWithArtifacts({
+          runtime,
+          context,
+          page,
+          actionId: action.id,
+          actionType: UNSAVE_POST_ACTION_TYPE,
+          profileName,
+          targetUrl: postUrl,
+          metadata: {
+            post_url: postUrl
+          },
+          errorDetails: {
+            post_url: postUrl
+          },
+          mapError: (error) =>
+            asLinkedInAssistantError(
+              error,
+              "UNKNOWN",
+              "Failed to execute LinkedIn unsave_post action."
+            ),
+          execute: async () => {
+            const rateLimitState = runtime.rateLimiter.consume(UNSAVE_RATE_LIMIT_CONFIG);
+            if (!rateLimitState.allowed) {
+              throw new LinkedInAssistantError(
+                "RATE_LIMITED",
+                "LinkedIn unsave_post confirm is rate limited for the current window.",
+                {
+                  action_id: action.id,
+                  profile_name: profileName,
+                  post_url: postUrl,
+                  rate_limit: formatRateLimitState(rateLimitState)
+                }
+              );
+            }
+
+            await page.goto(postUrl, { waitUntil: "domcontentloaded" });
+            await waitForPostSurface(page);
+
+            let targetPost = await findTargetPostLocator(page, postUrl);
+            const initialSavedState = await readPostSavedState(
+              page,
+              targetPost.locator,
+              runtime.selectorLocale
+            );
+
+            let selectorKey = "feed-unsave-existing-state";
+            if (initialSavedState !== false) {
+              selectorKey = await clickPostMoreMenuAction({
+                page,
+                postRoot: targetPost.locator,
+                selectorLocale: runtime.selectorLocale,
+                selectorKeys: "unsave",
+                candidateKeyPrefix: "feed-unsave",
+                selectorKey: "feed_unsave_menu_action"
+              });
+            }
+
+            let verified = initialSavedState === false;
+            if (!verified) {
+              verified = await waitForCondition(async () => {
+                try {
+                  return (await readPostSavedState(
+                    page,
+                    targetPost.locator,
+                    runtime.selectorLocale
+                  )) === false;
+                } catch {
+                  return false;
+                }
+              }, 6_000);
+            }
+
+            if (!verified) {
+              await page.reload({ waitUntil: "domcontentloaded" });
+              await waitForPostSurface(page);
+              targetPost = await findTargetPostLocator(page, postUrl);
+              verified =
+                (await readPostSavedState(page, targetPost.locator, runtime.selectorLocale)) === false;
+            }
+
+            if (!verified) {
+              throw new LinkedInAssistantError(
+                "UNKNOWN",
+                "Unsave post action could not be verified on the target post.",
+                {
+                  action_id: action.id,
+                  profile_name: profileName,
+                  post_url: postUrl,
+                  selector_key: selectorKey,
+                  post_identity: targetPost.postIdentity,
+                  activity_id: targetPost.activityId
+                }
+              );
+            }
+
+            const screenshotPath = `linkedin/screenshot-feed-unsave-${Date.now()}.png`;
+            await captureScreenshotArtifact(runtime, page, screenshotPath, {
+              action: UNSAVE_POST_ACTION_TYPE,
+              action_id: action.id,
+              profile_name: profileName,
+              post_url: postUrl,
+              selector_key: selectorKey,
+              post_selector_key: targetPost.key
+            });
+
+            return {
+              ok: true,
+              result: {
+                saved: false,
+                already_unsaved: initialSavedState === false,
+                post_url: postUrl,
+                rate_limit: formatRateLimitState(rateLimitState)
+              },
+              artifacts: [screenshotPath]
+            };
+          }
+        });
+      }
+    );
+  }
+}
+
+export class RemoveReactionActionExecutor
+  implements ActionExecutor<LinkedInFeedExecutorRuntime>
+{
+  async execute(
+    input: ActionExecutorInput<LinkedInFeedExecutorRuntime>
+  ): Promise<ActionExecutorResult> {
+    const runtime = input.runtime;
+    const action = input.action;
+    const profileName = getProfileName(action.target);
+    const postUrl = getRequiredStringField(
+      action.target,
+      "post_url",
+      action.id,
+      "target"
+    );
+
+    await runtime.auth.ensureAuthenticated({
+      profileName,
+      cdpUrl: runtime.cdpUrl
+    });
+
+    return runtime.profileManager.runWithContext(
+      {
+        cdpUrl: runtime.cdpUrl,
+        profileName,
+        headless: true
+      },
+      async (context) => {
+        const page = await getOrCreatePage(context);
+
+        return executeConfirmActionWithArtifacts({
+          runtime,
+          context,
+          page,
+          actionId: action.id,
+          actionType: REMOVE_REACTION_ACTION_TYPE,
+          profileName,
+          targetUrl: postUrl,
+          metadata: {
+            post_url: postUrl
+          },
+          errorDetails: {
+            post_url: postUrl
+          },
+          mapError: (error) =>
+            asLinkedInAssistantError(
+              error,
+              "UNKNOWN",
+              "Failed to execute LinkedIn remove_reaction action."
+            ),
+          execute: async () => {
+            const rateLimitState = runtime.rateLimiter.consume(
+              REMOVE_REACTION_RATE_LIMIT_CONFIG
+            );
+            if (!rateLimitState.allowed) {
+              throw new LinkedInAssistantError(
+                "RATE_LIMITED",
+                "LinkedIn remove_reaction confirm is rate limited for the current window.",
+                {
+                  action_id: action.id,
+                  profile_name: profileName,
+                  post_url: postUrl,
+                  rate_limit: formatRateLimitState(rateLimitState)
+                }
+              );
+            }
+
+            await page.goto(postUrl, { waitUntil: "domcontentloaded" });
+            await waitForPostSurface(page);
+
+            let targetPost = await findTargetPostLocator(page, postUrl);
+            let reactButton = await resolveReactionButton(
+              page,
+              targetPost.locator,
+              runtime.selectorLocale
+            );
+            const reactionState = await getReactionButtonState(
+              reactButton.locator,
+              runtime.selectorLocale
+            );
+            const previousReaction = reactionState.reaction;
+            const alreadyCleared = !reactionState.reacted;
+
+            if (!alreadyCleared) {
+              await reactButton.locator.click({ timeout: 5_000 });
+
+              let verified = await waitForCondition(async () => {
+                try {
+                  const currentState = await getReactionButtonState(
+                    reactButton.locator,
+                    runtime.selectorLocale
+                  );
+                  return !currentState.reacted;
+                } catch {
+                  return false;
+                }
+              }, 6_000);
+
+              if (!verified) {
+                await page.reload({ waitUntil: "domcontentloaded" });
+                await waitForPostSurface(page);
+                targetPost = await findTargetPostLocator(page, postUrl);
+                reactButton = await resolveReactionButton(
+                  page,
+                  targetPost.locator,
+                  runtime.selectorLocale
+                );
+                verified = !(await getReactionButtonState(
+                  reactButton.locator,
+                  runtime.selectorLocale
+                )).reacted;
+              }
+
+              if (!verified) {
+                throw new LinkedInAssistantError(
+                  "UNKNOWN",
+                  "Remove reaction action could not be verified on the target post.",
+                  {
+                    action_id: action.id,
+                    profile_name: profileName,
+                    post_url: postUrl,
+                    post_identity: targetPost.postIdentity,
+                    activity_id: targetPost.activityId,
+                    previous_reaction: previousReaction
+                  }
+                );
+              }
+            }
+
+            const screenshotPath = `linkedin/screenshot-feed-remove-reaction-${Date.now()}.png`;
+            await captureScreenshotArtifact(runtime, page, screenshotPath, {
+              action: REMOVE_REACTION_ACTION_TYPE,
+              action_id: action.id,
+              profile_name: profileName,
+              post_url: postUrl,
+              post_selector_key: targetPost.key,
+              previous_reaction: previousReaction
+            });
+
+            return {
+              ok: true,
+              result: {
+                reacted: false,
+                already_cleared: alreadyCleared,
+                previous_reaction: previousReaction,
+                post_url: postUrl,
+                rate_limit: formatRateLimitState(rateLimitState)
+              },
+              artifacts: [screenshotPath]
+            };
+          }
+        });
+      }
+    );
+  }
+}
+
 export function createFeedActionExecutors(): Record<
   string,
   ActionExecutor<LinkedInFeedExecutorRuntime>
 > {
   return {
     [LIKE_POST_ACTION_TYPE]: new LikePostActionExecutor(),
-    [COMMENT_ON_POST_ACTION_TYPE]: new CommentOnPostActionExecutor()
+    [COMMENT_ON_POST_ACTION_TYPE]: new CommentOnPostActionExecutor(),
+    [REPOST_POST_ACTION_TYPE]: new RepostPostActionExecutor(),
+    [SHARE_POST_ACTION_TYPE]: new SharePostActionExecutor(),
+    [SAVE_POST_ACTION_TYPE]: new SavePostActionExecutor(),
+    [UNSAVE_POST_ACTION_TYPE]: new UnsavePostActionExecutor(),
+    [REMOVE_REACTION_ACTION_TYPE]: new RemoveReactionActionExecutor()
   };
 }
 
@@ -1866,6 +3481,177 @@ export class LinkedInFeedService {
       payload: {
         text
       },
+      preview,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+  }
+
+  prepareRepostPost(input: RepostPostInput): {
+    preparedActionId: string;
+    confirmToken: string;
+    expiresAtMs: number;
+    preview: Record<string, unknown>;
+  } {
+    const profileName = input.profileName ?? "default";
+    const postUrl = resolvePostUrl(input.postUrl);
+    const rateLimitState = this.runtime.rateLimiter.peek(REPOST_RATE_LIMIT_CONFIG);
+
+    const target = {
+      profile_name: profileName,
+      post_url: postUrl
+    };
+
+    const preview = {
+      summary: `Repost LinkedIn post ${postUrl}`,
+      target,
+      outbound: {
+        action: "repost"
+      },
+      rate_limit: formatRateLimitState(rateLimitState)
+    } satisfies Record<string, unknown>;
+
+    return this.runtime.twoPhaseCommit.prepare({
+      actionType: REPOST_POST_ACTION_TYPE,
+      target,
+      payload: {},
+      preview,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+  }
+
+  prepareSharePost(input: SharePostInput): {
+    preparedActionId: string;
+    confirmToken: string;
+    expiresAtMs: number;
+    preview: Record<string, unknown>;
+  } {
+    const profileName = input.profileName ?? "default";
+    const postUrl = resolvePostUrl(input.postUrl);
+    const text = validateLinkedInPostText(input.text).normalizedText;
+    const rateLimitState = this.runtime.rateLimiter.peek(SHARE_RATE_LIMIT_CONFIG);
+
+    const target = {
+      profile_name: profileName,
+      post_url: postUrl
+    };
+
+    const preview = {
+      summary: `Share LinkedIn post ${postUrl}`,
+      target,
+      outbound: {
+        action: "share",
+        text
+      },
+      rate_limit: formatRateLimitState(rateLimitState)
+    } satisfies Record<string, unknown>;
+
+    return this.runtime.twoPhaseCommit.prepare({
+      actionType: SHARE_POST_ACTION_TYPE,
+      target,
+      payload: {
+        text
+      },
+      preview,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+  }
+
+  prepareSavePost(input: SavePostInput): {
+    preparedActionId: string;
+    confirmToken: string;
+    expiresAtMs: number;
+    preview: Record<string, unknown>;
+  } {
+    const profileName = input.profileName ?? "default";
+    const postUrl = resolvePostUrl(input.postUrl);
+    const rateLimitState = this.runtime.rateLimiter.peek(SAVE_RATE_LIMIT_CONFIG);
+
+    const target = {
+      profile_name: profileName,
+      post_url: postUrl
+    };
+
+    const preview = {
+      summary: `Save LinkedIn post ${postUrl} for later`,
+      target,
+      outbound: {
+        action: "save"
+      },
+      rate_limit: formatRateLimitState(rateLimitState)
+    } satisfies Record<string, unknown>;
+
+    return this.runtime.twoPhaseCommit.prepare({
+      actionType: SAVE_POST_ACTION_TYPE,
+      target,
+      payload: {},
+      preview,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+  }
+
+  prepareUnsavePost(input: UnsavePostInput): {
+    preparedActionId: string;
+    confirmToken: string;
+    expiresAtMs: number;
+    preview: Record<string, unknown>;
+  } {
+    const profileName = input.profileName ?? "default";
+    const postUrl = resolvePostUrl(input.postUrl);
+    const rateLimitState = this.runtime.rateLimiter.peek(UNSAVE_RATE_LIMIT_CONFIG);
+
+    const target = {
+      profile_name: profileName,
+      post_url: postUrl
+    };
+
+    const preview = {
+      summary: `Unsave LinkedIn post ${postUrl}`,
+      target,
+      outbound: {
+        action: "unsave"
+      },
+      rate_limit: formatRateLimitState(rateLimitState)
+    } satisfies Record<string, unknown>;
+
+    return this.runtime.twoPhaseCommit.prepare({
+      actionType: UNSAVE_POST_ACTION_TYPE,
+      target,
+      payload: {},
+      preview,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+  }
+
+  prepareRemoveReaction(input: RemoveReactionInput): {
+    preparedActionId: string;
+    confirmToken: string;
+    expiresAtMs: number;
+    preview: Record<string, unknown>;
+  } {
+    const profileName = input.profileName ?? "default";
+    const postUrl = resolvePostUrl(input.postUrl);
+    const rateLimitState = this.runtime.rateLimiter.peek(
+      REMOVE_REACTION_RATE_LIMIT_CONFIG
+    );
+
+    const target = {
+      profile_name: profileName,
+      post_url: postUrl
+    };
+
+    const preview = {
+      summary: `Remove your reaction from LinkedIn post ${postUrl}`,
+      target,
+      outbound: {
+        action: "remove_reaction"
+      },
+      rate_limit: formatRateLimitState(rateLimitState)
+    } satisfies Record<string, unknown>;
+
+    return this.runtime.twoPhaseCommit.prepare({
+      actionType: REMOVE_REACTION_ACTION_TYPE,
+      target,
+      payload: {},
       preview,
       ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
     });
