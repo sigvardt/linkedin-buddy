@@ -29,6 +29,26 @@ export const HONEYPOT_SELECTORS = [
   "input[aria-hidden='true']"
 ] as const;
 
+export function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+export function normalizeFiniteNumber(value: number, fallback = 0): number {
+  return isFiniteNumber(value) ? value : fallback;
+}
+
 export function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
+  const safeMin = Number.isFinite(min) ? min : Number.NEGATIVE_INFINITY;
+  const safeMax = Number.isFinite(max) ? max : Number.POSITIVE_INFINITY;
+  const lower = Math.min(safeMin, safeMax);
+  const upper = Math.max(safeMin, safeMax);
+  const safeValue = Number.isFinite(value)
+    ? value
+    : value === Number.POSITIVE_INFINITY
+      ? upper
+      : value === Number.NEGATIVE_INFINITY
+        ? lower
+        : lower;
+
+  return Math.min(upper, Math.max(lower, safeValue));
 }

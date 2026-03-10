@@ -2,4 +2,10 @@ export { applyFingerprintHardening, detectCaptcha, findHoneypotFields, simulateI
 export { computeBezierPath, computeReadingPauseMs, samplePoissonInterval } from "./evasion/math.js";
 export { EVASION_PROFILES } from "./evasion/profiles.js";
 export { EvasionSession } from "./evasion/session.js";
-export type { BezierPathOptions, EvasionLevel, EvasionProfile, Point2D } from "./evasion/types.js";
+export type {
+  BezierPathOptions,
+  EvasionLevel,
+  EvasionProfile,
+  IntervalSampleOptions,
+  Point2D
+} from "./evasion/types.js";

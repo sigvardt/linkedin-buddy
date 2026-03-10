@@ -36,6 +36,24 @@ export interface BezierPathOptions {
   seed?: number;
 }
 
+/** Optional guards and backoff hints for sampled action intervals. */
+export interface IntervalSampleOptions {
+  /** Lower bound for the returned interval in milliseconds. */
+  minIntervalMs?: number;
+  /** Upper bound for the returned interval in milliseconds. */
+  maxIntervalMs?: number;
+  /** Existing keep-alive cadence to respect when backing off. */
+  keepAliveIntervalMs?: number;
+  /** Server-provided retry hint in milliseconds, when available. */
+  retryAfterMs?: number;
+  /** Response status associated with the interval, such as `429` or `999`. */
+  responseStatus?: number;
+  /** Explicit rate-limit signal when a response status is unavailable. */
+  rateLimited?: boolean;
+  /** Multiplier applied to the base interval when rate limited. Defaults to `2`. */
+  rateLimitBackoffMultiplier?: number;
+}
+
 /** Configurable detection-evasion parameters. */
 export interface EvasionProfile {
   /** Whether to use cubic Bezier curves instead of straight-line mouse moves. */

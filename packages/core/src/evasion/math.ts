@@ -3,9 +3,13 @@ import {
   MAX_BEZIER_STEPS,
   MAX_READING_WPM,
   MIN_BEZIER_STEPS,
-  clamp
+  clamp,
+  normalizeFiniteNumber
 } from "./shared.js";
-import type { BezierPathOptions, Point2D } from "./types.js";
+import type { BezierPathOptions, IntervalSampleOptions, Point2D } from "./types.js";
+
+const ORIGIN_POINT: Readonly<Point2D> = Object.freeze({ x: 0, y: 0 });
+const RATE_LIMIT_STATUS_CODES = new Set([429, 999]);
 
 /**
  * Compute a cubic Bezier mouse path from `from` to `to`.
@@ -27,12 +31,14 @@ export function computeBezierPath(
   to: Readonly<Point2D>,
   options?: BezierPathOptions
 ): readonly Point2D[] {
-  const steps = clamp(options?.steps ?? 20, MIN_BEZIER_STEPS, MAX_BEZIER_STEPS);
+  const safeFrom = normalizePoint(from);
+  const safeTo = normalizePoint(to, safeFrom);
+  const steps = Math.round(clamp(options?.steps ?? 20, MIN_BEZIER_STEPS, MAX_BEZIER_STEPS));
   const overshootFactor = clamp(options?.overshootFactor ?? 0, 0, 1);
   const rand = options?.seed !== undefined ? makeSeededRandom(options.seed) : Math.random;
 
-  const dx = to.x - from.x;
-  const dy = to.y - from.y;
+  const dx = safeTo.x - safeFrom.x;
+  const dy = safeTo.y - safeFrom.y;
   const dist = Math.hypot(dx, dy);
 
   const perpX = dist > 0 ? -dy / dist : 0;
@@ -40,31 +46,31 @@ export function computeBezierPath(
   const deviation1 = dist * 0.3 * (rand() - 0.5);
   const deviation2 = dist * 0.2 * (rand() - 0.5);
   const cp1: Point2D = {
-    x: lerp(from.x, to.x, 0.25) + perpX * deviation1,
-    y: lerp(from.y, to.y, 0.25) + perpY * deviation1
+    x: lerp(safeFrom.x, safeTo.x, 0.25) + perpX * deviation1,
+    y: lerp(safeFrom.y, safeTo.y, 0.25) + perpY * deviation1
   };
   const cp2: Point2D = {
-    x: lerp(from.x, to.x, 0.75) + perpX * deviation2,
-    y: lerp(from.y, to.y, 0.75) + perpY * deviation2
+    x: lerp(safeFrom.x, safeTo.x, 0.75) + perpX * deviation2,
+    y: lerp(safeFrom.y, safeTo.y, 0.75) + perpY * deviation2
   };
 
   const overshootEnabled = overshootFactor > 0;
   const overshootTarget: Point2D = overshootEnabled
     ? {
-        x: to.x + dx * overshootFactor * 0.2 * rand(),
-        y: to.y + dy * overshootFactor * 0.2 * rand()
+        x: safeTo.x + dx * overshootFactor * 0.2 * rand(),
+        y: safeTo.y + dy * overshootFactor * 0.2 * rand()
       }
-    : to;
-  const mainSteps = overshootEnabled ? Math.ceil(steps * 0.8) : steps;
+    : safeTo;
+  const mainSteps = Math.max(1, overshootEnabled ? Math.ceil(steps * 0.8) : steps);
   const points: Point2D[] = [];
 
   for (let i = 0; i <= mainSteps; i++) {
     const t = i / mainSteps;
-    points.push(evaluateCubicBezier(from, cp1, cp2, overshootTarget, t));
+    points.push(evaluateCubicBezier(safeFrom, cp1, cp2, overshootTarget, t));
   }
 
   if (overshootEnabled) {
-    appendCorrectionPoints(points, overshootTarget, to, steps - mainSteps);
+    appendCorrectionPoints(points, overshootTarget, safeTo, steps - mainSteps);
   }
 
   return points;
@@ -77,16 +83,22 @@ export function computeBezierPath(
  * distributions that better resemble human action timing than uniform random
  * or constant delays.
  *
+ * Optional constraints can clamp the sample, respect existing keep-alive
+ * cadences, and apply rate-limit backoff for `429` / `999` style responses.
+ *
  * @param meanMs - Expected average interval in milliseconds.
+ * @param options - Optional bounds and rate-limit hints.
  * @returns Sampled interval in milliseconds (≥ 0).
  */
-export function samplePoissonInterval(meanMs: number): number {
-  if (meanMs <= 0) {
+export function samplePoissonInterval(meanMs: number, options?: IntervalSampleOptions): number {
+  const safeMeanMs = Math.max(0, normalizeFiniteNumber(meanMs, 0));
+  if (safeMeanMs <= 0) {
     return 0;
   }
 
   const u = Math.max(Number.EPSILON, Math.random());
-  return -Math.log(u) * meanMs;
+  const sampledMs = -Math.log(u) * safeMeanMs;
+  return applyIntervalConstraints(sampledMs, safeMeanMs, options);
 }
 
 /**
@@ -101,22 +113,33 @@ export function samplePoissonInterval(meanMs: number): number {
  * @returns Estimated reading time in milliseconds (≥ 0).
  */
 export function computeReadingPauseMs(charCount: number, wpm: number): number {
-  if (charCount <= 0 || wpm <= 0) {
+  const safeCharCount = Math.max(0, normalizeFiniteNumber(charCount, 0));
+  const clampedWpm = clamp(wpm, 0, MAX_READING_WPM);
+  if (safeCharCount <= 0 || clampedWpm <= 0) {
     return 0;
   }
 
-  const clampedWpm = clamp(wpm, 0, MAX_READING_WPM);
-  const words = charCount / CHARS_PER_WORD;
+  const words = safeCharCount / CHARS_PER_WORD;
   const minutes = words / clampedWpm;
   return Math.round(minutes * 60_000);
 }
 
 export function computeMomentumSteps(totalPixels: number, steps: number): number[] {
+  const safeTotalPixels = normalizeFiniteNumber(totalPixels, 0);
+  if (safeTotalPixels === 0) {
+    return [];
+  }
+
+  const safeSteps = Math.max(1, Math.floor(normalizeFiniteNumber(steps, 1)));
+  if (safeSteps === 1) {
+    return [safeTotalPixels];
+  }
+
   const amounts: number[] = [];
-  let remaining = totalPixels;
+  let remaining = safeTotalPixels;
   const decayFactor = 0.55;
 
-  for (let i = 0; i < steps - 1; i++) {
+  for (let index = 0; index < safeSteps - 1; index++) {
     const amount = remaining * decayFactor;
     amounts.push(amount);
     remaining -= amount;
@@ -126,14 +149,19 @@ export function computeMomentumSteps(totalPixels: number, steps: number): number
   return amounts;
 }
 
+export function resolveIntervalMs(baseMs: number, options?: IntervalSampleOptions): number {
+  const safeBaseMs = Math.max(0, normalizeFiniteNumber(baseMs, 0));
+  return applyIntervalConstraints(safeBaseMs, safeBaseMs, options);
+}
+
 function appendCorrectionPoints(
   points: Point2D[],
   overshootTarget: Readonly<Point2D>,
   to: Readonly<Point2D>,
   correctionSteps: number
 ): void {
-  for (let i = 1; i <= correctionSteps; i++) {
-    const t = i / Math.max(1, correctionSteps);
+  for (let index = 1; index <= correctionSteps; index++) {
+    const t = index / Math.max(1, correctionSteps);
     points.push({
       x: lerp(overshootTarget.x, to.x, t),
       y: lerp(overshootTarget.y, to.y, t)
@@ -175,4 +203,59 @@ function makeSeededRandom(seed: number): () => number {
     state ^= state << 5;
     return (state >>> 0) / 0x100000000;
   };
+}
+
+function normalizePoint(
+  point: Readonly<Point2D>,
+  fallback: Readonly<Point2D> = ORIGIN_POINT
+): Point2D {
+  return {
+    x: normalizeFiniteNumber(point.x, fallback.x),
+    y: normalizeFiniteNumber(point.y, fallback.y)
+  };
+}
+
+function applyIntervalConstraints(
+  intervalMs: number,
+  baseMs: number,
+  options?: IntervalSampleOptions
+): number {
+  const safeBaseMs = Math.max(0, normalizeFiniteNumber(baseMs, 0));
+  const safeIntervalMs = Math.max(0, normalizeFiniteNumber(intervalMs, safeBaseMs));
+  const minIntervalMs = Math.max(0, normalizeFiniteNumber(options?.minIntervalMs ?? 0, 0));
+  const maxIntervalMs = resolveMaxIntervalMs(options?.maxIntervalMs);
+  const keepAliveIntervalMs = Math.max(
+    0,
+    normalizeFiniteNumber(options?.keepAliveIntervalMs ?? 0, 0)
+  );
+  const retryAfterMs = Math.max(0, normalizeFiniteNumber(options?.retryAfterMs ?? 0, 0));
+  const backoffMultiplier = clamp(options?.rateLimitBackoffMultiplier ?? 2, 1, 10);
+  const rateLimitFloor = isRateLimited(options)
+    ? Math.max(retryAfterMs, keepAliveIntervalMs, safeBaseMs * backoffMultiplier)
+    : 0;
+  const effectiveMinIntervalMs = Math.max(minIntervalMs, rateLimitFloor);
+  const effectiveMaxIntervalMs = Math.max(effectiveMinIntervalMs, maxIntervalMs);
+
+  return clamp(safeIntervalMs, effectiveMinIntervalMs, effectiveMaxIntervalMs);
+}
+
+function isRateLimited(options?: IntervalSampleOptions): boolean {
+  if (!options) {
+    return false;
+  }
+
+  return (
+    options.rateLimited === true ||
+    RATE_LIMIT_STATUS_CODES.has(Math.trunc(normalizeFiniteNumber(options.responseStatus ?? 0, 0))) ||
+    (options.retryAfterMs ?? 0) > 0
+  );
+}
+
+function resolveMaxIntervalMs(maxIntervalMs: number | undefined): number {
+  if (maxIntervalMs === undefined) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const safeMaxIntervalMs = normalizeFiniteNumber(maxIntervalMs, Number.POSITIVE_INFINITY);
+  return safeMaxIntervalMs >= 0 ? safeMaxIntervalMs : Number.POSITIVE_INFINITY;
 }
