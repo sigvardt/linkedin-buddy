@@ -41,6 +41,7 @@ import {
   LinkedInProfileService,
   type LinkedInProfileRuntime
 } from "./linkedinProfile.js";
+import { LinkedInImageAssetsService } from "./linkedinImageAssets.js";
 import {
   LinkedInJobsService,
   type LinkedInJobsRuntime
@@ -150,6 +151,7 @@ export interface CoreRuntime {
   profileManager: ProfileManager;
   auth: LinkedInAuthService;
   profile: LinkedInProfileService;
+  imageAssets: LinkedInImageAssetsService;
   search: LinkedInSearchService;
   jobs: LinkedInJobsService;
   notifications: LinkedInNotificationsService;
@@ -301,6 +303,7 @@ export function createCoreRuntime(
       evasion
     ),
     profile: undefined as unknown as LinkedInProfileService,
+    imageAssets: undefined as unknown as LinkedInImageAssetsService,
     search: undefined as unknown as LinkedInSearchService,
     jobs: undefined as unknown as LinkedInJobsService,
     notifications: undefined as unknown as LinkedInNotificationsService,
@@ -339,6 +342,26 @@ export function createCoreRuntime(
 
   const profileRuntime: LinkedInProfileRuntime = runtime;
   runtime.profile = new LinkedInProfileService(profileRuntime);
+  runtime.imageAssets = new LinkedInImageAssetsService(
+    {
+      logger,
+      artifacts,
+      profile: runtime.profile,
+      confirmPreparedAction: (confirmToken) =>
+        runtime.twoPhaseCommit.confirmByToken({ confirmToken })
+    },
+    {
+      ...(process.env.OPENAI_API_KEY
+        ? { apiKey: process.env.OPENAI_API_KEY }
+        : {}),
+      ...(process.env.OPENAI_BASE_URL
+        ? { baseUrl: process.env.OPENAI_BASE_URL }
+        : {}),
+      ...(process.env.LINKEDIN_ASSISTANT_OPENAI_IMAGE_MODEL
+        ? { defaultModel: process.env.LINKEDIN_ASSISTANT_OPENAI_IMAGE_MODEL }
+        : {})
+    }
+  );
   const searchRuntime: LinkedInSearchRuntime = runtime;
   runtime.search = new LinkedInSearchService(searchRuntime);
   const jobsRuntime: LinkedInJobsRuntime = runtime;

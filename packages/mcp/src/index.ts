@@ -29,6 +29,8 @@ export const LINKEDIN_PROFILE_PREPARE_FEATURED_REMOVE_TOOL =
   "linkedin.profile.prepare_featured_remove";
 export const LINKEDIN_PROFILE_PREPARE_FEATURED_REORDER_TOOL =
   "linkedin.profile.prepare_featured_reorder";
+export const LINKEDIN_ASSETS_GENERATE_PROFILE_IMAGES_TOOL =
+  "linkedin.assets.generate_profile_images";
 export const LINKEDIN_SEARCH_TOOL = "linkedin.search";
 export const LINKEDIN_CONNECTIONS_LIST_TOOL = "linkedin.connections.list";
 export const LINKEDIN_CONNECTIONS_PENDING_TOOL = "linkedin.connections.pending";

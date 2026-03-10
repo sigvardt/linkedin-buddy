@@ -19,10 +19,12 @@
     "better-sqlite3": "^11.9.0",
     "fflate": "^0.8.2",
     "playwright-core": "^1.50.1",
+    "pngjs": "^7.0.0",
     "proper-lockfile": "^4.1.2"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
+    "@types/pngjs": "^6.0.5",
     "@types/proper-lockfile": "^4.1.4"
   }
 }
