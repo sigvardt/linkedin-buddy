@@ -98,6 +98,13 @@ export const LINKEDIN_POST_PREPARE_DELETE_TOOL = "linkedin.post.prepare_delete";
 export const LINKEDIN_NOTIFICATIONS_LIST_TOOL = "linkedin.notifications.list";
 export const LINKEDIN_JOBS_SEARCH_TOOL = "linkedin.jobs.search";
 export const LINKEDIN_JOBS_VIEW_TOOL = "linkedin.jobs.view";
+export const LINKEDIN_JOBS_SAVE_TOOL = "linkedin.jobs.save";
+export const LINKEDIN_JOBS_UNSAVE_TOOL = "linkedin.jobs.unsave";
+export const LINKEDIN_JOBS_ALERTS_CREATE_TOOL = "linkedin.jobs.alerts.create";
+export const LINKEDIN_JOBS_ALERTS_LIST_TOOL = "linkedin.jobs.alerts.list";
+export const LINKEDIN_JOBS_ALERTS_REMOVE_TOOL = "linkedin.jobs.alerts.remove";
+export const LINKEDIN_JOBS_PREPARE_EASY_APPLY_TOOL =
+  "linkedin.jobs.prepare_easy_apply";
 export const LINKEDIN_ACTIVITY_WATCH_CREATE_TOOL = "linkedin.activity_watch.create";
 export const LINKEDIN_ACTIVITY_WATCH_LIST_TOOL = "linkedin.activity_watch.list";
 export const LINKEDIN_ACTIVITY_WATCH_PAUSE_TOOL = "linkedin.activity_watch.pause";

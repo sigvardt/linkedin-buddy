@@ -2,6 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   LINKEDIN_COMPANY_PREPARE_FOLLOW_TOOL,
   LINKEDIN_COMPANY_VIEW_TOOL,
+  LINKEDIN_JOBS_ALERTS_CREATE_TOOL,
+  LINKEDIN_JOBS_ALERTS_LIST_TOOL,
+  LINKEDIN_JOBS_ALERTS_REMOVE_TOOL,
+  LINKEDIN_JOBS_PREPARE_EASY_APPLY_TOOL,
+  LINKEDIN_JOBS_SAVE_TOOL,
+  LINKEDIN_JOBS_UNSAVE_TOOL,
   LINKEDIN_MEMBERS_PREPARE_REPORT_TOOL,
   LINKEDIN_PRIVACY_GET_SETTINGS_TOOL
 } from "../index.js";
@@ -26,6 +32,14 @@ interface FakeRuntime {
     prepareFollowCompanyPage: ReturnType<typeof vi.fn>;
     viewCompanyPage: ReturnType<typeof vi.fn>;
   };
+  jobs: {
+    listJobAlerts: ReturnType<typeof vi.fn>;
+    prepareCreateJobAlert: ReturnType<typeof vi.fn>;
+    prepareEasyApply: ReturnType<typeof vi.fn>;
+    prepareRemoveJobAlert: ReturnType<typeof vi.fn>;
+    prepareSaveJob: ReturnType<typeof vi.fn>;
+    prepareUnsaveJob: ReturnType<typeof vi.fn>;
+  };
   logger: {
     log: ReturnType<typeof vi.fn>;
   };
@@ -38,6 +52,17 @@ interface FakeRuntime {
   runId: string;
 }
 
+function createPreparedResult(summary: string) {
+  return {
+    preparedActionId: "pa_test",
+    confirmToken: "ct_test",
+    expiresAtMs: 123,
+    preview: {
+      summary
+    }
+  };
+}
+
 function createFakeRuntime(): FakeRuntime {
   return {
     runId: "run_test",
@@ -45,6 +70,14 @@ function createFakeRuntime(): FakeRuntime {
     companyPages: {
       prepareFollowCompanyPage: vi.fn(),
       viewCompanyPage: vi.fn()
+    },
+    jobs: {
+      listJobAlerts: vi.fn(),
+      prepareCreateJobAlert: vi.fn(),
+      prepareEasyApply: vi.fn(),
+      prepareRemoveJobAlert: vi.fn(),
+      prepareSaveJob: vi.fn(),
+      prepareUnsaveJob: vi.fn()
     },
     logger: {
       log: vi.fn()
@@ -115,14 +148,9 @@ describe("handleToolCall", () => {
   });
 
   it("prepares member report actions through the MCP contract", async () => {
-    fakeRuntime.members.prepareReportMember.mockReturnValue({
-      preparedActionId: "pa_test",
-      confirmToken: "ct_test",
-      expiresAtMs: 123,
-      preview: {
-        summary: "Report LinkedIn member target-user for spam"
-      }
-    });
+    fakeRuntime.members.prepareReportMember.mockReturnValue(
+      createPreparedResult("Report LinkedIn member target-user for spam")
+    );
 
     const result = await handleToolCall(LINKEDIN_MEMBERS_PREPARE_REPORT_TOOL, {
       profileName: "default",
@@ -188,14 +216,9 @@ describe("handleToolCall", () => {
   });
 
   it("prepares company follow actions through the MCP contract", async () => {
-    fakeRuntime.companyPages.prepareFollowCompanyPage.mockReturnValue({
-      preparedActionId: "pa_company",
-      confirmToken: "ct_company",
-      expiresAtMs: 456,
-      preview: {
-        summary: "Follow company openai"
-      }
-    });
+    fakeRuntime.companyPages.prepareFollowCompanyPage.mockReturnValue(
+      createPreparedResult("Follow company openai")
+    );
 
     const result = await handleToolCall(LINKEDIN_COMPANY_PREPARE_FOLLOW_TOOL, {
       profileName: "default",
@@ -206,13 +229,180 @@ describe("handleToolCall", () => {
     expect(parseToolPayload(result)).toMatchObject({
       run_id: "run_test",
       profile_name: "default",
-      preparedActionId: "pa_company",
-      confirmToken: "ct_company"
+      preparedActionId: "pa_test",
+      confirmToken: "ct_test"
     });
     expect(fakeRuntime.companyPages.prepareFollowCompanyPage).toHaveBeenCalledWith({
       profileName: "default",
       targetCompany: "openai"
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("prepares job save and unsave actions through the MCP contract", async () => {
+    fakeRuntime.jobs.prepareSaveJob.mockReturnValue(
+      createPreparedResult("Save LinkedIn job 1234567890 for later")
+    );
+    fakeRuntime.jobs.prepareUnsaveJob.mockReturnValue(
+      createPreparedResult("Unsave LinkedIn job 1234567890")
+    );
+
+    const saveResult = await handleToolCall(LINKEDIN_JOBS_SAVE_TOOL, {
+      profileName: "default",
+      jobId: "1234567890"
+    });
+    const unsaveResult = await handleToolCall(LINKEDIN_JOBS_UNSAVE_TOOL, {
+      profileName: "jobs-profile",
+      jobId: "1234567890",
+      operatorNote: "cleanup"
+    });
+
+    expect(parseToolPayload(saveResult)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      preparedActionId: "pa_test",
+      confirmToken: "ct_test"
+    });
+    expect(parseToolPayload(unsaveResult)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "jobs-profile",
+      preparedActionId: "pa_test",
+      confirmToken: "ct_test"
+    });
+    expect(fakeRuntime.jobs.prepareSaveJob).toHaveBeenCalledWith({
+      profileName: "default",
+      jobId: "1234567890"
+    });
+    expect(fakeRuntime.jobs.prepareUnsaveJob).toHaveBeenCalledWith({
+      profileName: "jobs-profile",
+      jobId: "1234567890",
+      operatorNote: "cleanup"
+    });
+  });
+
+  it("lists job alerts through the MCP contract", async () => {
+    fakeRuntime.jobs.listJobAlerts.mockResolvedValue({
+      count: 1,
+      alerts: [
+        {
+          alert_id: "ja_123",
+          query: "software engineer",
+          location: "Copenhagen",
+          search_url:
+            "https://www.linkedin.com/jobs/search/?keywords=software%20engineer&location=Copenhagen",
+          filters_text: "Filters: Easy Apply",
+          frequency: "daily",
+          notification_type: "email",
+          frequency_text: "Frequency: Daily via email",
+          include_similar_jobs: false
+        }
+      ]
+    });
+
+    const result = await handleToolCall(LINKEDIN_JOBS_ALERTS_LIST_TOOL, {
+      profileName: "default"
+    });
+
+    expect(parseToolPayload(result)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      count: 1,
+      alerts: [
+        expect.objectContaining({
+          alert_id: "ja_123",
+          query: "software engineer"
+        })
+      ]
+    });
+    expect(fakeRuntime.jobs.listJobAlerts).toHaveBeenCalledWith({
+      profileName: "default"
+    });
+  });
+
+  it("prepares job alert create and remove actions through the MCP contract", async () => {
+    fakeRuntime.jobs.prepareCreateJobAlert.mockReturnValue(
+      createPreparedResult("Create a LinkedIn job alert for software engineer")
+    );
+    fakeRuntime.jobs.prepareRemoveJobAlert.mockReturnValue(
+      createPreparedResult("Remove LinkedIn job alert ja_123")
+    );
+
+    const createResult = await handleToolCall(LINKEDIN_JOBS_ALERTS_CREATE_TOOL, {
+      profileName: "default",
+      query: "software engineer",
+      location: "Copenhagen",
+      frequency: "weekly",
+      notificationType: "email_and_notification",
+      includeSimilarJobs: true
+    });
+    const removeResult = await handleToolCall(LINKEDIN_JOBS_ALERTS_REMOVE_TOOL, {
+      profileName: "default",
+      alertId: "ja_123"
+    });
+
+    expect(parseToolPayload(createResult)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      preparedActionId: "pa_test",
+      confirmToken: "ct_test"
+    });
+    expect(parseToolPayload(removeResult)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      preparedActionId: "pa_test",
+      confirmToken: "ct_test"
+    });
+    expect(fakeRuntime.jobs.prepareCreateJobAlert).toHaveBeenCalledWith({
+      profileName: "default",
+      query: "software engineer",
+      location: "Copenhagen",
+      frequency: "weekly",
+      notificationType: "email_and_notification",
+      includeSimilarJobs: true
+    });
+    expect(fakeRuntime.jobs.prepareRemoveJobAlert).toHaveBeenCalledWith({
+      profileName: "default",
+      alertId: "ja_123"
+    });
+  });
+
+  it("prepares Easy Apply payloads through the MCP contract", async () => {
+    fakeRuntime.jobs.prepareEasyApply.mockResolvedValue(
+      createPreparedResult("Prepare LinkedIn Easy Apply for job 1234567890")
+    );
+
+    const result = await handleToolCall(LINKEDIN_JOBS_PREPARE_EASY_APPLY_TOOL, {
+      profileName: "default",
+      jobId: "1234567890",
+      application: {
+        email: "person@example.com",
+        phoneCountryCode: "+45",
+        phoneNumber: "12345678",
+        answers: {
+          sponsorship_required: false,
+          years_of_experience: "5"
+        }
+      }
+    });
+
+    expect(parseToolPayload(result)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      preparedActionId: "pa_test",
+      confirmToken: "ct_test"
+    });
+    expect(fakeRuntime.jobs.prepareEasyApply).toHaveBeenCalledWith({
+      profileName: "default",
+      jobId: "1234567890",
+      application: {
+        email: "person@example.com",
+        phoneCountryCode: "+45",
+        phoneNumber: "12345678",
+        answers: {
+          sponsorship_required: false,
+          years_of_experience: "5"
+        }
+      }
+    });
   });
 });
