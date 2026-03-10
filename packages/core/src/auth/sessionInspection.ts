@@ -20,16 +20,29 @@ export interface LinkedInSessionInspection {
   sessionCookiePresent: boolean;
 }
 
+/** Best-effort identity snapshot for the authenticated LinkedIn member. */
+export interface LinkedInSessionIdentity {
+  fullName: string | null;
+  profileUrl: string | null;
+  vanityName: string | null;
+}
+
 const LOGIN_FORM_SELECTOR = "input[name='session_key'], input#username";
 const CHECKPOINT_FORM_SELECTOR = "form[action*='checkpoint']";
 const AUTH_NAV_SELECTOR = "nav.global-nav";
 const AUTH_PROFILE_MENU_SELECTOR = "[data-control-name='nav.settings_view_profile']";
+const PROFILE_HEADING_SELECTORS = [
+  "main h1",
+  ".pv-text-details__left-panel h1",
+  "h1"
+];
 const LOGIN_WALL_SELECTOR = [
   "[data-test-id='sign-in-form']",
   ".authwall",
   "form[action*='login-submit']",
   "a[href*='/login'][data-tracking-control-name]"
 ].join(", ");
+const LINKEDIN_PROFILE_SELF_URL = "https://www.linkedin.com/in/me/";
 
 async function isVisibleSafe(page: Page, selector: string): Promise<boolean> {
   try {
@@ -63,6 +76,82 @@ function isCheckpointUrl(url: string): boolean {
     url.includes("/challenge") ||
     isRateLimitedChallengeUrl(url)
   );
+}
+
+function normalizeWhitespace(value: string | null | undefined): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function normalizeLinkedInProfileUrl(value: string | null): string | null {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(value, "https://www.linkedin.com");
+    const vanityMatch = parsed.pathname.match(/^\/in\/([^/?#]+)\/?$/u);
+    if (!vanityMatch) {
+      return null;
+    }
+
+    parsed.hash = "";
+    parsed.search = "";
+    parsed.pathname = `/in/${vanityMatch[1]}/`;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function extractLinkedInVanityName(profileUrl: string | null): string | null {
+  if (!profileUrl) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(profileUrl);
+    const vanityMatch = parsed.pathname.match(/^\/in\/([^/]+)\/$/u);
+    return vanityMatch?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function readFirstNonEmptyText(
+  page: Page,
+  selectors: string[]
+): Promise<string | null> {
+  for (const selector of selectors) {
+    try {
+      const rawText = await page.locator(selector).first().textContent();
+      const normalized = normalizeWhitespace(rawText);
+      if (normalized) {
+        return normalized;
+      }
+    } catch {
+      // Best effort.
+    }
+  }
+
+  return null;
+}
+
+async function readFirstAttribute(
+  page: Page,
+  selector: string,
+  attribute: string
+): Promise<string | null> {
+  try {
+    const value = await page.locator(selector).first().getAttribute(attribute);
+    return normalizeWhitespace(value);
+  } catch {
+    return null;
+  }
 }
 
 async function hasSessionCookie(page: Page): Promise<boolean> {
@@ -159,5 +248,42 @@ export async function inspectLinkedInSession(
     loginWallDetected: false,
     rateLimited: false,
     sessionCookiePresent
+  };
+}
+
+/**
+ * Best-effort extraction of the currently authenticated LinkedIn member's
+ * public identity so operators can verify they are using the intended account.
+ */
+export async function inspectAuthenticatedLinkedInIdentity(
+  page: Page
+): Promise<LinkedInSessionIdentity | undefined> {
+  try {
+    await page.goto(LINKEDIN_PROFILE_SELF_URL, {
+      waitUntil: "domcontentloaded"
+    });
+  } catch {
+    return undefined;
+  }
+
+  const currentUrl = page.url();
+  if (isLoginUrl(currentUrl) || isCheckpointUrl(currentUrl)) {
+    return undefined;
+  }
+
+  const fullName = await readFirstNonEmptyText(page, PROFILE_HEADING_SELECTORS);
+  const profileUrl =
+    normalizeLinkedInProfileUrl(
+      await readFirstAttribute(page, "link[rel='canonical']", "href")
+    ) ?? normalizeLinkedInProfileUrl(currentUrl);
+
+  if (!fullName && !profileUrl) {
+    return undefined;
+  }
+
+  return {
+    fullName,
+    profileUrl,
+    vanityName: extractLinkedInVanityName(profileUrl)
   };
 }

@@ -4,9 +4,15 @@ import { resolveEvasionConfig } from "../config.js";
 import { checkBrowserHealth, checkLinkedInSession } from "../healthCheck.js";
 
 function createMockPage(opts: {
+  getAttribute?: (
+    selector: string,
+    name: string,
+    currentUrl: string
+  ) => string | null;
   url: string;
   evaluateResult?: unknown;
   isVisible?: (selector: string) => boolean;
+  textContent?: (selector: string, currentUrl: string) => string | null;
 }): Page {
   let currentUrl = opts.url;
 
@@ -18,16 +24,27 @@ function createMockPage(opts: {
       return opts.evaluateResult ?? 2;
     }),
     url: vi.fn(() => currentUrl),
-    goto: vi.fn(async () => {
-      currentUrl = opts.url;
+    goto: vi.fn(async (url: string) => {
+      currentUrl =
+        url === "https://www.linkedin.com/in/me/"
+          ? "https://www.linkedin.com/in/test-health/"
+          : opts.url;
     }),
     locator: vi.fn((selector: string) => {
       const visible = opts.isVisible?.(selector) ?? false;
       const isVisible = vi.fn(async () => visible);
+      const textContent = vi.fn(async () => {
+        return opts.textContent?.(selector, currentUrl) ?? null;
+      });
+      const getAttribute = vi.fn(async (name: string) => {
+        return opts.getAttribute?.(selector, name, currentUrl) ?? null;
+      });
       const first = vi.fn();
       const mockLocator = {
         first,
-        isVisible
+        getAttribute,
+        isVisible,
+        textContent
       } as unknown as Locator;
       first.mockReturnValue(mockLocator);
       return mockLocator;
@@ -215,5 +232,42 @@ describe("checkLinkedInSession", () => {
     const status = await checkLinkedInSession(context, { evasion });
 
     expect(status.evasion).toBe(evasion);
+  });
+
+  it("includes the authenticated member identity when the profile page resolves", async () => {
+    const page = createMockPage({
+      url: "https://www.linkedin.com/feed/",
+      getAttribute: (selector, name, currentUrl) => {
+        if (
+          selector === "link[rel='canonical']" &&
+          name === "href" &&
+          currentUrl.includes("/in/test-health/")
+        ) {
+          return "https://www.linkedin.com/in/test-health/";
+        }
+
+        return null;
+      },
+      isVisible: (selector) => selector === "nav.global-nav",
+      textContent: (selector, currentUrl) => {
+        if (selector === "main h1" && currentUrl.includes("/in/test-health/")) {
+          return "Health Check User";
+        }
+
+        return null;
+      }
+    });
+    const context = createMockContext({
+      connected: true,
+      pages: [page]
+    });
+
+    const status = await checkLinkedInSession(context);
+
+    expect(status.identity).toEqual({
+      fullName: "Health Check User",
+      profileUrl: "https://www.linkedin.com/in/test-health/",
+      vanityName: "test-health"
+    });
   });
 });

@@ -21,8 +21,14 @@ vi.mock("../auth/rateLimitState.js", () => ({
 
 function createMockPage(options: {
   initialUrl: string;
+  getAttribute?: (
+    selector: string,
+    name: string,
+    currentUrl: string
+  ) => string | null;
   onWait?: () => void;
   isVisible: (selector: string, currentUrl: string) => boolean;
+  textContent?: (selector: string, currentUrl: string) => string | null;
 }): { page: Page; gotoCalls: string[]; setUrl: (url: string) => void } {
   let currentUrl = options.initialUrl;
   const gotoCalls: string[] = [];
@@ -30,7 +36,10 @@ function createMockPage(options: {
   const page = {
     url: vi.fn(() => currentUrl),
     goto: vi.fn(async (url: string) => {
-      currentUrl = url;
+      currentUrl =
+        url === "https://www.linkedin.com/in/me/"
+          ? "https://www.linkedin.com/in/test-operator/"
+          : url;
       gotoCalls.push(url);
     }),
     waitForTimeout: vi.fn(async () => {
@@ -39,10 +48,18 @@ function createMockPage(options: {
     locator: vi.fn((selector: string) => {
       const visible = options.isVisible(selector, currentUrl);
       const isVisible = vi.fn(async () => visible);
+      const textContent = vi.fn(async () => {
+        return options.textContent?.(selector, currentUrl) ?? null;
+      });
+      const getAttribute = vi.fn(async (name: string) => {
+        return options.getAttribute?.(selector, name, currentUrl) ?? null;
+      });
       const first = vi.fn();
       const mockLocator = {
         first,
-        isVisible
+        getAttribute,
+        isVisible,
+        textContent
       } as unknown as Locator;
       first.mockReturnValue(mockLocator);
       return mockLocator;
@@ -116,7 +133,10 @@ describe("LinkedInAuthService auth flow", () => {
 
     expect(result.authenticated).toBe(true);
     expect(result.timedOut).toBe(false);
-    expect(gotoCalls).toEqual(["https://www.linkedin.com/login"]);
+    expect(gotoCalls).toEqual([
+      "https://www.linkedin.com/login",
+      "https://www.linkedin.com/in/me/"
+    ]);
     expect(rateLimitStateMocks.clearRateLimitState).toHaveBeenCalledTimes(1);
   });
 
@@ -151,6 +171,45 @@ describe("LinkedInAuthService auth flow", () => {
     });
     expect(status.rateLimitActive).toBeUndefined();
     expect(rateLimitStateMocks.clearRateLimitState).toHaveBeenCalledTimes(1);
+  });
+
+  it("status enriches authenticated sessions with member identity", async () => {
+    const { page } = createMockPage({
+      initialUrl: "https://www.linkedin.com/feed/",
+      getAttribute: (selector, name, currentUrl) => {
+        if (
+          selector === "link[rel='canonical']" &&
+          name === "href" &&
+          currentUrl.includes("/in/test-operator/")
+        ) {
+          return "https://www.linkedin.com/in/test-operator/";
+        }
+
+        return null;
+      },
+      isVisible: (selector) => selector === "nav.global-nav",
+      textContent: (selector, currentUrl) => {
+        if (selector === "main h1" && currentUrl.includes("/in/test-operator/")) {
+          return "Test Operator";
+        }
+
+        return null;
+      }
+    });
+
+    const context = createContextWithPage(page);
+    const profileManager = {
+      runWithContext: vi.fn(async (_options, callback) => callback(context))
+    } as const;
+    const auth = new LinkedInAuthService(profileManager as unknown as ProfileManager);
+
+    const status = await auth.status({ profileName: "default" });
+
+    expect(status.identity).toEqual({
+      fullName: "Test Operator",
+      profileUrl: "https://www.linkedin.com/in/test-operator/",
+      vanityName: "test-operator"
+    });
   });
 
   it("ensureAuthenticated throws RATE_LIMITED when session is unauthenticated during cooldown", async () => {

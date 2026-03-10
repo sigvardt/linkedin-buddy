@@ -1,21 +1,46 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BrowserContext, Locator, Page } from "playwright-core";
-import { inspectLinkedInSession } from "../auth/sessionInspection.js";
+import {
+  inspectAuthenticatedLinkedInIdentity,
+  inspectLinkedInSession
+} from "../auth/sessionInspection.js";
 
 function createMockPage(options: {
   url: string;
   cookies?: readonly { name: string; value: string }[];
+  getAttribute?: (
+    selector: string,
+    name: string,
+    currentUrl: string
+  ) => string | null;
   isVisible?: (selector: string) => boolean;
+  textContent?: (selector: string, currentUrl: string) => string | null;
 }): Page {
+  let currentUrl = options.url;
+
   return {
-    url: vi.fn(() => options.url),
+    goto: vi.fn(async (url: string) => {
+      currentUrl =
+        url === "https://www.linkedin.com/in/me/"
+          ? "https://www.linkedin.com/in/test-member/"
+          : url;
+    }),
+    url: vi.fn(() => currentUrl),
     locator: vi.fn((selector: string) => {
       const visible = options.isVisible?.(selector) ?? false;
       const isVisible = vi.fn(async () => visible);
+      const textContent = vi.fn(async () => {
+        return options.textContent?.(selector, currentUrl) ?? null;
+      });
+      const getAttribute = vi.fn(async (name: string) => {
+        return options.getAttribute?.(selector, name, currentUrl) ?? null;
+      });
       const first = vi.fn();
       const mockLocator = {
         first,
-        isVisible
+        getAttribute,
+        isVisible,
+        textContent
       } as unknown as Locator;
       first.mockReturnValue(mockLocator);
       return mockLocator;
@@ -138,5 +163,37 @@ describe("inspectLinkedInSession", () => {
 
     expect(status.authenticated).toBe(true);
     expect(status.reason).toContain("authenticated");
+  });
+
+  it("extracts the authenticated member identity from the self profile page", async () => {
+    const page = createMockPage({
+      url: "https://www.linkedin.com/feed/",
+      getAttribute: (selector, name, currentUrl) => {
+        if (
+          selector === "link[rel='canonical']" &&
+          name === "href" &&
+          currentUrl.includes("/in/test-member/")
+        ) {
+          return "https://www.linkedin.com/in/test-member/";
+        }
+
+        return null;
+      },
+      textContent: (selector, currentUrl) => {
+        if (selector === "main h1" && currentUrl.includes("/in/test-member/")) {
+          return " Test   Member ";
+        }
+
+        return null;
+      }
+    });
+
+    const identity = await inspectAuthenticatedLinkedInIdentity(page);
+
+    expect(identity).toEqual({
+      fullName: "Test Member",
+      profileUrl: "https://www.linkedin.com/in/test-member/",
+      vanityName: "test-member"
+    });
   });
 });

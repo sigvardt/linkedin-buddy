@@ -5,8 +5,10 @@ import { attachHumanizeLogger, detachHumanizeLogger, humanize } from "../humaniz
 import type { JsonEventLogger } from "../logging.js";
 import { ProfileManager } from "../profileManager.js";
 import {
+  inspectAuthenticatedLinkedInIdentity,
   inspectLinkedInSession,
-  isRateLimitedChallengeUrl
+  isRateLimitedChallengeUrl,
+  type LinkedInSessionIdentity
 } from "./sessionInspection.js";
 import {
   DEFAULT_LINKEDIN_SELECTOR_LOCALE,
@@ -27,6 +29,7 @@ export interface SessionStatus {
   currentUrl: string;
   /** Resolved anti-bot evasion status when available. */
   evasion?: EvasionConfig;
+  identity?: LinkedInSessionIdentity;
   loginWallDetected?: boolean;
   reason: string;
   rateLimitActive?: boolean;
@@ -101,6 +104,23 @@ async function sleep(ms: number): Promise<void> {
   });
 }
 
+async function enrichAuthenticatedSessionStatus<T extends { authenticated: boolean }>(
+  page: Page,
+  status: T
+): Promise<T & { identity?: LinkedInSessionIdentity }> {
+  if (!status.authenticated) {
+    return status;
+  }
+
+  const identity = await inspectAuthenticatedLinkedInIdentity(page);
+  return identity
+    ? {
+        ...status,
+        identity
+      }
+    : status;
+}
+
 export class LinkedInAuthService {
   constructor(
     private readonly profileManager: ProfileManager,
@@ -133,7 +153,7 @@ export class LinkedInAuthService {
         if (status.authenticated) {
           await clearRateLimitState();
         }
-        return status;
+        return enrichAuthenticatedSessionStatus(page, status);
       }
     );
 
@@ -305,8 +325,12 @@ export class LinkedInAuthService {
           });
           if (earlyStatus.authenticated) {
             await clearRateLimitState();
+            const resolvedEarlyStatus = await enrichAuthenticatedSessionStatus(
+              page,
+              earlyStatus
+            );
             return {
-              ...earlyStatus,
+              ...resolvedEarlyStatus,
               timedOut: false,
               checkpoint: false
             };
@@ -347,8 +371,12 @@ export class LinkedInAuthService {
 
           if (status.authenticated) {
             await clearRateLimitState();
+            const resolvedStatus = await enrichAuthenticatedSessionStatus(
+              page,
+              status
+            );
             return {
-              ...status,
+              ...resolvedStatus,
               timedOut: false,
               checkpoint: false
             };
@@ -541,11 +569,15 @@ export class LinkedInAuthService {
         const finalStatus = await inspectLinkedInSession(page, {
           selectorLocale: this.selectorLocale
         });
-        if (finalStatus.authenticated) {
+        const resolvedFinalStatus = await enrichAuthenticatedSessionStatus(
+          page,
+          finalStatus
+        );
+        if (resolvedFinalStatus.authenticated) {
           await clearRateLimitState();
         }
         return {
-          ...finalStatus,
+          ...resolvedFinalStatus,
           timedOut: true,
           checkpoint: false
         };
@@ -598,13 +630,15 @@ export class LinkedInAuthService {
           });
         }
 
-        if (status.authenticated) {
+        const resolvedStatus = await enrichAuthenticatedSessionStatus(page, status);
+
+        if (resolvedStatus.authenticated) {
           await clearRateLimitState();
         }
 
         return {
-          ...status,
-          timedOut: !status.authenticated
+          ...resolvedStatus,
+          timedOut: !resolvedStatus.authenticated
         };
       }
     );
