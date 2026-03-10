@@ -401,6 +401,22 @@ function collectFixtureReplayPageTypes(
   return [...previous, ...nextValues];
 }
 
+function collectNonEmptyStrings(value: string, previous: string[]): string[] {
+  const nextValues = value
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+
+  if (nextValues.length === 0) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      "Option must include at least one value when provided."
+    );
+  }
+
+  return [...previous, ...nextValues];
+}
+
 function uniqueFixtureReplayPageTypes(
   pageTypes: LinkedInReplayPageType[]
 ): LinkedInReplayPageType[] {
@@ -4797,6 +4813,114 @@ async function runPrepareReply(input: {
   }
 }
 
+async function runInboxSearchRecipients(input: {
+  profileName: string;
+  query: string;
+  limit: number;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.inbox.search_recipients.start", {
+      limit: input.limit,
+      profileName: input.profileName,
+      query: input.query
+    });
+
+    const result = await runtime.inbox.searchRecipients({
+      profileName: input.profileName,
+      query: input.query,
+      limit: input.limit
+    });
+
+    runtime.logger.log("info", "cli.inbox.search_recipients.done", {
+      count: result.count,
+      profileName: input.profileName,
+      query: input.query
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...result
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runPrepareNewThread(input: {
+  profileName: string;
+  recipients: string[];
+  text: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.inbox.prepare_new_thread.start", {
+      profileName: input.profileName,
+      recipientCount: input.recipients.length
+    });
+
+    const prepared = await runtime.inbox.prepareNewThread({
+      profileName: input.profileName,
+      recipients: input.recipients,
+      text: input.text
+    });
+
+    runtime.logger.log("info", "cli.inbox.prepare_new_thread.done", {
+      preparedActionId: prepared.preparedActionId,
+      profileName: input.profileName,
+      recipientCount: input.recipients.length
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runPrepareAddRecipients(input: {
+  profileName: string;
+  recipients: string[];
+  thread: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.inbox.prepare_add_recipients.start", {
+      profileName: input.profileName,
+      recipientCount: input.recipients.length,
+      thread: input.thread
+    });
+
+    const prepared = await runtime.inbox.prepareAddRecipients({
+      profileName: input.profileName,
+      recipients: input.recipients,
+      thread: input.thread
+    });
+
+    runtime.logger.log("info", "cli.inbox.prepare_add_recipients.done", {
+      preparedActionId: prepared.preparedActionId,
+      profileName: input.profileName,
+      recipientCount: input.recipients.length,
+      thread: input.thread
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 async function runConnectionsList(input: {
   profileName: string;
   limit: number;
@@ -7068,6 +7192,22 @@ export function createCliProgram(): Command {
     .description("List and inspect LinkedIn inbox threads");
 
   inboxCommand
+    .command("search-recipients")
+    .description("Search LinkedIn recipients for new messaging flows")
+    .requiredOption("--query <query>", "Recipient search keywords")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-l, --limit <limit>", "Max recipients", "10")
+    .action(
+      async (options: { profile: string; query: string; limit: string }) => {
+        await runInboxSearchRecipients({
+          profileName: options.profile,
+          query: options.query,
+          limit: coercePositiveInt(options.limit, "limit")
+        }, readCdpUrl());
+      }
+    );
+
+  inboxCommand
     .command("list")
     .description("List inbox threads")
     .option("-p, --profile <profile>", "Profile name", "default")
@@ -7100,6 +7240,27 @@ export function createCliProgram(): Command {
     );
 
   inboxCommand
+    .command("prepare-new-thread")
+    .description("Prepare a two-phase first message for a new LinkedIn thread")
+    .requiredOption(
+      "-r, --recipient <recipient>",
+      "LinkedIn profile URL, /in/ path, or vanity name",
+      collectNonEmptyStrings,
+      [] as string[]
+    )
+    .requiredOption("--text <text>", "First message text")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(
+      async (options: { profile: string; recipient: string[]; text: string }) => {
+        await runPrepareNewThread({
+          profileName: options.profile,
+          recipients: options.recipient,
+          text: options.text
+        }, readCdpUrl());
+      }
+    );
+
+  inboxCommand
     .command("prepare-reply")
     .description("Prepare a two-phase send_message action for a thread")
     .requiredOption("--thread <thread>", "Thread id or LinkedIn thread URL")
@@ -7111,6 +7272,27 @@ export function createCliProgram(): Command {
           profileName: options.profile,
           thread: options.thread,
           text: options.text
+        }, readCdpUrl());
+      }
+    );
+
+  inboxCommand
+    .command("prepare-add-recipients")
+    .description("Prepare a two-phase recipient update for an existing thread")
+    .requiredOption("--thread <thread>", "Thread id or LinkedIn thread URL")
+    .requiredOption(
+      "-r, --recipient <recipient>",
+      "LinkedIn profile URL, /in/ path, or vanity name",
+      collectNonEmptyStrings,
+      [] as string[]
+    )
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(
+      async (options: { profile: string; recipient: string[]; thread: string }) => {
+        await runPrepareAddRecipients({
+          profileName: options.profile,
+          recipients: options.recipient,
+          thread: options.thread
         }, readCdpUrl());
       }
     );

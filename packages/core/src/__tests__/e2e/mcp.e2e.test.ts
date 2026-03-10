@@ -85,6 +85,17 @@ describe.sequential("MCP E2E", () => {
       }
     });
 
+    const searchRecipients = await callMcpTool(MCP_TOOL_NAMES.inboxSearchRecipients, {
+      profileName,
+      query: "Simon Miller",
+      limit: 5
+    });
+    expect(searchRecipients.isError).toBe(false);
+    expect(searchRecipients.payload).toMatchObject({
+      profile_name: profileName,
+      recipients: expect.any(Array)
+    });
+
     const prepareReply = await callMcpTool(MCP_TOOL_NAMES.inboxPrepareReply, {
       profileName,
       thread: fixtures.threadId,
@@ -92,6 +103,36 @@ describe.sequential("MCP E2E", () => {
     });
     expect(prepareReply.isError).toBe(false);
     expect(prepareReply.payload).toMatchObject({
+      profile_name: profileName,
+      preparedActionId: expect.stringMatching(/^pa_/),
+      confirmToken: expect.stringMatching(/^ct_/)
+    });
+
+    const prepareNewThread = await callMcpTool(
+      MCP_TOOL_NAMES.inboxPrepareNewThread,
+      {
+        profileName,
+        recipients: [fixtures.connectionTarget],
+        text: `MCP new thread preview [${Date.now()}]`
+      }
+    );
+    expect(prepareNewThread.isError).toBe(false);
+    expect(prepareNewThread.payload).toMatchObject({
+      profile_name: profileName,
+      preparedActionId: expect.stringMatching(/^pa_/),
+      confirmToken: expect.stringMatching(/^ct_/)
+    });
+
+    const prepareAddRecipients = await callMcpTool(
+      MCP_TOOL_NAMES.inboxPrepareAddRecipients,
+      {
+        profileName,
+        thread: fixtures.threadId,
+        recipients: [fixtures.connectionTarget]
+      }
+    );
+    expect(prepareAddRecipients.isError).toBe(false);
+    expect(prepareAddRecipients.payload).toMatchObject({
       profile_name: profileName,
       preparedActionId: expect.stringMatching(/^pa_/),
       confirmToken: expect.stringMatching(/^ct_/)

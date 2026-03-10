@@ -3,7 +3,13 @@ export const LINKEDIN_SESSION_OPEN_LOGIN_TOOL = "linkedin.session.open_login";
 export const LINKEDIN_SESSION_HEALTH_TOOL = "linkedin.session.health";
 export const LINKEDIN_INBOX_LIST_THREADS_TOOL = "linkedin.inbox.list_threads";
 export const LINKEDIN_INBOX_GET_THREAD_TOOL = "linkedin.inbox.get_thread";
+export const LINKEDIN_INBOX_SEARCH_RECIPIENTS_TOOL =
+  "linkedin.inbox.search_recipients";
 export const LINKEDIN_INBOX_PREPARE_REPLY_TOOL = "linkedin.inbox.prepare_reply";
+export const LINKEDIN_INBOX_PREPARE_NEW_THREAD_TOOL =
+  "linkedin.inbox.prepare_new_thread";
+export const LINKEDIN_INBOX_PREPARE_ADD_RECIPIENTS_TOOL =
+  "linkedin.inbox.prepare_add_recipients";
 export const LINKEDIN_ACTIONS_CONFIRM_TOOL = "linkedin.actions.confirm";
 export const LINKEDIN_PROFILE_VIEW_TOOL = "linkedin.profile.view";
 export const LINKEDIN_PROFILE_VIEW_EDITABLE_TOOL = "linkedin.profile.view_editable";
