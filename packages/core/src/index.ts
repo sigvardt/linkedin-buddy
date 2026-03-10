@@ -21,6 +21,7 @@ export * from "./keepAlive.js";
 export * from "./localData.js";
 export * from "./liveValidation.js";
 export * from "./linkedinConnections.js";
+export * from "./linkedinCompanyPages.js";
 export * from "./linkedinFeed.js";
 export * from "./linkedinFollowups.js";
 export * from "./linkedinImageAssets.js";

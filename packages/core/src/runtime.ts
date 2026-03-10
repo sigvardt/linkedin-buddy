@@ -22,6 +22,11 @@ import {
   type LinkedInConnectionsRuntime
 } from "./linkedinConnections.js";
 import {
+  createCompanyPageActionExecutors,
+  LinkedInCompanyPagesService,
+  type LinkedInCompanyPagesRuntime
+} from "./linkedinCompanyPages.js";
+import {
   createMemberActionExecutors,
   LinkedInMembersService,
   type LinkedInMembersRuntime
@@ -161,6 +166,7 @@ export interface CoreRuntime {
   profileManager: ProfileManager;
   auth: LinkedInAuthService;
   profile: LinkedInProfileService;
+  companyPages: LinkedInCompanyPagesService;
   imageAssets: LinkedInImageAssetsService;
   search: LinkedInSearchService;
   jobs: LinkedInJobsService;
@@ -264,6 +270,10 @@ export function createCoreRuntime(
     string,
     import("./twoPhaseCommit.js").ActionExecutor<LinkedInMessagingRuntime>
   >;
+  const companyPageExecutors = createCompanyPageActionExecutors() as unknown as Record<
+    string,
+    import("./twoPhaseCommit.js").ActionExecutor<LinkedInMessagingRuntime>
+  >;
   const memberExecutors = createMemberActionExecutors() as unknown as Record<
     string,
     import("./twoPhaseCommit.js").ActionExecutor<LinkedInMessagingRuntime>
@@ -292,6 +302,7 @@ export function createCoreRuntime(
       ...linkedInExecutors,
       ...profileExecutors,
       ...connectionExecutors,
+      ...companyPageExecutors,
       ...memberExecutors,
       ...followupExecutors,
       ...feedExecutors,
@@ -326,6 +337,7 @@ export function createCoreRuntime(
       evasion
     ),
     profile: undefined as unknown as LinkedInProfileService,
+    companyPages: undefined as unknown as LinkedInCompanyPagesService,
     imageAssets: undefined as unknown as LinkedInImageAssetsService,
     search: undefined as unknown as LinkedInSearchService,
     jobs: undefined as unknown as LinkedInJobsService,
@@ -367,6 +379,8 @@ export function createCoreRuntime(
 
   const profileRuntime: LinkedInProfileRuntime = runtime;
   runtime.profile = new LinkedInProfileService(profileRuntime);
+  const companyPagesRuntime: LinkedInCompanyPagesRuntime = runtime;
+  runtime.companyPages = new LinkedInCompanyPagesService(companyPagesRuntime);
   runtime.imageAssets = new LinkedInImageAssetsService(
     {
       logger,

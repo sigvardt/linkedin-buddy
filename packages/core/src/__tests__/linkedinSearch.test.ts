@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildSearchUrl } from "../linkedinSearch.js";
+import {
+  SEARCH_CATEGORIES,
+  buildSearchUrl,
+  isSearchCategory
+} from "../linkedinSearch.js";
 
 describe("buildSearchUrl", () => {
   it("builds people search URL", () => {
@@ -20,6 +24,24 @@ describe("buildSearchUrl", () => {
     );
   });
 
+  it("builds posts search URL", () => {
+    expect(buildSearchUrl("OpenAI", "posts")).toBe(
+      "https://www.linkedin.com/search/results/posts/?keywords=OpenAI&skipRedirect=true"
+    );
+  });
+
+  it("builds groups search URL", () => {
+    expect(buildSearchUrl("marketing", "groups")).toBe(
+      "https://www.linkedin.com/search/results/groups/?keywords=marketing"
+    );
+  });
+
+  it("builds events search URL", () => {
+    expect(buildSearchUrl("AI", "events")).toBe(
+      "https://www.linkedin.com/search/results/events/?keywords=AI"
+    );
+  });
+
   it("defaults to people when no category given", () => {
     expect(buildSearchUrl("test")).toBe(
       "https://www.linkedin.com/search/results/people/?keywords=test"
@@ -29,5 +51,21 @@ describe("buildSearchUrl", () => {
   it("encodes special characters", () => {
     const url = buildSearchUrl("C++ developer", "people");
     expect(url).toContain("C%2B%2B");
+  });
+
+  it("exports the supported search categories", () => {
+    expect(SEARCH_CATEGORIES).toEqual([
+      "people",
+      "companies",
+      "jobs",
+      "posts",
+      "groups",
+      "events"
+    ]);
+  });
+
+  it("detects supported search categories", () => {
+    expect(isSearchCategory("groups")).toBe(true);
+    expect(isSearchCategory("topics")).toBe(false);
   });
 });

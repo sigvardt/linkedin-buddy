@@ -18,6 +18,7 @@ import {
   LinkedInAssistantError,
   buildLinkedInImagePersonaFromProfileSeed,
   createCoreRuntime,
+  isSearchCategory,
   normalizeLinkedInFeedReaction,
   normalizeLinkedInInboxReaction,
   normalizeLinkedInMemberReportReason,
@@ -27,6 +28,7 @@ import {
   resolveFollowupSinceWindow,
   redactStructuredValue,
   resolvePrivacyConfig,
+  SEARCH_CATEGORIES,
   toLinkedInAssistantErrorPayload,
   WEBHOOK_DELIVERY_ATTEMPT_STATUSES,
   WEBHOOK_SUBSCRIPTION_STATUSES,
@@ -60,6 +62,9 @@ import {
   LINKEDIN_ACTIVITY_WEBHOOK_PAUSE_TOOL,
   LINKEDIN_ACTIVITY_WEBHOOK_REMOVE_TOOL,
   LINKEDIN_ACTIVITY_WEBHOOK_RESUME_TOOL,
+  LINKEDIN_COMPANY_PREPARE_FOLLOW_TOOL,
+  LINKEDIN_COMPANY_PREPARE_UNFOLLOW_TOOL,
+  LINKEDIN_COMPANY_VIEW_TOOL,
   LINKEDIN_CONNECTIONS_ACCEPT_TOOL,
   LINKEDIN_CONNECTIONS_INVITE_TOOL,
   LINKEDIN_CONNECTIONS_LIST_TOOL,
@@ -425,13 +430,13 @@ function readSearchCategory(
   }
 
   const category = value.trim();
-  if (category === "people" || category === "companies" || category === "jobs") {
+  if (isSearchCategory(category)) {
     return category;
   }
 
   throw new LinkedInAssistantError(
     "ACTION_PRECONDITION_FAILED",
-    `${key} must be one of: people, companies, jobs.`
+    `${key} must be one of: ${SEARCH_CATEGORIES.join(", ")}.`
   );
 }
 
@@ -1052,6 +1057,38 @@ async function handleProfileView(args: ToolArgs): Promise<ToolResult> {
       run_id: runtime.runId,
       profile_name: profileName,
       profile
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleCompanyView(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const target = readRequiredString(args, "target");
+
+    runtime.logger.log("info", "mcp.company.view.start", {
+      profileName,
+      target
+    });
+
+    const company = await runtime.companyPages.viewCompanyPage({
+      profileName,
+      target
+    });
+
+    runtime.logger.log("info", "mcp.company.view.done", {
+      profileName,
+      companyName: company.name
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      company
     });
   } finally {
     runtime.close();
@@ -2149,6 +2186,76 @@ async function handleConnectionsPrepareUnfollow(
     });
 
     runtime.logger.log("info", "mcp.connections.prepare_unfollow.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleCompanyPrepareFollow(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const targetCompany = readRequiredString(args, "targetCompany");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.company.prepare_follow.start", {
+      profileName,
+      targetCompany
+    });
+
+    const prepared = runtime.companyPages.prepareFollowCompanyPage({
+      profileName,
+      targetCompany,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.company.prepare_follow.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleCompanyPrepareUnfollow(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const targetCompany = readRequiredString(args, "targetCompany");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.company.prepare_unfollow.start", {
+      profileName,
+      targetCompany
+    });
+
+    const prepared = runtime.companyPages.prepareUnfollowCompanyPage({
+      profileName,
+      targetCompany,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.company.prepare_unfollow.done", {
       profileName,
       preparedActionId: prepared.preparedActionId
     });
@@ -3625,6 +3732,28 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
+        name: LINKEDIN_COMPANY_VIEW_TOOL,
+        description: withSelectorAuditHint(
+          "View a LinkedIn company page. Returns structured company overview, details, and current follow state."
+        ),
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["target"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            },
+            target: {
+              type: "string",
+              description:
+                "Company slug, /company/ path, or LinkedIn company URL."
+            }
+          })
+        }
+      },
+      {
         name: LINKEDIN_PROFILE_VIEW_TOOL,
         description:
           withSelectorAuditHint(
@@ -4157,7 +4286,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: LINKEDIN_SEARCH_TOOL,
         description: withSelectorAuditHint(
-          "Search LinkedIn for people, companies, or jobs."
+          `Search LinkedIn for ${SEARCH_CATEGORIES.join(", ")}.`
         ),
         inputSchema: {
           type: "object",
@@ -4175,7 +4304,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             category: {
               type: "string",
-              enum: ["people", "companies", "jobs"],
+              enum: [...SEARCH_CATEGORIES],
               description: "Search category. Defaults to people."
             },
             limit: {
@@ -4361,6 +4490,54 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             operatorNote: {
               type: "string",
               description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_COMPANY_PREPARE_FOLLOW_TOOL,
+        description:
+          "Prepare to follow a LinkedIn company page (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["targetCompany"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            },
+            targetCompany: {
+              type: "string",
+              description: "Company slug, /company/ path, or company URL."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Optional note attached to the prepared action."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_COMPANY_PREPARE_UNFOLLOW_TOOL,
+        description:
+          "Prepare to unfollow a LinkedIn company page (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["targetCompany"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            },
+            targetCompany: {
+              type: "string",
+              description: "Company slug, /company/ path, or company URL."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Optional note attached to the prepared action."
             }
           })
         }
@@ -5365,6 +5542,7 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   [LINKEDIN_INBOX_UNARCHIVE_THREAD_TOOL]: handleUnarchiveThread,
   [LINKEDIN_INBOX_MARK_UNREAD_TOOL]: handleMarkUnread,
   [LINKEDIN_INBOX_MUTE_THREAD_TOOL]: handleMuteThread,
+  [LINKEDIN_COMPANY_VIEW_TOOL]: handleCompanyView,
   [LINKEDIN_PROFILE_VIEW_TOOL]: handleProfileView,
   [LINKEDIN_PROFILE_VIEW_EDITABLE_TOOL]: handleProfileViewEditable,
   [LINKEDIN_PROFILE_PREPARE_UPDATE_INTRO_TOOL]: handleProfilePrepareUpdateIntro,
@@ -5398,6 +5576,8 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   [LINKEDIN_CONNECTIONS_WITHDRAW_TOOL]: handleConnectionsWithdraw,
   [LINKEDIN_CONNECTIONS_PREPARE_IGNORE_TOOL]: handleConnectionsPrepareIgnore,
   [LINKEDIN_CONNECTIONS_PREPARE_REMOVE_TOOL]: handleConnectionsPrepareRemove,
+  [LINKEDIN_COMPANY_PREPARE_FOLLOW_TOOL]: handleCompanyPrepareFollow,
+  [LINKEDIN_COMPANY_PREPARE_UNFOLLOW_TOOL]: handleCompanyPrepareUnfollow,
   [LINKEDIN_CONNECTIONS_PREPARE_FOLLOW_TOOL]: handleConnectionsPrepareFollow,
   [LINKEDIN_CONNECTIONS_PREPARE_UNFOLLOW_TOOL]: handleConnectionsPrepareUnfollow,
   [LINKEDIN_MEMBERS_PREPARE_BLOCK_TOOL]: handleMembersPrepareBlock,

@@ -17,6 +17,11 @@ export const LINKEDIN_INBOX_UNARCHIVE_THREAD_TOOL =
 export const LINKEDIN_INBOX_MARK_UNREAD_TOOL = "linkedin.inbox.mark_unread";
 export const LINKEDIN_INBOX_MUTE_THREAD_TOOL = "linkedin.inbox.mute_thread";
 export const LINKEDIN_ACTIONS_CONFIRM_TOOL = "linkedin.actions.confirm";
+export const LINKEDIN_COMPANY_VIEW_TOOL = "linkedin.company.view";
+export const LINKEDIN_COMPANY_PREPARE_FOLLOW_TOOL =
+  "linkedin.company.prepare_follow";
+export const LINKEDIN_COMPANY_PREPARE_UNFOLLOW_TOOL =
+  "linkedin.company.prepare_unfollow";
 export const LINKEDIN_PROFILE_VIEW_TOOL = "linkedin.profile.view";
 export const LINKEDIN_PROFILE_VIEW_EDITABLE_TOOL = "linkedin.profile.view_editable";
 export const LINKEDIN_PROFILE_PREPARE_UPDATE_INTRO_TOOL =

@@ -34,7 +34,48 @@ export interface LinkedInJobResult {
   employment_type: string;
 }
 
-export type SearchCategory = "people" | "companies" | "jobs";
+export interface LinkedInPostSearchResult {
+  author: string;
+  author_headline: string;
+  posted_at: string;
+  text: string;
+  post_url: string;
+  reaction_count: string;
+  comment_count: string;
+}
+
+export interface LinkedInGroupSearchResult {
+  name: string;
+  group_type: string;
+  member_count: string;
+  description: string;
+  group_url: string;
+}
+
+export interface LinkedInEventSearchResult {
+  title: string;
+  date: string;
+  location: string;
+  organizer: string;
+  description: string;
+  attendee_count: string;
+  event_url: string;
+}
+
+export const SEARCH_CATEGORIES = [
+  "people",
+  "companies",
+  "jobs",
+  "posts",
+  "groups",
+  "events"
+] as const;
+
+export type SearchCategory = (typeof SEARCH_CATEGORIES)[number];
+
+export function isSearchCategory(value: string): value is SearchCategory {
+  return (SEARCH_CATEGORIES as readonly string[]).includes(value);
+}
 
 export interface SearchInput {
   profileName?: string;
@@ -64,10 +105,34 @@ export interface SearchJobsResult {
   count: number;
 }
 
+export interface SearchPostsResult {
+  query: string;
+  category: "posts";
+  results: LinkedInPostSearchResult[];
+  count: number;
+}
+
+export interface SearchGroupsResult {
+  query: string;
+  category: "groups";
+  results: LinkedInGroupSearchResult[];
+  count: number;
+}
+
+export interface SearchEventsResult {
+  query: string;
+  category: "events";
+  results: LinkedInEventSearchResult[];
+  count: number;
+}
+
 export type SearchResult =
   | SearchPeopleResult
   | SearchCompaniesResult
-  | SearchJobsResult;
+  | SearchJobsResult
+  | SearchPostsResult
+  | SearchGroupsResult
+  | SearchEventsResult;
 
 export interface LinkedInSearchRuntime {
   auth: LinkedInAuthService;
@@ -121,6 +186,12 @@ export function buildSearchUrl(
       return `https://www.linkedin.com/search/results/companies/?keywords=${encodedQuery}`;
     case "jobs":
       return `https://www.linkedin.com/search/results/jobs/?keywords=${encodedQuery}`;
+    case "posts":
+      return `https://www.linkedin.com/search/results/posts/?keywords=${encodedQuery}&skipRedirect=true`;
+    case "groups":
+      return `https://www.linkedin.com/search/results/groups/?keywords=${encodedQuery}`;
+    case "events":
+      return `https://www.linkedin.com/search/results/events/?keywords=${encodedQuery}`;
   }
 }
 
@@ -137,6 +208,12 @@ export class LinkedInSearchService {
         return this.searchCompanies(input);
       case "jobs":
         return this.searchJobs(input);
+      case "posts":
+        return this.searchPosts(input);
+      case "groups":
+        return this.searchGroups(input);
+      case "events":
+        return this.searchEvents(input);
     }
   }
 
@@ -525,6 +602,387 @@ export class LinkedInSearchService {
         error,
         "UNKNOWN",
         "Failed to search LinkedIn jobs."
+      );
+    }
+  }
+
+  private async searchPosts(input: SearchInput): Promise<SearchPostsResult> {
+    const profileName = input.profileName ?? "default";
+    const query = normalizeText(input.query);
+    const limit = readSearchLimit(input.limit);
+    if (!query) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        "query is required."
+      );
+    }
+
+    await this.runtime.auth.ensureAuthenticated({
+      profileName
+    });
+
+    try {
+      const snapshots = await this.runtime.profileManager.runWithPersistentContext(
+        profileName,
+        { headless: true },
+        async (context) => {
+          const page = await getOrCreatePage(context);
+          await page.goto(buildSearchUrl(query, "posts"), {
+            waitUntil: "domcontentloaded"
+          });
+          await waitForNetworkIdleBestEffort(page);
+          await page.waitForTimeout(2_000);
+
+          return page.evaluate((lim: number) => {
+            const normalize = (value: string | null | undefined): string =>
+              (value ?? "").replace(/\s+/g, " ").trim();
+            const origin = globalThis.window.location.origin;
+            const toAbsoluteHref = (value: string): string => {
+              if (!value) {
+                return "";
+              }
+              if (/^https?:\/\//i.test(value)) {
+                return value;
+              }
+              return value.startsWith("/") ? `${origin}${value}` : `${origin}/${value}`;
+            };
+
+            if (
+              normalize(globalThis.document.body?.innerText).includes(
+                "We've filed a report for this error."
+              )
+            ) {
+              return [] as Array<Record<string, string>>;
+            }
+
+            const anchors = Array.from(
+              globalThis.document.querySelectorAll(
+                "a[href*='/feed/update/'], a[href*='/posts/']"
+              )
+            ) as HTMLAnchorElement[];
+            const seen = new Set<string>();
+            const results: Array<Record<string, string>> = [];
+
+            for (const anchor of anchors) {
+              const href = toAbsoluteHref(
+                normalize(anchor.getAttribute("href")) || normalize(anchor.href)
+              );
+              if (!href || seen.has(href)) {
+                continue;
+              }
+              seen.add(href);
+
+              const container = anchor.closest("article, li, div") ?? anchor;
+              const lines = ((container as HTMLElement).innerText ?? container.textContent ?? "")
+                .split(/\n+/)
+                .map((value) => normalize(value))
+                .filter((value) => value.length > 0);
+              if (lines.length === 0) {
+                continue;
+              }
+
+              const postedAt =
+                lines.find((line) =>
+                  /\b(?:h|d|w|mo|yr|hour|day|week|month|year)s?\b/i.test(line)
+                ) ?? "";
+              const reactionCount =
+                lines.find((line) => /\breactions?\b/i.test(line)) ?? "";
+              const commentCount =
+                lines.find((line) => /\bcomments?\b/i.test(line)) ?? "";
+              const author =
+                container.querySelector("span[dir='ltr'], span[aria-hidden='true']")
+                  ?.textContent ??
+                lines[0] ??
+                "";
+
+              results.push({
+                author: normalize(author),
+                author_headline: "",
+                posted_at: postedAt,
+                text: lines.slice(0, 8).join(" "),
+                post_url: href,
+                reaction_count: reactionCount,
+                comment_count: commentCount
+              });
+
+              if (results.length >= lim) {
+                break;
+              }
+            }
+
+            return results;
+          }, limit);
+        }
+      );
+
+      const results = snapshots
+        .map((snapshot) => ({
+          author: normalizeText(snapshot.author),
+          author_headline: normalizeText(snapshot.author_headline),
+          posted_at: normalizeText(snapshot.posted_at),
+          text: normalizeText(snapshot.text),
+          post_url: normalizeText(snapshot.post_url),
+          reaction_count: normalizeText(snapshot.reaction_count),
+          comment_count: normalizeText(snapshot.comment_count)
+        }))
+        .filter((result) => result.text.length > 0 || result.post_url.length > 0)
+        .slice(0, limit);
+
+      return {
+        query,
+        category: "posts",
+        results,
+        count: results.length
+      };
+    } catch (error) {
+      if (error instanceof LinkedInAssistantError) {
+        throw error;
+      }
+      throw asLinkedInAssistantError(
+        error,
+        "UNKNOWN",
+        "Failed to search LinkedIn posts."
+      );
+    }
+  }
+
+  private async searchGroups(input: SearchInput): Promise<SearchGroupsResult> {
+    const profileName = input.profileName ?? "default";
+    const query = normalizeText(input.query);
+    const limit = readSearchLimit(input.limit);
+    if (!query) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        "query is required."
+      );
+    }
+
+    await this.runtime.auth.ensureAuthenticated({
+      profileName
+    });
+
+    try {
+      const snapshots = await this.runtime.profileManager.runWithPersistentContext(
+        profileName,
+        { headless: true },
+        async (context) => {
+          const page = await getOrCreatePage(context);
+          await page.goto(buildSearchUrl(query, "groups"), {
+            waitUntil: "domcontentloaded"
+          });
+          await waitForNetworkIdleBestEffort(page);
+          await page.waitForTimeout(2_000);
+
+          return page.evaluate((lim: number) => {
+            const normalize = (value: string | null | undefined): string =>
+              (value ?? "").replace(/\s+/g, " ").trim();
+            const origin = globalThis.window.location.origin;
+            const toAbsoluteHref = (value: string): string => {
+              if (!value) {
+                return "";
+              }
+              if (/^https?:\/\//i.test(value)) {
+                return value;
+              }
+              return value.startsWith("/") ? `${origin}${value}` : `${origin}/${value}`;
+            };
+
+            const anchors = Array.from(
+              globalThis.document.querySelectorAll("a[href*='/groups/']")
+            ) as HTMLAnchorElement[];
+            const seen = new Set<string>();
+            const results: Array<Record<string, string>> = [];
+
+            for (const anchor of anchors) {
+              const href = toAbsoluteHref(
+                normalize(anchor.getAttribute("href")) || normalize(anchor.href)
+              );
+              if (!href || seen.has(href)) {
+                continue;
+              }
+              seen.add(href);
+
+              const lines = (anchor.innerText ?? "")
+                .split(/\n+/)
+                .map((value) => normalize(value))
+                .filter((value) => value.length > 0);
+              if (lines.length < 2) {
+                continue;
+              }
+
+              const filteredLines = lines.filter(
+                (line) => !/^(Join|Requested|View)$/i.test(line)
+              );
+
+              results.push({
+                name: filteredLines[0] ?? "",
+                group_type: filteredLines[1] ?? "",
+                member_count: filteredLines[2] ?? "",
+                description: filteredLines.slice(3).join(" "),
+                group_url: href
+              });
+
+              if (results.length >= lim) {
+                break;
+              }
+            }
+
+            return results;
+          }, limit);
+        }
+      );
+
+      const results = snapshots
+        .map((snapshot) => ({
+          name: normalizeText(snapshot.name),
+          group_type: normalizeText(snapshot.group_type),
+          member_count: normalizeText(snapshot.member_count),
+          description: normalizeText(snapshot.description),
+          group_url: normalizeText(snapshot.group_url)
+        }))
+        .filter((result) => result.name.length > 0 || result.group_url.length > 0)
+        .slice(0, limit);
+
+      return {
+        query,
+        category: "groups",
+        results,
+        count: results.length
+      };
+    } catch (error) {
+      if (error instanceof LinkedInAssistantError) {
+        throw error;
+      }
+      throw asLinkedInAssistantError(
+        error,
+        "UNKNOWN",
+        "Failed to search LinkedIn groups."
+      );
+    }
+  }
+
+  private async searchEvents(input: SearchInput): Promise<SearchEventsResult> {
+    const profileName = input.profileName ?? "default";
+    const query = normalizeText(input.query);
+    const limit = readSearchLimit(input.limit);
+    if (!query) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        "query is required."
+      );
+    }
+
+    await this.runtime.auth.ensureAuthenticated({
+      profileName
+    });
+
+    try {
+      const snapshots = await this.runtime.profileManager.runWithPersistentContext(
+        profileName,
+        { headless: true },
+        async (context) => {
+          const page = await getOrCreatePage(context);
+          await page.goto(buildSearchUrl(query, "events"), {
+            waitUntil: "domcontentloaded"
+          });
+          await waitForNetworkIdleBestEffort(page);
+          await page.waitForTimeout(2_000);
+
+          return page.evaluate((lim: number) => {
+            const normalize = (value: string | null | undefined): string =>
+              (value ?? "").replace(/\s+/g, " ").trim();
+            const origin = globalThis.window.location.origin;
+            const toAbsoluteHref = (value: string): string => {
+              if (!value) {
+                return "";
+              }
+              if (/^https?:\/\//i.test(value)) {
+                return value;
+              }
+              return value.startsWith("/") ? `${origin}${value}` : `${origin}/${value}`;
+            };
+
+            const anchors = Array.from(
+              globalThis.document.querySelectorAll("a[href*='/events/']")
+            ) as HTMLAnchorElement[];
+            const seen = new Set<string>();
+            const results: Array<Record<string, string>> = [];
+
+            for (const anchor of anchors) {
+              const href = toAbsoluteHref(
+                normalize(anchor.getAttribute("href")) || normalize(anchor.href)
+              );
+              if (!href || seen.has(href)) {
+                continue;
+              }
+              seen.add(href);
+
+              const lines = (anchor.innerText ?? "")
+                .split(/\n+/)
+                .map((value) => normalize(value))
+                .filter((value) => value.length > 0);
+              if (lines.length < 2) {
+                continue;
+              }
+
+              const venueLine = lines[2] ?? "";
+              const organizerMatch = /^(.*)\s+.\s+By\s+(.*)$/.exec(venueLine);
+              const descriptionLines = lines.slice(3);
+              const attendeeIndex = descriptionLines.findIndex((line) =>
+                /\battendees?\b/i.test(line)
+              );
+
+              results.push({
+                title: lines[0] ?? "",
+                date: lines[1] ?? "",
+                location: normalize(organizerMatch?.[1] ?? venueLine),
+                organizer: normalize(organizerMatch?.[2] ?? ""),
+                description:
+                  attendeeIndex >= 0
+                    ? descriptionLines.slice(0, attendeeIndex).join(" ")
+                    : descriptionLines.join(" "),
+                attendee_count:
+                  attendeeIndex >= 0 ? descriptionLines[attendeeIndex] ?? "" : "",
+                event_url: href
+              });
+
+              if (results.length >= lim) {
+                break;
+              }
+            }
+
+            return results;
+          }, limit);
+        }
+      );
+
+      const results = snapshots
+        .map((snapshot) => ({
+          title: normalizeText(snapshot.title),
+          date: normalizeText(snapshot.date),
+          location: normalizeText(snapshot.location),
+          organizer: normalizeText(snapshot.organizer),
+          description: normalizeText(snapshot.description),
+          attendee_count: normalizeText(snapshot.attendee_count),
+          event_url: normalizeText(snapshot.event_url)
+        }))
+        .filter((result) => result.title.length > 0 || result.event_url.length > 0)
+        .slice(0, limit);
+
+      return {
+        query,
+        category: "events",
+        results,
+        count: results.length
+      };
+    } catch (error) {
+      if (error instanceof LinkedInAssistantError) {
+        throw error;
+      }
+      throw asLinkedInAssistantError(
+        error,
+        "UNKNOWN",
+        "Failed to search LinkedIn events."
       );
     }
   }
