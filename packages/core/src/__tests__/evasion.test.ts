@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Page } from "playwright-core";
 import {
   applyFingerprintHardening,
   computeBezierPath,
@@ -14,47 +13,8 @@ import {
   simulateTabBlur,
   simulateViewportJitter
 } from "../evasion.js";
-
-// --- Mock factory ---
-
-function createPageMock() {
-  const waitForTimeout = vi.fn(async () => {});
-  const mouseMove = vi.fn(async () => {});
-  const evaluateCalls: unknown[] = [];
-  const locatorCounts: Map<string, number> = new Map();
-
-  const evaluate = vi.fn(async (callback: unknown, arg?: unknown) => {
-    evaluateCalls.push({ callback, arg });
-    if (typeof callback === "function") {
-      try {
-        callback(arg);
-      } catch {
-        // Ignore errors from browser-context code run in Node
-      }
-    }
-  });
-
-  const locator = vi.fn((selector: string) => ({
-    count: vi.fn(async () => locatorCounts.get(selector) ?? 0)
-  }));
-
-  const page = {
-    evaluate,
-    locator,
-    mouse: { move: mouseMove },
-    waitForTimeout
-  } as unknown as Page;
-
-  return {
-    evaluate,
-    evaluateCalls,
-    locator,
-    locatorCounts,
-    mouseMove,
-    page,
-    waitForTimeout
-  };
-}
+import { MAX_SCROLL_DISTANCE_PX } from "../evasion/shared.js";
+import { createPageMock } from "./evasionTestUtils.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -512,14 +472,19 @@ describe("EvasionSession", () => {
     });
 
     it("tracks mouse position after moving", async () => {
-      const { page } = createPageMock();
-      const session = new EvasionSession(page, "minimal");
+      const { mouseMove, page } = createPageMock();
+      const session = new EvasionSession(page, "moderate");
+
+      vi.spyOn(Math, "random").mockReturnValue(0);
 
       await session.moveMouse({ x: 0, y: 0 }, { x: 250, y: 375 });
+      mouseMove.mockClear();
+      await session.idle(300);
 
-      // Internal state is reflected in subsequent idle drift.
-      // (We verify indirectly: calling idle with drift enabled should use the updated coords)
-      expect(session.activeLevel).toBe("minimal"); // sanity check
+      expect(mouseMove).toHaveBeenCalledTimes(1);
+      const [x, y] = mouseMove.mock.calls[0] as [number, number];
+      expect(x).toBeCloseTo(250, 5);
+      expect(y).toBeCloseTo(375, 5);
     });
   });
 
@@ -568,6 +533,15 @@ describe("EvasionSession", () => {
       const session = new EvasionSession(page, "moderate");
 
       await expect(session.scroll(999_999)).rejects.toThrow(/20000/);
+    });
+
+    it("accepts the documented maximum scroll distance", async () => {
+      const { evaluate, page } = createPageMock();
+      const session = new EvasionSession(page, "minimal");
+
+      await session.scroll(MAX_SCROLL_DISTANCE_PX);
+
+      expect(evaluate).toHaveBeenCalledOnce();
     });
   });
 
@@ -703,6 +677,57 @@ describe("EvasionSession", () => {
 
       const fields = await session.findHoneypotFields();
       expect(fields).toContain("input[tabindex='-1']");
+    });
+  });
+
+  describe("integration", () => {
+    it("keeps minimal sessions on the least evasive path end to end", async () => {
+      const { evaluate, locatorCounts, mouseMove, page, waitForTimeout } = createPageMock();
+      locatorCounts.set("input[tabindex='-1']", 1);
+      const session = new EvasionSession(page, "minimal");
+
+      await session.hardenFingerprint();
+      await session.moveMouse({ x: 0, y: 0 }, { x: 50, y: 75 });
+      await session.scroll(120);
+      await session.idle(300);
+      await session.simulateTabSwitch(250);
+      await session.simulateViewportJitter();
+      await session.readingPause(500);
+
+      expect(session.sampleInterval(250)).toBe(250);
+      expect(await session.detectCaptcha()).toBe(false);
+      expect(await session.findHoneypotFields()).toEqual(["input[tabindex='-1']"]);
+      expect(evaluate).toHaveBeenCalledTimes(1);
+      expect(mouseMove).toHaveBeenCalledTimes(1);
+      expect(waitForTimeout).toHaveBeenCalledWith(300);
+    });
+
+    it("layers paranoid strategies without breaking detection helpers", async () => {
+      const { evaluate, locatorCounts, mouseMove, page, waitForTimeout } = createPageMock();
+      locatorCounts.set("[data-sitekey]", 1);
+      locatorCounts.set("input[tabindex='-1']", 1);
+      const session = new EvasionSession(page, "paranoid");
+
+      vi.spyOn(Math, "random").mockReturnValue(0.25);
+
+      await session.hardenFingerprint();
+      await session.moveMouse({ x: 10, y: 20 }, { x: 110, y: 120 });
+      await session.scroll(240);
+      await session.idle(900);
+      await session.simulateTabSwitch(250);
+      await session.simulateViewportJitter();
+      await session.readingPause(500);
+
+      expect(session.sampleInterval(250)).not.toBe(250);
+      expect(await session.detectCaptcha()).toBe(true);
+      expect(await session.findHoneypotFields()).toContain("input[tabindex='-1']");
+      expect(evaluate.mock.calls.length).toBeGreaterThan(10);
+      expect(waitForTimeout.mock.calls.length).toBeGreaterThan(8);
+      expect(mouseMove.mock.calls.length).toBeGreaterThan(5);
+      const lastMove = mouseMove.mock.calls.at(-1) as [number, number] | undefined;
+      expect(lastMove).toBeDefined();
+      const driftDistance = Math.hypot((lastMove?.[0] ?? 0) - 110, (lastMove?.[1] ?? 0) - 120);
+      expect(driftDistance).toBeLessThanOrEqual(EVASION_PROFILES.paranoid.mouseJitterRadius + 0.001);
     });
   });
 });
