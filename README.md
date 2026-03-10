@@ -598,6 +598,18 @@ npm exec -w @linkedin-assistant/cli -- linkedin scheduler run-once --profile def
 - `scheduler run-once` and `scheduler start` reuse the same prepare-only safety model, but queue work near its due time instead of preparing everything immediately.
 - Successful scheduler ticks still leave follow-up work in the prepared state; nothing is sent automatically.
 
+Profile seeding commands:
+
+```bash
+npm exec -w @linkedin-assistant/cli -- linkedin profile editable --profile default
+npm exec -w @linkedin-assistant/cli -- linkedin profile apply-spec --profile default --spec docs/profile-seeds/issue-210-signikant-test-profile.json --allow-partial --yes --delay-ms 4000
+```
+
+- `profile editable` mirrors the MCP editable-profile surface in the CLI.
+- `profile apply-spec` reads a JSON profile spec, prepares the necessary profile edits, confirms them one by one, and inserts paced delays between actions.
+- The bundled issue-210 example spec currently needs `--allow-partial` because skills (`#228`) plus industry/custom public URL (`#252`) are still tracked as follow-up gaps.
+- See `docs/profile-seeding.md` for the full workflow, bundled spec, and current blockers.
+
 Confirm prepared actions by token:
 
 ```bash

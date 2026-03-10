@@ -190,6 +190,12 @@ import {
   type KeepAliveStatusReport,
   type KeepAliveStopReport
 } from "../keepAliveOutput.js";
+import {
+  createProfileSeedPlan,
+  parseProfileSeedSpec,
+  type ProfileSeedPlanAction,
+  type ProfileSeedUnsupportedField
+} from "../profileSeed.js";
 
 const cliPrivacyConfig = resolvePrivacyConfig();
 const SELECTOR_AUDIT_DOC_PATH = "docs/selector-audit.md";
@@ -5373,6 +5379,213 @@ async function runProfileView(input: {
   }
 }
 
+async function runProfileViewEditable(input: {
+  profileName: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.profile.view_editable.start", {
+      profileName: input.profileName
+    });
+
+    const profile = await runtime.profile.viewEditableProfile({
+      profileName: input.profileName
+    });
+
+    runtime.logger.log("info", "cli.profile.view_editable.done", {
+      profileName: input.profileName,
+      sectionCount: profile.sections.length
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      profile
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+function summarizeProfileSeedUnsupportedFields(
+  unsupportedFields: readonly ProfileSeedUnsupportedField[]
+): string {
+  return unsupportedFields
+    .map((field) => `${field.path} (#${field.issueNumber})`)
+    .join(", ");
+}
+
+function createProfileSeedUnsupportedFieldsError(
+  unsupportedFields: readonly ProfileSeedUnsupportedField[]
+): LinkedInAssistantError {
+  return new LinkedInAssistantError(
+    "ACTION_PRECONDITION_FAILED",
+    `Profile seed spec includes unsupported fields: ${summarizeProfileSeedUnsupportedFields(unsupportedFields)}. Remove them or rerun with --allow-partial.`,
+    {
+      unsupported_fields: unsupportedFields.map((field) => ({
+        path: field.path,
+        issue_number: field.issueNumber,
+        reason: field.reason
+      }))
+    }
+  );
+}
+
+function sampleProfileSeedDelay(baseDelayMs: number): number {
+  if (baseDelayMs <= 0) {
+    return 0;
+  }
+
+  const jitter = Math.max(250, Math.round(baseDelayMs * 0.35));
+  const minimum = Math.max(0, baseDelayMs - jitter);
+  const maximum = baseDelayMs + jitter;
+  return minimum + Math.floor(Math.random() * (maximum - minimum + 1));
+}
+
+function prepareProfileSeedAction(
+  runtime: ReturnType<typeof createRuntime>,
+  action: ProfileSeedPlanAction
+) {
+  switch (action.kind) {
+    case "update_intro":
+      return runtime.profile.prepareUpdateIntro(action.input);
+    case "upsert_section_item":
+      return runtime.profile.prepareUpsertSectionItem(action.input);
+    case "remove_section_item":
+      return runtime.profile.prepareRemoveSectionItem(action.input);
+  }
+}
+
+async function runProfileApplySpec(input: {
+  profileName: string;
+  specPath: string;
+  replace: boolean;
+  allowPartial: boolean;
+  delayMs: number;
+  yes: boolean;
+  outputPath?: string;
+}, cdpUrl?: string): Promise<void> {
+  const resolvedSpecPath = path.resolve(input.specPath);
+  const rawSpec = await readJsonInputFile(resolvedSpecPath, "profile seed spec");
+  const spec = parseProfileSeedSpec(rawSpec);
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.profile.apply_spec.start", {
+      profileName: input.profileName,
+      specPath: resolvedSpecPath,
+      replace: input.replace,
+      allowPartial: input.allowPartial,
+      delayMs: input.delayMs
+    });
+
+    const editableProfile = await runtime.profile.viewEditableProfile({
+      profileName: input.profileName
+    });
+    const plan = createProfileSeedPlan(editableProfile, spec, {
+      profileName: input.profileName,
+      operatorNote: `profile seed: ${path.basename(resolvedSpecPath)}`,
+      replace: input.replace
+    });
+
+    if (plan.unsupportedFields.length > 0 && !input.allowPartial) {
+      throw createProfileSeedUnsupportedFieldsError(plan.unsupportedFields);
+    }
+
+    if (plan.unsupportedFields.length > 0) {
+      writeCliWarning(
+        `Ignoring unsupported profile fields for this run: ${summarizeProfileSeedUnsupportedFields(plan.unsupportedFields)}.`
+      );
+    }
+
+    if (plan.actions.length > 0) {
+      writeCliNotice(
+        `Loaded ${resolvedSpecPath} with ${plan.actions.length} supported profile ${plan.actions.length === 1 ? "edit" : "edits"}.`
+      );
+    } else {
+      writeCliNotice(`Loaded ${resolvedSpecPath}; no supported profile edits are required.`);
+    }
+
+    if (!input.yes && plan.actions.length > 0) {
+      if (!stdin.isTTY || !stdout.isTTY) {
+        throw new LinkedInAssistantError(
+          "ACTION_PRECONDITION_FAILED",
+          "Refusing to apply a profile seed spec without --yes in non-interactive mode."
+        );
+      }
+
+      const confirmed = await promptYesNo(
+        `Apply ${plan.actions.length} LinkedIn profile ${plan.actions.length === 1 ? "edit" : "edits"}?`,
+        process.stderr
+      );
+      if (!confirmed) {
+        throw new LinkedInAssistantError(
+          "ACTION_PRECONDITION_FAILED",
+          "Operator declined profile seed execution."
+        );
+      }
+    }
+
+    const actionResults: Array<Record<string, unknown>> = [];
+    for (let index = 0; index < plan.actions.length; index += 1) {
+      const action = plan.actions[index]!;
+      const prepared = prepareProfileSeedAction(runtime, action);
+      const confirmed = await runtime.twoPhaseCommit.confirmByToken({
+        confirmToken: prepared.confirmToken
+      });
+
+      actionResults.push({
+        summary: action.summary,
+        action_type: confirmed.actionType,
+        prepared_action_id: confirmed.preparedActionId,
+        status: confirmed.status,
+        result: confirmed.result,
+        artifacts: confirmed.artifacts
+      });
+
+      if (index < plan.actions.length - 1 && input.delayMs > 0) {
+        await sleep(sampleProfileSeedDelay(input.delayMs));
+      }
+    }
+
+    const finalProfile = await runtime.profile.viewProfile({
+      profileName: input.profileName,
+      target: "me"
+    });
+
+    const report: Record<string, unknown> = {
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      spec_path: resolvedSpecPath,
+      replace: input.replace,
+      allow_partial: input.allowPartial,
+      delay_ms: input.delayMs,
+      planned_action_count: plan.actions.length,
+      executed_action_count: actionResults.length,
+      unsupported_fields: plan.unsupportedFields,
+      actions: actionResults,
+      profile: finalProfile
+    };
+
+    if (input.outputPath) {
+      report.output_path = await writeOutputJsonFile(input.outputPath, report);
+    }
+
+    runtime.logger.log("info", "cli.profile.apply_spec.done", {
+      profileName: input.profileName,
+      specPath: resolvedSpecPath,
+      plannedActionCount: plan.actions.length,
+      executedActionCount: actionResults.length,
+      unsupportedFieldCount: plan.unsupportedFields.length
+    });
+
+    printJson(report);
+  } finally {
+    runtime.close();
+  }
+}
+
 async function runSearch(input: {
   profileName: string;
   query: string;
@@ -7616,6 +7829,71 @@ export function createCliProgram(): Command {
         target
       }, readCdpUrl());
     });
+
+  profileCommand
+    .command("editable")
+    .description("Inspect the logged-in member's editable LinkedIn profile surface")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(async (options: { profile: string }) => {
+      await runProfileViewEditable({
+        profileName: options.profile
+      }, readCdpUrl());
+    });
+
+  profileCommand
+    .command("apply-spec")
+    .description("Apply a JSON profile seed spec with paced LinkedIn profile edits")
+    .requiredOption("--spec <path>", "Path to a JSON profile seed spec")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option(
+      "--replace",
+      "Remove unmatched supported section items for sections included in the spec",
+      false
+    )
+    .option(
+      "--allow-partial",
+      "Continue when the spec includes unsupported fields such as skills or custom public URL",
+      false
+    )
+    .option(
+      "--delay-ms <ms>",
+      "Base delay between confirmed profile edits",
+      "3500"
+    )
+    .option("-y, --yes", "Skip the interactive confirmation prompt", false)
+    .option("--output <path>", "Write the final JSON report to a file")
+    .addHelpText(
+      "after",
+      [
+        "",
+        "Notes:",
+        "  - uses the existing two-phase profile edit actions under the hood and confirms them one by one",
+        "  - paces edits with a randomized delay so large profile updates do not fire back-to-back",
+        "  - unsupported fields currently include skills (#228) plus industry/custom public URL (#252)",
+        "  - run \"linkedin profile editable\" first if you want to inspect the current section structure"
+      ].join("\n")
+    )
+    .action(
+      async (options: {
+        profile: string;
+        spec: string;
+        replace: boolean;
+        allowPartial: boolean;
+        delayMs: string;
+        yes: boolean;
+        output?: string;
+      }) => {
+        await runProfileApplySpec({
+          profileName: options.profile,
+          specPath: options.spec,
+          replace: options.replace,
+          allowPartial: options.allowPartial,
+          delayMs: coerceNonNegativeInt(options.delayMs, "delay-ms"),
+          yes: options.yes,
+          ...(options.output ? { outputPath: options.output } : {})
+        }, readCdpUrl());
+      }
+    );
 
   const auditCommand = program
     .command("audit")
