@@ -1,119 +1,26 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   CREATE_JOB_ALERT_ACTION_TYPE,
-  EASY_APPLY_ACTION_TYPE,
+  LinkedInJobsService,
   LINKEDIN_JOB_ALERT_FREQUENCIES,
   LINKEDIN_JOB_ALERT_NOTIFICATION_TYPES,
-  LinkedInJobsService,
   REMOVE_JOB_ALERT_ACTION_TYPE,
   SAVE_JOB_ACTION_TYPE,
   UNSAVE_JOB_ACTION_TYPE,
+  buildJobAlertsManagementUrl,
+  buildJobEasyApplyUrl,
   buildJobSearchUrl,
   buildJobViewUrl,
   createJobActionExecutors,
-  normalizeLinkedInJobAlertFrequency,
-  normalizeLinkedInJobAlertNotificationType,
-  resolveLinkedInJobId,
-  type LinkedInJobPosting,
-  type LinkedInJobsRuntime,
+  normalizeLinkedInJobSearchUrl,
+  type LinkedInEasyApplyPreview,
+  type LinkedInJobAlert,
   type LinkedInJobSearchResult,
+  type LinkedInJobPosting,
   type SearchJobsInput,
-  type ViewJobInput
+  type ViewJobInput,
+  type LinkedInJobsRuntime
 } from "../linkedinJobs.js";
-
-function createRateLimitState(counterKey: string) {
-  return {
-    counterKey,
-    windowStartMs: 0,
-    windowSizeMs: 60_000,
-    count: 0,
-    limit: 10,
-    remaining: 10,
-    allowed: true
-  };
-}
-
-function createPrepareResult(preview: Record<string, unknown>) {
-  return {
-    preparedActionId: "pa_test",
-    confirmToken: "ct_test",
-    expiresAtMs: 123,
-    preview
-  };
-}
-
-function createJobsServiceRuntime() {
-  const prepare = vi.fn((input: { preview: Record<string, unknown> }) =>
-    createPrepareResult(input.preview)
-  );
-  const ensureAuthenticated = vi.fn().mockResolvedValue(undefined);
-  const runWithContext = vi.fn().mockResolvedValue({
-    readyToConfirm: false,
-    steps: [
-      {
-        stepIndex: 0,
-        stepTitle: "Contact info",
-        fields: [],
-        availableActions: ["Continue to next step"]
-      }
-    ],
-    fields: [
-      {
-        field_key: "resume",
-        label: "Resume",
-        input_type: "file",
-        required: true,
-        step_index: 0,
-        step_title: "Contact info",
-        supplied: false
-      }
-    ],
-    blockingFields: [
-      {
-        field_key: "resume",
-        label: "Resume",
-        input_type: "file",
-        required: true,
-        step_index: 0,
-        step_title: "Contact info",
-        supplied: false
-      }
-    ]
-  });
-  const peek = vi.fn((input: { counterKey: string }) =>
-    createRateLimitState(input.counterKey)
-  );
-
-  const runtime = {
-    auth: {
-      ensureAuthenticated
-    },
-    cdpUrl: undefined,
-    selectorLocale: "en",
-    profileManager: {
-      runWithContext
-    },
-    logger: {
-      log: vi.fn()
-    },
-    rateLimiter: {
-      peek
-    },
-    artifacts: {},
-    confirmFailureArtifacts: {},
-    twoPhaseCommit: {
-      prepare
-    }
-  } as unknown as LinkedInJobsRuntime;
-
-  return {
-    runtime,
-    prepare,
-    ensureAuthenticated,
-    runWithContext,
-    peek
-  };
-}
 
 describe("buildJobSearchUrl", () => {
   it("builds a job search URL with query only", () => {
@@ -139,13 +46,15 @@ describe("buildJobSearchUrl", () => {
   });
 
   it("ignores empty location", () => {
-    expect(buildJobSearchUrl("tester", "")).toBe(
+    const url = buildJobSearchUrl("tester", "");
+    expect(url).toBe(
       "https://www.linkedin.com/jobs/search/?keywords=tester"
     );
   });
 
   it("ignores whitespace-only location", () => {
-    expect(buildJobSearchUrl("tester", "   ")).toBe(
+    const url = buildJobSearchUrl("tester", "   ");
+    expect(url).toBe(
       "https://www.linkedin.com/jobs/search/?keywords=tester"
     );
   });
@@ -164,83 +73,159 @@ describe("buildJobViewUrl", () => {
   });
 });
 
-describe("Job action types and executors", () => {
-  it("exports the expected action type constants", () => {
-    expect(SAVE_JOB_ACTION_TYPE).toBe("jobs.save_job");
-    expect(UNSAVE_JOB_ACTION_TYPE).toBe("jobs.unsave_job");
-    expect(CREATE_JOB_ALERT_ACTION_TYPE).toBe("jobs.create_alert");
-    expect(REMOVE_JOB_ALERT_ACTION_TYPE).toBe("jobs.remove_alert");
-    expect(EASY_APPLY_ACTION_TYPE).toBe("jobs.easy_apply");
+describe("buildJobAlertsManagementUrl", () => {
+  it("builds the alerts management URL", () => {
+    expect(buildJobAlertsManagementUrl()).toBe("https://www.linkedin.com/jobs/jam/");
+  });
+});
+
+describe("buildJobEasyApplyUrl", () => {
+  it("builds an easy apply URL from a job ID", () => {
+    expect(buildJobEasyApplyUrl("1234567890")).toBe(
+      "https://www.linkedin.com/jobs/view/1234567890/apply/?openSDUIApplyFlow=true"
+    );
+  });
+});
+
+describe("normalizeLinkedInJobSearchUrl", () => {
+  it("normalizes relative LinkedIn search paths", () => {
+    expect(
+      normalizeLinkedInJobSearchUrl(
+        "/jobs/search?keywords=software%20engineer&location=Copenhagen"
+      )
+    ).toBe(
+      "https://www.linkedin.com/jobs/search/?keywords=software+engineer&location=Copenhagen"
+    );
   });
 
-  it("registers all five job action executors", () => {
-    const executors = createJobActionExecutors();
+  it("drops tracking params and sorts remaining params", () => {
+    expect(
+      normalizeLinkedInJobSearchUrl(
+        "https://www.linkedin.com/jobs/search?trk=foo&location=Copenhagen&keywords=software%20engineer&currentJobId=123"
+      )
+    ).toBe(
+      "https://www.linkedin.com/jobs/search/?keywords=software+engineer&location=Copenhagen"
+    );
+  });
 
-    expect(Object.keys(executors)).toHaveLength(5);
+  it("rejects non-LinkedIn URLs", () => {
+    expect(() =>
+      normalizeLinkedInJobSearchUrl("https://example.com/jobs/search?q=engineer")
+    ).toThrow("searchUrl must point to a LinkedIn jobs search page.");
+  });
+});
+
+describe("createJobActionExecutors", () => {
+  it("registers all confirmable jobs action executors", () => {
+    const executors = createJobActionExecutors();
+    expect(Object.keys(executors)).toHaveLength(4);
     expect(executors[SAVE_JOB_ACTION_TYPE]).toBeDefined();
     expect(executors[UNSAVE_JOB_ACTION_TYPE]).toBeDefined();
     expect(executors[CREATE_JOB_ALERT_ACTION_TYPE]).toBeDefined();
     expect(executors[REMOVE_JOB_ALERT_ACTION_TYPE]).toBeDefined();
-    expect(executors[EASY_APPLY_ACTION_TYPE]).toBeDefined();
-  });
-
-  it("exposes execute methods for every job action executor", () => {
-    const executors = createJobActionExecutors();
-
-    for (const executor of Object.values(executors)) {
-      expect(typeof executor.execute).toBe("function");
-    }
-  });
-});
-
-describe("Job alert normalization", () => {
-  it("exports the supported alert frequency and notification enums", () => {
-    expect(LINKEDIN_JOB_ALERT_FREQUENCIES).toEqual(["daily", "weekly"]);
-    expect(LINKEDIN_JOB_ALERT_NOTIFICATION_TYPES).toEqual([
-      "email_and_notification",
-      "email",
-      "notification"
-    ]);
-  });
-
-  it("normalizes friendly job alert values", () => {
-    expect(normalizeLinkedInJobAlertFrequency("weekly")).toBe("weekly");
-    expect(normalizeLinkedInJobAlertFrequency("day")).toBe("daily");
-    expect(normalizeLinkedInJobAlertNotificationType("both")).toBe(
-      "email_and_notification"
-    );
-    expect(normalizeLinkedInJobAlertNotificationType("notification_only")).toBe(
-      "notification"
-    );
-  });
-});
-
-describe("resolveLinkedInJobId", () => {
-  it("keeps numeric job IDs intact", () => {
-    expect(resolveLinkedInJobId("1234567890")).toBe("1234567890");
-  });
-
-  it("extracts the job ID from a LinkedIn job URL", () => {
-    expect(
-      resolveLinkedInJobId(
-        "https://www.linkedin.com/jobs/view/1234567890/?trackingId=test"
-      )
-    ).toBe("1234567890");
-  });
-
-  it("falls back to currentJobId query parameters when needed", () => {
-    expect(
-      resolveLinkedInJobId(
-        "https://www.linkedin.com/jobs/search/?currentJobId=987654321"
-      )
-    ).toBe("987654321");
   });
 });
 
 describe("LinkedInJobsService", () => {
+  function createService() {
+    const prepare = vi.fn((input: { preview: Record<string, unknown> }) => ({
+      preparedActionId: "pa_test",
+      confirmToken: "ct_test",
+      expiresAtMs: 123,
+      preview: input.preview
+    }));
+    const rateLimiter = {
+      peek: vi.fn((config: { counterKey: string; windowSizeMs: number; limit: number }) => ({
+        counterKey: config.counterKey,
+        windowStartMs: 0,
+        windowSizeMs: config.windowSizeMs,
+        count: 0,
+        limit: config.limit,
+        remaining: config.limit,
+        allowed: true
+      }))
+    };
+
+    const service = new LinkedInJobsService({
+      twoPhaseCommit: { prepare },
+      rateLimiter
+    } as unknown as ConstructorParameters<typeof LinkedInJobsService>[0]);
+
+    return {
+      prepare,
+      service
+    };
+  }
+
   it("exports the service class", () => {
     expect(LinkedInJobsService).toBeDefined();
     expect(typeof LinkedInJobsService).toBe("function");
+  });
+
+  it("prepares save, unsave, and alert actions with rate-limited previews", () => {
+    const { service, prepare } = createService();
+
+    const savePrepared = service.prepareSaveJob({
+      jobId: "123"
+    });
+    const unsavePrepared = service.prepareUnsaveJob({
+      jobId: "123"
+    });
+    const createAlertPrepared = service.prepareCreateJobAlert({
+      query: "software engineer",
+      location: "Copenhagen"
+    });
+    const removeAlertPrepared = service.prepareRemoveJobAlert({
+      searchUrl:
+        "https://www.linkedin.com/jobs/search/?keywords=software%20engineer&location=Copenhagen"
+    });
+
+    expect(savePrepared.preview).toMatchObject({
+      summary: "Save LinkedIn job 123 for later",
+      outbound: {
+        action: "save_job"
+      },
+      target: {
+        job_id: "123",
+        profile_name: "default"
+      }
+    });
+    expect(unsavePrepared.preview).toMatchObject({
+      summary: "Remove LinkedIn job 123 from your saved jobs",
+      outbound: {
+        action: "unsave_job"
+      }
+    });
+    expect(createAlertPrepared.preview).toMatchObject({
+      summary: "Create LinkedIn job alert for software engineer in Copenhagen",
+      outbound: {
+        action: "create_job_alert"
+      }
+    });
+    expect(removeAlertPrepared.preview).toMatchObject({
+      summary:
+        "Remove LinkedIn job alert https://www.linkedin.com/jobs/search/?keywords=software+engineer&location=Copenhagen",
+      outbound: {
+        action: "remove_job_alert"
+      }
+    });
+
+    expect(prepare).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ actionType: SAVE_JOB_ACTION_TYPE })
+    );
+    expect(prepare).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ actionType: UNSAVE_JOB_ACTION_TYPE })
+    );
+    expect(prepare).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ actionType: CREATE_JOB_ALERT_ACTION_TYPE })
+    );
+    expect(prepare).toHaveBeenNthCalledWith(
+      4,
+      expect.objectContaining({ actionType: REMOVE_JOB_ALERT_ACTION_TYPE })
+    );
   });
 
   it("search result interface types are importable", () => {
@@ -280,6 +265,52 @@ describe("LinkedInJobsService", () => {
     expect(posting.is_remote).toBe(false);
   });
 
+  it("job alert interface types are importable", () => {
+    const alert: LinkedInJobAlert = {
+      alert_key: "https://www.linkedin.com/jobs/search/?keywords=software+engineer",
+      query: "software engineer",
+      location: "Copenhagen",
+      search_url: "https://www.linkedin.com/jobs/search/?keywords=software+engineer",
+      filters: ["Remote"],
+      frequency: "daily",
+      notification_type: "email_and_notification"
+    };
+
+    expect(alert.filters).toContain("Remote");
+    expect(alert.frequency).toBe("daily");
+  });
+
+  it("easy apply preview interface types are importable", () => {
+    const preview: LinkedInEasyApplyPreview = {
+      job_id: "123",
+      job_url: "https://www.linkedin.com/jobs/view/123/",
+      application_url:
+        "https://www.linkedin.com/jobs/view/123/apply/?openSDUIApplyFlow=true",
+      title: "Senior Frontend Engineer",
+      company: "Anthill",
+      current_step: "Contact info",
+      progress_percent: 0,
+      next_action_label: "Next",
+      submit_available: false,
+      field_count: 2,
+      required_field_count: 2,
+      fields: [
+        {
+          field_key: "email::select",
+          label: "Email address",
+          input_type: "select",
+          required: true,
+          has_value: true,
+          option_count: 3
+        }
+      ],
+      preview_only: true
+    };
+
+    expect(preview.preview_only).toBe(true);
+    expect(preview.required_field_count).toBe(2);
+  });
+
   it("search input accepts optional fields", () => {
     const input: SearchJobsInput = {
       query: "engineer"
@@ -297,11 +328,10 @@ describe("LinkedInJobsService", () => {
     expect(input.profileName).toBeUndefined();
   });
 
-  it("runtime interface shape includes confirm, locale, rate limit, and artifact dependencies", () => {
+  it("runtime interface shape is correct", () => {
     const runtimeKeys: (keyof LinkedInJobsRuntime)[] = [
       "auth",
       "cdpUrl",
-      "selectorLocale",
       "profileManager",
       "logger",
       "rateLimiter",
@@ -309,150 +339,13 @@ describe("LinkedInJobsService", () => {
       "confirmFailureArtifacts",
       "twoPhaseCommit"
     ];
-    expect(runtimeKeys).toHaveLength(9);
+    expect(runtimeKeys).toHaveLength(8);
   });
 
-  it("prepares save, unsave, create-alert, and remove-alert actions with targeted previews", () => {
-    const { runtime, prepare, peek } = createJobsServiceRuntime();
-    const service = new LinkedInJobsService(runtime);
-
-    const savePrepared = service.prepareSaveJob({
-      jobId: "1234567890"
-    });
-    const unsavePrepared = service.prepareUnsaveJob({
-      profileName: "jobs-profile",
-      jobId: "https://www.linkedin.com/jobs/view/1234567890/"
-    });
-    const createAlertPrepared = service.prepareCreateJobAlert({
-      query: "software engineer",
-      location: "Copenhagen",
-      frequency: "weekly",
-      notificationType: "email",
-      includeSimilarJobs: true
-    });
-    const removeAlertPrepared = service.prepareRemoveJobAlert({
-      alertId: "ja_abc123"
-    });
-
-    expect(savePrepared.preview).toMatchObject({
-      summary: "Save LinkedIn job 1234567890 for later",
-      target: {
-        profile_name: "default",
-        job_id: "1234567890"
-      },
-      outbound: {
-        action: "save"
-      }
-    });
-    expect(unsavePrepared.preview).toMatchObject({
-      summary: "Unsave LinkedIn job 1234567890",
-      target: {
-        profile_name: "jobs-profile",
-        job_id: "1234567890"
-      },
-      outbound: {
-        action: "unsave"
-      }
-    });
-    expect(createAlertPrepared.preview).toMatchObject({
-      summary: "Create a LinkedIn job alert for software engineer in Copenhagen",
-      target: {
-        profile_name: "default",
-        query: "software engineer",
-        location: "Copenhagen"
-      },
-      outbound: {
-        action: "create_alert",
-        frequency: "weekly",
-        notification_type: "email",
-        include_similar_jobs: true
-      }
-    });
-    expect(removeAlertPrepared.preview).toMatchObject({
-      summary: "Remove LinkedIn job alert ja_abc123",
-      target: {
-        profile_name: "default",
-        alert_id: "ja_abc123"
-      },
-      outbound: {
-        action: "remove_alert"
-      }
-    });
-
-    expect(prepare).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({ actionType: SAVE_JOB_ACTION_TYPE })
-    );
-    expect(prepare).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({ actionType: UNSAVE_JOB_ACTION_TYPE })
-    );
-    expect(prepare).toHaveBeenNthCalledWith(
-      3,
-      expect.objectContaining({ actionType: CREATE_JOB_ALERT_ACTION_TYPE })
-    );
-    expect(prepare).toHaveBeenNthCalledWith(
-      4,
-      expect.objectContaining({ actionType: REMOVE_JOB_ALERT_ACTION_TYPE })
-    );
-    expect(peek).toHaveBeenCalledTimes(4);
-  });
-
-  it("prepares Easy Apply previews with surfaced blocking fields", async () => {
-    const { runtime, prepare, ensureAuthenticated, runWithContext } =
-      createJobsServiceRuntime();
-    const service = new LinkedInJobsService(runtime);
-
-    const prepared = await service.prepareEasyApply({
-      profileName: "jobs-profile",
-      jobId: "1234567890",
-      application: {
-        email: "person@example.com",
-        answers: {
-          sponsorship_required: false
-        }
-      }
-    });
-
-    expect(prepared.preview).toMatchObject({
-      summary: "Prepare LinkedIn Easy Apply for job 1234567890",
-      target: {
-        profile_name: "jobs-profile",
-        job_id: "1234567890"
-      },
-      outbound: {
-        action: "easy_apply"
-      },
-      ready_to_confirm: false,
-      blocking_fields: [
-        expect.objectContaining({
-          field_key: "resume",
-          label: "Resume"
-        })
-      ],
-      application_inputs_present: {
-        email: true,
-        phone_country_code: false,
-        phone_number: false,
-        resume_path: false,
-        cover_letter_path: false,
-        answer_count: 1
-      }
-    });
-
-    expect(ensureAuthenticated).toHaveBeenCalledWith({
-      profileName: "jobs-profile",
-      cdpUrl: undefined
-    });
-    expect(runWithContext).toHaveBeenCalledWith(
-      expect.objectContaining({
-        profileName: "jobs-profile",
-        headless: true
-      }),
-      expect.any(Function)
-    );
-    expect(prepare).toHaveBeenCalledWith(
-      expect.objectContaining({ actionType: EASY_APPLY_ACTION_TYPE })
+  it("exports the supported alert frequency and notification enums", () => {
+    expect(LINKEDIN_JOB_ALERT_FREQUENCIES).toContain("daily");
+    expect(LINKEDIN_JOB_ALERT_NOTIFICATION_TYPES).toContain(
+      "email_and_notification"
     );
   });
 });

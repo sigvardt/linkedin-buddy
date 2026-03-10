@@ -283,6 +283,10 @@ export function createCoreRuntime(
     string,
     import("./twoPhaseCommit.js").ActionExecutor<LinkedInMessagingRuntime>
   >;
+  const jobExecutors = createJobActionExecutors() as unknown as Record<
+    string,
+    import("./twoPhaseCommit.js").ActionExecutor<LinkedInMessagingRuntime>
+  >;
   const followupExecutors = createFollowupActionExecutors() as unknown as Record<
     string,
     import("./twoPhaseCommit.js").ActionExecutor<LinkedInMessagingRuntime>
@@ -311,6 +315,7 @@ export function createCoreRuntime(
       ...memberExecutors,
       ...followupExecutors,
       ...feedExecutors,
+      ...jobExecutors,
       ...postExecutors,
       ...jobExecutors,
       ...privacySettingExecutors,

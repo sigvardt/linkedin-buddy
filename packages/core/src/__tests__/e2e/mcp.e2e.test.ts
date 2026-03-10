@@ -664,5 +664,61 @@ describe.sequential("MCP E2E", () => {
         job_id: fixtures.jobId
       }
     });
+
+    const jobsSave = await callMcpTool(MCP_TOOL_NAMES.jobsSave, {
+      profileName,
+      jobId: fixtures.jobId
+    });
+    expect(jobsSave.isError).toBe(false);
+    expect(jobsSave.payload).toMatchObject({
+      profile_name: profileName,
+      preparedActionId: expect.stringMatching(/^pa_/),
+      confirmToken: expect.stringMatching(/^ct_/)
+    });
+
+    const jobsUnsave = await callMcpTool(MCP_TOOL_NAMES.jobsUnsave, {
+      profileName,
+      jobId: fixtures.jobId
+    });
+    expect(jobsUnsave.isError).toBe(false);
+    expect(jobsUnsave.payload).toMatchObject({
+      profile_name: profileName,
+      preparedActionId: expect.stringMatching(/^pa_/),
+      confirmToken: expect.stringMatching(/^ct_/)
+    });
+
+    const jobsAlertsCreate = await callMcpTool(MCP_TOOL_NAMES.jobsAlertsCreate, {
+      profileName,
+      query: "software engineer",
+      location: "Copenhagen"
+    });
+    expect(jobsAlertsCreate.isError).toBe(false);
+    expect(jobsAlertsCreate.payload).toMatchObject({
+      profile_name: profileName,
+      preparedActionId: expect.stringMatching(/^pa_/),
+      confirmToken: expect.stringMatching(/^ct_/)
+    });
+
+    const jobsAlertsList = await callMcpTool(MCP_TOOL_NAMES.jobsAlertsList, {
+      profileName,
+      limit: 10
+    });
+    expect(jobsAlertsList.isError).toBe(false);
+    expect(jobsAlertsList.payload).toMatchObject({
+      profile_name: profileName,
+      alerts: expect.any(Array)
+    });
+
+    const jobsAlertsRemove = await callMcpTool(MCP_TOOL_NAMES.jobsAlertsRemove, {
+      profileName,
+      searchUrl:
+        "https://www.linkedin.com/jobs/search/?keywords=software%20engineer&location=Copenhagen"
+    });
+    expect(jobsAlertsRemove.isError).toBe(false);
+    expect(jobsAlertsRemove.payload).toMatchObject({
+      profile_name: profileName,
+      preparedActionId: expect.stringMatching(/^pa_/),
+      confirmToken: expect.stringMatching(/^ct_/)
+    });
   }, 180_000);
 });

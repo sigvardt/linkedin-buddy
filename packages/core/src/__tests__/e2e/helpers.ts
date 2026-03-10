@@ -33,7 +33,13 @@ import {
   LINKEDIN_INBOX_PREPARE_NEW_THREAD_TOOL,
   LINKEDIN_INBOX_PREPARE_REPLY_TOOL,
   LINKEDIN_INBOX_SEARCH_RECIPIENTS_TOOL,
+  LINKEDIN_JOBS_ALERTS_CREATE_TOOL,
+  LINKEDIN_JOBS_ALERTS_LIST_TOOL,
+  LINKEDIN_JOBS_ALERTS_REMOVE_TOOL,
+  LINKEDIN_JOBS_PREPARE_EASY_APPLY_TOOL,
   LINKEDIN_JOBS_SEARCH_TOOL,
+  LINKEDIN_JOBS_SAVE_TOOL,
+  LINKEDIN_JOBS_UNSAVE_TOOL,
   LINKEDIN_JOBS_VIEW_TOOL,
   LINKEDIN_NETWORK_PREPARE_FOLLOWUP_AFTER_ACCEPT_TOOL,
   LINKEDIN_MEMBERS_PREPARE_BLOCK_TOOL,
@@ -641,6 +647,12 @@ export function getOptInCommentPostUrl(): string | undefined {
     (isReplayModeEnabled() ? DEFAULT_REPLAY_POST_URL : undefined);
 }
 
+/** Returns an approved Easy Apply job ID used for preview-only coverage. */
+export function getOptInEasyApplyJobId(): string | undefined {
+  return readTrimmedEnv("LINKEDIN_E2E_EASY_APPLY_JOB_ID") ??
+    (isReplayModeEnabled() ? "4375508379" : undefined);
+}
+
 /**
  * Invokes the CLI entrypoint, applying optional retries, assistant-home
  * overrides, and timeout handling.
@@ -986,5 +998,11 @@ export const MCP_TOOL_NAMES = {
   notificationsList: LINKEDIN_NOTIFICATIONS_LIST_TOOL,
   jobsSearch: LINKEDIN_JOBS_SEARCH_TOOL,
   jobsView: LINKEDIN_JOBS_VIEW_TOOL,
+  jobsSave: LINKEDIN_JOBS_SAVE_TOOL,
+  jobsUnsave: LINKEDIN_JOBS_UNSAVE_TOOL,
+  jobsAlertsCreate: LINKEDIN_JOBS_ALERTS_CREATE_TOOL,
+  jobsAlertsList: LINKEDIN_JOBS_ALERTS_LIST_TOOL,
+  jobsAlertsRemove: LINKEDIN_JOBS_ALERTS_REMOVE_TOOL,
+  jobsPrepareEasyApply: LINKEDIN_JOBS_PREPARE_EASY_APPLY_TOOL,
   actionsConfirm: LINKEDIN_ACTIONS_CONFIRM_TOOL
 } as const;

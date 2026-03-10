@@ -11,8 +11,6 @@ import {
   DEFAULT_FOLLOWUP_SINCE,
   LINKEDIN_FEED_REACTION_TYPES,
   LINKEDIN_INBOX_REACTION_TYPES,
-  LINKEDIN_JOB_ALERT_FREQUENCIES,
-  LINKEDIN_JOB_ALERT_NOTIFICATION_TYPES,
   LINKEDIN_MEMBER_REPORT_REASONS,
   LINKEDIN_POST_VISIBILITY_TYPES,
   LINKEDIN_PRIVACY_SETTING_KEYS,
@@ -37,7 +35,6 @@ import {
   type ActivityEventType,
   type ActivityWatchKind,
   type ActivityWatchStatus,
-  type LinkedInEasyApplyApplicationDraft,
   type SearchCategory,
   type WebhookDeliveryAttemptStatus,
   type WebhookSubscriptionStatus
@@ -118,14 +115,14 @@ import {
   LINKEDIN_PROFILE_VIEW_EDITABLE_TOOL,
   LINKEDIN_PRIVACY_GET_SETTINGS_TOOL,
   LINKEDIN_PRIVACY_PREPARE_UPDATE_SETTING_TOOL,
-  LINKEDIN_JOBS_SEARCH_TOOL,
-  LINKEDIN_JOBS_SAVE_TOOL,
-  LINKEDIN_JOBS_UNSAVE_TOOL,
-  LINKEDIN_JOBS_VIEW_TOOL,
   LINKEDIN_JOBS_ALERTS_CREATE_TOOL,
   LINKEDIN_JOBS_ALERTS_LIST_TOOL,
   LINKEDIN_JOBS_ALERTS_REMOVE_TOOL,
   LINKEDIN_JOBS_PREPARE_EASY_APPLY_TOOL,
+  LINKEDIN_JOBS_SEARCH_TOOL,
+  LINKEDIN_JOBS_SAVE_TOOL,
+  LINKEDIN_JOBS_UNSAVE_TOOL,
+  LINKEDIN_JOBS_VIEW_TOOL,
   LINKEDIN_NOTIFICATIONS_LIST_TOOL,
   LINKEDIN_POST_PREPARE_CREATE_TOOL,
   LINKEDIN_POST_PREPARE_CREATE_MEDIA_TOOL,
@@ -447,113 +444,6 @@ function readSearchCategory(
     "ACTION_PRECONDITION_FAILED",
     `${key} must be one of: ${SEARCH_CATEGORIES.join(", ")}.`
   );
-}
-
-function readOptionalJobAlertFrequency(
-  args: ToolArgs,
-  key: string
-) {
-  const value = args[key];
-  if (typeof value !== "string" || value.trim().length === 0) {
-    return undefined;
-  }
-
-  return coerceEnumValue(
-    value.trim(),
-    LINKEDIN_JOB_ALERT_FREQUENCIES,
-    key
-  );
-}
-
-function readOptionalJobAlertNotificationType(
-  args: ToolArgs,
-  key: string
-) {
-  const value = args[key];
-  if (typeof value !== "string" || value.trim().length === 0) {
-    return undefined;
-  }
-
-  return coerceEnumValue(
-    value.trim(),
-    LINKEDIN_JOB_ALERT_NOTIFICATION_TYPES,
-    key
-  );
-}
-
-function readEasyApplyApplicationDraft(
-  args: ToolArgs,
-  key: string
-): LinkedInEasyApplyApplicationDraft | undefined {
-  const value = readObject(args, key);
-  if (!value) {
-    return undefined;
-  }
-
-  const readOptionalDraftString = (draftKey: string): string | undefined => {
-    const draftValue = value[draftKey];
-    return typeof draftValue === "string" && draftValue.trim().length > 0
-      ? draftValue.trim()
-      : undefined;
-  };
-
-  const answersValue = value.answers;
-  let answers: Record<string, string | boolean> | undefined;
-  const email = readOptionalDraftString("email");
-  const phoneCountryCode = readOptionalDraftString("phoneCountryCode");
-  const phoneNumber = readOptionalDraftString("phoneNumber");
-  const resumePath = readOptionalDraftString("resumePath");
-  const coverLetterPath = readOptionalDraftString("coverLetterPath");
-
-  if (answersValue !== undefined) {
-    if (
-      typeof answersValue !== "object" ||
-      answersValue === null ||
-      Array.isArray(answersValue)
-    ) {
-      throw new LinkedInAssistantError(
-        "ACTION_PRECONDITION_FAILED",
-        "application.answers must be an object."
-      );
-    }
-
-    const parsedAnswers = Object.entries(answersValue).reduce<
-      Record<string, string | boolean>
-    >((result, [answerKey, answerValue]) => {
-      if (typeof answerValue === "boolean") {
-        result[answerKey] = answerValue;
-        return result;
-      }
-
-      if (typeof answerValue === "string" && answerValue.trim().length > 0) {
-        result[answerKey] = answerValue.trim();
-        return result;
-      }
-
-      throw new LinkedInAssistantError(
-        "ACTION_PRECONDITION_FAILED",
-        "application.answers values must be strings or booleans.",
-        {
-          answer_key: answerKey
-        }
-      );
-    }, {});
-
-    if (Object.keys(parsedAnswers).length > 0) {
-      answers = parsedAnswers;
-    }
-  }
-
-  const draft: LinkedInEasyApplyApplicationDraft = {
-    ...(email ? { email } : {}),
-    ...(phoneCountryCode ? { phoneCountryCode } : {}),
-    ...(phoneNumber ? { phoneNumber } : {}),
-    ...(resumePath ? { resumePath } : {}),
-    ...(coverLetterPath ? { coverLetterPath } : {}),
-    ...(answers ? { answers } : {})
-  };
-
-  return Object.keys(draft).length > 0 ? draft : undefined;
 }
 
 function readMemberReportReason(
@@ -1980,8 +1870,7 @@ async function handleJobsSave(args: ToolArgs): Promise<ToolResult> {
 
     runtime.logger.log("info", "mcp.jobs.save.done", {
       profileName,
-      preparedActionId: prepared.preparedActionId,
-      jobId
+      preparedActionId: prepared.preparedActionId
     });
 
     return toToolResult({
@@ -2015,8 +1904,7 @@ async function handleJobsUnsave(args: ToolArgs): Promise<ToolResult> {
 
     runtime.logger.log("info", "mcp.jobs.unsave.done", {
       profileName,
-      preparedActionId: prepared.preparedActionId,
-      jobId
+      preparedActionId: prepared.preparedActionId
     });
 
     return toToolResult({
@@ -2036,38 +1924,24 @@ async function handleJobsAlertsCreate(args: ToolArgs): Promise<ToolResult> {
     const profileName = readString(args, "profileName", "default");
     const query = readRequiredString(args, "query");
     const location = readString(args, "location", "");
-    const frequency = readOptionalJobAlertFrequency(args, "frequency");
-    const notificationType = readOptionalJobAlertNotificationType(
-      args,
-      "notificationType"
-    );
-    const includeSimilarJobs = readBoolean(args, "includeSimilarJobs", false);
     const operatorNote = readString(args, "operatorNote", "");
 
     runtime.logger.log("info", "mcp.jobs.alerts.create.start", {
       profileName,
       query,
-      location,
-      ...(frequency ? { frequency } : {}),
-      ...(notificationType ? { notificationType } : {}),
-      includeSimilarJobs
+      location
     });
 
     const prepared = runtime.jobs.prepareCreateJobAlert({
       profileName,
       query,
       ...(location ? { location } : {}),
-      ...(frequency ? { frequency } : {}),
-      ...(notificationType ? { notificationType } : {}),
-      includeSimilarJobs,
       ...(operatorNote ? { operatorNote } : {})
     });
 
     runtime.logger.log("info", "mcp.jobs.alerts.create.done", {
       profileName,
-      preparedActionId: prepared.preparedActionId,
-      query,
-      location
+      preparedActionId: prepared.preparedActionId
     });
 
     return toToolResult({
@@ -2085,24 +1959,28 @@ async function handleJobsAlertsList(args: ToolArgs): Promise<ToolResult> {
 
   try {
     const profileName = readString(args, "profileName", "default");
+    const limit = readPositiveNumber(args, "limit", 50);
 
     runtime.logger.log("info", "mcp.jobs.alerts.list.start", {
-      profileName
+      profileName,
+      limit
     });
 
-    const result = await runtime.jobs.listJobAlerts({
-      profileName
+    const alerts = await runtime.jobs.listJobAlerts({
+      profileName,
+      limit
     });
 
     runtime.logger.log("info", "mcp.jobs.alerts.list.done", {
       profileName,
-      count: result.count
+      count: alerts.length
     });
 
     return toToolResult({
       run_id: runtime.runId,
       profile_name: profileName,
-      ...result
+      count: alerts.length,
+      alerts
     });
   } finally {
     runtime.close();
@@ -2114,24 +1992,23 @@ async function handleJobsAlertsRemove(args: ToolArgs): Promise<ToolResult> {
 
   try {
     const profileName = readString(args, "profileName", "default");
-    const alertId = readRequiredString(args, "alertId");
+    const searchUrl = readRequiredString(args, "searchUrl");
     const operatorNote = readString(args, "operatorNote", "");
 
     runtime.logger.log("info", "mcp.jobs.alerts.remove.start", {
       profileName,
-      alertId
+      searchUrl
     });
 
     const prepared = runtime.jobs.prepareRemoveJobAlert({
       profileName,
-      alertId,
+      searchUrl,
       ...(operatorNote ? { operatorNote } : {})
     });
 
     runtime.logger.log("info", "mcp.jobs.alerts.remove.done", {
       profileName,
-      preparedActionId: prepared.preparedActionId,
-      alertId
+      preparedActionId: prepared.preparedActionId
     });
 
     return toToolResult({
@@ -2150,32 +2027,26 @@ async function handleJobsPrepareEasyApply(args: ToolArgs): Promise<ToolResult> {
   try {
     const profileName = readString(args, "profileName", "default");
     const jobId = readRequiredString(args, "jobId");
-    const application = readEasyApplyApplicationDraft(args, "application");
-    const operatorNote = readString(args, "operatorNote", "");
 
     runtime.logger.log("info", "mcp.jobs.prepare_easy_apply.start", {
       profileName,
-      jobId,
-      hasApplication: Boolean(application)
+      jobId
     });
 
-    const prepared = await runtime.jobs.prepareEasyApply({
+    const preview = await runtime.jobs.prepareEasyApply({
       profileName,
-      jobId,
-      ...(application ? { application } : {}),
-      ...(operatorNote ? { operatorNote } : {})
+      jobId
     });
 
     runtime.logger.log("info", "mcp.jobs.prepare_easy_apply.done", {
       profileName,
-      preparedActionId: prepared.preparedActionId,
       jobId
     });
 
     return toToolResult({
       run_id: runtime.runId,
       profile_name: profileName,
-      ...prepared
+      preview
     });
   } finally {
     runtime.close();
@@ -5572,7 +5443,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: LINKEDIN_JOBS_SAVE_TOOL,
         description:
-          "Prepare to save a LinkedIn job for later (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+          withSelectorAuditHint(
+            "Prepare a save action for a LinkedIn job posting."
+          ),
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -5585,11 +5458,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             jobId: {
               type: "string",
-              description: "LinkedIn job ID or job URL."
+              description: "LinkedIn job ID to save."
             },
             operatorNote: {
               type: "string",
-              description: "Internal note for audit."
+              description: "Optional operator note stored with the prepared action."
             }
           })
         }
@@ -5597,7 +5470,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: LINKEDIN_JOBS_UNSAVE_TOOL,
         description:
-          "Prepare to remove a LinkedIn job from saved jobs (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+          withSelectorAuditHint(
+            "Prepare an unsave action for a LinkedIn job posting."
+          ),
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -5610,11 +5485,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             jobId: {
               type: "string",
-              description: "LinkedIn job ID or job URL."
+              description: "LinkedIn job ID to remove from saved jobs."
             },
             operatorNote: {
               type: "string",
-              description: "Internal note for audit."
+              description: "Optional operator note stored with the prepared action."
             }
           })
         }
@@ -5622,7 +5497,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: LINKEDIN_JOBS_ALERTS_CREATE_TOOL,
         description:
-          "Prepare to create or update a LinkedIn job alert for a search (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+          withSelectorAuditHint(
+            "Prepare a LinkedIn job alert for a keyword search and optional location."
+          ),
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -5635,30 +5512,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             query: {
               type: "string",
-              description: "Job search keywords for the alert."
+              description: "Search keywords used for the alert."
             },
             location: {
               type: "string",
-              description: "Optional location filter for the alert."
-            },
-            frequency: {
-              type: "string",
-              enum: [...LINKEDIN_JOB_ALERT_FREQUENCIES],
-              description: "Alert frequency. Defaults to daily."
-            },
-            notificationType: {
-              type: "string",
-              enum: [...LINKEDIN_JOB_ALERT_NOTIFICATION_TYPES],
-              description:
-                "Notification delivery preference. Defaults to email_and_notification."
-            },
-            includeSimilarJobs: {
-              type: "boolean",
-              description: "Whether the alert should include similar jobs."
+              description: "Optional location string for the alert search."
             },
             operatorNote: {
               type: "string",
-              description: "Internal note for audit."
+              description: "Optional operator note stored with the prepared action."
             }
           })
         }
@@ -5667,7 +5529,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         name: LINKEDIN_JOBS_ALERTS_LIST_TOOL,
         description:
           withSelectorAuditHint(
-            "List active LinkedIn job alerts, including delivery settings and search URLs."
+            "List the LinkedIn job alerts configured for the current account."
           ),
         inputSchema: {
           type: "object",
@@ -5677,6 +5539,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description:
                 "Persistent Playwright profile name. Defaults to default."
+            },
+            limit: {
+              type: "number",
+              description: "Maximum number of alerts to return. Defaults to 50."
             }
           })
         }
@@ -5684,24 +5550,27 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: LINKEDIN_JOBS_ALERTS_REMOVE_TOOL,
         description:
-          "Prepare to remove a LinkedIn job alert by alert ID (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+          withSelectorAuditHint(
+            "Prepare removal of a LinkedIn job alert by its search URL."
+          ),
         inputSchema: {
           type: "object",
           additionalProperties: false,
-          required: ["alertId"],
+          required: ["searchUrl"],
           properties: withCdpSchemaProperties({
             profileName: {
               type: "string",
               description:
                 "Persistent Playwright profile name. Defaults to default."
             },
-            alertId: {
+            searchUrl: {
               type: "string",
-              description: "Alert ID returned by linkedin.jobs.alerts.list."
+              description:
+                "Canonical LinkedIn jobs search URL returned by linkedin.jobs.alerts.list."
             },
             operatorNote: {
               type: "string",
-              description: "Internal note for audit."
+              description: "Optional operator note stored with the prepared action."
             }
           })
         }
@@ -5709,7 +5578,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: LINKEDIN_JOBS_PREPARE_EASY_APPLY_TOOL,
         description:
-          "Inspect an Easy Apply flow and prepare a strict two-phase application submission. Returns blocking fields when more input is required. Use linkedin.actions.confirm to execute only after review.",
+          withSelectorAuditHint(
+            "Inspect the current Easy Apply form requirements for a LinkedIn job without submitting an application."
+          ),
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -5722,47 +5593,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             jobId: {
               type: "string",
-              description: "LinkedIn job ID or job URL."
-            },
-            application: {
-              type: "object",
-              additionalProperties: false,
-              description:
-                "Optional Easy Apply inputs collected during preparation.",
-              properties: {
-                email: {
-                  type: "string",
-                  description: "Email address to use in the application."
-                },
-                phoneCountryCode: {
-                  type: "string",
-                  description: "Phone country code label or value."
-                },
-                phoneNumber: {
-                  type: "string",
-                  description: "Phone number to use in the application."
-                },
-                resumePath: {
-                  type: "string",
-                  description: "Local filesystem path to a resume file."
-                },
-                coverLetterPath: {
-                  type: "string",
-                  description: "Local filesystem path to a cover letter file."
-                },
-                answers: {
-                  type: "object",
-                  description:
-                    "Optional mapping from field labels/keys to string or boolean answers.",
-                  additionalProperties: {
-                    anyOf: [{ type: "string" }, { type: "boolean" }]
-                  }
-                }
-              }
-            },
-            operatorNote: {
-              type: "string",
-              description: "Internal note for audit."
+              description: "LinkedIn job ID with an Easy Apply flow."
             }
           })
         }

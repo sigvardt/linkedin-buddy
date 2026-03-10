@@ -52,17 +52,6 @@ interface FakeRuntime {
   runId: string;
 }
 
-function createPreparedResult(summary: string) {
-  return {
-    preparedActionId: "pa_test",
-    confirmToken: "ct_test",
-    expiresAtMs: 123,
-    preview: {
-      summary
-    }
-  };
-}
-
 function createFakeRuntime(): FakeRuntime {
   return {
     runId: "run_test",
@@ -148,9 +137,14 @@ describe("handleToolCall", () => {
   });
 
   it("prepares member report actions through the MCP contract", async () => {
-    fakeRuntime.members.prepareReportMember.mockReturnValue(
-      createPreparedResult("Report LinkedIn member target-user for spam")
-    );
+    fakeRuntime.members.prepareReportMember.mockReturnValue({
+      preparedActionId: "pa_test",
+      confirmToken: "ct_test",
+      expiresAtMs: 123,
+      preview: {
+        summary: "Report LinkedIn member target-user for spam"
+      }
+    });
 
     const result = await handleToolCall(LINKEDIN_MEMBERS_PREPARE_REPORT_TOOL, {
       profileName: "default",
@@ -216,9 +210,14 @@ describe("handleToolCall", () => {
   });
 
   it("prepares company follow actions through the MCP contract", async () => {
-    fakeRuntime.companyPages.prepareFollowCompanyPage.mockReturnValue(
-      createPreparedResult("Follow company openai")
-    );
+    fakeRuntime.companyPages.prepareFollowCompanyPage.mockReturnValue({
+      preparedActionId: "pa_company",
+      confirmToken: "ct_company",
+      expiresAtMs: 456,
+      preview: {
+        summary: "Follow company openai"
+      }
+    });
 
     const result = await handleToolCall(LINKEDIN_COMPANY_PREPARE_FOLLOW_TOOL, {
       profileName: "default",
@@ -229,8 +228,8 @@ describe("handleToolCall", () => {
     expect(parseToolPayload(result)).toMatchObject({
       run_id: "run_test",
       profile_name: "default",
-      preparedActionId: "pa_test",
-      confirmToken: "ct_test"
+      preparedActionId: "pa_company",
+      confirmToken: "ct_company"
     });
     expect(fakeRuntime.companyPages.prepareFollowCompanyPage).toHaveBeenCalledWith({
       profileName: "default",
@@ -239,170 +238,200 @@ describe("handleToolCall", () => {
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });
 
-  it("prepares job save and unsave actions through the MCP contract", async () => {
-    fakeRuntime.jobs.prepareSaveJob.mockReturnValue(
-      createPreparedResult("Save LinkedIn job 1234567890 for later")
-    );
-    fakeRuntime.jobs.prepareUnsaveJob.mockReturnValue(
-      createPreparedResult("Unsave LinkedIn job 1234567890")
-    );
+  it("prepares job save actions through the MCP contract", async () => {
+    fakeRuntime.jobs.prepareSaveJob.mockReturnValue({
+      preparedActionId: "pa_job_save",
+      confirmToken: "ct_job_save",
+      expiresAtMs: 789,
+      preview: {
+        summary: "Save LinkedIn job 123"
+      }
+    });
 
-    const saveResult = await handleToolCall(LINKEDIN_JOBS_SAVE_TOOL, {
+    const result = await handleToolCall(LINKEDIN_JOBS_SAVE_TOOL, {
       profileName: "default",
-      jobId: "1234567890"
-    });
-    const unsaveResult = await handleToolCall(LINKEDIN_JOBS_UNSAVE_TOOL, {
-      profileName: "jobs-profile",
-      jobId: "1234567890",
-      operatorNote: "cleanup"
+      jobId: "123"
     });
 
-    expect(parseToolPayload(saveResult)).toMatchObject({
+    expect("isError" in result && result.isError).toBe(false);
+    expect(parseToolPayload(result)).toMatchObject({
       run_id: "run_test",
       profile_name: "default",
-      preparedActionId: "pa_test",
-      confirmToken: "ct_test"
-    });
-    expect(parseToolPayload(unsaveResult)).toMatchObject({
-      run_id: "run_test",
-      profile_name: "jobs-profile",
-      preparedActionId: "pa_test",
-      confirmToken: "ct_test"
+      preparedActionId: "pa_job_save",
+      confirmToken: "ct_job_save"
     });
     expect(fakeRuntime.jobs.prepareSaveJob).toHaveBeenCalledWith({
       profileName: "default",
-      jobId: "1234567890"
+      jobId: "123"
+    });
+    expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("prepares job unsave actions through the MCP contract", async () => {
+    fakeRuntime.jobs.prepareUnsaveJob.mockReturnValue({
+      preparedActionId: "pa_job_unsave",
+      confirmToken: "ct_job_unsave",
+      expiresAtMs: 790,
+      preview: {
+        summary: "Unsave LinkedIn job 123"
+      }
+    });
+
+    const result = await handleToolCall(LINKEDIN_JOBS_UNSAVE_TOOL, {
+      profileName: "default",
+      jobId: "123"
+    });
+
+    expect("isError" in result && result.isError).toBe(false);
+    expect(parseToolPayload(result)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      preparedActionId: "pa_job_unsave",
+      confirmToken: "ct_job_unsave"
     });
     expect(fakeRuntime.jobs.prepareUnsaveJob).toHaveBeenCalledWith({
-      profileName: "jobs-profile",
-      jobId: "1234567890",
-      operatorNote: "cleanup"
+      profileName: "default",
+      jobId: "123"
     });
+    expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("prepares job alert creation through the MCP contract", async () => {
+    fakeRuntime.jobs.prepareCreateJobAlert.mockReturnValue({
+      preparedActionId: "pa_job_alert_create",
+      confirmToken: "ct_job_alert_create",
+      expiresAtMs: 791,
+      preview: {
+        summary: "Create LinkedIn job alert for software engineer"
+      }
+    });
+
+    const result = await handleToolCall(LINKEDIN_JOBS_ALERTS_CREATE_TOOL, {
+      profileName: "default",
+      query: "software engineer",
+      location: "Copenhagen"
+    });
+
+    expect("isError" in result && result.isError).toBe(false);
+    expect(parseToolPayload(result)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      preparedActionId: "pa_job_alert_create",
+      confirmToken: "ct_job_alert_create"
+    });
+    expect(fakeRuntime.jobs.prepareCreateJobAlert).toHaveBeenCalledWith({
+      profileName: "default",
+      query: "software engineer",
+      location: "Copenhagen"
+    });
+    expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });
 
   it("lists job alerts through the MCP contract", async () => {
-    fakeRuntime.jobs.listJobAlerts.mockResolvedValue({
-      count: 1,
-      alerts: [
-        {
-          alert_id: "ja_123",
-          query: "software engineer",
-          location: "Copenhagen",
-          search_url:
-            "https://www.linkedin.com/jobs/search/?keywords=software%20engineer&location=Copenhagen",
-          filters_text: "Filters: Easy Apply",
-          frequency: "daily",
-          notification_type: "email",
-          frequency_text: "Frequency: Daily via email",
-          include_similar_jobs: false
-        }
-      ]
-    });
+    fakeRuntime.jobs.listJobAlerts.mockResolvedValue([
+      {
+        alert_key: "https://www.linkedin.com/jobs/search/?keywords=software%20engineer",
+        query: "software engineer",
+        location: "Copenhagen",
+        search_url: "https://www.linkedin.com/jobs/search/?keywords=software%20engineer",
+        filters: ["Remote"],
+        frequency: "daily",
+        notification_type: "email_and_notification"
+      }
+    ]);
 
     const result = await handleToolCall(LINKEDIN_JOBS_ALERTS_LIST_TOOL, {
-      profileName: "default"
+      profileName: "default",
+      limit: 10
     });
 
+    expect("isError" in result && result.isError).toBe(false);
     expect(parseToolPayload(result)).toMatchObject({
       run_id: "run_test",
       profile_name: "default",
       count: 1,
       alerts: [
         expect.objectContaining({
-          alert_id: "ja_123",
-          query: "software engineer"
+          query: "software engineer",
+          frequency: "daily"
         })
       ]
     });
     expect(fakeRuntime.jobs.listJobAlerts).toHaveBeenCalledWith({
-      profileName: "default"
+      profileName: "default",
+      limit: 10
     });
+    expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });
 
-  it("prepares job alert create and remove actions through the MCP contract", async () => {
-    fakeRuntime.jobs.prepareCreateJobAlert.mockReturnValue(
-      createPreparedResult("Create a LinkedIn job alert for software engineer")
-    );
-    fakeRuntime.jobs.prepareRemoveJobAlert.mockReturnValue(
-      createPreparedResult("Remove LinkedIn job alert ja_123")
-    );
-
-    const createResult = await handleToolCall(LINKEDIN_JOBS_ALERTS_CREATE_TOOL, {
-      profileName: "default",
-      query: "software engineer",
-      location: "Copenhagen",
-      frequency: "weekly",
-      notificationType: "email_and_notification",
-      includeSimilarJobs: true
-    });
-    const removeResult = await handleToolCall(LINKEDIN_JOBS_ALERTS_REMOVE_TOOL, {
-      profileName: "default",
-      alertId: "ja_123"
-    });
-
-    expect(parseToolPayload(createResult)).toMatchObject({
-      run_id: "run_test",
-      profile_name: "default",
-      preparedActionId: "pa_test",
-      confirmToken: "ct_test"
-    });
-    expect(parseToolPayload(removeResult)).toMatchObject({
-      run_id: "run_test",
-      profile_name: "default",
-      preparedActionId: "pa_test",
-      confirmToken: "ct_test"
-    });
-    expect(fakeRuntime.jobs.prepareCreateJobAlert).toHaveBeenCalledWith({
-      profileName: "default",
-      query: "software engineer",
-      location: "Copenhagen",
-      frequency: "weekly",
-      notificationType: "email_and_notification",
-      includeSimilarJobs: true
-    });
-    expect(fakeRuntime.jobs.prepareRemoveJobAlert).toHaveBeenCalledWith({
-      profileName: "default",
-      alertId: "ja_123"
-    });
-  });
-
-  it("prepares Easy Apply payloads through the MCP contract", async () => {
-    fakeRuntime.jobs.prepareEasyApply.mockResolvedValue(
-      createPreparedResult("Prepare LinkedIn Easy Apply for job 1234567890")
-    );
-
-    const result = await handleToolCall(LINKEDIN_JOBS_PREPARE_EASY_APPLY_TOOL, {
-      profileName: "default",
-      jobId: "1234567890",
-      application: {
-        email: "person@example.com",
-        phoneCountryCode: "+45",
-        phoneNumber: "12345678",
-        answers: {
-          sponsorship_required: false,
-          years_of_experience: "5"
-        }
+  it("prepares job alert removal through the MCP contract", async () => {
+    fakeRuntime.jobs.prepareRemoveJobAlert.mockReturnValue({
+      preparedActionId: "pa_job_alert_remove",
+      confirmToken: "ct_job_alert_remove",
+      expiresAtMs: 792,
+      preview: {
+        summary: "Remove LinkedIn job alert"
       }
     });
 
+    const result = await handleToolCall(LINKEDIN_JOBS_ALERTS_REMOVE_TOOL, {
+      profileName: "default",
+      searchUrl:
+        "https://www.linkedin.com/jobs/search/?keywords=software%20engineer&location=Copenhagen"
+    });
+
+    expect("isError" in result && result.isError).toBe(false);
     expect(parseToolPayload(result)).toMatchObject({
       run_id: "run_test",
       profile_name: "default",
-      preparedActionId: "pa_test",
-      confirmToken: "ct_test"
+      preparedActionId: "pa_job_alert_remove",
+      confirmToken: "ct_job_alert_remove"
+    });
+    expect(fakeRuntime.jobs.prepareRemoveJobAlert).toHaveBeenCalledWith({
+      profileName: "default",
+      searchUrl:
+        "https://www.linkedin.com/jobs/search/?keywords=software%20engineer&location=Copenhagen"
+    });
+    expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("previews easy apply requirements through the MCP contract", async () => {
+    fakeRuntime.jobs.prepareEasyApply.mockResolvedValue({
+      job_id: "123",
+      job_url: "https://www.linkedin.com/jobs/view/123/",
+      application_url:
+        "https://www.linkedin.com/jobs/view/123/apply/?openSDUIApplyFlow=true",
+      title: "Senior Frontend Engineer",
+      company: "Anthill",
+      current_step: "Contact info",
+      progress_percent: 0,
+      next_action_label: "Next",
+      submit_available: false,
+      field_count: 2,
+      required_field_count: 2,
+      fields: [],
+      preview_only: true
+    });
+
+    const result = await handleToolCall(LINKEDIN_JOBS_PREPARE_EASY_APPLY_TOOL, {
+      profileName: "default",
+      jobId: "123"
+    });
+
+    expect("isError" in result && result.isError).toBe(false);
+    expect(parseToolPayload(result)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      preview: {
+        job_id: "123",
+        current_step: "Contact info",
+        preview_only: true
+      }
     });
     expect(fakeRuntime.jobs.prepareEasyApply).toHaveBeenCalledWith({
       profileName: "default",
-      jobId: "1234567890",
-      application: {
-        email: "person@example.com",
-        phoneCountryCode: "+45",
-        phoneNumber: "12345678",
-        answers: {
-          sponsorship_required: false,
-          years_of_experience: "5"
-        }
-      }
+      jobId: "123"
     });
+    expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });
 });
