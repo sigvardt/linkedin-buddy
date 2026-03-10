@@ -32,7 +32,7 @@ export type LinkedInGroupMembershipState =
   | "pending"
   | "unknown";
 
-export interface LinkedInGroupSearchResult {
+export interface LinkedInGroupsSearchResult {
   group_id: string;
   name: string;
   group_url: string;
@@ -67,7 +67,7 @@ export interface ViewGroupInput {
 
 export interface SearchGroupsOutput {
   query: string;
-  results: LinkedInGroupSearchResult[];
+  results: LinkedInGroupsSearchResult[];
   count: number;
 }
 

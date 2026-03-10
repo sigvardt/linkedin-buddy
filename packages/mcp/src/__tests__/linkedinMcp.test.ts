@@ -32,14 +32,6 @@ interface FakeRuntime {
     prepareFollowCompanyPage: ReturnType<typeof vi.fn>;
     viewCompanyPage: ReturnType<typeof vi.fn>;
   };
-  events: {
-    searchEvents: ReturnType<typeof vi.fn>;
-    viewEvent: ReturnType<typeof vi.fn>;
-  };
-  groups: {
-    searchGroups: ReturnType<typeof vi.fn>;
-    viewGroup: ReturnType<typeof vi.fn>;
-  };
   logger: {
     log: ReturnType<typeof vi.fn>;
   };
@@ -71,14 +63,6 @@ function createFakeRuntime(): FakeRuntime {
     companyPages: {
       prepareFollowCompanyPage: vi.fn(),
       viewCompanyPage: vi.fn()
-    },
-    events: {
-      searchEvents: vi.fn(),
-      viewEvent: vi.fn()
-    },
-    groups: {
-      searchGroups: vi.fn(),
-      viewGroup: vi.fn()
     },
     logger: {
       log: vi.fn()

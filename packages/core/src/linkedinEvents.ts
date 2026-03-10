@@ -23,7 +23,7 @@ export const EVENT_RSVP_ACTION_TYPE = "events.rsvp";
 
 export type LinkedInEventRsvpState = "not_responded" | "attending" | "unknown";
 
-export interface LinkedInEventSearchResult {
+export interface LinkedInEventsSearchResult {
   event_id: string;
   title: string;
   date_time: string;
@@ -61,7 +61,7 @@ export interface ViewEventInput {
 
 export interface SearchEventsOutput {
   query: string;
-  results: LinkedInEventSearchResult[];
+  results: LinkedInEventsSearchResult[];
   count: number;
 }
 

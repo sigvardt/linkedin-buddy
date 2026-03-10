@@ -67,10 +67,6 @@ import {
   type LinkedInJobsRuntime
 } from "./linkedinJobs.js";
 import {
-  LinkedInEventsService,
-  type LinkedInEventsRuntime
-} from "./linkedinEvents.js";
-import {
   LinkedInNotificationsService,
   type LinkedInNotificationsRuntime
 } from "./linkedinNotifications.js";
@@ -192,9 +188,7 @@ export interface CoreRuntime {
   privacySettings: LinkedInPrivacySettingsService;
   followups: LinkedInFollowupsService;
   feed: LinkedInFeedService;
-  groups: LinkedInGroupsService;
   posts: LinkedInPostsService;
-  events: LinkedInEventsService;
   inbox: LinkedInInboxService;
   activityWatches: ActivityWatchesService;
   activityPoller: ActivityPollerService;
@@ -377,9 +371,7 @@ export function createCoreRuntime(
     privacySettings: undefined as unknown as LinkedInPrivacySettingsService,
     followups: undefined as unknown as LinkedInFollowupsService,
     feed: undefined as unknown as LinkedInFeedService,
-    groups: undefined as unknown as LinkedInGroupsService,
     posts: undefined as unknown as LinkedInPostsService,
-    events: undefined as unknown as LinkedInEventsService,
     inbox: undefined as unknown as LinkedInInboxService,
     activityWatches: undefined as unknown as ActivityWatchesService,
     activityPoller: undefined as unknown as ActivityPollerService,
@@ -455,12 +447,8 @@ export function createCoreRuntime(
   runtime.followups = new LinkedInFollowupsService(followupsRuntime);
   const feedRuntime: LinkedInFeedRuntime = runtime;
   runtime.feed = new LinkedInFeedService(feedRuntime);
-  const groupsRuntime: LinkedInGroupsRuntime = runtime;
-  runtime.groups = new LinkedInGroupsService(groupsRuntime);
   const postsRuntime: LinkedInPostsRuntime = runtime;
   runtime.posts = new LinkedInPostsService(postsRuntime);
-  const eventsRuntime: LinkedInEventsRuntime = runtime;
-  runtime.events = new LinkedInEventsService(eventsRuntime);
   runtime.inbox = new LinkedInInboxService(runtime);
   runtime.activityWatches = new ActivityWatchesService(runtime);
   runtime.activityPoller = new ActivityPollerService(runtime);

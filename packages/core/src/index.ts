@@ -29,7 +29,6 @@ export * from "./linkedinGroups.js";
 export * from "./linkedinImageAssets.js";
 export * from "./linkedinInbox.js";
 export * from "./linkedinMembers.js";
-export * from "./linkedinEvents.js";
 export * from "./linkedinProfile.js";
 export * from "./linkedinPrivacySettings.js";
 export * from "./linkedinJobs.js";
