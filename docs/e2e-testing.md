@@ -575,8 +575,10 @@ The E2E suite now covers:
   health, and both confirm entrypoints
 - MCP tools: session status/open-login/health, inbox list/get-thread/
   prepare-reply, profile, search, connections list/pending/invite/accept/
-  withdraw, followup prepare-after-accept, feed list/view-post/like/comment,
-  post prepare-create, notifications, jobs search/view, and actions confirm
+  withdraw/prepare-ignore/prepare-remove/prepare-follow/
+  prepare-unfollow, followup prepare-after-accept, feed list/view-post/
+  like/comment, post prepare-create, notifications, jobs search/view, and
+  actions confirm
 - Real outbound confirm flows for messages, connections, likes, comments, and
   posts behind explicit opt-in flags
 - Error paths for expired tokens, rate limits, UI drift detection, profile

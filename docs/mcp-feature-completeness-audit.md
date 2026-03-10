@@ -22,7 +22,7 @@ land in focused slices.
 | Profile | `linkedin.profile.view`, `linkedin.profile.view_editable`, `linkedin.profile.prepare_update_intro`, `linkedin.profile.prepare_upsert_section_item`, `linkedin.profile.prepare_remove_section_item`, `linkedin.actions.confirm` | Read/write profile inspection plus intro and structured section editing |
 | Search | `linkedin.search` | Read-only search for `people`, `companies`, and `jobs` only |
 | Inbox | `linkedin.inbox.list_threads`, `linkedin.inbox.get_thread`, `linkedin.inbox.prepare_reply`, `linkedin.actions.confirm` | Read existing threads and send replies through two-phase confirm |
-| Connections | `linkedin.connections.list`, `linkedin.connections.pending`, `linkedin.connections.invite`, `linkedin.connections.accept`, `linkedin.connections.withdraw`, `linkedin.network.prepare_followup_after_accept`, `linkedin.actions.confirm` | Basic network reads plus invite/accept/withdraw and follow-up preparation |
+| Connections | `linkedin.connections.list`, `linkedin.connections.pending`, `linkedin.connections.invite`, `linkedin.connections.accept`, `linkedin.connections.withdraw`, `linkedin.connections.prepare_ignore`, `linkedin.connections.prepare_remove`, `linkedin.connections.prepare_follow`, `linkedin.connections.prepare_unfollow`, `linkedin.network.prepare_followup_after_accept`, `linkedin.actions.confirm` | Basic network reads plus invite/accept/withdraw/ignore/remove/follow/unfollow and follow-up preparation |
 | Feed | `linkedin.feed.list`, `linkedin.feed.view_post`, `linkedin.feed.like`, `linkedin.feed.comment`, `linkedin.actions.confirm` | Read feed/posts plus reactions and comments |
 | Posts | `linkedin.post.prepare_create`, `linkedin.actions.confirm` | Text post creation with visibility selection |
 | Notifications | `linkedin.notifications.list` | Read-only notifications |
@@ -60,7 +60,6 @@ land in focused slices.
 | #228 | Medium | Skills, endorsements, and recommendations | `linkedin.profile.prepare_add_skill`, `linkedin.profile.prepare_endorse_skill`, `linkedin.profile.prepare_request_recommendation` |
 | #229 | High | Starting new LinkedIn message threads | `linkedin.inbox.search_recipients`, `linkedin.inbox.prepare_new_thread` |
 | #230 | Medium | Inbox reactions and thread triage actions | `linkedin.inbox.prepare_react`, `linkedin.inbox.archive_thread`, `linkedin.inbox.mark_unread`, `linkedin.inbox.mute_thread` |
-| #231 | High | Relationship management beyond invites | `linkedin.connections.prepare_ignore`, `linkedin.connections.prepare_remove`, `linkedin.connections.prepare_follow`, `linkedin.connections.prepare_unfollow` |
 | #232 | Medium | Privacy and member-safety controls | `linkedin.members.prepare_block`, `linkedin.members.prepare_report`, `linkedin.privacy.get_settings`, `linkedin.privacy.prepare_update_setting` |
 | #233 | High | Repost/share/save feed interactions | `linkedin.feed.prepare_repost`, `linkedin.feed.prepare_share`, `linkedin.feed.save_post`, `linkedin.feed.prepare_remove_reaction` |
 | #234 | High | Rich post composition and content lifecycle | `linkedin.post.prepare_create_media`, `linkedin.post.prepare_create_poll`, `linkedin.post.prepare_edit`, `linkedin.post.prepare_delete` |

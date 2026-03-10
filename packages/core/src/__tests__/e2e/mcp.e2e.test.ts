@@ -120,7 +120,11 @@ describe.sequential("MCP E2E", () => {
     for (const toolName of [
       MCP_TOOL_NAMES.connectionsInvite,
       MCP_TOOL_NAMES.connectionsAccept,
-      MCP_TOOL_NAMES.connectionsWithdraw
+      MCP_TOOL_NAMES.connectionsWithdraw,
+      MCP_TOOL_NAMES.connectionsPrepareIgnore,
+      MCP_TOOL_NAMES.connectionsPrepareRemove,
+      MCP_TOOL_NAMES.connectionsPrepareFollow,
+      MCP_TOOL_NAMES.connectionsPrepareUnfollow
     ] as const) {
       const targetProfile = getDefaultConnectionTarget();
       const prepared = await callMcpTool(toolName, {
