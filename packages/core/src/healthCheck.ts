@@ -1,5 +1,6 @@
 import type { BrowserContext, Page } from "playwright-core";
 import { inspectLinkedInSession } from "./auth/sessionInspection.js";
+import { resolveEvasionConfig, type EvasionConfig } from "./config.js";
 import {
   getLinkedInSessionFingerprint,
   summarizeLinkedInSessionCookies,
@@ -8,6 +9,7 @@ import {
 
 export const DEFAULT_SESSION_COOKIE_EXPIRY_WARNING_MS = 60 * 60_000;
 
+/** Browser reachability snapshot for one health-check run. */
 export interface BrowserHealthStatus {
   healthy: boolean;
   browserConnected: boolean;
@@ -15,6 +17,7 @@ export interface BrowserHealthStatus {
   checkedAt: string;
 }
 
+/** LinkedIn session health snapshot for one health-check run. */
 export interface SessionHealthStatus {
   authenticated: boolean;
   currentUrl: string;
@@ -22,6 +25,8 @@ export interface SessionHealthStatus {
   checkedAt: string;
   checkpointDetected: boolean;
   cookieExpiringSoon: boolean;
+  /** Resolved anti-bot evasion status for the current runtime. */
+  evasion: EvasionConfig;
   loginWallDetected: boolean;
   nextCookieExpiryAt: string | null;
   rateLimited: boolean;
@@ -30,9 +35,15 @@ export interface SessionHealthStatus {
   sessionCookies: LinkedInSessionCookieMetadata[];
 }
 
+/** Combined browser + LinkedIn session health report. */
 export interface FullHealthStatus {
   browser: BrowserHealthStatus;
   session: SessionHealthStatus;
+}
+
+/** Optional enrichments applied to session and full health checks. */
+export interface HealthCheckOptions {
+  evasion?: EvasionConfig;
 }
 
 async function getFirstPage(context: BrowserContext): Promise<Page> {
@@ -44,6 +55,7 @@ async function getFirstPage(context: BrowserContext): Promise<Page> {
   return context.newPage();
 }
 
+/** Checks whether the underlying browser context is connected and responsive. */
 export async function checkBrowserHealth(
   context: BrowserContext
 ): Promise<BrowserHealthStatus> {
@@ -69,9 +81,13 @@ export async function checkBrowserHealth(
   };
 }
 
+/** Checks the LinkedIn session state and enriches it with cookie + evasion diagnostics. */
 export async function checkLinkedInSession(
-  context: BrowserContext
+  context: BrowserContext,
+  options: HealthCheckOptions = {}
 ): Promise<SessionHealthStatus> {
+  const evasion = options.evasion ?? resolveEvasionConfig();
+
   try {
     const page = await getFirstPage(context);
     await page.goto("https://www.linkedin.com/feed/", {
@@ -94,6 +110,7 @@ export async function checkLinkedInSession(
     return {
       ...inspection,
       cookieExpiringSoon,
+      evasion,
       nextCookieExpiryAt,
       sessionCookieFingerprint:
         sessionCookies.length > 0
@@ -108,8 +125,8 @@ export async function checkLinkedInSession(
     const currentUrl = context.pages()[0]?.url() ?? "";
     const reason =
       error instanceof Error
-        ? `Session health check failed: ${error.message}`
-        : "Session health check failed.";
+        ? `Session health check failed before LinkedIn could be inspected: ${error.message}. Check browser connectivity and reload the profile before retrying.`
+        : "Session health check failed before LinkedIn could be inspected. Check browser connectivity and reload the profile before retrying.";
 
     return {
       authenticated: false,
@@ -118,6 +135,7 @@ export async function checkLinkedInSession(
       reason,
       checkpointDetected: false,
       cookieExpiringSoon: false,
+      evasion,
       loginWallDetected: false,
       nextCookieExpiryAt: null,
       rateLimited: false,
@@ -128,11 +146,13 @@ export async function checkLinkedInSession(
   }
 }
 
+/** Runs both browser and LinkedIn session checks and returns one combined report. */
 export async function checkFullHealth(
-  context: BrowserContext
+  context: BrowserContext,
+  options: HealthCheckOptions = {}
 ): Promise<FullHealthStatus> {
   const browser = await checkBrowserHealth(context);
-  const session = await checkLinkedInSession(context);
+  const session = await checkLinkedInSession(context, options);
 
   return {
     browser,

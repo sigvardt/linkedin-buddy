@@ -86,3 +86,54 @@ export interface EvasionProfile {
    */
   fingerprintHardening: boolean;
 }
+
+/** Source used to resolve the effective evasion level. */
+export type EvasionConfigSource = "default" | "env" | "option";
+
+/** Stable feature names surfaced in status output and diagnostics. */
+export type EvasionFeatureName =
+  | "bezier_mouse_movement"
+  | "momentum_scroll"
+  | "tab_blur_simulation"
+  | "viewport_resize_simulation"
+  | "idle_drift"
+  | "reading_pauses"
+  | "poisson_timing"
+  | "fingerprint_hardening";
+
+/** Minimal logger surface used by optional evasion diagnostics. */
+export interface EvasionDiagnosticsLogger {
+  log(
+    level: "debug" | "info" | "warn" | "error",
+    event: string,
+    payload?: Record<string, unknown>
+  ): unknown;
+}
+
+/** Resolved evasion status exposed through runtime/session diagnostics. */
+export interface EvasionStatus {
+  /** Whether verbose evasion diagnostics are enabled for this run. */
+  diagnosticsEnabled: boolean;
+  /** Stable feature names disabled by the active profile. */
+  disabledFeatures: readonly EvasionFeatureName[];
+  /** Stable feature names enabled by the active profile. */
+  enabledFeatures: readonly EvasionFeatureName[];
+  /** Effective evasion level. */
+  level: EvasionLevel;
+  /** Concrete profile values used for this run. */
+  profile: Readonly<EvasionProfile>;
+  /** Whether the level came from the default, env, or runtime option. */
+  source: EvasionConfigSource;
+  /** Human-readable summary for CLI, MCP, and logs. */
+  summary: string;
+}
+
+/** Optional diagnostics controls for {@link EvasionSession}. */
+export interface EvasionSessionOptions {
+  /** Override whether debug diagnostics are emitted for this session. */
+  diagnosticsEnabled?: boolean;
+  /** Optional label added to emitted diagnostics for easier correlation. */
+  diagnosticsLabel?: string;
+  /** Structured logger that receives optional evasion diagnostics. */
+  logger?: EvasionDiagnosticsLogger;
+}

@@ -199,6 +199,14 @@ export async function findHoneypotFields(page: Page): Promise<readonly string[]>
   return findMatchingSelectors(page, HONEYPOT_SELECTORS);
 }
 
+/**
+ * Scrolls the page by a fixed distance using the requested browser scroll
+ * behavior.
+ *
+ * @param page - Playwright Page to scroll.
+ * @param pixels - Distance in pixels (positive = down, negative = up).
+ * @param behavior - Native browser scroll behavior to request.
+ */
 export async function scrollPageBy(
   page: Page,
   pixels: number,

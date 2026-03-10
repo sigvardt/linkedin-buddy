@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { resolveActivityWebhookConfig } from "../config.js";
+import {
+  LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS_ENV,
+  LINKEDIN_ASSISTANT_EVASION_LEVEL_ENV,
+  resolveActivityWebhookConfig,
+  resolveEvasionConfig
+} from "../config.js";
 import { LinkedInAssistantError } from "../errors.js";
 
 const ACTIVITY_ENV_KEYS = [
@@ -15,13 +20,32 @@ const ACTIVITY_ENV_KEYS = [
   "LINKEDIN_ASSISTANT_ACTIVITY_WATCH_LEASE_SECONDS"
 ] as const;
 
+const EVASION_ENV_KEYS = [
+  LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS_ENV,
+  LINKEDIN_ASSISTANT_EVASION_LEVEL_ENV
+] as const;
+
 const ORIGINAL_ACTIVITY_ENV = new Map(
   ACTIVITY_ENV_KEYS.map((key) => [key, process.env[key]] as const)
+);
+const ORIGINAL_EVASION_ENV = new Map(
+  EVASION_ENV_KEYS.map((key) => [key, process.env[key]] as const)
 );
 
 function restoreActivityEnv(): void {
   for (const key of ACTIVITY_ENV_KEYS) {
     const originalValue = ORIGINAL_ACTIVITY_ENV.get(key);
+    if (originalValue === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = originalValue;
+    }
+  }
+}
+
+function restoreEvasionEnv(): void {
+  for (const key of EVASION_ENV_KEYS) {
+    const originalValue = ORIGINAL_EVASION_ENV.get(key);
     if (originalValue === undefined) {
       delete process.env[key];
     } else {
@@ -43,6 +67,7 @@ function captureLinkedInError(action: () => unknown): LinkedInAssistantError {
 
 afterEach(() => {
   restoreActivityEnv();
+  restoreEvasionEnv();
 });
 
 describe("resolveActivityWebhookConfig", () => {
@@ -139,5 +164,70 @@ describe("resolveActivityWebhookConfig", () => {
       example: "LINKEDIN_ASSISTANT_ACTIVITY_MAX_BACKOFF_SECONDS=90"
     });
     expect(String(error.details.suggestion)).toContain("at least 90");
+  });
+});
+
+describe("resolveEvasionConfig", () => {
+  it("returns the documented defaults when no overrides are configured", () => {
+    expect(resolveEvasionConfig()).toMatchObject({
+      diagnosticsEnabled: false,
+      enabledFeatures: [
+        "bezier_mouse_movement",
+        "momentum_scroll",
+        "idle_drift",
+        "reading_pauses",
+        "poisson_timing",
+        "fingerprint_hardening"
+      ],
+      level: "moderate",
+      source: "default"
+    });
+  });
+
+  it("parses env overrides for the evasion level and diagnostics flag", () => {
+    process.env[LINKEDIN_ASSISTANT_EVASION_LEVEL_ENV] = "paranoid";
+    process.env[LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS_ENV] = "true";
+
+    expect(resolveEvasionConfig()).toMatchObject({
+      diagnosticsEnabled: true,
+      enabledFeatures: expect.arrayContaining([
+        "tab_blur_simulation",
+        "viewport_resize_simulation"
+      ]),
+      level: "paranoid",
+      source: "env"
+    });
+  });
+
+  it("rejects invalid env evasion levels with a concrete example", () => {
+    process.env[LINKEDIN_ASSISTANT_EVASION_LEVEL_ENV] = "aggressive";
+
+    const error = captureLinkedInError(() => resolveEvasionConfig());
+
+    expect(error.message).toBe(
+      "LINKEDIN_ASSISTANT_EVASION_LEVEL must be one of minimal, moderate, paranoid. Unset it to use the default value."
+    );
+    expect(error.details).toMatchObject({
+      default_value: "moderate",
+      env: LINKEDIN_ASSISTANT_EVASION_LEVEL_ENV,
+      example: `${LINKEDIN_ASSISTANT_EVASION_LEVEL_ENV}=paranoid`,
+      value: "aggressive"
+    });
+    expect(String(error.details.suggestion)).toContain("minimal");
+  });
+
+  it("rejects malformed diagnostics booleans with clear guidance", () => {
+    process.env[LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS_ENV] = "verbose";
+
+    const error = captureLinkedInError(() => resolveEvasionConfig());
+
+    expect(error.message).toBe(
+      "LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS must use a boolean value: 1, 0, true, false, yes, no, on, or off. Unset it to use the default value."
+    );
+    expect(error.details).toMatchObject({
+      default_value: "false",
+      env: LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS_ENV,
+      example: `${LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS_ENV}=true`
+    });
   });
 });

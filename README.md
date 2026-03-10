@@ -36,6 +36,9 @@ Default tool-owned state home (profiles, DB, artifacts):
 - `~/.linkedin-assistant/linkedin-owa-agentools`
 - Override with `LINKEDIN_ASSISTANT_HOME=/custom/path`
 - Confirm-failure trace size cap: `LINKEDIN_ASSISTANT_CONFIRM_TRACE_MAX_BYTES` (defaults to `26214400`)
+- Anti-bot evasion profile: `LINKEDIN_ASSISTANT_EVASION_LEVEL` (defaults to `moderate`; supports `minimal`, `moderate`, `paranoid`)
+- Verbose evasion diagnostics: `LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS` (defaults to `false`; when `true`, debug evasion events are written to the run log)
+- See `docs/evasion.md` for the evasion profiles, status output, and diagnostics hooks
 - Selector locale for UI-text fallbacks: `LINKEDIN_ASSISTANT_SELECTOR_LOCALE` (defaults to `en`; supports `en`, `da`; region tags like `da-DK` normalize to `da`; unsupported values fall back to `en` with a warning; see `docs/selector-locale.md`)
 
 Scheduler / scheduled follow-up configuration:
@@ -173,6 +176,43 @@ await hp.type('[role="textbox"]', "Thanks for sharing this update.", {
 See `packages/core/README.md` for more profile examples and
 `docs/human-typing-architecture.md` for the underlying design.
 
+## Anti-bot evasion
+
+The core package ships an opt-in anti-bot evasion module for Playwright pages,
+along with runtime-level status snapshots and debug diagnostics.
+
+Configuration surface:
+
+- default level: `moderate`
+- `LINKEDIN_ASSISTANT_EVASION_LEVEL=minimal|moderate|paranoid`
+- `LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS=true|false`
+- `createCoreRuntime({ evasionLevel, evasionDiagnostics })` for direct Core callers
+
+Diagnostics surface:
+
+- `linkedin status` includes a top-level `evasion` block
+- `linkedin health` includes `session.evasion`
+- read-only status and health checks report the resolved config without injecting synthetic input
+- enabling diagnostics records `evasion.*` events in the run log for easier troubleshooting
+
+```ts
+import { EvasionSession, createCoreRuntime } from "@linkedin-assistant/core";
+
+const runtime = createCoreRuntime({
+  evasionLevel: "paranoid",
+  evasionDiagnostics: true
+});
+
+const session = new EvasionSession(page, runtime.evasion.level, {
+  diagnosticsEnabled: runtime.evasion.diagnosticsEnabled,
+  diagnosticsLabel: "feed",
+  logger: runtime.logger
+});
+```
+
+See `docs/evasion.md` for the profile matrix, CLI/MCP diagnostics notes, and
+API examples.
+
 ## Selector Locale Support
 
 Locale-aware selectors let the runtime prefer localized LinkedIn UI phrases
@@ -208,8 +248,11 @@ Run commands via workspace binaries:
 
 ```bash
 npm exec -w @linkedin-assistant/cli -- linkedin status --profile default
+npm exec -w @linkedin-assistant/cli -- linkedin health --profile default
 npm exec -w @linkedin-assistant/cli -- linkedin login --profile default --timeout-minutes 10
 ```
+
+- `linkedin status` and `linkedin health` now include the resolved anti-bot evasion snapshot in their JSON output so you can confirm the active level, enabled features, and diagnostics flag before reproducing session issues.
 
 Isolation note:
 

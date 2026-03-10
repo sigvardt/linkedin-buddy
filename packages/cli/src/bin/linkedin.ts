@@ -22,6 +22,8 @@ import {
   ACTIVITY_WATCH_KINDS,
   ACTIVITY_WATCH_STATUSES,
   DEFAULT_FOLLOWUP_SINCE,
+  LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS_ENV,
+  LINKEDIN_ASSISTANT_EVASION_LEVEL_ENV,
   LINKEDIN_ASSISTANT_SELECTOR_LOCALE_ENV,
   AssistantDatabase,
   alignToBusinessHours,
@@ -1763,9 +1765,11 @@ async function runStatus(profileName: string, cdpUrl?: string): Promise<void> {
     const status = await runtime.auth.status({ profileName });
     runtime.logger.log("info", "cli.status.done", {
       profileName,
-      authenticated: status.authenticated
+      authenticated: status.authenticated,
+      evasion_level: status.evasion?.level,
+      evasion_diagnostics_enabled: status.evasion?.diagnosticsEnabled ?? false
     });
-    printJson({ run_id: runtime.runId, ...status });
+    printJson({ run_id: runtime.runId, profile_name: profileName, ...status });
   } finally {
     runtime.close();
   }
@@ -5710,6 +5714,16 @@ export function createCliProgram(): Command {
     .command("status")
     .description("Check whether the persistent LinkedIn profile is authenticated")
     .option("-p, --profile <profile>", "Profile name", "default")
+    .addHelpText(
+      "after",
+      [
+        "",
+        "Diagnostics:",
+        "  - output includes an evasion block with the resolved level, enabled features, and diagnostics flag",
+        `  - ${LINKEDIN_ASSISTANT_EVASION_LEVEL_ENV}=minimal|moderate|paranoid sets the default anti-bot profile`,
+        `  - ${LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS_ENV}=true records debug evasion events in the run log`
+      ].join("\n")
+    )
     .action(async (options: { profile: string }) => {
       await runStatus(options.profile, readCdpUrl());
     });
@@ -7534,11 +7548,31 @@ export function createCliProgram(): Command {
     .command("health")
     .description("Check browser and LinkedIn session health")
     .option("-p, --profile <profile>", "Profile name", "default")
+    .addHelpText(
+      "after",
+      [
+        "",
+        "Diagnostics:",
+        "  - output includes session.evasion with the resolved anti-bot profile and diagnostics status",
+        `  - ${LINKEDIN_ASSISTANT_EVASION_LEVEL_ENV}=minimal|moderate|paranoid selects the default anti-bot profile`,
+        `  - ${LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS_ENV}=true records debug evasion events in the run log`
+      ].join("\n")
+    )
     .action(async (options: { profile: string }) => {
       const runtime = createRuntime(readCdpUrl());
       try {
+        runtime.logger.log("info", "cli.health.start", {
+          profileName: options.profile
+        });
         const health = await runtime.healthCheck({ profileName: options.profile });
-        printJson({ run_id: runtime.runId, ...health });
+        runtime.logger.log("info", "cli.health.done", {
+          profileName: options.profile,
+          browser_healthy: health.browser.healthy,
+          authenticated: health.session.authenticated,
+          evasion_level: health.session.evasion.level,
+          evasion_diagnostics_enabled: health.session.evasion.diagnosticsEnabled
+        });
+        printJson({ run_id: runtime.runId, profile_name: options.profile, ...health });
         if (!health.browser.healthy || !health.session.authenticated) {
           process.exitCode = 1;
         }
