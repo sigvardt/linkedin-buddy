@@ -78,6 +78,8 @@ import {
   LINKEDIN_MEMBERS_PREPARE_BLOCK_TOOL,
   LINKEDIN_MEMBERS_PREPARE_REPORT_TOOL,
   LINKEDIN_MEMBERS_PREPARE_UNBLOCK_TOOL,
+  LINKEDIN_EVENTS_SEARCH_TOOL,
+  LINKEDIN_EVENTS_VIEW_TOOL,
   LINKEDIN_FEED_COMMENT_TOOL,
   LINKEDIN_FEED_LIKE_TOOL,
   LINKEDIN_FEED_LIST_TOOL,
@@ -87,6 +89,8 @@ import {
   LINKEDIN_FEED_SAVE_POST_TOOL,
   LINKEDIN_FEED_UNSAVE_POST_TOOL,
   LINKEDIN_FEED_VIEW_POST_TOOL,
+  LINKEDIN_GROUPS_SEARCH_TOOL,
+  LINKEDIN_GROUPS_VIEW_TOOL,
   LINKEDIN_INBOX_GET_THREAD_TOOL,
   LINKEDIN_INBOX_ARCHIVE_THREAD_TOOL,
   LINKEDIN_INBOX_LIST_THREADS_TOOL,
@@ -1876,6 +1880,142 @@ async function handleSearch(args: ToolArgs): Promise<ToolResult> {
       run_id: runtime.runId,
       profile_name: profileName,
       ...search
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleGroupsSearch(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const query = readRequiredString(args, "query");
+    const limit = readPositiveNumber(args, "limit", 10);
+
+    runtime.logger.log("info", "mcp.groups.search.start", {
+      profileName,
+      query,
+      limit
+    });
+
+    const result = await runtime.groups.searchGroups({
+      profileName,
+      query,
+      limit
+    });
+
+    runtime.logger.log("info", "mcp.groups.search.done", {
+      profileName,
+      count: result.count
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...result
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleGroupsView(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const target = readRequiredString(args, "target");
+
+    runtime.logger.log("info", "mcp.groups.view.start", {
+      profileName,
+      target
+    });
+
+    const group = await runtime.groups.viewGroup({
+      profileName,
+      target
+    });
+
+    runtime.logger.log("info", "mcp.groups.view.done", {
+      profileName,
+      groupId: group.group_id,
+      joinState: group.join_state
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      group
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleEventsSearch(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const query = readRequiredString(args, "query");
+    const limit = readPositiveNumber(args, "limit", 10);
+
+    runtime.logger.log("info", "mcp.events.search.start", {
+      profileName,
+      query,
+      limit
+    });
+
+    const result = await runtime.events.searchEvents({
+      profileName,
+      query,
+      limit
+    });
+
+    runtime.logger.log("info", "mcp.events.search.done", {
+      profileName,
+      count: result.count
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...result
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleEventsView(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const target = readRequiredString(args, "target");
+
+    runtime.logger.log("info", "mcp.events.view.start", {
+      profileName,
+      target
+    });
+
+    const event = await runtime.events.viewEvent({
+      profileName,
+      target
+    });
+
+    runtime.logger.log("info", "mcp.events.view.done", {
+      profileName,
+      eventId: event.event_id,
+      rsvpState: event.rsvp_state
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      event
     });
   } finally {
     runtime.close();
@@ -4315,6 +4455,55 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
+        name: LINKEDIN_GROUPS_SEARCH_TOOL,
+        description: withSelectorAuditHint(
+          "Search LinkedIn groups and return names, group types, member counts, and summary descriptions."
+        ),
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["query"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            query: {
+              type: "string",
+              description: "Search keywords for groups."
+            },
+            limit: {
+              type: "number",
+              description: "Max results. Defaults to 10."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_GROUPS_VIEW_TOOL,
+        description: withSelectorAuditHint(
+          "View details for one LinkedIn group by group ID, /groups/ path, or full LinkedIn group URL."
+        ),
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["target"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            target: {
+              type: "string",
+              description:
+                "LinkedIn group ID, /groups/ path, or full LinkedIn group URL."
+            }
+          })
+        }
+      },
+      {
         name: LINKEDIN_CONNECTIONS_LIST_TOOL,
         description:
           withSelectorAuditHint(
@@ -5177,6 +5366,55 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
+        name: LINKEDIN_EVENTS_SEARCH_TOOL,
+        description: withSelectorAuditHint(
+          "Search LinkedIn events and return event titles, timing, organizers, locations, and attendee counts."
+        ),
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["query"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            query: {
+              type: "string",
+              description: "Search keywords for events."
+            },
+            limit: {
+              type: "number",
+              description: "Max results. Defaults to 10."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_EVENTS_VIEW_TOOL,
+        description: withSelectorAuditHint(
+          "View details for one LinkedIn event by event ID, /events/ path, or full LinkedIn event URL."
+        ),
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["target"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            target: {
+              type: "string",
+              description:
+                "LinkedIn event ID, /events/ path, or full LinkedIn event URL."
+            }
+          })
+        }
+      },
+      {
         name: LINKEDIN_JOBS_SEARCH_TOOL,
         description:
           withSelectorAuditHint(
@@ -5569,6 +5807,8 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   [LINKEDIN_ASSETS_GENERATE_PROFILE_IMAGES_TOOL]:
     handleAssetsGenerateProfileImages,
   [LINKEDIN_SEARCH_TOOL]: handleSearch,
+  [LINKEDIN_GROUPS_SEARCH_TOOL]: handleGroupsSearch,
+  [LINKEDIN_GROUPS_VIEW_TOOL]: handleGroupsView,
   [LINKEDIN_CONNECTIONS_LIST_TOOL]: handleConnectionsList,
   [LINKEDIN_CONNECTIONS_PENDING_TOOL]: handleConnectionsPending,
   [LINKEDIN_CONNECTIONS_INVITE_TOOL]: handleConnectionsInvite,
@@ -5602,6 +5842,8 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   [LINKEDIN_POST_PREPARE_EDIT_TOOL]: handlePostPrepareEdit,
   [LINKEDIN_POST_PREPARE_DELETE_TOOL]: handlePostPrepareDelete,
   [LINKEDIN_NOTIFICATIONS_LIST_TOOL]: handleNotificationsList,
+  [LINKEDIN_EVENTS_SEARCH_TOOL]: handleEventsSearch,
+  [LINKEDIN_EVENTS_VIEW_TOOL]: handleEventsView,
   [LINKEDIN_JOBS_SEARCH_TOOL]: handleJobsSearch,
   [LINKEDIN_JOBS_VIEW_TOOL]: handleJobsView,
   [LINKEDIN_ACTIVITY_WATCH_CREATE_TOOL]: handleActivityWatchCreate,

@@ -2,6 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   LINKEDIN_COMPANY_PREPARE_FOLLOW_TOOL,
   LINKEDIN_COMPANY_VIEW_TOOL,
+  LINKEDIN_EVENTS_SEARCH_TOOL,
+  LINKEDIN_EVENTS_VIEW_TOOL,
+  LINKEDIN_GROUPS_SEARCH_TOOL,
+  LINKEDIN_GROUPS_VIEW_TOOL,
   LINKEDIN_MEMBERS_PREPARE_REPORT_TOOL,
   LINKEDIN_PRIVACY_GET_SETTINGS_TOOL
 } from "../index.js";
@@ -26,6 +30,14 @@ interface FakeRuntime {
     prepareFollowCompanyPage: ReturnType<typeof vi.fn>;
     viewCompanyPage: ReturnType<typeof vi.fn>;
   };
+  events: {
+    searchEvents: ReturnType<typeof vi.fn>;
+    viewEvent: ReturnType<typeof vi.fn>;
+  };
+  groups: {
+    searchGroups: ReturnType<typeof vi.fn>;
+    viewGroup: ReturnType<typeof vi.fn>;
+  };
   logger: {
     log: ReturnType<typeof vi.fn>;
   };
@@ -45,6 +57,14 @@ function createFakeRuntime(): FakeRuntime {
     companyPages: {
       prepareFollowCompanyPage: vi.fn(),
       viewCompanyPage: vi.fn()
+    },
+    events: {
+      searchEvents: vi.fn(),
+      viewEvent: vi.fn()
+    },
+    groups: {
+      searchGroups: vi.fn(),
+      viewGroup: vi.fn()
     },
     logger: {
       log: vi.fn()
@@ -212,6 +232,162 @@ describe("handleToolCall", () => {
     expect(fakeRuntime.companyPages.prepareFollowCompanyPage).toHaveBeenCalledWith({
       profileName: "default",
       targetCompany: "openai"
+    });
+    expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns group search payloads through the MCP contract", async () => {
+    fakeRuntime.groups.searchGroups.mockResolvedValue({
+      query: "marketing",
+      count: 1,
+      results: [
+        {
+          name: "The Social Media Marketing Group",
+          group_type: "Public Group",
+          member_count: "3M members",
+          description: "The largest LinkedIn group focused on digital marketing.",
+          group_url: "https://www.linkedin.com/groups/66325/"
+        }
+      ]
+    });
+
+    const result = await handleToolCall(LINKEDIN_GROUPS_SEARCH_TOOL, {
+      profileName: "default",
+      query: "marketing",
+      limit: 5
+    });
+
+    expect("isError" in result && result.isError).toBe(false);
+    expect(parseToolPayload(result)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      query: "marketing",
+      count: 1,
+      results: [
+        expect.objectContaining({
+          name: "The Social Media Marketing Group"
+        })
+      ]
+    });
+    expect(fakeRuntime.groups.searchGroups).toHaveBeenCalledWith({
+      profileName: "default",
+      query: "marketing",
+      limit: 5
+    });
+    expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns group detail payloads through the MCP contract", async () => {
+    fakeRuntime.groups.viewGroup.mockResolvedValue({
+      group_url: "https://www.linkedin.com/groups/66325/",
+      group_id: "66325",
+      name: "The Social Media Marketing Group",
+      description: "The largest LinkedIn group focused on digital marketing.",
+      member_count: "3M members",
+      group_type: "Public group",
+      visibility_description:
+        "Anyone, on or off LinkedIn can see posts in the group.",
+      join_state: "not_joined"
+    });
+
+    const result = await handleToolCall(LINKEDIN_GROUPS_VIEW_TOOL, {
+      profileName: "default",
+      target: "66325"
+    });
+
+    expect("isError" in result && result.isError).toBe(false);
+    expect(parseToolPayload(result)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      group: {
+        group_id: "66325",
+        join_state: "not_joined"
+      }
+    });
+    expect(fakeRuntime.groups.viewGroup).toHaveBeenCalledWith({
+      profileName: "default",
+      target: "66325"
+    });
+    expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns event search payloads through the MCP contract", async () => {
+    fakeRuntime.events.searchEvents.mockResolvedValue({
+      query: "AI",
+      count: 1,
+      results: [
+        {
+          title: "The AI Advantage in 2026",
+          date: "Tue, Mar 10, 2026",
+          location: "Warren, Ohio, US",
+          organizer: "Gilbert's Risk Solutions",
+          description: "A practical, no-hype executive breakfast briefing.",
+          attendee_count: "7 attendees",
+          event_url: "https://www.linkedin.com/events/7424814333760700416/"
+        }
+      ]
+    });
+
+    const result = await handleToolCall(LINKEDIN_EVENTS_SEARCH_TOOL, {
+      profileName: "default",
+      query: "AI",
+      limit: 5
+    });
+
+    expect("isError" in result && result.isError).toBe(false);
+    expect(parseToolPayload(result)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      query: "AI",
+      count: 1,
+      results: [
+        expect.objectContaining({
+          title: "The AI Advantage in 2026"
+        })
+      ]
+    });
+    expect(fakeRuntime.events.searchEvents).toHaveBeenCalledWith({
+      profileName: "default",
+      query: "AI",
+      limit: 5
+    });
+    expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns event detail payloads through the MCP contract", async () => {
+    fakeRuntime.events.viewEvent.mockResolvedValue({
+      event_url: "https://www.linkedin.com/events/7424814333760700416/",
+      event_id: "7424814333760700416",
+      title: "The AI Advantage in 2026",
+      status: "Event ended",
+      date: "Tue, Mar 10, 2026, 1:00 PM - 2:30 PM (your local time)",
+      location: "9519 E Market St, Warren, Ohio, US, 44484",
+      venue: "The Theater Room",
+      organizer: "Gilbert's Risk Solutions",
+      organizer_url: "https://www.linkedin.com/company/gilberts-risk-solutions/",
+      description: "A practical, no-hype executive breakfast briefing.",
+      attendee_count: "7 attendees",
+      event_link: "https://gilbertsleadingwithai.my.canva.site/",
+      rsvp_state: "not_responded"
+    });
+
+    const result = await handleToolCall(LINKEDIN_EVENTS_VIEW_TOOL, {
+      profileName: "default",
+      target: "7424814333760700416"
+    });
+
+    expect("isError" in result && result.isError).toBe(false);
+    expect(parseToolPayload(result)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      event: {
+        event_id: "7424814333760700416",
+        rsvp_state: "not_responded"
+      }
+    });
+    expect(fakeRuntime.events.viewEvent).toHaveBeenCalledWith({
+      profileName: "default",
+      target: "7424814333760700416"
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });

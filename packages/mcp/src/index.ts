@@ -53,6 +53,8 @@ export const LINKEDIN_PROFILE_PREPARE_WRITE_RECOMMENDATION_TOOL =
 export const LINKEDIN_ASSETS_GENERATE_PROFILE_IMAGES_TOOL =
   "linkedin.assets.generate_profile_images";
 export const LINKEDIN_SEARCH_TOOL = "linkedin.search";
+export const LINKEDIN_GROUPS_SEARCH_TOOL = "linkedin.groups.search";
+export const LINKEDIN_GROUPS_VIEW_TOOL = "linkedin.groups.view";
 export const LINKEDIN_CONNECTIONS_LIST_TOOL = "linkedin.connections.list";
 export const LINKEDIN_CONNECTIONS_PENDING_TOOL = "linkedin.connections.pending";
 export const LINKEDIN_CONNECTIONS_INVITE_TOOL = "linkedin.connections.invite";
@@ -96,6 +98,8 @@ export const LINKEDIN_POST_PREPARE_CREATE_POLL_TOOL =
 export const LINKEDIN_POST_PREPARE_EDIT_TOOL = "linkedin.post.prepare_edit";
 export const LINKEDIN_POST_PREPARE_DELETE_TOOL = "linkedin.post.prepare_delete";
 export const LINKEDIN_NOTIFICATIONS_LIST_TOOL = "linkedin.notifications.list";
+export const LINKEDIN_EVENTS_SEARCH_TOOL = "linkedin.events.search";
+export const LINKEDIN_EVENTS_VIEW_TOOL = "linkedin.events.view";
 export const LINKEDIN_JOBS_SEARCH_TOOL = "linkedin.jobs.search";
 export const LINKEDIN_JOBS_VIEW_TOOL = "linkedin.jobs.view";
 export const LINKEDIN_ACTIVITY_WATCH_CREATE_TOOL = "linkedin.activity_watch.create";

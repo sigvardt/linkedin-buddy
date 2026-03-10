@@ -42,6 +42,10 @@ import {
   type LinkedInFeedRuntime
 } from "./linkedinFeed.js";
 import {
+  LinkedInGroupsService,
+  type LinkedInGroupsRuntime
+} from "./linkedinGroups.js";
+import {
   createLinkedInActionExecutors,
   LinkedInInboxService,
   type LinkedInMessagingRuntime
@@ -56,6 +60,10 @@ import {
   LinkedInJobsService,
   type LinkedInJobsRuntime
 } from "./linkedinJobs.js";
+import {
+  LinkedInEventsService,
+  type LinkedInEventsRuntime
+} from "./linkedinEvents.js";
 import {
   LinkedInNotificationsService,
   type LinkedInNotificationsRuntime
@@ -169,6 +177,8 @@ export interface CoreRuntime {
   companyPages: LinkedInCompanyPagesService;
   imageAssets: LinkedInImageAssetsService;
   search: LinkedInSearchService;
+  groups: LinkedInGroupsService;
+  events: LinkedInEventsService;
   jobs: LinkedInJobsService;
   notifications: LinkedInNotificationsService;
   connections: LinkedInConnectionsService;
@@ -340,6 +350,8 @@ export function createCoreRuntime(
     companyPages: undefined as unknown as LinkedInCompanyPagesService,
     imageAssets: undefined as unknown as LinkedInImageAssetsService,
     search: undefined as unknown as LinkedInSearchService,
+    groups: undefined as unknown as LinkedInGroupsService,
+    events: undefined as unknown as LinkedInEventsService,
     jobs: undefined as unknown as LinkedInJobsService,
     notifications: undefined as unknown as LinkedInNotificationsService,
     connections: undefined as unknown as LinkedInConnectionsService,
@@ -403,6 +415,10 @@ export function createCoreRuntime(
   );
   const searchRuntime: LinkedInSearchRuntime = runtime;
   runtime.search = new LinkedInSearchService(searchRuntime);
+  const groupsRuntime: LinkedInGroupsRuntime = runtime;
+  runtime.groups = new LinkedInGroupsService(groupsRuntime);
+  const eventsRuntime: LinkedInEventsRuntime = runtime;
+  runtime.events = new LinkedInEventsService(eventsRuntime);
   const jobsRuntime: LinkedInJobsRuntime = runtime;
   runtime.jobs = new LinkedInJobsService(jobsRuntime);
   const notificationsRuntime: LinkedInNotificationsRuntime = runtime;
