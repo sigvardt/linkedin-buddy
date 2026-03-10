@@ -57,6 +57,7 @@ import {
   type LinkedInJobsRuntime
 } from "./linkedinJobs.js";
 import {
+  createNotificationActionExecutors,
   LinkedInNotificationsService,
   type LinkedInNotificationsRuntime
 } from "./linkedinNotifications.js";
@@ -290,6 +291,11 @@ export function createCoreRuntime(
     string,
     import("./twoPhaseCommit.js").ActionExecutor<LinkedInMessagingRuntime>
   >;
+  const notificationExecutors =
+    createNotificationActionExecutors() as unknown as Record<
+      string,
+      import("./twoPhaseCommit.js").ActionExecutor<LinkedInMessagingRuntime>
+    >;
   const privacySettingExecutors =
     createPrivacySettingActionExecutors() as unknown as Record<
       string,
@@ -307,6 +313,7 @@ export function createCoreRuntime(
       ...followupExecutors,
       ...feedExecutors,
       ...postExecutors,
+      ...notificationExecutors,
       ...privacySettingExecutors,
       [TEST_ECHO_ACTION_TYPE]: testEchoExecutor
     },
