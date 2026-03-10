@@ -358,6 +358,44 @@ describe.sequential("MCP E2E", () => {
       profile_name: profileName,
       notifications: expect.any(Array)
     });
+
+    const notificationPreferences = await callMcpTool(
+      MCP_TOOL_NAMES.notificationsPreferencesGet,
+      {
+        profileName,
+        preferenceUrl:
+          "https://www.linkedin.com/mypreferences/d/notification-categories/posting-and-commenting"
+      }
+    );
+    expect(notificationPreferences.isError).toBe(false);
+    expect(notificationPreferences.payload).toMatchObject({
+      profile_name: profileName,
+      preferences: {
+        view_type: "category",
+        preference_url: expect.stringContaining("/notification-categories/")
+      }
+    });
+
+    const categoryPreferences = notificationPreferences.payload.preferences as {
+      master_toggle?: { enabled?: boolean };
+      preference_url?: string;
+    };
+    const notificationPreferencePrepare = await callMcpTool(
+      MCP_TOOL_NAMES.notificationsPreferencesPrepareUpdate,
+      {
+        profileName,
+        preferenceUrl:
+          categoryPreferences.preference_url ??
+          "https://www.linkedin.com/mypreferences/d/notification-categories/posting-and-commenting",
+        enabled: !(categoryPreferences.master_toggle?.enabled ?? false)
+      }
+    );
+    expect(notificationPreferencePrepare.isError).toBe(false);
+    expect(notificationPreferencePrepare.payload).toMatchObject({
+      profile_name: profileName,
+      preparedActionId: expect.stringMatching(/^pa_/),
+      confirmToken: expect.stringMatching(/^ct_/)
+    });
   }, 180_000);
 
   it("covers profile, search, and jobs tools", async (context) => {
