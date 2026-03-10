@@ -24,13 +24,27 @@ import {
   type LinkedInProfile,
   type LinkedInProfileService
 } from "./linkedinProfile.js";
+import {
+  LINKEDIN_FEED_REACTION_TYPES,
+  normalizeLinkedInFeedReaction,
+  type LinkedInFeedReaction
+} from "./linkedinFeed.js";
 import type { LinkedInSearchResult, LinkedInSearchService } from "./linkedinSearch.js";
 import type { ProfileManager } from "./profileManager.js";
-import type { RateLimiter, RateLimiterState } from "./rateLimiter.js";
-import type { LinkedInSelectorLocale } from "./selectorLocale.js";
+import type {
+  ConsumeRateLimitInput,
+  RateLimiter,
+  RateLimiterState
+} from "./rateLimiter.js";
+import type {
+  LinkedInSelectorLocale,
+  LinkedInSelectorPhraseKey
+} from "./selectorLocale.js";
 import {
+  buildLinkedInAriaLabelContainsSelector,
   buildLinkedInSelectorPhraseRegex,
-  formatLinkedInSelectorRegexHint
+  formatLinkedInSelectorRegexHint,
+  valueContainsLinkedInSelectorPhrase
 } from "./selectorLocale.js";
 import type {
   ActionExecutor,
@@ -45,6 +59,11 @@ const MAX_RECIPIENTS_PER_ACTION = 10;
 export const SEND_MESSAGE_ACTION_TYPE = "send_message";
 export const SEND_NEW_THREAD_ACTION_TYPE = "inbox.send_new_thread";
 export const ADD_RECIPIENTS_ACTION_TYPE = "inbox.add_recipients";
+export const REACT_MESSAGE_ACTION_TYPE = "inbox.react";
+export const ARCHIVE_THREAD_ACTION_TYPE = "inbox.archive_thread";
+export const UNARCHIVE_THREAD_ACTION_TYPE = "inbox.unarchive_thread";
+export const MARK_UNREAD_ACTION_TYPE = "inbox.mark_unread";
+export const MUTE_THREAD_ACTION_TYPE = "inbox.mute_thread";
 export const SEND_MESSAGE_RATE_LIMIT_CONFIG = {
   counterKey: "linkedin.messaging.send_message",
   windowSizeMs: 60 * 60 * 1000,
@@ -55,6 +74,34 @@ export const ADD_RECIPIENTS_RATE_LIMIT_CONFIG = {
   windowSizeMs: 60 * 60 * 1000,
   limit: 20
 } as const;
+export const REACT_MESSAGE_RATE_LIMIT_CONFIG = {
+  counterKey: "linkedin.messaging.react",
+  windowSizeMs: 60 * 60 * 1000,
+  limit: 60
+} as const;
+export const ARCHIVE_THREAD_RATE_LIMIT_CONFIG = {
+  counterKey: "linkedin.messaging.archive_thread",
+  windowSizeMs: 60 * 60 * 1000,
+  limit: 60
+} as const;
+export const UNARCHIVE_THREAD_RATE_LIMIT_CONFIG = {
+  counterKey: "linkedin.messaging.unarchive_thread",
+  windowSizeMs: 60 * 60 * 1000,
+  limit: 60
+} as const;
+export const MARK_UNREAD_RATE_LIMIT_CONFIG = {
+  counterKey: "linkedin.messaging.mark_unread",
+  windowSizeMs: 60 * 60 * 1000,
+  limit: 60
+} as const;
+export const MUTE_THREAD_RATE_LIMIT_CONFIG = {
+  counterKey: "linkedin.messaging.mute_thread",
+  windowSizeMs: 60 * 60 * 1000,
+  limit: 60
+} as const;
+
+export const LINKEDIN_INBOX_REACTION_TYPES = LINKEDIN_FEED_REACTION_TYPES;
+export type LinkedInInboxReaction = LinkedInFeedReaction;
 
 interface ThreadSnapshot {
   thread_id: string;
@@ -97,16 +144,24 @@ interface SelectorCandidate {
 }
 
 type LocalizedInboxPhraseKey =
+  | "add_reaction"
   | "add_people"
+  | "archive_thread"
   | "finalize_recipients"
+  | "mark_read"
+  | "mark_unread"
+  | "mute_conversation"
   | "new_message"
-  | "type_a_name";
+  | "type_a_name"
+  | "unarchive_thread"
+  | "unmute_conversation";
 
 const LOCALIZED_INBOX_PHRASES: Record<
   LinkedInSelectorLocale,
   Record<LocalizedInboxPhraseKey, readonly string[]>
 > = {
   en: {
+    add_reaction: ["Add a reaction", "React", "Reaction"],
     add_people: [
       "Add people",
       "Add participants",
@@ -114,15 +169,26 @@ const LOCALIZED_INBOX_PHRASES: Record<
       "Create group",
       "Create group conversation"
     ],
+    archive_thread: ["Archive", "Move to archive"],
     finalize_recipients: ["Done", "Create", "Add", "Next"],
+    mark_read: ["Mark as read", "Read"],
+    mark_unread: ["Mark as unread", "Unread"],
+    mute_conversation: ["Mute", "Mute conversation", "Mute thread"],
     new_message: ["New message", "Compose message", "Compose"],
     type_a_name: [
       "Type a name",
       "Type a name or names",
       "Type a name or multiple names"
+    ],
+    unarchive_thread: ["Unarchive", "Move to inbox", "Return to inbox"],
+    unmute_conversation: [
+      "Unmute",
+      "Unmute conversation",
+      "Unmute thread"
     ]
   },
   da: {
+    add_reaction: ["Tilføj en reaktion", "Reager", "Reaktion"],
     add_people: [
       "Tilføj personer",
       "Tilføj deltagere",
@@ -130,12 +196,26 @@ const LOCALIZED_INBOX_PHRASES: Record<
       "Opret gruppe",
       "Opret gruppesamtale"
     ],
+    archive_thread: ["Arkiver", "Arkivér", "Flyt til arkiv"],
     finalize_recipients: ["Færdig", "Opret", "Tilføj", "Næste"],
+    mark_read: ["Markér som læst", "Læst"],
+    mark_unread: ["Markér som ulæst", "Ulæst"],
+    mute_conversation: [
+      "Slå samtale fra",
+      "Slå lyd fra",
+      "Dæmp samtale"
+    ],
     new_message: ["Ny besked", "Ny meddelelse", "Skriv besked"],
     type_a_name: [
       "Skriv et navn",
       "Skriv et navn eller flere navne",
       "Indtast et navn"
+    ],
+    unarchive_thread: ["Flyt til indbakke", "Fjern fra arkiv"],
+    unmute_conversation: [
+      "Slå lyd til",
+      "Slå samtale til",
+      "Fjern dæmpning"
     ]
   }
 };
@@ -218,6 +298,19 @@ export interface PrepareAddRecipientsInput {
   operatorNote?: string;
 }
 
+export interface PrepareReactInput {
+  profileName?: string;
+  thread: string;
+  reaction?: LinkedInInboxReaction | string;
+  messageIndex?: number;
+  operatorNote?: string;
+}
+
+export interface ThreadActionInput {
+  profileName?: string;
+  thread: string;
+}
+
 export interface PrepareReplyResult {
   preparedActionId: string;
   confirmToken: string;
@@ -227,6 +320,46 @@ export interface PrepareReplyResult {
 
 export type PrepareNewThreadResult = PrepareReplyResult;
 export type PrepareAddRecipientsResult = PrepareReplyResult;
+export type PrepareReactResult = PrepareReplyResult;
+
+export interface LinkedInThreadMessageTarget {
+  index: number;
+  author: string;
+  sent_at: string | null;
+  text: string;
+}
+
+export interface ArchiveThreadResult {
+  archived: true;
+  thread_id: string;
+  thread_url: string;
+  artifacts: string[];
+  rate_limit: Record<string, number | boolean | string>;
+}
+
+export interface UnarchiveThreadResult {
+  unarchived: true;
+  thread_id: string;
+  thread_url: string;
+  artifacts: string[];
+  rate_limit: Record<string, number | boolean | string>;
+}
+
+export interface MarkUnreadResult {
+  marked_unread: true;
+  thread_id: string;
+  thread_url: string;
+  artifacts: string[];
+  rate_limit: Record<string, number | boolean | string>;
+}
+
+export interface MuteThreadResult {
+  muted: true;
+  thread_id: string;
+  thread_url: string;
+  artifacts: string[];
+  rate_limit: Record<string, number | boolean | string>;
+}
 
 export interface LinkedInMessagingRuntime {
   runId: string;
@@ -752,6 +885,160 @@ function parseParticipantNames(title: string): string[] {
     .split(",")
     .map((value) => normalizeText(value))
     .filter((value) => value.length > 0);
+}
+
+export function normalizeLinkedInInboxReaction(
+  value: string | undefined,
+  fallback: LinkedInInboxReaction = "like"
+): LinkedInInboxReaction {
+  return normalizeLinkedInFeedReaction(value, fallback);
+}
+
+function resolveMessageIndex(
+  messages: readonly LinkedInThreadMessage[],
+  requestedIndex: number | undefined
+): number {
+  if (messages.length === 0) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      "Thread reactions require at least one message in the thread."
+    );
+  }
+
+  if (requestedIndex === undefined) {
+    return messages.length - 1;
+  }
+
+  if (!Number.isInteger(requestedIndex) || requestedIndex < 0) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      "messageIndex must be a non-negative integer.",
+      {
+        message_index: requestedIndex
+      }
+    );
+  }
+
+  if (requestedIndex >= messages.length) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `messageIndex must be between 0 and ${messages.length - 1}.`,
+      {
+        message_index: requestedIndex,
+        message_count: messages.length
+      }
+    );
+  }
+
+  return requestedIndex;
+}
+
+function toThreadMessageTarget(
+  thread: LinkedInThreadDetail,
+  messageIndex: number | undefined
+): LinkedInThreadMessageTarget {
+  const resolvedIndex = resolveMessageIndex(thread.messages, messageIndex);
+  const message = thread.messages[resolvedIndex]!;
+
+  return {
+    index: resolvedIndex,
+    author: message.author,
+    sent_at: message.sent_at,
+    text: message.text
+  };
+}
+
+function toThreadMessageTargetRecord(
+  target: LinkedInThreadMessageTarget
+): Record<string, unknown> {
+  return {
+    index: target.index,
+    author: target.author,
+    sent_at: target.sent_at,
+    text: target.text
+  };
+}
+
+function parsePreparedThreadMessageTarget(
+  source: Record<string, unknown>,
+  key: string,
+  actionId: string,
+  location: "target" | "payload"
+): LinkedInThreadMessageTarget {
+  const value = source[key];
+  const record = asRecord(value);
+  if (!record) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `Prepared action ${actionId} is missing ${location}.${key}.`,
+      {
+        action_id: actionId,
+        key,
+        location
+      }
+    );
+  }
+
+  const indexValue = record.index;
+  if (typeof indexValue !== "number" || !Number.isInteger(indexValue) || indexValue < 0) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `Prepared action ${actionId} has invalid ${location}.${key}.index.`,
+      {
+        action_id: actionId,
+        key,
+        location,
+        message_index: indexValue
+      }
+    );
+  }
+
+  return {
+    index: indexValue,
+    author: getRequiredRecordStringField(record, "author", actionId, `${location}.${key}`),
+    sent_at: getOptionalRecordStringField(record, "sent_at"),
+    text: getRequiredRecordStringField(record, "text", actionId, `${location}.${key}`)
+  };
+}
+
+function createVerificationSnippet(text: string): string {
+  return normalizeText(text).slice(0, 120);
+}
+
+const INBOX_REACTION_SELECTOR_KEYS: Record<
+  LinkedInInboxReaction,
+  LinkedInSelectorPhraseKey
+> = {
+  like: "like",
+  celebrate: "celebrate",
+  support: "support",
+  love: "love",
+  insightful: "insightful",
+  funny: "funny"
+};
+
+function inferInboxReactionFromText(
+  value: string,
+  selectorLocale: LinkedInSelectorLocale
+): LinkedInInboxReaction | null {
+  const normalized = normalizeText(value).toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  for (const reaction of LINKEDIN_INBOX_REACTION_TYPES) {
+    if (
+      valueContainsLinkedInSelectorPhrase(
+        normalized,
+        INBOX_REACTION_SELECTOR_KEYS[reaction],
+        selectorLocale
+      )
+    ) {
+      return reaction;
+    }
+  }
+
+  return null;
 }
 
 function toInboxRecipientFromSearchResult(
@@ -1429,6 +1716,449 @@ async function findVisibleLocatorOrThrow(
   );
 }
 
+async function waitForCondition(
+  predicate: () => Promise<boolean>,
+  timeoutMs: number,
+  intervalMs = 250
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
+    try {
+      if (await predicate()) {
+        return true;
+      }
+    } catch {
+      // Keep polling until the timeout window closes.
+    }
+    await new Promise((resolve) => {
+      setTimeout(resolve, intervalMs);
+    });
+  }
+
+  try {
+    return await predicate();
+  } catch {
+    return false;
+  }
+}
+
+function createThreadMoreButtonSelectors(
+  runtime: LinkedInMessagingRuntime
+): SelectorCandidate[] {
+  const moreRegex = buildLinkedInSelectorPhraseRegex(
+    ["more", "more_actions"],
+    runtime.selectorLocale,
+    { exact: true }
+  );
+  const moreRegexHint = formatLinkedInSelectorRegexHint(
+    ["more", "more_actions"],
+    runtime.selectorLocale,
+    { exact: true }
+  );
+  const moreAriaSelector = buildLinkedInAriaLabelContainsSelector(
+    "button",
+    ["more", "more_actions"],
+    runtime.selectorLocale
+  );
+
+  return [
+    {
+      key: "role-button-more",
+      selectorHint: `getByRole(button, ${moreRegexHint})`,
+      locatorFactory: (targetPage) =>
+        targetPage.getByRole("button", { name: moreRegex })
+    },
+    {
+      key: "button-text-more",
+      selectorHint: `button hasText ${moreRegexHint}`,
+      locatorFactory: (targetPage) =>
+        targetPage.locator("button").filter({ hasText: moreRegex })
+    },
+    {
+      key: "button-aria-more",
+      selectorHint: moreAriaSelector,
+      locatorFactory: (targetPage) => targetPage.locator(moreAriaSelector)
+    }
+  ];
+}
+
+function createThreadMenuItemSelectors(
+  runtime: LinkedInMessagingRuntime,
+  phraseKey: LocalizedInboxPhraseKey
+): SelectorCandidate[] {
+  const itemRegex = buildLocalizedInboxPhraseRegex(phraseKey, runtime.selectorLocale);
+  const itemRegexHint = formatLocalizedInboxPhraseRegexHint(
+    phraseKey,
+    runtime.selectorLocale
+  );
+
+  return [
+    {
+      key: "role-menuitem-thread-action",
+      selectorHint: `getByRole(menuitem, ${itemRegexHint})`,
+      locatorFactory: (targetPage) =>
+        targetPage.getByRole("menuitem", { name: itemRegex })
+    },
+    {
+      key: "role-button-thread-action",
+      selectorHint: `.artdeco-dropdown__content-inner [role='button'] hasText ${itemRegexHint}`,
+      locatorFactory: (targetPage) =>
+        targetPage
+          .locator(".artdeco-dropdown__content-inner [role='button']")
+          .filter({ hasText: itemRegex })
+    },
+    {
+      key: "menuitem-text-thread-action",
+      selectorHint: `[role='menuitem'] hasText ${itemRegexHint}`,
+      locatorFactory: (targetPage) =>
+        targetPage.locator("[role='menuitem']").filter({ hasText: itemRegex })
+    },
+    {
+      key: "dropdown-item-thread-action",
+      selectorHint: `.artdeco-dropdown__content-inner li hasText ${itemRegexHint}`,
+      locatorFactory: (targetPage) =>
+        targetPage
+          .locator(".artdeco-dropdown__content-inner li")
+          .filter({ hasText: itemRegex })
+    },
+    {
+      key: "generic-button-thread-action",
+      selectorHint: `button hasText ${itemRegexHint}`,
+      locatorFactory: (targetPage) =>
+        targetPage.locator("button").filter({ hasText: itemRegex })
+    }
+  ];
+}
+
+async function openThreadMoreMenu(input: {
+  artifactPaths: string[];
+  page: Page;
+  runtime: LinkedInMessagingRuntime;
+}): Promise<{ locator: Locator; key: string }> {
+  const moreButton = await findVisibleLocatorOrThrow(
+    input.page,
+    createThreadMoreButtonSelectors(input.runtime),
+    "thread_more_button",
+    input.artifactPaths
+  );
+  await moreButton.locator.click({ timeout: 5_000 });
+  await input.page.waitForTimeout(500);
+  return moreButton;
+}
+
+async function clickThreadMenuAction(input: {
+  actionType: string;
+  artifactPaths: string[];
+  page: Page;
+  runtime: LinkedInMessagingRuntime;
+  phraseKey: LocalizedInboxPhraseKey;
+}): Promise<string> {
+  await openThreadMoreMenu(input);
+  const actionMenuItem = await findVisibleLocatorOrThrow(
+    input.page,
+    createThreadMenuItemSelectors(input.runtime, input.phraseKey),
+    `${input.actionType}_menu_item`,
+    input.artifactPaths
+  );
+  await actionMenuItem.locator.click({ timeout: 5_000 });
+  await input.page.waitForTimeout(600);
+  return actionMenuItem.key;
+}
+
+async function findThreadMessageLocator(
+  page: Page,
+  target: LinkedInThreadMessageTarget,
+  artifactPaths: string[]
+): Promise<{ locator: Locator; key: string }> {
+  const markerAttribute = "data-linkedin-assistant-target-message";
+  const targetMetadata = await page.evaluate(
+    ({ attributeName, author, index, textSnippet }) => {
+      const normalize = (value: string | null | undefined): string =>
+        (value ?? "").replace(/\s+/g, " ").trim();
+
+      for (const node of globalThis.document.querySelectorAll(`[${attributeName}]`)) {
+        node.removeAttribute(attributeName);
+      }
+
+      const messageNodes = Array.from(
+        globalThis.document.querySelectorAll(
+          ".msg-s-message-list__event, .msg-s-event-listitem"
+        )
+      );
+      const filteredMessages = messageNodes
+        .map((node) => {
+          const group = node.closest(".msg-s-message-group");
+          const resolvedAuthor = normalize(
+            group?.querySelector(
+              ".msg-s-message-group__name, .msg-s-message-group__profile-link"
+            )?.textContent ??
+              node.querySelector("[data-anonymize='person-name']")?.textContent
+          );
+          const resolvedText = normalize(
+            node.querySelector(
+              ".msg-s-event-listitem__body, .msg-s-event-listitem__message-bubble, .msg-s-message-group__message-body"
+            )?.textContent ?? node.textContent
+          );
+
+          return {
+            node,
+            author: resolvedAuthor || "Unknown",
+            text: resolvedText
+          };
+        })
+        .filter((message) => message.text.length > 0);
+
+      if (index < 0 || index >= filteredMessages.length) {
+        return {
+          ok: false,
+          reason: "index_out_of_range",
+          messageCount: filteredMessages.length
+        };
+      }
+
+      const targetMessage = filteredMessages[index]!;
+      targetMessage.node.setAttribute(attributeName, "true");
+
+      const normalizedExpectedAuthor = normalize(author).toLowerCase();
+      const normalizedActualAuthor = normalize(targetMessage.author).toLowerCase();
+      const normalizedExpectedSnippet = normalize(textSnippet).toLowerCase();
+      const normalizedActualText = normalize(targetMessage.text).toLowerCase();
+
+      return {
+        ok: true,
+        actualAuthor: targetMessage.author,
+        actualText: targetMessage.text,
+        authorMatches:
+          normalizedExpectedAuthor.length === 0 ||
+          normalizedActualAuthor === normalizedExpectedAuthor,
+        textMatches:
+          normalizedExpectedSnippet.length === 0 ||
+          normalizedActualText.includes(normalizedExpectedSnippet)
+      };
+    },
+    {
+      attributeName: markerAttribute,
+      author: target.author,
+      index: target.index,
+      textSnippet: createVerificationSnippet(target.text)
+    }
+  );
+
+  if (!targetMetadata.ok) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      "Prepared reaction target no longer matches the current thread message list.",
+      {
+        message_index: target.index,
+        message_count: targetMetadata.messageCount
+      }
+    );
+  }
+
+  if (!targetMetadata.authorMatches || !targetMetadata.textMatches) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      "Prepared reaction target no longer matches the selected thread message.",
+      {
+        message_index: target.index,
+        expected_author: target.author,
+        actual_author: targetMetadata.actualAuthor,
+        expected_message_preview: createVerificationSnippet(target.text),
+        actual_message_preview: createVerificationSnippet(
+          targetMetadata.actualText ?? ""
+        )
+      }
+    );
+  }
+
+  const locator = page.locator(`[${markerAttribute}='true']`).first();
+  const visible = await locator.isVisible().catch(() => false);
+  if (!visible) {
+    throw new LinkedInAssistantError(
+      "UI_CHANGED_SELECTOR_FAILED",
+      'Could not resolve the prepared thread message in the current LinkedIn thread.',
+      {
+        selector_key: "thread_message",
+        message_index: target.index,
+        current_url: page.url(),
+        artifact_paths: artifactPaths
+      }
+    );
+  }
+
+  return {
+    locator,
+    key: "thread-message-index"
+  };
+}
+
+function createMessageReactionButtonSelectors(
+  messageRoot: Locator,
+  runtime: LinkedInMessagingRuntime
+): SelectorCandidate[] {
+  const reactRegex = buildLocalizedInboxPhraseRegex(
+    "add_reaction",
+    runtime.selectorLocale
+  );
+  const reactRegexHint = formatLocalizedInboxPhraseRegexHint(
+    "add_reaction",
+    runtime.selectorLocale
+  );
+  const reactAriaSelector = buildLinkedInAriaLabelContainsSelector(
+    "button",
+    ["react", "reaction"],
+    runtime.selectorLocale
+  );
+
+  return [
+    {
+      key: "message-aria-reaction-button",
+      selectorHint: reactAriaSelector,
+      locatorFactory: () => messageRoot.locator(reactAriaSelector)
+    },
+    {
+      key: "message-role-button-reaction",
+      selectorHint: `messageRoot.getByRole(button, ${reactRegexHint})`,
+      locatorFactory: () => messageRoot.getByRole("button", { name: reactRegex })
+    },
+    {
+      key: "message-button-text-reaction",
+      selectorHint: `messageRoot button hasText ${reactRegexHint}`,
+      locatorFactory: () => messageRoot.locator("button").filter({ hasText: reactRegex })
+    },
+    {
+      key: "message-data-control-reaction",
+      selectorHint: "button[data-control-name*='reaction']",
+      locatorFactory: () =>
+        messageRoot.locator(
+          "button[data-control-name*='reaction'], [data-control-name*='reaction'] button"
+        )
+    }
+  ];
+}
+
+function createMessageReactionMenuSelectors(
+  runtime: LinkedInMessagingRuntime,
+  reaction: LinkedInInboxReaction
+): SelectorCandidate[] {
+  const reactionKey = INBOX_REACTION_SELECTOR_KEYS[reaction];
+  const reactionRegex = buildLinkedInSelectorPhraseRegex(
+    reactionKey,
+    runtime.selectorLocale,
+    { exact: true }
+  );
+  const reactionRegexHint = formatLinkedInSelectorRegexHint(
+    reactionKey,
+    runtime.selectorLocale,
+    { exact: true }
+  );
+  const reactionAriaSelector = buildLinkedInAriaLabelContainsSelector(
+    "button",
+    reactionKey,
+    runtime.selectorLocale
+  );
+
+  return [
+    {
+      key: "message-reaction-menu-text",
+      selectorHint: `[role='menuitem'], button hasText ${reactionRegexHint}`,
+      locatorFactory: (targetPage) =>
+        targetPage
+          .locator("[role='menuitem'], .artdeco-dropdown__content-inner button, button")
+          .filter({ hasText: reactionRegex })
+    },
+    {
+      key: "message-reaction-menu-aria",
+      selectorHint: reactionAriaSelector,
+      locatorFactory: (targetPage) => targetPage.locator(reactionAriaSelector)
+    },
+    {
+      key: "message-reaction-menu-data-control",
+      selectorHint: `[data-control-name*='${reaction}']`,
+      locatorFactory: (targetPage) =>
+        targetPage.locator(
+          `[data-control-name*='${reaction}'], [data-test-reaction='${reaction}']`
+        )
+    }
+  ];
+}
+
+interface MessageReactionButtonState {
+  reacted: boolean;
+  reaction: LinkedInInboxReaction | null;
+  ariaLabel: string;
+  className: string;
+  buttonText: string;
+}
+
+async function getMessageReactionButtonState(
+  reactionButton: Locator,
+  selectorLocale: LinkedInSelectorLocale
+): Promise<MessageReactionButtonState> {
+  const ariaPressed = normalizeText(
+    await reactionButton.getAttribute("aria-pressed")
+  ).toLowerCase();
+  const className = normalizeText(await reactionButton.getAttribute("class"));
+  const ariaLabel = normalizeText(await reactionButton.getAttribute("aria-label"));
+  const buttonText = normalizeText(await reactionButton.innerText().catch(() => ""));
+
+  const reactionFromLabel = inferInboxReactionFromText(ariaLabel, selectorLocale);
+  const reactionFromText = inferInboxReactionFromText(buttonText, selectorLocale);
+  const reacted =
+    ariaPressed === "true" ||
+    className.toLowerCase().includes("active") ||
+    reactionFromLabel !== null ||
+    reactionFromText !== null ||
+    /reacted|remove|undo|change your reaction/i.test(ariaLabel);
+
+  return {
+    reacted,
+    reaction: reactionFromLabel ?? reactionFromText,
+    ariaLabel,
+    className,
+    buttonText
+  };
+}
+
+async function isDesiredMessageReactionActive(
+  reactionButton: Locator,
+  reaction: LinkedInInboxReaction,
+  selectorLocale: LinkedInSelectorLocale
+): Promise<boolean> {
+  const state = await getMessageReactionButtonState(reactionButton, selectorLocale);
+  if (!state.reacted) {
+    return false;
+  }
+
+  if (state.reaction === reaction) {
+    return true;
+  }
+
+  return reaction === "like" && state.reaction === null;
+}
+
+async function verifyReverseThreadMenuActionVisible(input: {
+  artifactPaths: string[];
+  page: Page;
+  runtime: LinkedInMessagingRuntime;
+  threadUrl: string;
+  phraseKey: LocalizedInboxPhraseKey;
+}): Promise<boolean> {
+  try {
+    await input.page.goto(input.threadUrl, { waitUntil: "domcontentloaded" });
+    await waitForNetworkIdleBestEffort(input.page);
+    await waitForThreadSurface(input.page);
+    await openThreadMoreMenu(input);
+    const reverseItem = await findVisibleLocator(
+      input.page,
+      createThreadMenuItemSelectors(input.runtime, input.phraseKey)
+    );
+    return reverseItem !== null;
+  } catch {
+    return false;
+  }
+}
+
 function createMessageComposerSelectors(
   runtime: LinkedInMessagingRuntime
 ): SelectorCandidate[] {
@@ -1917,77 +2647,13 @@ async function openAddRecipientsFlow(input: {
     return;
   }
 
-  const moreRegex = buildLinkedInSelectorPhraseRegex(
-    "more",
-    input.runtime.selectorLocale,
-    { exact: true }
-  );
-  const moreRegexHint = formatLinkedInSelectorRegexHint(
-    "more",
-    input.runtime.selectorLocale,
-    { exact: true }
-  );
-  const addPeopleRegex = buildLocalizedInboxPhraseRegex(
-    "add_people",
-    input.runtime.selectorLocale
-  );
-  const addPeopleRegexHint = formatLocalizedInboxPhraseRegexHint(
-    "add_people",
-    input.runtime.selectorLocale
-  );
-  const moreButton = await findVisibleLocatorOrThrow(
-    input.page,
-    [
-      {
-        key: "role-button-more",
-        selectorHint: `getByRole(button, ${moreRegexHint})`,
-        locatorFactory: (targetPage) =>
-          targetPage.getByRole("button", { name: moreRegex })
-      },
-      {
-        key: "button-text-more",
-        selectorHint: `button hasText ${moreRegexHint}`,
-        locatorFactory: (targetPage) =>
-          targetPage.locator("button").filter({ hasText: moreRegex })
-      }
-    ],
-    "thread_more_button",
-    input.artifactPaths
-  );
-  await moreButton.locator.click({ timeout: 5_000 });
-  await input.page.waitForTimeout(500);
-
-  const addRecipientsMenuItem = await findVisibleLocatorOrThrow(
-    input.page,
-    [
-      {
-        key: "menuitem-add-people",
-        selectorHint: `[role='menuitem'] hasText ${addPeopleRegexHint}`,
-        locatorFactory: (targetPage) =>
-          targetPage.locator("[role='menuitem']").filter({ hasText: addPeopleRegex })
-      },
-      {
-        key: "dropdown-button-add-people",
-        selectorHint: `.artdeco-dropdown__content-inner [role='button'] hasText ${addPeopleRegexHint}`,
-        locatorFactory: (targetPage) =>
-          targetPage
-            .locator(".artdeco-dropdown__content-inner [role='button']")
-            .filter({ hasText: addPeopleRegex })
-      },
-      {
-        key: "dropdown-item-add-people",
-        selectorHint: `.artdeco-dropdown__content-inner li hasText ${addPeopleRegexHint}`,
-        locatorFactory: (targetPage) =>
-          targetPage
-            .locator(".artdeco-dropdown__content-inner li")
-            .filter({ hasText: addPeopleRegex })
-      }
-    ],
-    "add_recipients_menu_item",
-    input.artifactPaths
-  );
-  await addRecipientsMenuItem.locator.click({ timeout: 5_000 });
-  await input.page.waitForTimeout(500);
+  await clickThreadMenuAction({
+    actionType: ADD_RECIPIENTS_ACTION_TYPE,
+    artifactPaths: input.artifactPaths,
+    page: input.page,
+    runtime: input.runtime,
+    phraseKey: "add_people"
+  });
 }
 
 async function maybeFinalizeAddRecipients(input: {
@@ -2046,6 +2712,200 @@ function validateThreadTarget(
       }
     );
   }
+}
+
+async function executeThreadReaction(input: {
+  actionId: string;
+  artifactPaths: string[];
+  page: Page;
+  profileName: string;
+  reaction: LinkedInInboxReaction;
+  runtime: LinkedInMessagingRuntime;
+  threadUrl: string;
+  messageTarget: LinkedInThreadMessageTarget;
+}): Promise<{
+  alreadyReacted: boolean;
+  messageSelectorKey: string;
+  reactionButtonKey: string;
+  reactionMenuKey: string | null;
+}> {
+  const detail = await extractThreadDetailWithNetwork(input.page, input.threadUrl, 20);
+  const messageLocator = await findThreadMessageLocator(
+    input.page,
+    input.messageTarget,
+    input.artifactPaths
+  );
+
+  await messageLocator.locator.hover({ timeout: 5_000 }).catch(() => undefined);
+
+  let reactionButton = await findVisibleLocatorOrThrow(
+    input.page,
+    createMessageReactionButtonSelectors(messageLocator.locator, input.runtime),
+    "message_reaction_button",
+    input.artifactPaths
+  );
+
+  const alreadyReacted = await isDesiredMessageReactionActive(
+    reactionButton.locator,
+    input.reaction,
+    input.runtime.selectorLocale
+  );
+
+  let reactionMenuKey: string | null = null;
+  let verifiedReaction = alreadyReacted;
+
+  if (!alreadyReacted) {
+    await reactionButton.locator.click({ timeout: 5_000 });
+    await input.page.waitForTimeout(400);
+
+    const reactionMenuButton = await findVisibleLocatorOrThrow(
+      input.page,
+      createMessageReactionMenuSelectors(input.runtime, input.reaction),
+      "message_reaction_menu_button",
+      input.artifactPaths
+    );
+    reactionMenuKey = reactionMenuButton.key;
+    await reactionMenuButton.locator.click({ timeout: 5_000 });
+
+    verifiedReaction = await waitForCondition(
+      async () =>
+        isDesiredMessageReactionActive(
+          reactionButton.locator,
+          input.reaction,
+          input.runtime.selectorLocale
+        ),
+      6_000
+    );
+  }
+
+  if (!verifiedReaction) {
+    const refreshedDetail = await extractThreadDetailWithNetwork(
+      input.page,
+      detail.thread_url,
+      20
+    );
+    const refreshedMessageLocator = await findThreadMessageLocator(
+      input.page,
+      {
+        ...input.messageTarget,
+        ...(refreshedDetail.messages[input.messageTarget.index]
+          ? {
+              text: refreshedDetail.messages[input.messageTarget.index]!.text
+            }
+          : {})
+      },
+      input.artifactPaths
+    );
+    await refreshedMessageLocator.locator.hover({ timeout: 5_000 }).catch(
+      () => undefined
+    );
+    reactionButton = await findVisibleLocatorOrThrow(
+      input.page,
+      createMessageReactionButtonSelectors(
+        refreshedMessageLocator.locator,
+        input.runtime
+      ),
+      "message_reaction_button",
+      input.artifactPaths
+    );
+    verifiedReaction = await isDesiredMessageReactionActive(
+      reactionButton.locator,
+      input.reaction,
+      input.runtime.selectorLocale
+    );
+  }
+
+  if (!verifiedReaction) {
+    const reactionState = await getMessageReactionButtonState(
+      reactionButton.locator,
+      input.runtime.selectorLocale
+    );
+    throw new LinkedInAssistantError(
+      "UNKNOWN",
+      "Message reaction action could not be verified on the target thread.",
+      {
+        action_id: input.actionId,
+        profile_name: input.profileName,
+        thread_url: detail.thread_url,
+        thread_id: detail.thread_id,
+        requested_reaction: input.reaction,
+        current_reaction: reactionState.reaction,
+        current_reacted: reactionState.reacted,
+        current_aria_label: reactionState.ariaLabel,
+        message_index: input.messageTarget.index,
+        message_author: input.messageTarget.author,
+        message_preview: createVerificationSnippet(input.messageTarget.text)
+      }
+    );
+  }
+
+  return {
+    alreadyReacted,
+    messageSelectorKey: messageLocator.key,
+    reactionButtonKey: reactionButton.key,
+    reactionMenuKey
+  };
+}
+
+type ThreadVerificationMode = "reverse_menu_action_visible";
+
+async function executeThreadMenuMutation(input: {
+  actionId?: string;
+  actionType: string;
+  artifactPaths: string[];
+  page: Page;
+  profileName: string;
+  runtime: LinkedInMessagingRuntime;
+  threadUrl: string;
+  menuPhraseKey: LocalizedInboxPhraseKey;
+  verification: ThreadVerificationMode;
+  reverseMenuPhraseKey?: LocalizedInboxPhraseKey;
+}): Promise<{
+  selectorKey: string;
+  threadDetail: ThreadDetailSnapshot;
+}> {
+  const threadDetail = await extractThreadDetailWithNetwork(input.page, input.threadUrl, 5);
+  const selectorKey = await clickThreadMenuAction({
+    actionType: input.actionType,
+    artifactPaths: input.artifactPaths,
+    page: input.page,
+    runtime: input.runtime,
+    phraseKey: input.menuPhraseKey
+  });
+
+  let verified = false;
+  if (input.reverseMenuPhraseKey) {
+    const reverseMenuPhraseKey = input.reverseMenuPhraseKey;
+    verified = await waitForCondition(
+      async () =>
+        verifyReverseThreadMenuActionVisible({
+          artifactPaths: input.artifactPaths,
+          page: input.page,
+          runtime: input.runtime,
+          threadUrl: input.threadUrl,
+          phraseKey: reverseMenuPhraseKey
+        }),
+      10_000
+    );
+  }
+
+  if (!verified) {
+    throw new LinkedInAssistantError(
+      "UNKNOWN",
+      `Thread action ${input.actionType} could not be verified.`,
+      {
+        action_id: input.actionId,
+        profile_name: input.profileName,
+        thread_url: input.threadUrl,
+        verification: input.verification
+      }
+    );
+  }
+
+  return {
+    selectorKey,
+    threadDetail
+  };
 }
 
 export class LinkedInInboxService {
@@ -2490,6 +3350,243 @@ export class LinkedInInboxService {
       );
     }
   }
+
+  async prepareReact(input: PrepareReactInput): Promise<PrepareReactResult> {
+    const profileName = input.profileName ?? "default";
+    const reaction = normalizeLinkedInInboxReaction(input.reaction, "like");
+
+    try {
+      const threadDetail = await this.getThread({
+        profileName,
+        thread: input.thread,
+        limit: 20
+      });
+      const messageTarget = toThreadMessageTarget(threadDetail, input.messageIndex);
+      const target = {
+        profile_name: profileName,
+        thread_id: threadDetail.thread_id,
+        thread_url: threadDetail.thread_url,
+        title: threadDetail.title,
+        participant_name: inferParticipantName(threadDetail.title),
+        message: toThreadMessageTargetRecord(messageTarget)
+      };
+      const preview = {
+        summary: `React (${reaction}) to message ${messageTarget.index} in "${threadDetail.title}"`,
+        target,
+        outbound: {
+          action: "react",
+          reaction
+        },
+        supported_reactions: LINKEDIN_INBOX_REACTION_TYPES,
+        rate_limit: formatRateLimitState(
+          this.runtime.rateLimiter.peek(REACT_MESSAGE_RATE_LIMIT_CONFIG)
+        )
+      } satisfies Record<string, unknown>;
+
+      const prepared = this.runtime.twoPhaseCommit.prepare({
+        actionType: REACT_MESSAGE_ACTION_TYPE,
+        target,
+        payload: {
+          reaction
+        },
+        preview,
+        ...(input.operatorNote
+          ? {
+              operatorNote: input.operatorNote
+            }
+          : {})
+      });
+
+      return {
+        preparedActionId: prepared.preparedActionId,
+        confirmToken: prepared.confirmToken,
+        expiresAtMs: prepared.expiresAtMs,
+        preview: prepared.preview
+      };
+    } catch (error) {
+      throw toAutomationError(error, "Failed to prepare LinkedIn message reaction.", {
+        profile_name: profileName,
+        thread: input.thread,
+        reaction,
+        message_index: input.messageIndex
+      });
+    }
+  }
+
+  private async executeDirectThreadAction(input: {
+    actionType: string;
+    menuPhraseKey: LocalizedInboxPhraseKey;
+    profileName: string;
+    rateLimitConfig: ConsumeRateLimitInput;
+    resultKey: "archived" | "unarchived" | "marked_unread" | "muted";
+    thread: string;
+    verification: ThreadVerificationMode;
+    reverseMenuPhraseKey?: LocalizedInboxPhraseKey;
+  }): Promise<
+    ArchiveThreadResult | UnarchiveThreadResult | MarkUnreadResult | MuteThreadResult
+  > {
+    const threadUrl = resolveThreadUrl(input.thread);
+
+    await this.runtime.auth.ensureAuthenticated({
+      profileName: input.profileName,
+      cdpUrl: this.runtime.cdpUrl
+    });
+
+    try {
+      return await this.runtime.profileManager.runWithContext(
+        {
+          cdpUrl: this.runtime.cdpUrl,
+          profileName: input.profileName,
+          headless: true
+        },
+        async (context) => {
+          const page = await getOrCreatePage(context);
+          const artifactPaths: string[] = [];
+          const rateLimitState = this.runtime.rateLimiter.consume(input.rateLimitConfig);
+          if (!rateLimitState.allowed) {
+            throw new LinkedInAssistantError(
+              "RATE_LIMITED",
+              `LinkedIn ${input.actionType} is rate limited for the current window.`,
+              {
+                profile_name: input.profileName,
+                thread_url: threadUrl,
+                rate_limit: formatRateLimitState(rateLimitState)
+              }
+            );
+          }
+
+          const mutation = await executeThreadMenuMutation({
+            actionType: input.actionType,
+            artifactPaths,
+            page,
+            profileName: input.profileName,
+            runtime: this.runtime,
+            threadUrl,
+            menuPhraseKey: input.menuPhraseKey,
+            verification: input.verification,
+            ...(input.reverseMenuPhraseKey
+              ? {
+                  reverseMenuPhraseKey: input.reverseMenuPhraseKey
+                }
+              : {})
+          });
+
+          const screenshotPath = `linkedin/screenshot-${input.actionType}-${Date.now()}.png`;
+          await captureScreenshotArtifact(this.runtime, page, screenshotPath, {
+            action: input.actionType,
+            profile_name: input.profileName,
+            thread_url: mutation.threadDetail.thread_url,
+            thread_id: mutation.threadDetail.thread_id,
+            selector_key: mutation.selectorKey
+          });
+          artifactPaths.push(screenshotPath);
+
+          const commonResult = {
+            thread_id: mutation.threadDetail.thread_id,
+            thread_url: mutation.threadDetail.thread_url,
+            artifacts: artifactPaths,
+            rate_limit: formatRateLimitState(rateLimitState)
+          };
+
+          switch (input.resultKey) {
+            case "archived":
+              return {
+                archived: true,
+                ...commonResult
+              };
+            case "unarchived":
+              return {
+                unarchived: true,
+                ...commonResult
+              };
+            case "marked_unread":
+              return {
+                marked_unread: true,
+                ...commonResult
+              };
+            case "muted":
+              return {
+                muted: true,
+                ...commonResult
+              };
+          }
+        }
+      );
+    } catch (error) {
+      throw toAutomationError(
+        error,
+        `Failed to execute LinkedIn ${input.actionType} action.`,
+        {
+          profile_name: input.profileName,
+          thread: input.thread
+        }
+      );
+    }
+  }
+
+  async archiveThread(input: ThreadActionInput): Promise<ArchiveThreadResult> {
+    const profileName = input.profileName ?? "default";
+    const result = await this.executeDirectThreadAction({
+      actionType: ARCHIVE_THREAD_ACTION_TYPE,
+      menuPhraseKey: "archive_thread",
+      profileName,
+      rateLimitConfig: ARCHIVE_THREAD_RATE_LIMIT_CONFIG,
+      resultKey: "archived",
+      thread: input.thread,
+      verification: "reverse_menu_action_visible",
+      reverseMenuPhraseKey: "unarchive_thread"
+    });
+
+    return result as ArchiveThreadResult;
+  }
+
+  async unarchiveThread(input: ThreadActionInput): Promise<UnarchiveThreadResult> {
+    const profileName = input.profileName ?? "default";
+    const result = await this.executeDirectThreadAction({
+      actionType: UNARCHIVE_THREAD_ACTION_TYPE,
+      menuPhraseKey: "unarchive_thread",
+      profileName,
+      rateLimitConfig: UNARCHIVE_THREAD_RATE_LIMIT_CONFIG,
+      resultKey: "unarchived",
+      thread: input.thread,
+      verification: "reverse_menu_action_visible",
+      reverseMenuPhraseKey: "archive_thread"
+    });
+
+    return result as UnarchiveThreadResult;
+  }
+
+  async markUnread(input: ThreadActionInput): Promise<MarkUnreadResult> {
+    const profileName = input.profileName ?? "default";
+    const result = await this.executeDirectThreadAction({
+      actionType: MARK_UNREAD_ACTION_TYPE,
+      menuPhraseKey: "mark_unread",
+      profileName,
+      rateLimitConfig: MARK_UNREAD_RATE_LIMIT_CONFIG,
+      resultKey: "marked_unread",
+      thread: input.thread,
+      verification: "reverse_menu_action_visible",
+      reverseMenuPhraseKey: "mark_read"
+    });
+
+    return result as MarkUnreadResult;
+  }
+
+  async muteThread(input: ThreadActionInput): Promise<MuteThreadResult> {
+    const profileName = input.profileName ?? "default";
+    const result = await this.executeDirectThreadAction({
+      actionType: MUTE_THREAD_ACTION_TYPE,
+      menuPhraseKey: "mute_conversation",
+      profileName,
+      rateLimitConfig: MUTE_THREAD_RATE_LIMIT_CONFIG,
+      resultKey: "muted",
+      thread: input.thread,
+      verification: "reverse_menu_action_visible",
+      reverseMenuPhraseKey: "unmute_conversation"
+    });
+
+    return result as MuteThreadResult;
+  }
 }
 
 class SendMessageActionExecutor
@@ -2854,10 +3951,147 @@ class AddRecipientsActionExecutor
   }
 }
 
+class ReactMessageActionExecutor
+  implements ActionExecutor<LinkedInMessagingRuntime>
+{
+  async execute(input: {
+    runtime: LinkedInMessagingRuntime;
+    action: PreparedAction;
+  }): Promise<ActionExecutorResult> {
+    const runtime = input.runtime;
+    const action = input.action;
+    const profileName = getProfileName(action.target);
+    const threadUrl = getRequiredStringField(
+      action.target,
+      "thread_url",
+      action.id,
+      "target"
+    );
+    const requestedReaction =
+      typeof action.payload.reaction === "string"
+        ? action.payload.reaction
+        : undefined;
+    const reaction = normalizeLinkedInInboxReaction(requestedReaction, "like");
+    const messageTarget = parsePreparedThreadMessageTarget(
+      action.target,
+      "message",
+      action.id,
+      "target"
+    );
+
+    await runtime.auth.ensureAuthenticated({
+      profileName,
+      cdpUrl: runtime.cdpUrl
+    });
+
+    return runtime.profileManager.runWithContext(
+      {
+        cdpUrl: runtime.cdpUrl,
+        profileName,
+        headless: true
+      },
+      async (context) => {
+        const page = await getOrCreatePage(context);
+        return executeConfirmActionWithArtifacts({
+          runtime,
+          context,
+          page,
+          actionId: action.id,
+          actionType: REACT_MESSAGE_ACTION_TYPE,
+          profileName,
+          targetUrl: threadUrl,
+          persistTraceOnSuccess: true,
+          metadata: {
+            thread_url: threadUrl,
+            requested_reaction: reaction,
+            message_index: messageTarget.index,
+            message_author: messageTarget.author
+          },
+          errorDetails: {
+            thread_url: threadUrl,
+            requested_reaction: reaction,
+            message_index: messageTarget.index,
+            message_author: messageTarget.author
+          },
+          mapError: (error) =>
+            toAutomationError(error, "Failed to execute LinkedIn inbox reaction.", {
+              thread_url: threadUrl,
+              requested_reaction: reaction,
+              message_index: messageTarget.index,
+              message_author: messageTarget.author
+            }),
+          execute: async () => {
+            const detail = await extractThreadDetailWithNetwork(page, threadUrl, 20);
+            validateThreadTarget(action, detail, page.url());
+
+            const rateLimitState = runtime.rateLimiter.consume(
+              REACT_MESSAGE_RATE_LIMIT_CONFIG
+            );
+            if (!rateLimitState.allowed) {
+              throw new LinkedInAssistantError(
+                "RATE_LIMITED",
+                "LinkedIn inbox reactions are rate limited for the current window.",
+                {
+                  action_id: action.id,
+                  profile_name: profileName,
+                  thread_url: threadUrl,
+                  rate_limit: formatRateLimitState(rateLimitState)
+                }
+              );
+            }
+
+            const artifactPaths: string[] = [];
+            const reactionResult = await executeThreadReaction({
+              actionId: action.id,
+              artifactPaths,
+              page,
+              profileName,
+              reaction,
+              runtime,
+              threadUrl,
+              messageTarget
+            });
+
+            const screenshotPath = `linkedin/screenshot-confirm-${Date.now()}.png`;
+            await captureScreenshotArtifact(runtime, page, screenshotPath, {
+              action: REACT_MESSAGE_ACTION_TYPE,
+              action_id: action.id,
+              profile_name: profileName,
+              thread_url: threadUrl,
+              reaction,
+              message_index: messageTarget.index,
+              message_author: messageTarget.author,
+              message_selector_key: reactionResult.messageSelectorKey,
+              reaction_button_selector_key: reactionResult.reactionButtonKey,
+              reaction_menu_selector_key: reactionResult.reactionMenuKey ?? undefined
+            });
+            artifactPaths.push(screenshotPath);
+
+            return {
+              ok: true,
+              result: {
+                reacted: true,
+                reaction,
+                already_reacted: reactionResult.alreadyReacted,
+                message_index: messageTarget.index,
+                message_author: messageTarget.author,
+                thread_url: threadUrl,
+                rate_limit: formatRateLimitState(rateLimitState)
+              },
+              artifacts: artifactPaths
+            };
+          }
+        });
+      }
+    );
+  }
+}
+
 export function createLinkedInActionExecutors(): ActionExecutorRegistry<LinkedInMessagingRuntime> {
   return {
     [SEND_MESSAGE_ACTION_TYPE]: new SendMessageActionExecutor(),
     [SEND_NEW_THREAD_ACTION_TYPE]: new SendNewThreadActionExecutor(),
-    [ADD_RECIPIENTS_ACTION_TYPE]: new AddRecipientsActionExecutor()
+    [ADD_RECIPIENTS_ACTION_TYPE]: new AddRecipientsActionExecutor(),
+    [REACT_MESSAGE_ACTION_TYPE]: new ReactMessageActionExecutor()
   };
 }

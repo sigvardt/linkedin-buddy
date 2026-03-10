@@ -10,6 +10,12 @@ export const LINKEDIN_INBOX_PREPARE_NEW_THREAD_TOOL =
   "linkedin.inbox.prepare_new_thread";
 export const LINKEDIN_INBOX_PREPARE_ADD_RECIPIENTS_TOOL =
   "linkedin.inbox.prepare_add_recipients";
+export const LINKEDIN_INBOX_PREPARE_REACT_TOOL = "linkedin.inbox.prepare_react";
+export const LINKEDIN_INBOX_ARCHIVE_THREAD_TOOL = "linkedin.inbox.archive_thread";
+export const LINKEDIN_INBOX_UNARCHIVE_THREAD_TOOL =
+  "linkedin.inbox.unarchive_thread";
+export const LINKEDIN_INBOX_MARK_UNREAD_TOOL = "linkedin.inbox.mark_unread";
+export const LINKEDIN_INBOX_MUTE_THREAD_TOOL = "linkedin.inbox.mute_thread";
 export const LINKEDIN_ACTIONS_CONFIRM_TOOL = "linkedin.actions.confirm";
 export const LINKEDIN_PROFILE_VIEW_TOOL = "linkedin.profile.view";
 export const LINKEDIN_PROFILE_VIEW_EDITABLE_TOOL = "linkedin.profile.view_editable";
