@@ -4,9 +4,30 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
   "bin": {
     "linkedin-mcp": "dist/bin/linkedin-mcp.js"
   },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sigvardt/linkedin-buddy.git",
+    "directory": "packages/mcp"
+  },
+  "bugs": {
+    "url": "https://github.com/sigvardt/linkedin-buddy/issues"
+  },
+  "homepage": "https://github.com/sigvardt/linkedin-buddy/tree/main/packages/mcp",
+  "keywords": [
+    "linkedin",
+    "automation",
+    "mcp",
+    "playwright"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json"

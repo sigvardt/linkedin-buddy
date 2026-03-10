@@ -4,12 +4,33 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     }
   },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sigvardt/linkedin-buddy.git",
+    "directory": "packages/core"
+  },
+  "bugs": {
+    "url": "https://github.com/sigvardt/linkedin-buddy/issues"
+  },
+  "homepage": "https://github.com/sigvardt/linkedin-buddy/tree/main/packages/core",
+  "keywords": [
+    "linkedin",
+    "automation",
+    "playwright",
+    "library"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
