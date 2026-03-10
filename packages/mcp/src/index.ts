@@ -6,6 +6,13 @@ export const LINKEDIN_INBOX_GET_THREAD_TOOL = "linkedin.inbox.get_thread";
 export const LINKEDIN_INBOX_PREPARE_REPLY_TOOL = "linkedin.inbox.prepare_reply";
 export const LINKEDIN_ACTIONS_CONFIRM_TOOL = "linkedin.actions.confirm";
 export const LINKEDIN_PROFILE_VIEW_TOOL = "linkedin.profile.view";
+export const LINKEDIN_PROFILE_VIEW_EDITABLE_TOOL = "linkedin.profile.view_editable";
+export const LINKEDIN_PROFILE_PREPARE_UPDATE_INTRO_TOOL =
+  "linkedin.profile.prepare_update_intro";
+export const LINKEDIN_PROFILE_PREPARE_UPSERT_SECTION_ITEM_TOOL =
+  "linkedin.profile.prepare_upsert_section_item";
+export const LINKEDIN_PROFILE_PREPARE_REMOVE_SECTION_ITEM_TOOL =
+  "linkedin.profile.prepare_remove_section_item";
 export const LINKEDIN_SEARCH_TOOL = "linkedin.search";
 export const LINKEDIN_CONNECTIONS_LIST_TOOL = "linkedin.connections.list";
 export const LINKEDIN_CONNECTIONS_PENDING_TOOL = "linkedin.connections.pending";

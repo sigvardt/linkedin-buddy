@@ -60,7 +60,11 @@ import {
   LINKEDIN_INBOX_GET_THREAD_TOOL,
   LINKEDIN_INBOX_LIST_THREADS_TOOL,
   LINKEDIN_INBOX_PREPARE_REPLY_TOOL,
+  LINKEDIN_PROFILE_PREPARE_REMOVE_SECTION_ITEM_TOOL,
+  LINKEDIN_PROFILE_PREPARE_UPDATE_INTRO_TOOL,
+  LINKEDIN_PROFILE_PREPARE_UPSERT_SECTION_ITEM_TOOL,
   LINKEDIN_PROFILE_VIEW_TOOL,
+  LINKEDIN_PROFILE_VIEW_EDITABLE_TOOL,
   LINKEDIN_JOBS_SEARCH_TOOL,
   LINKEDIN_JOBS_VIEW_TOOL,
   LINKEDIN_NOTIFICATIONS_LIST_TOOL,
@@ -604,6 +608,173 @@ async function handleProfileView(args: ToolArgs): Promise<ToolResult> {
       run_id: runtime.runId,
       profile_name: profileName,
       profile
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleProfileViewEditable(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+
+    runtime.logger.log("info", "mcp.profile.view_editable.start", {
+      profileName
+    });
+
+    const profile = await runtime.profile.viewEditableProfile({
+      profileName
+    });
+
+    runtime.logger.log("info", "mcp.profile.view_editable.done", {
+      profileName,
+      sectionCount: profile.sections.length
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      profile
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleProfilePrepareUpdateIntro(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.profile.prepare_update_intro.start", {
+      profileName
+    });
+
+    const prepared = runtime.profile.prepareUpdateIntro({
+      profileName,
+      ...(typeof args.firstName === "string"
+        ? { firstName: readString(args, "firstName", "") }
+        : {}),
+      ...(typeof args.lastName === "string"
+        ? { lastName: readString(args, "lastName", "") }
+        : {}),
+      ...(typeof args.headline === "string"
+        ? { headline: readString(args, "headline", "") }
+        : {}),
+      ...(typeof args.location === "string"
+        ? { location: readString(args, "location", "") }
+        : {}),
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.profile.prepare_update_intro.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleProfilePrepareUpsertSectionItem(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const section = readRequiredString(args, "section");
+    const values = readObject(args, "values");
+    const match = readObject(args, "match");
+    const itemId = readString(args, "itemId", "");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    if (!values) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        "values is required."
+      );
+    }
+
+    runtime.logger.log("info", "mcp.profile.prepare_upsert_section_item.start", {
+      profileName,
+      section,
+      hasItemId: itemId.length > 0
+    });
+
+    const prepared = runtime.profile.prepareUpsertSectionItem({
+      profileName,
+      section,
+      values,
+      ...(itemId ? { itemId } : {}),
+      ...(match ? { match } : {}),
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.profile.prepare_upsert_section_item.done", {
+      profileName,
+      section,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleProfilePrepareRemoveSectionItem(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const section = readRequiredString(args, "section");
+    const match = readObject(args, "match");
+    const itemId = readString(args, "itemId", "");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.profile.prepare_remove_section_item.start", {
+      profileName,
+      section,
+      hasItemId: itemId.length > 0
+    });
+
+    const prepared = runtime.profile.prepareRemoveSectionItem({
+      profileName,
+      section,
+      ...(itemId ? { itemId } : {}),
+      ...(match ? { match } : {}),
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.profile.prepare_remove_section_item.done", {
+      profileName,
+      section,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
     });
   } finally {
     runtime.close();
@@ -1673,6 +1844,159 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
+        name: LINKEDIN_PROFILE_VIEW_EDITABLE_TOOL,
+        description: withSelectorAuditHint(
+          "Inspect the logged-in member's editable LinkedIn profile surface. Returns intro metadata, supported editable fields, and stable-ish section item identifiers for about, experience, education, certifications, languages, projects, volunteer work, and honors."
+        ),
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_PROFILE_PREPARE_UPDATE_INTRO_TOOL,
+        description:
+          "Prepare a LinkedIn profile intro update (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            },
+            firstName: {
+              type: "string",
+              description: "Optional new first name."
+            },
+            lastName: {
+              type: "string",
+              description: "Optional new last name."
+            },
+            headline: {
+              type: "string",
+              description: "Optional new headline."
+            },
+            location: {
+              type: "string",
+              description: "Optional new location text."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Optional note attached to the prepared action."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_PROFILE_PREPARE_UPSERT_SECTION_ITEM_TOOL,
+        description:
+          "Prepare to create or update an editable LinkedIn profile section item (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["section", "values"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            },
+            section: {
+              type: "string",
+              enum: [
+                "about",
+                "experience",
+                "education",
+                "certifications",
+                "languages",
+                "projects",
+                "volunteer_experience",
+                "honors_awards"
+              ],
+              description: "Editable LinkedIn profile section to create or update."
+            },
+            itemId: {
+              type: "string",
+              description:
+                "Stable-ish item identifier returned by linkedin.profile.view_editable. Provide this (or match) to update an existing item. Omit both to create a new item."
+            },
+            match: {
+              type: "object",
+              additionalProperties: {
+                anyOf: [{ type: "string" }]
+              },
+              description:
+                "Optional optimistic matching object for legacy items when itemId is unavailable. Supported keys include sourceId, primaryText, secondaryText, tertiaryText, and rawText."
+            },
+            values: {
+              type: "object",
+              additionalProperties: {
+                anyOf: [{ type: "string" }, { type: "number" }, { type: "boolean" }]
+              },
+              description:
+                "Section field values to create or update. Use linkedin.profile.view_editable.supported_fields as the canonical field list for each section."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Optional note attached to the prepared action."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_PROFILE_PREPARE_REMOVE_SECTION_ITEM_TOOL,
+        description:
+          "Prepare to remove an editable LinkedIn profile section item (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["section"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            },
+            section: {
+              type: "string",
+              enum: [
+                "about",
+                "experience",
+                "education",
+                "certifications",
+                "languages",
+                "projects",
+                "volunteer_experience",
+                "honors_awards"
+              ],
+              description: "Editable LinkedIn profile section to remove from."
+            },
+            itemId: {
+              type: "string",
+              description:
+                "Stable-ish item identifier returned by linkedin.profile.view_editable. Optional for about; otherwise provide this or match."
+            },
+            match: {
+              type: "object",
+              additionalProperties: {
+                anyOf: [{ type: "string" }]
+              },
+              description:
+                "Optional optimistic matching object for legacy items when itemId is unavailable. Supported keys include sourceId, primaryText, secondaryText, tertiaryText, and rawText."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Optional note attached to the prepared action."
+            }
+          })
+        }
+      },
+      {
         name: LINKEDIN_SEARCH_TOOL,
         description: withSelectorAuditHint(
           "Search LinkedIn for people, companies, or jobs."
@@ -2370,6 +2694,12 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   [LINKEDIN_INBOX_GET_THREAD_TOOL]: handleGetThread,
   [LINKEDIN_INBOX_PREPARE_REPLY_TOOL]: handlePrepareReply,
   [LINKEDIN_PROFILE_VIEW_TOOL]: handleProfileView,
+  [LINKEDIN_PROFILE_VIEW_EDITABLE_TOOL]: handleProfileViewEditable,
+  [LINKEDIN_PROFILE_PREPARE_UPDATE_INTRO_TOOL]: handleProfilePrepareUpdateIntro,
+  [LINKEDIN_PROFILE_PREPARE_UPSERT_SECTION_ITEM_TOOL]:
+    handleProfilePrepareUpsertSectionItem,
+  [LINKEDIN_PROFILE_PREPARE_REMOVE_SECTION_ITEM_TOOL]:
+    handleProfilePrepareRemoveSectionItem,
   [LINKEDIN_SEARCH_TOOL]: handleSearch,
   [LINKEDIN_CONNECTIONS_LIST_TOOL]: handleConnectionsList,
   [LINKEDIN_CONNECTIONS_PENDING_TOOL]: handleConnectionsPending,

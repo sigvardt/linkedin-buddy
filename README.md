@@ -625,6 +625,10 @@ Exposed tools:
 - `linkedin.session.open_login`
 - `linkedin.session.health`
 - `linkedin.profile.view`
+- `linkedin.profile.view_editable`
+- `linkedin.profile.prepare_update_intro`
+- `linkedin.profile.prepare_upsert_section_item`
+- `linkedin.profile.prepare_remove_section_item`
 - `linkedin.search`
 - `linkedin.inbox.list_threads`
 - `linkedin.inbox.get_thread`
