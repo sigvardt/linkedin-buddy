@@ -36,6 +36,7 @@ import type {
 } from "./twoPhaseCommit.js";
 
 const LINKEDIN_FEED_URL = "https://www.linkedin.com/feed/";
+const LINKEDIN_PROFILE_ACTIVITY_URL = "https://www.linkedin.com/in/me/recent-activity/all/";
 const LINKEDIN_ASSISTANT_CONFIG_FILENAME = "config.json";
 const DEFAULT_LINK_PREVIEW_VALIDATION_TIMEOUT_MS = 5_000;
 const MAX_LINK_PREVIEW_VALIDATION_TIMEOUT_MS = 30_000;
@@ -51,6 +52,22 @@ export const LINKEDIN_POST_MAX_MEDIA_ATTACHMENTS = 20;
 export const LINKEDIN_POST_POLL_MIN_OPTIONS = 2;
 export const LINKEDIN_POST_POLL_MAX_OPTIONS = 4;
 export const LINKEDIN_POST_POLL_DURATION_DAYS = [1, 3, 7, 14] as const;
+export const LINKEDIN_POST_FEED_SURFACE_SELECTORS = [
+  "main[role='main']",
+  "[data-urn]",
+  ".feed-shared-update-v2",
+  ".occludable-update",
+  ".share-box-feed-entry",
+  "main"
+] as const;
+export const LINKEDIN_POST_ACTIVITY_SURFACE_SELECTORS = [
+  "main[role='main']",
+  "[data-urn]",
+  "article",
+  ".feed-shared-update-v2",
+  ".occludable-update",
+  "main"
+] as const;
 
 type LinkedInPollDurationDays =
   (typeof LINKEDIN_POST_POLL_DURATION_DAYS)[number];
@@ -1607,16 +1624,17 @@ async function findPresentScopedLocator(
   return null;
 }
 
-async function waitForFeedSurface(page: Page): Promise<void> {
-  const candidates = [
-    page.locator(".share-box-feed-entry").first(),
-    page.locator(".feed-shared-update-v2, .occludable-update, main").first(),
-    page.locator("main").first()
-  ];
-
-  for (const locator of candidates) {
+async function waitForVisibleSurface(
+  page: Page,
+  selectors: readonly string[],
+  errorMessage: string
+): Promise<void> {
+  for (const selector of selectors) {
     try {
-      await locator.waitFor({ state: "visible", timeout: 6_000 });
+      await page.locator(selector).first().waitFor({
+        state: "visible",
+        timeout: 5_000
+      });
       return;
     } catch {
       // Try next candidate.
@@ -1625,10 +1643,27 @@ async function waitForFeedSurface(page: Page): Promise<void> {
 
   throw new LinkedInAssistantError(
     "UI_CHANGED_SELECTOR_FAILED",
-    "Could not locate LinkedIn feed surface.",
+    errorMessage,
     {
-      current_url: page.url()
+      current_url: page.url(),
+      attempted_selectors: [...selectors]
     }
+  );
+}
+
+export async function waitForFeedSurface(page: Page): Promise<void> {
+  await waitForVisibleSurface(
+    page,
+    LINKEDIN_POST_FEED_SURFACE_SELECTORS,
+    "Could not locate LinkedIn feed surface."
+  );
+}
+
+async function waitForProfileActivitySurface(page: Page): Promise<void> {
+  await waitForVisibleSurface(
+    page,
+    LINKEDIN_POST_ACTIVITY_SURFACE_SELECTORS,
+    "Could not locate LinkedIn profile activity surface."
   );
 }
 
@@ -2495,14 +2530,20 @@ async function openPostComposer(
 ): Promise<{ composerRoot: Locator; triggerKey: string; rootKey: string }> {
   await page.goto(LINKEDIN_FEED_URL, { waitUntil: "domcontentloaded" });
   await waitForNetworkIdleBestEffort(page);
-  await waitForFeedSurface(page);
+  const triggerCandidates = createComposeTriggerCandidates(selectorLocale);
+  const visibleTrigger = await findOptionalVisibleLocator(page, triggerCandidates);
+  if (!visibleTrigger) {
+    await waitForFeedSurface(page);
+  }
 
-  const trigger = await findVisibleLocatorOrThrow(
-    page,
-    createComposeTriggerCandidates(selectorLocale),
-    "post_composer_trigger",
-    artifactPaths
-  );
+  const trigger =
+    visibleTrigger ??
+    (await findVisibleLocatorOrThrow(
+      page,
+      triggerCandidates,
+      "post_composer_trigger",
+      artifactPaths
+    ));
   await trigger.locator.click({ timeout: 5_000 });
 
   const root = await findVisibleLocatorOrThrow(
@@ -3151,11 +3192,45 @@ async function extractPublishedPostUrl(
   }
 }
 
-async function verifyPublishedPost(
+type PublishedPostVerificationSurface = "feed" | "profile_activity";
+
+async function locatePublishedPostOnSurface(
+  page: Page,
+  snippet: string,
+  surface: PublishedPostVerificationSurface
+): Promise<Locator | null> {
+  if (surface === "feed") {
+    if (!page.url().startsWith(LINKEDIN_FEED_URL)) {
+      await page.goto(LINKEDIN_FEED_URL, { waitUntil: "domcontentloaded" });
+      await waitForNetworkIdleBestEffort(page);
+    }
+    await page.evaluate(() => {
+      globalThis.scrollTo({ top: 0, behavior: "auto" });
+    });
+    await waitForFeedSurface(page);
+    return findVisiblePostBySnippet(page, snippet);
+  }
+
+  await page.goto(LINKEDIN_PROFILE_ACTIVITY_URL, {
+    waitUntil: "domcontentloaded"
+  });
+  await waitForNetworkIdleBestEffort(page);
+  await page.evaluate(() => {
+    globalThis.scrollTo({ top: 0, behavior: "auto" });
+  });
+  await waitForProfileActivitySurface(page);
+  return findVisiblePostBySnippet(page, snippet);
+}
+
+export async function verifyPublishedPost(
   page: Page,
   text: string,
   artifactPaths: string[]
-): Promise<{ verified: true; postUrl: string | null }> {
+): Promise<{
+  verified: true;
+  postUrl: string | null;
+  surface: PublishedPostVerificationSurface;
+}> {
   const snippet = createVerificationSnippet(text);
   if (!snippet) {
     throw new LinkedInAssistantError(
@@ -3164,36 +3239,43 @@ async function verifyPublishedPost(
     );
   }
 
-  const locatePost = async (): Promise<Locator | null> => {
-    await page.evaluate(() => {
-      globalThis.scrollTo({ top: 0, behavior: "auto" });
-    });
-    await waitForFeedSurface(page);
-    return findVisiblePostBySnippet(page, snippet);
-  };
-
-  let postRoot = await locatePost();
-  if (!postRoot) {
-    await page.goto(LINKEDIN_FEED_URL, { waitUntil: "domcontentloaded" });
-    await waitForNetworkIdleBestEffort(page);
-    postRoot = await locatePost();
+  const surfaces: readonly PublishedPostVerificationSurface[] = [
+    "feed",
+    "profile_activity"
+  ];
+  let locatedSurface: PublishedPostVerificationSurface | null = null;
+  let postRoot: Locator | null = null;
+  for (const surface of surfaces) {
+    postRoot = await locatePublishedPostOnSurface(page, snippet, surface);
+    if (postRoot) {
+      locatedSurface = surface;
+      break;
+    }
   }
 
   if (!postRoot) {
     const verified = await waitForCondition(async () => {
-      const located = await locatePost();
-      postRoot = located;
-      return located !== null;
+      for (const surface of surfaces) {
+        const located = await locatePublishedPostOnSurface(page, snippet, surface);
+        if (located) {
+          postRoot = located;
+          locatedSurface = surface;
+          return true;
+        }
+      }
+
+      return false;
     }, 12_000);
 
     if (!verified) {
       throw new LinkedInAssistantError(
         "UNKNOWN",
-        "Published LinkedIn post could not be verified on the feed.",
+        "Published LinkedIn post could not be verified on LinkedIn.",
         {
           current_url: page.url(),
           verification_snippet: snippet,
-          artifact_paths: artifactPaths
+          artifact_paths: artifactPaths,
+          verification_urls: [LINKEDIN_FEED_URL, LINKEDIN_PROFILE_ACTIVITY_URL]
         }
       );
     }
@@ -3201,7 +3283,8 @@ async function verifyPublishedPost(
 
   return {
     verified: true,
-    postUrl: await extractPublishedPostUrl(page, postRoot)
+    postUrl: await extractPublishedPostUrl(page, postRoot),
+    surface: locatedSurface ?? "feed"
   };
 }
 
@@ -4293,7 +4376,8 @@ class CreatePostActionExecutor
             action: CREATE_POST_ACTION_TYPE,
             profile_name: profileName,
             visibility,
-            published_post_url: verification.postUrl
+            published_post_url: verification.postUrl,
+            verification_surface: verification.surface
           });
           artifactPaths.push(postPublishScreenshot);
 
@@ -4304,6 +4388,7 @@ class CreatePostActionExecutor
               visibility,
               verification_snippet: createVerificationSnippet(text),
               published_post_url: verification.postUrl,
+              verification_surface: verification.surface,
               rate_limit: formatRateLimitState(rateLimitState)
             },
             artifacts: artifactPaths
@@ -4501,6 +4586,7 @@ class CreateMediaPostActionExecutor
             profile_name: profileName,
             visibility,
             published_post_url: verification.postUrl,
+            verification_surface: verification.surface,
             media_count: attachments.length,
             media_kind: attachments[0]?.kind ?? null
           });
@@ -4516,6 +4602,7 @@ class CreateMediaPostActionExecutor
               media_kind: attachments[0]?.kind ?? null,
               verification_snippet: createVerificationSnippet(text),
               published_post_url: verification.postUrl,
+              verification_surface: verification.surface,
               rate_limit: formatRateLimitState(rateLimitState)
             },
             artifacts: artifactPaths
@@ -4731,6 +4818,7 @@ class CreatePollPostActionExecutor
             profile_name: profileName,
             visibility,
             published_post_url: verification.postUrl,
+            verification_surface: verification.surface,
             poll_option_count: options.length,
             poll_duration_days: durationDays
           });
@@ -4747,6 +4835,7 @@ class CreatePollPostActionExecutor
               poll_duration_days: durationDays,
               verification_snippet: createVerificationSnippet(verificationText),
               published_post_url: verification.postUrl,
+              verification_surface: verification.surface,
               rate_limit: formatRateLimitState(rateLimitState)
             },
             artifacts: artifactPaths
