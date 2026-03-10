@@ -73,6 +73,10 @@ import {
   LINKEDIN_JOBS_VIEW_TOOL,
   LINKEDIN_NOTIFICATIONS_LIST_TOOL,
   LINKEDIN_POST_PREPARE_CREATE_TOOL,
+  LINKEDIN_POST_PREPARE_CREATE_MEDIA_TOOL,
+  LINKEDIN_POST_PREPARE_CREATE_POLL_TOOL,
+  LINKEDIN_POST_PREPARE_DELETE_TOOL,
+  LINKEDIN_POST_PREPARE_EDIT_TOOL,
   LINKEDIN_SEARCH_TOOL,
   LINKEDIN_SESSION_HEALTH_TOOL,
   LINKEDIN_SESSION_OPEN_LOGIN_TOOL,
@@ -1468,6 +1472,184 @@ async function handlePostPrepareCreate(args: ToolArgs): Promise<ToolResult> {
   }
 }
 
+async function handlePostPrepareCreateMedia(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const text = readRequiredString(args, "text");
+    const mediaPaths = readStringArray(args, "mediaPaths");
+    if (!mediaPaths) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        "mediaPaths is required."
+      );
+    }
+    const visibility = normalizeLinkedInPostVisibility(
+      readString(args, "visibility", "public"),
+      "public"
+    );
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.post.prepare_create_media.start", {
+      profileName,
+      visibility,
+      mediaCount: mediaPaths.length
+    });
+
+    const prepared = await runtime.posts.prepareCreateMedia({
+      profileName,
+      text,
+      mediaPaths,
+      visibility,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.post.prepare_create_media.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId,
+      visibility,
+      mediaCount: mediaPaths.length
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handlePostPrepareCreatePoll(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const question = readRequiredString(args, "question");
+    const options = readStringArray(args, "options");
+    if (!options) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        "options is required."
+      );
+    }
+    const text = readString(args, "text", "");
+    const durationDays = readOptionalPositiveNumber(args, "durationDays");
+    const visibility = normalizeLinkedInPostVisibility(
+      readString(args, "visibility", "public"),
+      "public"
+    );
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.post.prepare_create_poll.start", {
+      profileName,
+      visibility,
+      optionCount: options.length,
+      ...(typeof durationDays === "number" ? { durationDays } : {})
+    });
+
+    const prepared = await runtime.posts.prepareCreatePoll({
+      profileName,
+      question,
+      options,
+      ...(text ? { text } : {}),
+      ...(typeof durationDays === "number" ? { durationDays } : {}),
+      visibility,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.post.prepare_create_poll.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId,
+      visibility,
+      optionCount: options.length,
+      ...(typeof durationDays === "number" ? { durationDays } : {})
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handlePostPrepareEdit(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const postUrl = readRequiredString(args, "postUrl");
+    const text = readRequiredString(args, "text");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.post.prepare_edit.start", {
+      profileName,
+      postUrl
+    });
+
+    const prepared = await runtime.posts.prepareEdit({
+      profileName,
+      postUrl,
+      text,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.post.prepare_edit.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId,
+      postUrl
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handlePostPrepareDelete(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const postUrl = readRequiredString(args, "postUrl");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.post.prepare_delete.start", {
+      profileName,
+      postUrl
+    });
+
+    const prepared = await runtime.posts.prepareDelete({
+      profileName,
+      postUrl,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.post.prepare_delete.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId,
+      postUrl
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 async function handleActivityWatchCreate(args: ToolArgs): Promise<ToolResult> {
   const runtime = createRuntime(args);
 
@@ -2566,6 +2748,143 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
+        name: LINKEDIN_POST_PREPARE_CREATE_MEDIA_TOOL,
+        description:
+          "Prepare a new LinkedIn media post with attachments (two-phase: returns confirm token). Use linkedin.actions.confirm to publish.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["text", "mediaPaths"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            text: {
+              type: "string",
+              description: "Post text to publish alongside the media attachments."
+            },
+            mediaPaths: {
+              type: "array",
+              items: {
+                type: "string"
+              },
+              description:
+                "One or more local file paths for image/video attachments."
+            },
+            visibility: {
+              type: "string",
+              enum: [...LINKEDIN_POST_VISIBILITY_TYPES],
+              description: "Post visibility. Defaults to public."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_POST_PREPARE_CREATE_POLL_TOOL,
+        description:
+          "Prepare a new LinkedIn poll post (two-phase: returns confirm token). Use linkedin.actions.confirm to publish.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["question", "options"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            text: {
+              type: "string",
+              description: "Optional lead-in text that appears above the poll."
+            },
+            question: {
+              type: "string",
+              description: "Poll question to publish."
+            },
+            options: {
+              type: "array",
+              items: {
+                type: "string"
+              },
+              description: "Two to four poll options."
+            },
+            durationDays: {
+              type: "number",
+              description: "Poll duration in days. Supported values: 1, 3, 7, or 14."
+            },
+            visibility: {
+              type: "string",
+              enum: [...LINKEDIN_POST_VISIBILITY_TYPES],
+              description: "Post visibility. Defaults to public."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_POST_PREPARE_EDIT_TOOL,
+        description:
+          "Prepare to edit one of your LinkedIn posts (two-phase: returns confirm token). Use linkedin.actions.confirm to save the update.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["postUrl", "text"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            postUrl: {
+              type: "string",
+              description: "LinkedIn post URL, URN, or activity/share identifier."
+            },
+            text: {
+              type: "string",
+              description: "Replacement post text to save."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_POST_PREPARE_DELETE_TOOL,
+        description:
+          "Prepare to delete one of your LinkedIn posts (two-phase: returns confirm token). Use linkedin.actions.confirm to execute the deletion.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["postUrl"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            postUrl: {
+              type: "string",
+              description: "LinkedIn post URL, URN, or activity/share identifier."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
         name: LINKEDIN_NOTIFICATIONS_LIST_TOOL,
         description:
           withSelectorAuditHint(
@@ -2968,6 +3287,10 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   [LINKEDIN_FEED_LIKE_TOOL]: handleFeedLike,
   [LINKEDIN_FEED_COMMENT_TOOL]: handleFeedComment,
   [LINKEDIN_POST_PREPARE_CREATE_TOOL]: handlePostPrepareCreate,
+  [LINKEDIN_POST_PREPARE_CREATE_MEDIA_TOOL]: handlePostPrepareCreateMedia,
+  [LINKEDIN_POST_PREPARE_CREATE_POLL_TOOL]: handlePostPrepareCreatePoll,
+  [LINKEDIN_POST_PREPARE_EDIT_TOOL]: handlePostPrepareEdit,
+  [LINKEDIN_POST_PREPARE_DELETE_TOOL]: handlePostPrepareDelete,
   [LINKEDIN_NOTIFICATIONS_LIST_TOOL]: handleNotificationsList,
   [LINKEDIN_JOBS_SEARCH_TOOL]: handleJobsSearch,
   [LINKEDIN_JOBS_VIEW_TOOL]: handleJobsView,

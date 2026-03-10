@@ -4,7 +4,11 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CREATE_POST_ACTION_TYPE,
+  CREATE_MEDIA_POST_ACTION_TYPE,
+  CREATE_POLL_POST_ACTION_TYPE,
+  DELETE_POST_ACTION_TYPE,
   DEFAULT_LINKEDIN_POST_SAFETY_LINT_CONFIG,
+  EDIT_POST_ACTION_TYPE,
   LINKEDIN_POST_MAX_LENGTH,
   LINKEDIN_POST_VISIBILITY_MAP,
   LINKEDIN_POST_VISIBILITY_TYPES,
@@ -62,14 +66,22 @@ function createTempBaseDir(): string {
 describe("Post action type constants", () => {
   it("has correct create post action type", () => {
     expect(CREATE_POST_ACTION_TYPE).toBe("post.create");
+    expect(CREATE_MEDIA_POST_ACTION_TYPE).toBe("post.create_media");
+    expect(CREATE_POLL_POST_ACTION_TYPE).toBe("post.create_poll");
+    expect(EDIT_POST_ACTION_TYPE).toBe("post.edit");
+    expect(DELETE_POST_ACTION_TYPE).toBe("post.delete");
   });
 });
 
 describe("createPostActionExecutors", () => {
-  it("registers the create post action executor", () => {
+  it("registers all post action executors", () => {
     const executors = createPostActionExecutors();
-    expect(Object.keys(executors)).toHaveLength(1);
+    expect(Object.keys(executors)).toHaveLength(5);
     expect(executors[CREATE_POST_ACTION_TYPE]).toBeDefined();
+    expect(executors[CREATE_MEDIA_POST_ACTION_TYPE]).toBeDefined();
+    expect(executors[CREATE_POLL_POST_ACTION_TYPE]).toBeDefined();
+    expect(executors[EDIT_POST_ACTION_TYPE]).toBeDefined();
+    expect(executors[DELETE_POST_ACTION_TYPE]).toBeDefined();
   });
 
   it("exposes an execute method", () => {
@@ -266,6 +278,124 @@ describe("post safety lint", () => {
         text: "This post contains a forbidden phrase."
       })
     ).rejects.toThrow('Post text contains banned phrase "forbidden phrase".');
+
+    expect(ensureAuthenticated).not.toHaveBeenCalled();
+  });
+
+  it("blocks prepareCreateMedia before authentication when a media file is missing", async () => {
+    const ensureAuthenticated = vi.fn();
+    const service = new LinkedInPostsService({
+      auth: {
+        ensureAuthenticated
+      },
+      cdpUrl: undefined,
+      profileManager: {},
+      logger: {
+        log: vi.fn()
+      },
+      rateLimiter: {},
+      artifacts: {},
+      twoPhaseCommit: {
+        prepare: vi.fn()
+      },
+      postSafetyLint: DEFAULT_LINKEDIN_POST_SAFETY_LINT_CONFIG
+    } as never);
+
+    await expect(
+      service.prepareCreateMedia({
+        text: "Post with missing media",
+        mediaPaths: ["./does-not-exist.png"]
+      })
+    ).rejects.toThrow("Media file does not exist");
+
+    expect(ensureAuthenticated).not.toHaveBeenCalled();
+  });
+
+  it("blocks prepareCreatePoll before authentication when options are invalid", async () => {
+    const ensureAuthenticated = vi.fn();
+    const service = new LinkedInPostsService({
+      auth: {
+        ensureAuthenticated
+      },
+      cdpUrl: undefined,
+      profileManager: {},
+      logger: {
+        log: vi.fn()
+      },
+      rateLimiter: {},
+      artifacts: {},
+      twoPhaseCommit: {
+        prepare: vi.fn()
+      },
+      postSafetyLint: DEFAULT_LINKEDIN_POST_SAFETY_LINT_CONFIG
+    } as never);
+
+    await expect(
+      service.prepareCreatePoll({
+        question: "Which option?",
+        options: ["Same", "same"]
+      })
+    ).rejects.toThrow("options must be distinct");
+
+    expect(ensureAuthenticated).not.toHaveBeenCalled();
+  });
+
+  it("blocks prepareEdit before authentication when lint fails", async () => {
+    const ensureAuthenticated = vi.fn();
+    const service = new LinkedInPostsService({
+      auth: {
+        ensureAuthenticated
+      },
+      cdpUrl: undefined,
+      profileManager: {},
+      logger: {
+        log: vi.fn()
+      },
+      rateLimiter: {},
+      artifacts: {},
+      twoPhaseCommit: {
+        prepare: vi.fn()
+      },
+      postSafetyLint: {
+        ...DEFAULT_LINKEDIN_POST_SAFETY_LINT_CONFIG,
+        bannedPhrases: ["forbidden phrase"]
+      }
+    } as never);
+
+    await expect(
+      service.prepareEdit({
+        postUrl: "1234567890",
+        text: "This edited post contains a forbidden phrase."
+      })
+    ).rejects.toThrow('Post text contains banned phrase "forbidden phrase".');
+
+    expect(ensureAuthenticated).not.toHaveBeenCalled();
+  });
+
+  it("blocks prepareDelete before authentication when postUrl is blank", async () => {
+    const ensureAuthenticated = vi.fn();
+    const service = new LinkedInPostsService({
+      auth: {
+        ensureAuthenticated
+      },
+      cdpUrl: undefined,
+      profileManager: {},
+      logger: {
+        log: vi.fn()
+      },
+      rateLimiter: {},
+      artifacts: {},
+      twoPhaseCommit: {
+        prepare: vi.fn()
+      },
+      postSafetyLint: DEFAULT_LINKEDIN_POST_SAFETY_LINT_CONFIG
+    } as never);
+
+    await expect(
+      service.prepareDelete({
+        postUrl: "   "
+      })
+    ).rejects.toThrow("postUrl is required");
 
     expect(ensureAuthenticated).not.toHaveBeenCalled();
   });

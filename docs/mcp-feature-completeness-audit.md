@@ -24,7 +24,7 @@ land in focused slices.
 | Inbox | `linkedin.inbox.list_threads`, `linkedin.inbox.get_thread`, `linkedin.inbox.prepare_reply`, `linkedin.actions.confirm` | Read existing threads and send replies through two-phase confirm |
 | Connections | `linkedin.connections.list`, `linkedin.connections.pending`, `linkedin.connections.invite`, `linkedin.connections.accept`, `linkedin.connections.withdraw`, `linkedin.connections.prepare_ignore`, `linkedin.connections.prepare_remove`, `linkedin.connections.prepare_follow`, `linkedin.connections.prepare_unfollow`, `linkedin.network.prepare_followup_after_accept`, `linkedin.actions.confirm` | Basic network reads plus invite/accept/withdraw/ignore/remove/follow/unfollow and follow-up preparation |
 | Feed | `linkedin.feed.list`, `linkedin.feed.view_post`, `linkedin.feed.like`, `linkedin.feed.comment`, `linkedin.actions.confirm` | Read feed/posts plus reactions and comments |
-| Posts | `linkedin.post.prepare_create`, `linkedin.actions.confirm` | Text post creation with visibility selection |
+| Posts | `linkedin.post.prepare_create`, `linkedin.post.prepare_create_media`, `linkedin.post.prepare_create_poll`, `linkedin.post.prepare_edit`, `linkedin.post.prepare_delete`, `linkedin.actions.confirm` | Text post creation plus media, polls, edit, and delete lifecycle |
 | Notifications | `linkedin.notifications.list` | Read-only notifications |
 | Jobs | `linkedin.jobs.search`, `linkedin.jobs.view` | Read-only job discovery |
 | Activity webhooks | `linkedin.activity_watch.*`, `linkedin.activity_webhook.*`, `linkedin.activity_events.list`, `linkedin.activity_deliveries.list`, `linkedin.activity_poller.run_once` | Local activity polling, subscriptions, and delivery inspection |
@@ -43,9 +43,9 @@ land in focused slices.
   recommendations.
 - `linkedin.inbox.prepare_reply` only works for existing threads. There is no
   new-thread compose flow, no inbox reactions, and no triage actions.
-- `linkedin.post.prepare_create` is currently a text-only post composer with
-  visibility selection. It does not cover media, polls, edit/delete, articles,
-  or newsletters.
+- LinkedIn posts now cover text, media attachments, polls, and owned-post
+  edit/delete lifecycle through prepare/confirm. Articles and newsletters still
+  remain outside the MCP surface.
 - `linkedin.search` only covers `people`, `companies`, and `jobs`. It does not
   cover broader discovery categories such as posts/content, groups, or events.
 - `linkedin.notifications.list` and `linkedin.jobs.search` /
@@ -62,7 +62,6 @@ land in focused slices.
 | #230 | Medium | Inbox reactions and thread triage actions | `linkedin.inbox.prepare_react`, `linkedin.inbox.archive_thread`, `linkedin.inbox.mark_unread`, `linkedin.inbox.mute_thread` |
 | #232 | Medium | Privacy and member-safety controls | `linkedin.members.prepare_block`, `linkedin.members.prepare_report`, `linkedin.privacy.get_settings`, `linkedin.privacy.prepare_update_setting` |
 | #233 | High | Repost/share/save feed interactions | `linkedin.feed.prepare_repost`, `linkedin.feed.prepare_share`, `linkedin.feed.save_post`, `linkedin.feed.prepare_remove_reaction` |
-| #234 | High | Rich post composition and content lifecycle | `linkedin.post.prepare_create_media`, `linkedin.post.prepare_create_poll`, `linkedin.post.prepare_edit`, `linkedin.post.prepare_delete` |
 | #235 | Medium | LinkedIn articles and newsletters | `linkedin.article.prepare_create`, `linkedin.article.prepare_publish`, `linkedin.newsletter.prepare_publish_issue` |
 | #236 | Medium | Company pages and expanded discovery search | `linkedin.company.view`, `linkedin.company.prepare_follow`, expanded `linkedin.search` categories |
 | #237 | Medium | Groups and events | `linkedin.groups.*`, `linkedin.events.*` |
