@@ -9,6 +9,7 @@ import {
   ENDORSE_PROFILE_SKILL_ACTION_TYPE,
   LINKEDIN_PROFILE_SECTION_TYPES,
   LINKEDIN_PROFILE_FEATURED_ITEM_KINDS,
+  PROFILE_MEDIA_STRUCTURAL_SELECTORS,
   REMOVE_PROFILE_SECTION_ITEM_ACTION_TYPE,
   REMOVE_PROFILE_FEATURED_ACTION_TYPE,
   REORDER_PROFILE_FEATURED_ACTION_TYPE,
@@ -233,6 +234,16 @@ describe("createProfileActionExecutors", () => {
     for (const executor of Object.values(executors)) {
       expect(typeof executor.execute).toBe("function");
     }
+  });
+
+  it("keeps structural fallbacks for the current profile media edit controls", () => {
+    expect(PROFILE_MEDIA_STRUCTURAL_SELECTORS.photo).toContain(
+      "button.profile-photo-edit__edit-btn"
+    );
+    expect(PROFILE_MEDIA_STRUCTURAL_SELECTORS.photo).toContain(".profile-photo-edit button");
+    expect(PROFILE_MEDIA_STRUCTURAL_SELECTORS.banner).toContain(
+      "[id^='cover-photo-dropdown-button-trigger-']"
+    );
   });
 });
 
