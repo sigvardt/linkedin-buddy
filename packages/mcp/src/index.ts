@@ -19,6 +19,14 @@ export const LINKEDIN_CONNECTIONS_PENDING_TOOL = "linkedin.connections.pending";
 export const LINKEDIN_CONNECTIONS_INVITE_TOOL = "linkedin.connections.invite";
 export const LINKEDIN_CONNECTIONS_ACCEPT_TOOL = "linkedin.connections.accept";
 export const LINKEDIN_CONNECTIONS_WITHDRAW_TOOL = "linkedin.connections.withdraw";
+export const LINKEDIN_CONNECTIONS_PREPARE_IGNORE_TOOL =
+  "linkedin.connections.prepare_ignore";
+export const LINKEDIN_CONNECTIONS_PREPARE_REMOVE_TOOL =
+  "linkedin.connections.prepare_remove";
+export const LINKEDIN_CONNECTIONS_PREPARE_FOLLOW_TOOL =
+  "linkedin.connections.prepare_follow";
+export const LINKEDIN_CONNECTIONS_PREPARE_UNFOLLOW_TOOL =
+  "linkedin.connections.prepare_unfollow";
 export const LINKEDIN_NETWORK_PREPARE_FOLLOWUP_AFTER_ACCEPT_TOOL =
   "linkedin.network.prepare_followup_after_accept";
 export const LINKEDIN_FEED_LIST_TOOL = "linkedin.feed.list";

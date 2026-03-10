@@ -638,6 +638,10 @@ Exposed tools:
 - `linkedin.connections.invite`
 - `linkedin.connections.accept`
 - `linkedin.connections.withdraw`
+- `linkedin.connections.prepare_ignore`
+- `linkedin.connections.prepare_remove`
+- `linkedin.connections.prepare_follow`
+- `linkedin.connections.prepare_unfollow`
 - `linkedin.feed.list`
 - `linkedin.feed.view_post`
 - `linkedin.feed.like`

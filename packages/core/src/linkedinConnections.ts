@@ -11,7 +11,10 @@ import {
   normalizeLinkedInProfileUrl,
   resolveProfileUrl
 } from "./linkedinProfile.js";
-import type { LinkedInSelectorLocale } from "./selectorLocale.js";
+import type {
+  LinkedInSelectorLocale,
+  LinkedInSelectorPhraseKey
+} from "./selectorLocale.js";
 import {
   buildLinkedInAriaLabelContainsSelector,
   buildLinkedInSelectorPhraseRegex,
@@ -58,17 +61,23 @@ export interface PrepareSendInvitationInput {
   operatorNote?: string;
 }
 
-export interface PrepareAcceptInvitationInput {
+interface PrepareRelationshipActionInput {
   profileName?: string;
   targetProfile: string;
   operatorNote?: string;
 }
 
-export interface PrepareWithdrawInvitationInput {
-  profileName?: string;
-  targetProfile: string;
-  operatorNote?: string;
-}
+export type PrepareAcceptInvitationInput = PrepareRelationshipActionInput;
+
+export type PrepareWithdrawInvitationInput = PrepareRelationshipActionInput;
+
+export type PrepareIgnoreInvitationInput = PrepareRelationshipActionInput;
+
+export type PrepareRemoveConnectionInput = PrepareRelationshipActionInput;
+
+export type PrepareFollowMemberInput = PrepareRelationshipActionInput;
+
+export type PrepareUnfollowMemberInput = PrepareRelationshipActionInput;
 
 /**
  * Minimal runtime needed by connection action executors (no twoPhaseCommit).
@@ -98,6 +107,10 @@ export interface LinkedInConnectionsRuntime extends LinkedInConnectionsExecutorR
 export const SEND_INVITATION_ACTION_TYPE = "connections.send_invitation";
 export const ACCEPT_INVITATION_ACTION_TYPE = "connections.accept_invitation";
 export const WITHDRAW_INVITATION_ACTION_TYPE = "connections.withdraw_invitation";
+export const IGNORE_INVITATION_ACTION_TYPE = "connections.ignore_invitation";
+export const REMOVE_CONNECTION_ACTION_TYPE = "connections.remove_connection";
+export const FOLLOW_MEMBER_ACTION_TYPE = "connections.follow_member";
+export const UNFOLLOW_MEMBER_ACTION_TYPE = "connections.unfollow_member";
 
 const CONNECTIONS_URL = "https://www.linkedin.com/mynetwork/invite-connect/connections/";
 const INVITATIONS_RECEIVED_URL = "https://www.linkedin.com/mynetwork/invitation-manager/";
@@ -111,18 +124,20 @@ function normalizeText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
 }
 
+type LocatorRoot = Page | Locator;
+
 interface VisibleLocatorCandidate {
   key: string;
   selectorHint: string;
-  locatorFactory: (page: Page) => Locator;
+  locatorFactory: (root: LocatorRoot) => Locator;
 }
 
 async function findVisibleLocator(
-  page: Page,
+  root: LocatorRoot,
   candidates: VisibleLocatorCandidate[]
 ): Promise<{ locator: Locator; key: string } | null> {
   for (const candidate of candidates) {
-    const locator = candidate.locatorFactory(page).first();
+    const locator = candidate.locatorFactory(root).first();
     if (await locator.isVisible().catch(() => false)) {
       return { locator, key: candidate.key };
     }
@@ -167,6 +182,268 @@ function extractVanityName(url: string): string | null {
   } catch {
     return match[1];
   }
+}
+
+function escapeCssAttributeValue(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function resolveProfileHrefFragment(targetProfile: string): string {
+  const resolvedProfileUrl = resolveProfileUrl(targetProfile);
+  const vanityName = extractVanityName(resolvedProfileUrl);
+  return vanityName ? `/in/${vanityName}` : normalizeLinkedInProfileUrl(resolvedProfileUrl);
+}
+
+function buildPendingInvitationCardLocator(
+  page: Page,
+  targetProfile: string
+): Locator {
+  const escapedHrefFragment = escapeCssAttributeValue(
+    resolveProfileHrefFragment(targetProfile)
+  );
+
+  return page.locator(
+    [
+      `li.invitation-card:has(a[href*="${escapedHrefFragment}"])`,
+      `li[class*='invitation-card']:has(a[href*="${escapedHrefFragment}"])`,
+      `div.invitation-card:has(a[href*="${escapedHrefFragment}"])`,
+      `div[role='listitem']:has(a[href*="${escapedHrefFragment}"])`,
+      `li[role='listitem']:has(a[href*="${escapedHrefFragment}"])`
+    ].join(", ")
+  ).first();
+}
+
+function buildProfileTopCardRoot(page: Page): Locator {
+  return page.locator("main .pv-top-card, main").first();
+}
+
+function buildProfileMoreButtonCandidates(
+  topCardRoot: Locator,
+  selectorLocale: LinkedInSelectorLocale
+): VisibleLocatorCandidate[] {
+  const moreExactRegex = buildLinkedInSelectorPhraseRegex(
+    "more",
+    selectorLocale,
+    { exact: true }
+  );
+  const moreExactRegexHint = formatLinkedInSelectorRegexHint(
+    "more",
+    selectorLocale,
+    { exact: true }
+  );
+  const moreActionsAriaSelector = buildLinkedInAriaLabelContainsSelector(
+    "button",
+    "more_actions",
+    selectorLocale
+  );
+
+  return [
+    {
+      key: "topcard-more-role",
+      selectorHint: `topCard.getByRole(button, ${moreExactRegexHint})`,
+      locatorFactory: () =>
+        topCardRoot.getByRole("button", {
+          name: moreExactRegex
+        })
+    },
+    {
+      key: "topcard-more-actions-aria",
+      selectorHint: `topCard ${moreActionsAriaSelector}`,
+      locatorFactory: () => topCardRoot.locator(moreActionsAriaSelector)
+    },
+    {
+      key: "page-more-role",
+      selectorHint: `page.getByRole(button, ${moreExactRegexHint})`,
+      locatorFactory: (targetPage) =>
+        targetPage.getByRole("button", {
+          name: moreExactRegex
+        })
+    }
+  ];
+}
+
+function buildProfileActionButtonCandidates(input: {
+  topCardRoot: Locator;
+  selectorLocale: LinkedInSelectorLocale;
+  selectorKeys: LinkedInSelectorPhraseKey | readonly LinkedInSelectorPhraseKey[];
+  candidateKeyPrefix: string;
+}): VisibleLocatorCandidate[] {
+  const exactRegex = buildLinkedInSelectorPhraseRegex(
+    input.selectorKeys,
+    input.selectorLocale,
+    { exact: true }
+  );
+  const exactRegexHint = formatLinkedInSelectorRegexHint(
+    input.selectorKeys,
+    input.selectorLocale,
+    { exact: true }
+  );
+  const ariaSelector = buildLinkedInAriaLabelContainsSelector(
+    "button",
+    input.selectorKeys,
+    input.selectorLocale
+  );
+
+  return [
+    {
+      key: `${input.candidateKeyPrefix}-topcard-role`,
+      selectorHint: `topCard.getByRole(button, ${exactRegexHint})`,
+      locatorFactory: () =>
+        input.topCardRoot.getByRole("button", {
+          name: exactRegex
+        })
+    },
+    {
+      key: `${input.candidateKeyPrefix}-topcard-aria`,
+      selectorHint: `topCard ${ariaSelector}`,
+      locatorFactory: () => input.topCardRoot.locator(ariaSelector)
+    },
+    {
+      key: `${input.candidateKeyPrefix}-page-role`,
+      selectorHint: `page.getByRole(button, ${exactRegexHint})`,
+      locatorFactory: (targetPage) =>
+        targetPage.getByRole("button", {
+          name: exactRegex
+        })
+    },
+    {
+      key: `${input.candidateKeyPrefix}-page-aria`,
+      selectorHint: ariaSelector,
+      locatorFactory: (targetPage) => targetPage.locator(ariaSelector)
+    }
+  ];
+}
+
+function buildProfileMenuActionCandidates(input: {
+  selectorLocale: LinkedInSelectorLocale;
+  selectorKeys: LinkedInSelectorPhraseKey | readonly LinkedInSelectorPhraseKey[];
+  candidateKeyPrefix: string;
+}): VisibleLocatorCandidate[] {
+  const exactRegex = buildLinkedInSelectorPhraseRegex(
+    input.selectorKeys,
+    input.selectorLocale,
+    { exact: true }
+  );
+  const exactRegexHint = formatLinkedInSelectorRegexHint(
+    input.selectorKeys,
+    input.selectorLocale,
+    { exact: true }
+  );
+  const textRegex = buildLinkedInSelectorPhraseRegex(
+    input.selectorKeys,
+    input.selectorLocale
+  );
+  const textRegexHint = formatLinkedInSelectorRegexHint(
+    input.selectorKeys,
+    input.selectorLocale
+  );
+
+  return [
+    {
+      key: `${input.candidateKeyPrefix}-menu-roleitem`,
+      selectorHint: `[role='menuitem'] hasText ${exactRegexHint}`,
+      locatorFactory: (page) =>
+        page.locator("[role='menuitem']").filter({
+          hasText: exactRegex
+        })
+    },
+    {
+      key: `${input.candidateKeyPrefix}-menu-dropdown-item`,
+      selectorHint: `.artdeco-dropdown__content-inner [role='button'] hasText ${exactRegexHint}`,
+      locatorFactory: (page) =>
+        page.locator(".artdeco-dropdown__content-inner [role='button']").filter({
+          hasText: exactRegex
+        })
+    },
+    {
+      key: `${input.candidateKeyPrefix}-menu-li-text`,
+      selectorHint: `.artdeco-dropdown__content-inner li hasText ${textRegexHint}`,
+      locatorFactory: (page) =>
+        page.locator(".artdeco-dropdown__content-inner li").filter({
+          hasText: textRegex
+        })
+    }
+  ];
+}
+
+async function clickProfileAction(input: {
+  page: Page;
+  selectorLocale: LinkedInSelectorLocale;
+  selectorKeys: LinkedInSelectorPhraseKey | readonly LinkedInSelectorPhraseKey[];
+  menuSelectorKeys?: LinkedInSelectorPhraseKey | readonly LinkedInSelectorPhraseKey[];
+  targetProfile: string;
+  actionLabel: string;
+  candidateKeyPrefix: string;
+  allowMoreMenu?: boolean;
+}): Promise<string> {
+  const topCardRoot = buildProfileTopCardRoot(input.page);
+  const directCandidates = buildProfileActionButtonCandidates({
+    topCardRoot,
+    selectorLocale: input.selectorLocale,
+    selectorKeys: input.selectorKeys,
+    candidateKeyPrefix: input.candidateKeyPrefix
+  });
+  const directAction = await findVisibleLocator(input.page, directCandidates);
+  if (directAction) {
+    await directAction.locator.click({ timeout: 5_000 });
+    return directAction.key;
+  }
+
+  if (input.allowMoreMenu === false) {
+    throw new LinkedInAssistantError(
+      "UI_CHANGED_SELECTOR_FAILED",
+      `Could not find ${input.actionLabel} button on profile page.`,
+      {
+        target_profile: input.targetProfile,
+        url: input.page.url(),
+        attempted_direct_selectors: directCandidates.map((candidate) => candidate.selectorHint)
+      }
+    );
+  }
+
+  const moreCandidates = buildProfileMoreButtonCandidates(
+    topCardRoot,
+    input.selectorLocale
+  );
+  const moreButton = await findVisibleLocator(input.page, moreCandidates);
+  if (moreButton) {
+    await moreButton.locator.click({ timeout: 5_000 });
+    await input.page.waitForTimeout(600);
+
+    const menuCandidates = buildProfileMenuActionCandidates({
+      selectorLocale: input.selectorLocale,
+      selectorKeys: input.menuSelectorKeys ?? input.selectorKeys,
+      candidateKeyPrefix: input.candidateKeyPrefix
+    });
+    const menuAction = await findVisibleLocator(input.page, menuCandidates);
+    if (menuAction) {
+      await menuAction.locator.click({ timeout: 5_000 });
+      return `${moreButton.key}:${menuAction.key}`;
+    }
+
+    throw new LinkedInAssistantError(
+      "UI_CHANGED_SELECTOR_FAILED",
+      `Could not find ${input.actionLabel} in the profile actions menu.`,
+      {
+        target_profile: input.targetProfile,
+        url: input.page.url(),
+        attempted_direct_selectors: directCandidates.map((candidate) => candidate.selectorHint),
+        attempted_more_selectors: moreCandidates.map((candidate) => candidate.selectorHint),
+        attempted_menu_selectors: menuCandidates.map((candidate) => candidate.selectorHint)
+      }
+    );
+  }
+
+  throw new LinkedInAssistantError(
+    "UI_CHANGED_SELECTOR_FAILED",
+    `Could not find ${input.actionLabel} control on profile page.`,
+    {
+      target_profile: input.targetProfile,
+      url: input.page.url(),
+      attempted_direct_selectors: directCandidates.map((candidate) => candidate.selectorHint),
+      attempted_more_selectors: moreCandidates.map((candidate) => candidate.selectorHint)
+    }
+  );
 }
 
 function trackSentInvitationState(
@@ -915,29 +1192,50 @@ async function executeAcceptInvitation(
       await page.goto(INVITATIONS_RECEIVED_URL, { waitUntil: "domcontentloaded" });
       await waitForNetworkIdleBestEffort(page);
 
+      const invitationCard = buildPendingInvitationCardLocator(page, targetProfile);
       const acceptRegex = buildLinkedInSelectorPhraseRegex(
         "accept",
         runtime.selectorLocale,
         { exact: true }
       );
+      const acceptRegexHint = formatLinkedInSelectorRegexHint(
+        "accept",
+        runtime.selectorLocale,
+        { exact: true }
+      );
+      const acceptCandidates: VisibleLocatorCandidate[] = [
+        {
+          key: "card-accept-role",
+          selectorHint: `invitationCard.getByRole(button, ${acceptRegexHint})`,
+          locatorFactory: () =>
+            invitationCard.getByRole("button", {
+              name: acceptRegex
+            })
+        },
+        {
+          key: "card-accept-text",
+          selectorHint: `invitationCard button hasText ${acceptRegexHint}`,
+          locatorFactory: () =>
+            invitationCard.locator("button").filter({
+              hasText: acceptRegex
+            })
+        }
+      ];
+      const acceptButton = await findVisibleLocator(page, acceptCandidates);
 
-      // Find the invitation card for the target
-      const acceptBtn = page.locator(
-        `li:has(a[href*="${targetProfile}"]) button`
-      ).filter({
-        hasText: acceptRegex
-      }).first();
-
-      if (await acceptBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
-        await acceptBtn.click();
-        await page.waitForTimeout(2000);
-      } else {
+      if (!acceptButton) {
         throw new LinkedInAssistantError(
           "TARGET_NOT_FOUND",
           `No pending invitation found from "${targetProfile}".`,
           { target_profile: targetProfile }
         );
       }
+
+      await acceptButton.locator.click({ timeout: 5_000 });
+      await waitForCondition(
+        async () => !(await invitationCard.isVisible().catch(() => false)),
+        5_000
+      );
 
       return {
         ok: true,
@@ -993,46 +1291,70 @@ async function executeWithdrawInvitation(
       await page.goto(INVITATIONS_SENT_URL, { waitUntil: "domcontentloaded" });
       await waitForNetworkIdleBestEffort(page);
 
+      const invitationCard = buildPendingInvitationCardLocator(page, targetProfile);
       const withdrawRegex = buildLinkedInSelectorPhraseRegex(
         "withdraw",
         runtime.selectorLocale,
         { exact: true }
       );
 
-      const withdrawBtn = page.locator(
-        `li:has(a[href*="${targetProfile}"]) button`
-      ).filter({
-        hasText: withdrawRegex
-      }).first();
-
-      if (await withdrawBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
-        await withdrawBtn.click();
-        await page.waitForTimeout(1000);
-        // Confirm withdrawal dialog
-        const confirmBtn = page
-          .locator("button")
-          .filter({ hasText: withdrawRegex })
-          .last();
-        if (await confirmBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-          await confirmBtn.click();
-          await page.waitForTimeout(2000);
+      const withdrawRegexHint = formatLinkedInSelectorRegexHint(
+        "withdraw",
+        runtime.selectorLocale,
+        { exact: true }
+      );
+      const withdrawCandidates: VisibleLocatorCandidate[] = [
+        {
+          key: "card-withdraw-role",
+          selectorHint: `invitationCard.getByRole(button, ${withdrawRegexHint})`,
+          locatorFactory: () =>
+            invitationCard.getByRole("button", {
+              name: withdrawRegex
+            })
+        },
+        {
+          key: "card-withdraw-text",
+          selectorHint: `invitationCard button hasText ${withdrawRegexHint}`,
+          locatorFactory: () =>
+            invitationCard.locator("button").filter({
+              hasText: withdrawRegex
+            })
         }
+      ];
+      const withdrawButton = await findVisibleLocator(page, withdrawCandidates);
 
-        const closedAtMs = Date.now();
-        runtime.db.markSentInvitationClosed({
-          profileName,
-          profileUrlKey: normalizeLinkedInProfileUrl(resolveProfileUrl(targetProfile)),
-          closedAtMs,
-          closedReason: "withdrawn",
-          updatedAtMs: closedAtMs
-        });
-      } else {
+      if (!withdrawButton) {
         throw new LinkedInAssistantError(
           "TARGET_NOT_FOUND",
           `No sent invitation found to "${targetProfile}".`,
           { target_profile: targetProfile }
         );
       }
+
+      await withdrawButton.locator.click({ timeout: 5_000 });
+      await page.waitForTimeout(1_000);
+
+      const confirmButton = page
+        .locator("button")
+        .filter({ hasText: withdrawRegex })
+        .last();
+      if (await confirmButton.isVisible({ timeout: 2_000 }).catch(() => false)) {
+        await confirmButton.click({ timeout: 5_000 });
+      }
+
+      await waitForCondition(
+        async () => !(await invitationCard.isVisible().catch(() => false)),
+        5_000
+      );
+
+      const closedAtMs = Date.now();
+      runtime.db.markSentInvitationClosed({
+        profileName,
+        profileUrlKey: normalizeLinkedInProfileUrl(resolveProfileUrl(targetProfile)),
+        closedAtMs,
+        closedReason: "withdrawn",
+        updatedAtMs: closedAtMs
+      });
 
       return {
         ok: true,
@@ -1042,6 +1364,466 @@ async function executeWithdrawInvitation(
         },
         artifacts: []
       };
+        }
+      });
+    }
+  );
+}
+
+async function executeIgnoreInvitation(
+  runtime: LinkedInConnectionsExecutorRuntime,
+  actionId: string,
+  target: Record<string, unknown>
+): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
+  const targetProfile = String(target.target_profile ?? "");
+  const profileName = String(target.profile_name ?? "default");
+
+  return runtime.profileManager.runWithContext(
+    {
+      cdpUrl: runtime.cdpUrl,
+      profileName,
+      headless: true
+    },
+    async (context) => {
+      const page = await getOrCreatePage(context);
+      return executeConfirmActionWithArtifacts({
+        runtime,
+        context,
+        page,
+        actionId,
+        actionType: IGNORE_INVITATION_ACTION_TYPE,
+        profileName,
+        targetUrl: INVITATIONS_RECEIVED_URL,
+        metadata: {
+          target_profile: targetProfile
+        },
+        errorDetails: {
+          target_profile: targetProfile
+        },
+        mapError: (error) =>
+          asLinkedInAssistantError(
+            error,
+            "UNKNOWN",
+            "Failed to execute LinkedIn ignore_invitation action."
+          ),
+        execute: async () => {
+          await page.goto(INVITATIONS_RECEIVED_URL, { waitUntil: "domcontentloaded" });
+          await waitForNetworkIdleBestEffort(page);
+
+          const invitationCard = buildPendingInvitationCardLocator(page, targetProfile);
+          const ignoreRegex = buildLinkedInSelectorPhraseRegex(
+            ["ignore", "decline", "dismiss"],
+            runtime.selectorLocale,
+            { exact: true }
+          );
+          const ignoreRegexHint = formatLinkedInSelectorRegexHint(
+            ["ignore", "decline", "dismiss"],
+            runtime.selectorLocale,
+            { exact: true }
+          );
+          const ignoreCandidates: VisibleLocatorCandidate[] = [
+            {
+              key: "card-ignore-role",
+              selectorHint: `invitationCard.getByRole(button, ${ignoreRegexHint})`,
+              locatorFactory: () =>
+                invitationCard.getByRole("button", {
+                  name: ignoreRegex
+                })
+            },
+            {
+              key: "card-ignore-text",
+              selectorHint: `invitationCard button hasText ${ignoreRegexHint}`,
+              locatorFactory: () =>
+                invitationCard.locator("button").filter({
+                  hasText: ignoreRegex
+                })
+            }
+          ];
+          const ignoreButton = await findVisibleLocator(page, ignoreCandidates);
+
+          if (!ignoreButton) {
+            throw new LinkedInAssistantError(
+              "TARGET_NOT_FOUND",
+              `No pending invitation found from "${targetProfile}".`,
+              { target_profile: targetProfile }
+            );
+          }
+
+          await ignoreButton.locator.click({ timeout: 5_000 });
+          await waitForCondition(
+            async () => !(await invitationCard.isVisible().catch(() => false)),
+            5_000
+          );
+
+          return {
+            ok: true,
+            result: {
+              status: "invitation_ignored",
+              target_profile: targetProfile,
+              ignore_selector_key: ignoreButton.key
+            },
+            artifacts: []
+          };
+        }
+      });
+    }
+  );
+}
+
+async function executeRemoveConnection(
+  runtime: LinkedInConnectionsExecutorRuntime,
+  actionId: string,
+  target: Record<string, unknown>
+): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
+  const targetProfile = String(target.target_profile ?? "");
+  const profileName = String(target.profile_name ?? "default");
+  const profileUrl = resolveProfileUrl(targetProfile);
+
+  return runtime.profileManager.runWithContext(
+    {
+      cdpUrl: runtime.cdpUrl,
+      profileName,
+      headless: true
+    },
+    async (context) => {
+      const page = await getOrCreatePage(context);
+      return executeConfirmActionWithArtifacts({
+        runtime,
+        context,
+        page,
+        actionId,
+        actionType: REMOVE_CONNECTION_ACTION_TYPE,
+        profileName,
+        targetUrl: profileUrl,
+        metadata: {
+          target_profile: targetProfile,
+          profile_url: profileUrl
+        },
+        errorDetails: {
+          target_profile: targetProfile,
+          profile_url: profileUrl
+        },
+        mapError: (error) =>
+          asLinkedInAssistantError(
+            error,
+            "UNKNOWN",
+            "Failed to execute LinkedIn remove_connection action."
+          ),
+        execute: async () => {
+          await page.goto(profileUrl, { waitUntil: "domcontentloaded" });
+          await waitForNetworkIdleBestEffort(page);
+
+          const removeSelectorKey = await clickProfileAction({
+            page,
+            selectorLocale: runtime.selectorLocale,
+            selectorKeys: "remove_connection",
+            targetProfile,
+            actionLabel: "Remove connection",
+            candidateKeyPrefix: "remove-connection"
+          });
+
+          const removeConfirmRegex = buildLinkedInSelectorPhraseRegex(
+            ["remove", "remove_connection"],
+            runtime.selectorLocale,
+            { exact: true }
+          );
+          const removeConfirmRegexHint = formatLinkedInSelectorRegexHint(
+            ["remove", "remove_connection"],
+            runtime.selectorLocale,
+            { exact: true }
+          );
+          const removeConfirmCandidates: VisibleLocatorCandidate[] = [
+            {
+              key: "remove-confirm-dialog-role",
+              selectorHint: `dialog.getByRole(button, ${removeConfirmRegexHint})`,
+              locatorFactory: (targetPage) =>
+                targetPage.locator("div[role='dialog']").getByRole("button", {
+                  name: removeConfirmRegex
+                })
+            },
+            {
+              key: "remove-confirm-dialog-text",
+              selectorHint: `div[role='dialog'] button hasText ${removeConfirmRegexHint}`,
+              locatorFactory: (targetPage) =>
+                targetPage.locator("div[role='dialog'] button").filter({
+                  hasText: removeConfirmRegex
+                })
+            },
+            {
+              key: "remove-confirm-dialog-data-primary",
+              selectorHint: "div[role='dialog'] button[data-test-dialog-primary-btn]",
+              locatorFactory: (targetPage) =>
+                targetPage.locator("div[role='dialog'] button[data-test-dialog-primary-btn]")
+            },
+            {
+              key: "remove-confirm-dialog-primary",
+              selectorHint: "div[role='dialog'] button.artdeco-button--primary",
+              locatorFactory: (targetPage) =>
+                targetPage.locator("div[role='dialog'] button.artdeco-button--primary")
+            }
+          ];
+          const removeConfirmButton = await findVisibleLocator(page, removeConfirmCandidates);
+          if (!removeConfirmButton) {
+            throw new LinkedInAssistantError(
+              "UI_CHANGED_SELECTOR_FAILED",
+              "Could not find Remove confirmation button after opening the connection removal dialog.",
+              {
+                target_profile: targetProfile,
+                remove_selector_key: removeSelectorKey,
+                attempted_remove_confirm_selectors: removeConfirmCandidates.map(
+                  (candidate) => candidate.selectorHint
+                )
+              }
+            );
+          }
+
+          await removeConfirmButton.locator.click({ timeout: 5_000 });
+          await waitForCondition(
+            async () => !(await page.locator("div[role='dialog']").first().isVisible().catch(() => false)),
+            5_000
+          );
+
+          return {
+            ok: true,
+            result: {
+              status: "connection_removed",
+              target_profile: targetProfile,
+              remove_selector_key: removeSelectorKey,
+              remove_confirm_selector_key: removeConfirmButton.key
+            },
+            artifacts: []
+          };
+        }
+      });
+    }
+  );
+}
+
+async function executeFollowMember(
+  runtime: LinkedInConnectionsExecutorRuntime,
+  actionId: string,
+  target: Record<string, unknown>
+): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
+  const targetProfile = String(target.target_profile ?? "");
+  const profileName = String(target.profile_name ?? "default");
+  const profileUrl = resolveProfileUrl(targetProfile);
+
+  return runtime.profileManager.runWithContext(
+    {
+      cdpUrl: runtime.cdpUrl,
+      profileName,
+      headless: true
+    },
+    async (context) => {
+      const page = await getOrCreatePage(context);
+      return executeConfirmActionWithArtifacts({
+        runtime,
+        context,
+        page,
+        actionId,
+        actionType: FOLLOW_MEMBER_ACTION_TYPE,
+        profileName,
+        targetUrl: profileUrl,
+        metadata: {
+          target_profile: targetProfile,
+          profile_url: profileUrl
+        },
+        errorDetails: {
+          target_profile: targetProfile,
+          profile_url: profileUrl
+        },
+        mapError: (error) =>
+          asLinkedInAssistantError(
+            error,
+            "UNKNOWN",
+            "Failed to execute LinkedIn follow_member action."
+          ),
+        execute: async () => {
+          await page.goto(profileUrl, { waitUntil: "domcontentloaded" });
+          await waitForNetworkIdleBestEffort(page);
+
+          const topCardRoot = buildProfileTopCardRoot(page);
+          const alreadyFollowingCandidates = buildProfileActionButtonCandidates({
+            topCardRoot,
+            selectorLocale: runtime.selectorLocale,
+            selectorKeys: ["following", "unfollow"],
+            candidateKeyPrefix: "already-following"
+          });
+          if (await findVisibleLocator(page, alreadyFollowingCandidates)) {
+            throw new LinkedInAssistantError(
+              "ACTION_PRECONDITION_FAILED",
+              `Already following "${targetProfile}".`,
+              { target_profile: targetProfile }
+            );
+          }
+
+          const followSelectorKey = await clickProfileAction({
+            page,
+            selectorLocale: runtime.selectorLocale,
+            selectorKeys: "follow",
+            targetProfile,
+            actionLabel: "Follow",
+            candidateKeyPrefix: "follow-member"
+          });
+
+          const followCandidates = buildProfileActionButtonCandidates({
+            topCardRoot,
+            selectorLocale: runtime.selectorLocale,
+            selectorKeys: "follow",
+            candidateKeyPrefix: "follow-check"
+          });
+          const followingCandidates = buildProfileActionButtonCandidates({
+            topCardRoot,
+            selectorLocale: runtime.selectorLocale,
+            selectorKeys: ["following", "unfollow"],
+            candidateKeyPrefix: "following-check"
+          });
+          const followed = await waitForCondition(async () => {
+            if (await findVisibleLocator(page, followingCandidates)) {
+              return true;
+            }
+
+            return (await findVisibleLocator(page, followCandidates)) === null;
+          }, 5_000);
+
+          if (!followed) {
+            throw new LinkedInAssistantError(
+              "UNKNOWN",
+              "Follow action could not be verified after clicking the control.",
+              {
+                target_profile: targetProfile,
+                follow_selector_key: followSelectorKey
+              }
+            );
+          }
+
+          return {
+            ok: true,
+            result: {
+              status: "member_followed",
+              target_profile: targetProfile,
+              follow_selector_key: followSelectorKey
+            },
+            artifacts: []
+          };
+        }
+      });
+    }
+  );
+}
+
+async function executeUnfollowMember(
+  runtime: LinkedInConnectionsExecutorRuntime,
+  actionId: string,
+  target: Record<string, unknown>
+): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
+  const targetProfile = String(target.target_profile ?? "");
+  const profileName = String(target.profile_name ?? "default");
+  const profileUrl = resolveProfileUrl(targetProfile);
+
+  return runtime.profileManager.runWithContext(
+    {
+      cdpUrl: runtime.cdpUrl,
+      profileName,
+      headless: true
+    },
+    async (context) => {
+      const page = await getOrCreatePage(context);
+      return executeConfirmActionWithArtifacts({
+        runtime,
+        context,
+        page,
+        actionId,
+        actionType: UNFOLLOW_MEMBER_ACTION_TYPE,
+        profileName,
+        targetUrl: profileUrl,
+        metadata: {
+          target_profile: targetProfile,
+          profile_url: profileUrl
+        },
+        errorDetails: {
+          target_profile: targetProfile,
+          profile_url: profileUrl
+        },
+        mapError: (error) =>
+          asLinkedInAssistantError(
+            error,
+            "UNKNOWN",
+            "Failed to execute LinkedIn unfollow_member action."
+          ),
+        execute: async () => {
+          await page.goto(profileUrl, { waitUntil: "domcontentloaded" });
+          await waitForNetworkIdleBestEffort(page);
+
+          const topCardRoot = buildProfileTopCardRoot(page);
+          const followCandidates = buildProfileActionButtonCandidates({
+            topCardRoot,
+            selectorLocale: runtime.selectorLocale,
+            selectorKeys: "follow",
+            candidateKeyPrefix: "follow-check"
+          });
+          if (await findVisibleLocator(page, followCandidates)) {
+            throw new LinkedInAssistantError(
+              "ACTION_PRECONDITION_FAILED",
+              `Not currently following "${targetProfile}".`,
+              { target_profile: targetProfile }
+            );
+          }
+
+          let unfollowSelectorKey = await clickProfileAction({
+            page,
+            selectorLocale: runtime.selectorLocale,
+            selectorKeys: ["unfollow", "following"],
+            targetProfile,
+            actionLabel: "Unfollow",
+            candidateKeyPrefix: "unfollow-member"
+          });
+
+          const menuUnfollowCandidates = buildProfileMenuActionCandidates({
+            selectorLocale: runtime.selectorLocale,
+            selectorKeys: "unfollow",
+            candidateKeyPrefix: "unfollow-confirm"
+          });
+          const menuUnfollowAction = await findVisibleLocator(page, menuUnfollowCandidates);
+          if (menuUnfollowAction) {
+            await menuUnfollowAction.locator.click({ timeout: 5_000 });
+            unfollowSelectorKey = `${unfollowSelectorKey}:${menuUnfollowAction.key}`;
+          }
+
+          const stillFollowingCandidates = buildProfileActionButtonCandidates({
+            topCardRoot,
+            selectorLocale: runtime.selectorLocale,
+            selectorKeys: ["following", "unfollow"],
+            candidateKeyPrefix: "still-following-check"
+          });
+          const unfollowed = await waitForCondition(async () => {
+            if (await findVisibleLocator(page, followCandidates)) {
+              return true;
+            }
+
+            return (await findVisibleLocator(page, stillFollowingCandidates)) === null;
+          }, 5_000);
+
+          if (!unfollowed) {
+            throw new LinkedInAssistantError(
+              "UNKNOWN",
+              "Unfollow action could not be verified after clicking the control.",
+              {
+                target_profile: targetProfile,
+                unfollow_selector_key: unfollowSelectorKey
+              }
+            );
+          }
+
+          return {
+            ok: true,
+            result: {
+              status: "member_unfollowed",
+              target_profile: targetProfile,
+              unfollow_selector_key: unfollowSelectorKey
+            },
+            artifacts: []
+          };
         }
       });
     }
@@ -1104,6 +1886,66 @@ export class WithdrawInvitationActionExecutor
   }
 }
 
+export class IgnoreInvitationActionExecutor
+  implements ActionExecutor<LinkedInConnectionsExecutorRuntime>
+{
+  async execute(
+    input: ActionExecutorInput<LinkedInConnectionsExecutorRuntime>
+  ): Promise<ActionExecutorResult> {
+    const { result, artifacts } = await executeIgnoreInvitation(
+      input.runtime,
+      input.action.id,
+      input.action.target
+    );
+    return { ok: true, result, artifacts };
+  }
+}
+
+export class RemoveConnectionActionExecutor
+  implements ActionExecutor<LinkedInConnectionsExecutorRuntime>
+{
+  async execute(
+    input: ActionExecutorInput<LinkedInConnectionsExecutorRuntime>
+  ): Promise<ActionExecutorResult> {
+    const { result, artifacts } = await executeRemoveConnection(
+      input.runtime,
+      input.action.id,
+      input.action.target
+    );
+    return { ok: true, result, artifacts };
+  }
+}
+
+export class FollowMemberActionExecutor
+  implements ActionExecutor<LinkedInConnectionsExecutorRuntime>
+{
+  async execute(
+    input: ActionExecutorInput<LinkedInConnectionsExecutorRuntime>
+  ): Promise<ActionExecutorResult> {
+    const { result, artifacts } = await executeFollowMember(
+      input.runtime,
+      input.action.id,
+      input.action.target
+    );
+    return { ok: true, result, artifacts };
+  }
+}
+
+export class UnfollowMemberActionExecutor
+  implements ActionExecutor<LinkedInConnectionsExecutorRuntime>
+{
+  async execute(
+    input: ActionExecutorInput<LinkedInConnectionsExecutorRuntime>
+  ): Promise<ActionExecutorResult> {
+    const { result, artifacts } = await executeUnfollowMember(
+      input.runtime,
+      input.action.id,
+      input.action.target
+    );
+    return { ok: true, result, artifacts };
+  }
+}
+
 export function createConnectionActionExecutors(): Record<
   string,
   ActionExecutor<LinkedInConnectionsExecutorRuntime>
@@ -1111,7 +1953,11 @@ export function createConnectionActionExecutors(): Record<
   return {
     [SEND_INVITATION_ACTION_TYPE]: new SendInvitationActionExecutor(),
     [ACCEPT_INVITATION_ACTION_TYPE]: new AcceptInvitationActionExecutor(),
-    [WITHDRAW_INVITATION_ACTION_TYPE]: new WithdrawInvitationActionExecutor()
+    [WITHDRAW_INVITATION_ACTION_TYPE]: new WithdrawInvitationActionExecutor(),
+    [IGNORE_INVITATION_ACTION_TYPE]: new IgnoreInvitationActionExecutor(),
+    [REMOVE_CONNECTION_ACTION_TYPE]: new RemoveConnectionActionExecutor(),
+    [FOLLOW_MEMBER_ACTION_TYPE]: new FollowMemberActionExecutor(),
+    [UNFOLLOW_MEMBER_ACTION_TYPE]: new UnfollowMemberActionExecutor()
   };
 }
 
@@ -1121,6 +1967,46 @@ export function createConnectionActionExecutors(): Record<
 
 export class LinkedInConnectionsService {
   constructor(private readonly runtime: LinkedInConnectionsRuntime) {}
+
+  private prepareTargetedRelationshipAction(input: {
+    actionType: string;
+    operatorNote?: string | undefined;
+    profileName?: string | undefined;
+    summary: string;
+    targetProfile: string;
+  }): {
+    preparedActionId: string;
+    confirmToken: string;
+    expiresAtMs: number;
+    preview: Record<string, unknown>;
+  } {
+    const profileName = input.profileName ?? "default";
+    const targetProfile = normalizeText(input.targetProfile);
+
+    if (!targetProfile) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        "targetProfile is required.",
+        {}
+      );
+    }
+
+    const target = {
+      target_profile: targetProfile,
+      profile_name: profileName
+    };
+
+    return this.runtime.twoPhaseCommit.prepare({
+      actionType: input.actionType,
+      target,
+      payload: {},
+      preview: {
+        summary: input.summary,
+        target
+      },
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+  }
 
   async listConnections(
     input: ListConnectionsInput = {}
@@ -1288,33 +2174,12 @@ export class LinkedInConnectionsService {
     expiresAtMs: number;
     preview: Record<string, unknown>;
   } {
-    const profileName = input.profileName ?? "default";
-    const targetProfile = normalizeText(input.targetProfile);
-
-    if (!targetProfile) {
-      throw new LinkedInAssistantError(
-        "ACTION_PRECONDITION_FAILED",
-        "targetProfile is required.",
-        {}
-      );
-    }
-
-    const target = {
-      target_profile: targetProfile,
-      profile_name: profileName
-    };
-
-    const preview = {
-      summary: `Accept connection invitation from ${targetProfile}`,
-      target
-    };
-
-    return this.runtime.twoPhaseCommit.prepare({
+    return this.prepareTargetedRelationshipAction({
       actionType: ACCEPT_INVITATION_ACTION_TYPE,
-      target,
-      payload: {},
-      preview,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      operatorNote: input.operatorNote,
+      profileName: input.profileName,
+      summary: `Accept connection invitation from ${normalizeText(input.targetProfile)}`,
+      targetProfile: input.targetProfile
     });
   }
 
@@ -1324,33 +2189,72 @@ export class LinkedInConnectionsService {
     expiresAtMs: number;
     preview: Record<string, unknown>;
   } {
-    const profileName = input.profileName ?? "default";
-    const targetProfile = normalizeText(input.targetProfile);
-
-    if (!targetProfile) {
-      throw new LinkedInAssistantError(
-        "ACTION_PRECONDITION_FAILED",
-        "targetProfile is required.",
-        {}
-      );
-    }
-
-    const target = {
-      target_profile: targetProfile,
-      profile_name: profileName
-    };
-
-    const preview = {
-      summary: `Withdraw sent invitation to ${targetProfile}`,
-      target
-    };
-
-    return this.runtime.twoPhaseCommit.prepare({
+    return this.prepareTargetedRelationshipAction({
       actionType: WITHDRAW_INVITATION_ACTION_TYPE,
-      target,
-      payload: {},
-      preview,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      operatorNote: input.operatorNote,
+      profileName: input.profileName,
+      summary: `Withdraw sent invitation to ${normalizeText(input.targetProfile)}`,
+      targetProfile: input.targetProfile
+    });
+  }
+
+  prepareIgnoreInvitation(input: PrepareIgnoreInvitationInput): {
+    preparedActionId: string;
+    confirmToken: string;
+    expiresAtMs: number;
+    preview: Record<string, unknown>;
+  } {
+    return this.prepareTargetedRelationshipAction({
+      actionType: IGNORE_INVITATION_ACTION_TYPE,
+      operatorNote: input.operatorNote,
+      profileName: input.profileName,
+      summary: `Ignore connection invitation from ${normalizeText(input.targetProfile)}`,
+      targetProfile: input.targetProfile
+    });
+  }
+
+  prepareRemoveConnection(input: PrepareRemoveConnectionInput): {
+    preparedActionId: string;
+    confirmToken: string;
+    expiresAtMs: number;
+    preview: Record<string, unknown>;
+  } {
+    return this.prepareTargetedRelationshipAction({
+      actionType: REMOVE_CONNECTION_ACTION_TYPE,
+      operatorNote: input.operatorNote,
+      profileName: input.profileName,
+      summary: `Remove existing connection with ${normalizeText(input.targetProfile)}`,
+      targetProfile: input.targetProfile
+    });
+  }
+
+  prepareFollowMember(input: PrepareFollowMemberInput): {
+    preparedActionId: string;
+    confirmToken: string;
+    expiresAtMs: number;
+    preview: Record<string, unknown>;
+  } {
+    return this.prepareTargetedRelationshipAction({
+      actionType: FOLLOW_MEMBER_ACTION_TYPE,
+      operatorNote: input.operatorNote,
+      profileName: input.profileName,
+      summary: `Follow ${normalizeText(input.targetProfile)}`,
+      targetProfile: input.targetProfile
+    });
+  }
+
+  prepareUnfollowMember(input: PrepareUnfollowMemberInput): {
+    preparedActionId: string;
+    confirmToken: string;
+    expiresAtMs: number;
+    preview: Record<string, unknown>;
+  } {
+    return this.prepareTargetedRelationshipAction({
+      actionType: UNFOLLOW_MEMBER_ACTION_TYPE,
+      operatorNote: input.operatorNote,
+      profileName: input.profileName,
+      summary: `Unfollow ${normalizeText(input.targetProfile)}`,
+      targetProfile: input.targetProfile
     });
   }
 }

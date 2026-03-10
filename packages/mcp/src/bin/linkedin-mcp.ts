@@ -51,6 +51,10 @@ import {
   LINKEDIN_CONNECTIONS_INVITE_TOOL,
   LINKEDIN_CONNECTIONS_LIST_TOOL,
   LINKEDIN_CONNECTIONS_PENDING_TOOL,
+  LINKEDIN_CONNECTIONS_PREPARE_FOLLOW_TOOL,
+  LINKEDIN_CONNECTIONS_PREPARE_IGNORE_TOOL,
+  LINKEDIN_CONNECTIONS_PREPARE_REMOVE_TOOL,
+  LINKEDIN_CONNECTIONS_PREPARE_UNFOLLOW_TOOL,
   LINKEDIN_CONNECTIONS_WITHDRAW_TOOL,
   LINKEDIN_NETWORK_PREPARE_FOLLOWUP_AFTER_ACCEPT_TOOL,
   LINKEDIN_FEED_COMMENT_TOOL,
@@ -1083,6 +1087,150 @@ async function handleConnectionsWithdraw(args: ToolArgs): Promise<ToolResult> {
     });
 
     runtime.logger.log("info", "mcp.connections.withdraw.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleConnectionsPrepareIgnore(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const targetProfile = readRequiredString(args, "targetProfile");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.connections.prepare_ignore.start", {
+      profileName,
+      targetProfile
+    });
+
+    const prepared = runtime.connections.prepareIgnoreInvitation({
+      profileName,
+      targetProfile,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.connections.prepare_ignore.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleConnectionsPrepareRemove(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const targetProfile = readRequiredString(args, "targetProfile");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.connections.prepare_remove.start", {
+      profileName,
+      targetProfile
+    });
+
+    const prepared = runtime.connections.prepareRemoveConnection({
+      profileName,
+      targetProfile,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.connections.prepare_remove.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleConnectionsPrepareFollow(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const targetProfile = readRequiredString(args, "targetProfile");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.connections.prepare_follow.start", {
+      profileName,
+      targetProfile
+    });
+
+    const prepared = runtime.connections.prepareFollowMember({
+      profileName,
+      targetProfile,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.connections.prepare_follow.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleConnectionsPrepareUnfollow(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const targetProfile = readRequiredString(args, "targetProfile");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.connections.prepare_unfollow.start", {
+      profileName,
+      targetProfile
+    });
+
+    const prepared = runtime.connections.prepareUnfollowMember({
+      profileName,
+      targetProfile,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.connections.prepare_unfollow.done", {
       profileName,
       preparedActionId: prepared.preparedActionId
     });
@@ -2156,6 +2304,110 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
+        name: LINKEDIN_CONNECTIONS_PREPARE_IGNORE_TOOL,
+        description:
+          "Prepare to ignore a received connection invitation (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["targetProfile"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            targetProfile: {
+              type: "string",
+              description:
+                "Vanity name or profile URL of the person whose received invitation should be ignored."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_CONNECTIONS_PREPARE_REMOVE_TOOL,
+        description:
+          "Prepare to remove an existing connection (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["targetProfile"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            targetProfile: {
+              type: "string",
+              description:
+                "Vanity name or profile URL of the existing connection to remove."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_CONNECTIONS_PREPARE_FOLLOW_TOOL,
+        description:
+          "Prepare to follow a LinkedIn member (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["targetProfile"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            targetProfile: {
+              type: "string",
+              description:
+                "Vanity name or profile URL of the member to follow."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_CONNECTIONS_PREPARE_UNFOLLOW_TOOL,
+        description:
+          "Prepare to unfollow a LinkedIn member (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["targetProfile"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            targetProfile: {
+              type: "string",
+              description:
+                "Vanity name or profile URL of the member to unfollow."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
         name: LINKEDIN_NETWORK_PREPARE_FOLLOWUP_AFTER_ACCEPT_TOOL,
         description:
           "Detect newly accepted sent invitations and prepare follow-up messages (two-phase: returns confirm tokens). Use linkedin.actions.confirm to execute each prepared follow-up.",
@@ -2706,6 +2958,10 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   [LINKEDIN_CONNECTIONS_INVITE_TOOL]: handleConnectionsInvite,
   [LINKEDIN_CONNECTIONS_ACCEPT_TOOL]: handleConnectionsAccept,
   [LINKEDIN_CONNECTIONS_WITHDRAW_TOOL]: handleConnectionsWithdraw,
+  [LINKEDIN_CONNECTIONS_PREPARE_IGNORE_TOOL]: handleConnectionsPrepareIgnore,
+  [LINKEDIN_CONNECTIONS_PREPARE_REMOVE_TOOL]: handleConnectionsPrepareRemove,
+  [LINKEDIN_CONNECTIONS_PREPARE_FOLLOW_TOOL]: handleConnectionsPrepareFollow,
+  [LINKEDIN_CONNECTIONS_PREPARE_UNFOLLOW_TOOL]: handleConnectionsPrepareUnfollow,
   [LINKEDIN_NETWORK_PREPARE_FOLLOWUP_AFTER_ACCEPT_TOOL]: handlePrepareFollowupAfterAccept,
   [LINKEDIN_FEED_LIST_TOOL]: handleFeedList,
   [LINKEDIN_FEED_VIEW_POST_TOOL]: handleFeedViewPost,

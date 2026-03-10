@@ -133,6 +133,8 @@ export type LinkedInSelectorPhraseKey =
   | "done"
   | "education"
   | "experience"
+  | "follow"
+  | "following"
   | "funny"
   | "ignore"
   | "insightful"
@@ -155,6 +157,7 @@ export type LinkedInSelectorPhraseKey =
   | "post_settings"
   | "react"
   | "reaction"
+  | "remove"
   | "remove_connection"
   | "resources"
   | "respond"
@@ -164,6 +167,7 @@ export type LinkedInSelectorPhraseKey =
   | "start_post"
   | "support"
   | "time_ago"
+  | "unfollow"
   | "visibility"
   | "what_do_you_want_to_talk_about"
   | "who_can_see_your_post"
@@ -195,6 +199,8 @@ const ENGLISH_SELECTOR_PHRASES: SelectorPhraseDictionary = {
   done: ["Done"],
   education: ["Education"],
   experience: ["Experience"],
+  follow: ["Follow"],
+  following: ["Following"],
   funny: ["Funny"],
   ignore: ["Ignore"],
   insightful: ["Insightful"],
@@ -217,6 +223,7 @@ const ENGLISH_SELECTOR_PHRASES: SelectorPhraseDictionary = {
   post_settings: ["Post settings"],
   react: ["React"],
   reaction: ["Reaction", "Reactions"],
+  remove: ["Remove"],
   remove_connection: ["Remove connection"],
   resources: ["Resources"],
   respond: ["Respond"],
@@ -226,6 +233,7 @@ const ENGLISH_SELECTOR_PHRASES: SelectorPhraseDictionary = {
   start_post: ["Start a post"],
   support: ["Support"],
   time_ago: ["ago"],
+  unfollow: ["Unfollow"],
   visibility: ["Visibility"],
   what_do_you_want_to_talk_about: ["What do you want to talk about?"],
   who_can_see_your_post: ["Who can see your post?"],
@@ -251,6 +259,8 @@ const DANISH_SELECTOR_PHRASE_OVERRIDES: SelectorPhraseOverrides = {
   done: ["Færdig", "Udført"],
   education: ["Uddannelse"],
   experience: ["Erfaring"],
+  follow: ["Følg"],
+  following: ["Følger"],
   funny: ["Sjov"],
   ignore: ["Ignorer"],
   insightful: ["Indsigtsfuld", "Indsigt"],
@@ -273,6 +283,7 @@ const DANISH_SELECTOR_PHRASE_OVERRIDES: SelectorPhraseOverrides = {
   post_settings: ["Opslagsindstillinger", "Indstillinger for opslag"],
   react: ["Reager"],
   reaction: ["Reaktion", "Reaktioner"],
+  remove: ["Fjern"],
   remove_connection: ["Fjern forbindelse", "Fjern kontakt"],
   resources: ["Ressourcer"],
   respond: ["Svar"],
@@ -281,6 +292,7 @@ const DANISH_SELECTOR_PHRASE_OVERRIDES: SelectorPhraseOverrides = {
   start_post: ["Start et opslag", "Start et indlæg"],
   support: ["Støt", "Støtter"],
   time_ago: ["siden"],
+  unfollow: ["Følg ikke længere", "Stop med at følge"],
   visibility: ["Synlighed"],
   what_do_you_want_to_talk_about: [
     "Hvad vil du tale om?",

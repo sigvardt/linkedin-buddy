@@ -16,7 +16,7 @@ const connectionConfirmTest = connectionConfirmEnabled ? it : it.skip;
 describe("Connections Write E2E (2PC invitation flows)", () => {
   const e2e = setupE2ESuite();
 
-  it("prepare returns valid previews for invite, accept, and withdraw", async (context) => {
+  it("prepare returns valid previews for all supported relationship actions", async (context) => {
     skipIfE2EUnavailable(e2e, context);
     const runtime = e2e.runtime();
     const targetProfile = getDefaultConnectionTarget();
@@ -31,8 +31,28 @@ describe("Connections Write E2E (2PC invitation flows)", () => {
     const withdraw = runtime.connections.prepareWithdrawInvitation({
       targetProfile
     });
+    const ignore = runtime.connections.prepareIgnoreInvitation({
+      targetProfile
+    });
+    const remove = runtime.connections.prepareRemoveConnection({
+      targetProfile
+    });
+    const follow = runtime.connections.prepareFollowMember({
+      targetProfile
+    });
+    const unfollow = runtime.connections.prepareUnfollowMember({
+      targetProfile
+    });
 
-    for (const prepared of [invite, accept, withdraw]) {
+    for (const prepared of [
+      invite,
+      accept,
+      withdraw,
+      ignore,
+      remove,
+      follow,
+      unfollow
+    ]) {
       expectPreparedAction(prepared);
     }
   });

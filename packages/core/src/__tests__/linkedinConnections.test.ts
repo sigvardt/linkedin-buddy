@@ -1,7 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
-  SEND_INVITATION_ACTION_TYPE,
   ACCEPT_INVITATION_ACTION_TYPE,
+  FOLLOW_MEMBER_ACTION_TYPE,
+  IGNORE_INVITATION_ACTION_TYPE,
+  LinkedInConnectionsService,
+  REMOVE_CONNECTION_ACTION_TYPE,
+  SEND_INVITATION_ACTION_TYPE,
+  UNFOLLOW_MEMBER_ACTION_TYPE,
   WITHDRAW_INVITATION_ACTION_TYPE,
   createConnectionActionExecutors
 } from "../linkedinConnections.js";
@@ -18,15 +23,35 @@ describe("Connection action type constants", () => {
   it("has correct withdraw invitation action type", () => {
     expect(WITHDRAW_INVITATION_ACTION_TYPE).toBe("connections.withdraw_invitation");
   });
+
+  it("has correct ignore invitation action type", () => {
+    expect(IGNORE_INVITATION_ACTION_TYPE).toBe("connections.ignore_invitation");
+  });
+
+  it("has correct remove connection action type", () => {
+    expect(REMOVE_CONNECTION_ACTION_TYPE).toBe("connections.remove_connection");
+  });
+
+  it("has correct follow member action type", () => {
+    expect(FOLLOW_MEMBER_ACTION_TYPE).toBe("connections.follow_member");
+  });
+
+  it("has correct unfollow member action type", () => {
+    expect(UNFOLLOW_MEMBER_ACTION_TYPE).toBe("connections.unfollow_member");
+  });
 });
 
 describe("createConnectionActionExecutors", () => {
-  it("registers all three action executors", () => {
+  it("registers all seven action executors", () => {
     const executors = createConnectionActionExecutors();
-    expect(Object.keys(executors)).toHaveLength(3);
+    expect(Object.keys(executors)).toHaveLength(7);
     expect(executors[SEND_INVITATION_ACTION_TYPE]).toBeDefined();
     expect(executors[ACCEPT_INVITATION_ACTION_TYPE]).toBeDefined();
     expect(executors[WITHDRAW_INVITATION_ACTION_TYPE]).toBeDefined();
+    expect(executors[IGNORE_INVITATION_ACTION_TYPE]).toBeDefined();
+    expect(executors[REMOVE_CONNECTION_ACTION_TYPE]).toBeDefined();
+    expect(executors[FOLLOW_MEMBER_ACTION_TYPE]).toBeDefined();
+    expect(executors[UNFOLLOW_MEMBER_ACTION_TYPE]).toBeDefined();
   });
 
   it("each executor has an execute method", () => {
@@ -36,6 +61,70 @@ describe("createConnectionActionExecutors", () => {
       expect(executor).toBeDefined();
       expect(typeof executor!.execute).toBe("function");
     }
+  });
+});
+
+describe("LinkedInConnectionsService prepare relationship actions", () => {
+  it("prepares ignore, remove, follow, and unfollow actions with targeted previews", () => {
+    const prepare = vi.fn((input: {
+      preview: Record<string, unknown>;
+    }) => ({
+      preparedActionId: "pa_test",
+      confirmToken: "ct_test",
+      expiresAtMs: 123,
+      preview: input.preview
+    }));
+
+    const service = new LinkedInConnectionsService({
+      twoPhaseCommit: { prepare }
+    } as unknown as ConstructorParameters<typeof LinkedInConnectionsService>[0]);
+
+    const ignorePrepared = service.prepareIgnoreInvitation({
+      targetProfile: "target-user"
+    });
+    const removePrepared = service.prepareRemoveConnection({
+      targetProfile: "target-user"
+    });
+    const followPrepared = service.prepareFollowMember({
+      targetProfile: "target-user"
+    });
+    const unfollowPrepared = service.prepareUnfollowMember({
+      targetProfile: "target-user"
+    });
+
+    expect(ignorePrepared.preview).toMatchObject({
+      summary: "Ignore connection invitation from target-user",
+      target: {
+        target_profile: "target-user",
+        profile_name: "default"
+      }
+    });
+    expect(removePrepared.preview).toMatchObject({
+      summary: "Remove existing connection with target-user"
+    });
+    expect(followPrepared.preview).toMatchObject({
+      summary: "Follow target-user"
+    });
+    expect(unfollowPrepared.preview).toMatchObject({
+      summary: "Unfollow target-user"
+    });
+
+    expect(prepare).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ actionType: IGNORE_INVITATION_ACTION_TYPE })
+    );
+    expect(prepare).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ actionType: REMOVE_CONNECTION_ACTION_TYPE })
+    );
+    expect(prepare).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ actionType: FOLLOW_MEMBER_ACTION_TYPE })
+    );
+    expect(prepare).toHaveBeenNthCalledWith(
+      4,
+      expect.objectContaining({ actionType: UNFOLLOW_MEMBER_ACTION_TYPE })
+    );
   });
 });
 

@@ -86,6 +86,18 @@ describe("getLinkedInSelectorPhrases", () => {
     ]);
   });
 
+  it("exposes follow and unfollow phrases for relationship actions", () => {
+    expect(getLinkedInSelectorPhrases(["follow", "following", "unfollow"], "da")).toEqual([
+      "Følg",
+      "Følger",
+      "Følg ikke længere",
+      "Stop med at følge",
+      "Follow",
+      "Following",
+      "Unfollow"
+    ]);
+  });
+
   it("handles empty phrase sets without producing fallback matches", () => {
     expect(getLinkedInSelectorPhrases([] as const, "da")).toEqual([]);
   });
