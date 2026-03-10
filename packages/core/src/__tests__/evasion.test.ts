@@ -265,7 +265,10 @@ describe("simulateMomentumScroll", () => {
 
     await simulateMomentumScroll(page, 500, 5);
 
-    const amounts = evaluateCalls.map((c) => (c as { arg: number }).arg);
+    const amounts = evaluateCalls.map((c) => {
+      const instruction = c.arg as { top?: number } | undefined;
+      return instruction?.top ?? 0;
+    });
     const total = amounts.reduce((sum, v) => sum + v, 0);
     expect(total).toBeCloseTo(500, 5);
   });
@@ -276,7 +279,10 @@ describe("simulateMomentumScroll", () => {
     await simulateMomentumScroll(page, -200, 3);
 
     expect(evaluate.mock.calls.length).toBe(3);
-    const amounts = evaluateCalls.map((c) => (c as { arg: number }).arg);
+    const amounts = evaluateCalls.map((c) => {
+      const instruction = c.arg as { top?: number } | undefined;
+      return instruction?.top ?? 0;
+    });
     expect(amounts.every((a) => a < 0)).toBe(true);
   });
 
@@ -528,11 +534,18 @@ describe("EvasionSession", () => {
       expect(evaluate.mock.calls.length).toBe(1);
     });
 
-    it("throws for excessive scroll distances", async () => {
-      const { page } = createPageMock();
+    it("clamps excessive scroll distances", async () => {
+      const { evaluateCalls, page } = createPageMock();
       const session = new EvasionSession(page, "moderate");
 
-      await expect(session.scroll(999_999)).rejects.toThrow(/20000/);
+      await expect(session.scroll(999_999)).resolves.toBeUndefined();
+
+      const amounts = evaluateCalls.map((call) => {
+        const instruction = call.arg as { top?: number } | undefined;
+        return instruction?.top ?? 0;
+      });
+      const total = amounts.reduce((sum, amount) => sum + amount, 0);
+      expect(total).toBeCloseTo(MAX_SCROLL_DISTANCE_PX, 5);
     });
 
     it("accepts the documented maximum scroll distance", async () => {
