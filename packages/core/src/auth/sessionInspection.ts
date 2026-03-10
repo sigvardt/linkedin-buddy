@@ -123,38 +123,6 @@ function extractLinkedInVanityName(profileUrl: string | null): string | null {
   }
 }
 
-async function readFirstNonEmptyText(
-  page: Page,
-  selectors: string[]
-): Promise<string | null> {
-  for (const selector of selectors) {
-    try {
-      const rawText = await page.locator(selector).first().textContent();
-      const normalized = normalizeWhitespace(rawText);
-      if (normalized) {
-        return normalized;
-      }
-    } catch {
-      // Best effort.
-    }
-  }
-
-  return null;
-}
-
-async function readFirstAttribute(
-  page: Page,
-  selector: string,
-  attribute: string
-): Promise<string | null> {
-  try {
-    const value = await page.locator(selector).first().getAttribute(attribute);
-    return normalizeWhitespace(value);
-  } catch {
-    return null;
-  }
-}
-
 async function readFirstNonEmptyTextWithTimeout(
   page: Page,
   selectors: string[],
