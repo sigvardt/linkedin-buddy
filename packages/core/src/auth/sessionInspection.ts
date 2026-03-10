@@ -155,6 +155,46 @@ async function readFirstAttribute(
   }
 }
 
+async function readFirstNonEmptyTextWithTimeout(
+  page: Page,
+  selectors: string[],
+  timeoutMs: number
+): Promise<string | null> {
+  for (const selector of selectors) {
+    try {
+      const rawText = await page
+        .locator(selector)
+        .first()
+        .textContent({ timeout: timeoutMs });
+      const normalized = normalizeWhitespace(rawText);
+      if (normalized) {
+        return normalized;
+      }
+    } catch {
+      // Best effort — element missing or timeout exceeded.
+    }
+  }
+
+  return null;
+}
+
+async function readFirstAttributeWithTimeout(
+  page: Page,
+  selector: string,
+  attribute: string,
+  timeoutMs: number
+): Promise<string | null> {
+  try {
+    const value = await page
+      .locator(selector)
+      .first()
+      .getAttribute(attribute, { timeout: timeoutMs });
+    return normalizeWhitespace(value);
+  } catch {
+    return null;
+  }
+}
+
 async function hasSessionCookie(page: Page): Promise<boolean> {
   try {
     const cookies = await page.context().cookies("https://www.linkedin.com");
@@ -259,6 +299,13 @@ export async function inspectLinkedInSession(
 export async function inspectAuthenticatedLinkedInIdentity(
   page: Page
 ): Promise<LinkedInSessionIdentity | undefined> {
+  // Skip identity inspection in fixture replay mode — recorded fixtures have
+  // no real LinkedIn session so navigation to /in/me/ causes prolonged hangs
+  // as each Playwright locator waits its full default timeout.
+  if (process.env.LINKEDIN_E2E_REPLAY) {
+    return undefined;
+  }
+
   try {
     await page.goto(LINKEDIN_PROFILE_SELF_URL, {
       waitUntil: "domcontentloaded",
@@ -273,10 +320,23 @@ export async function inspectAuthenticatedLinkedInIdentity(
     return undefined;
   }
 
-  const fullName = await readFirstNonEmptyText(page, PROFILE_HEADING_SELECTORS);
+  // Use a short per-locator timeout so a slow profile page does not stall
+  // the entire identity lookup (Playwright default is 30s per call).
+  const IDENTITY_LOCATOR_TIMEOUT_MS = 3_000;
+
+  const fullName = await readFirstNonEmptyTextWithTimeout(
+    page,
+    PROFILE_HEADING_SELECTORS,
+    IDENTITY_LOCATOR_TIMEOUT_MS
+  );
   const profileUrl =
     normalizeLinkedInProfileUrl(
-      await readFirstAttribute(page, "link[rel='canonical']", "href")
+      await readFirstAttributeWithTimeout(
+        page,
+        "link[rel='canonical']",
+        "href",
+        IDENTITY_LOCATOR_TIMEOUT_MS
+      )
     ) ?? normalizeLinkedInProfileUrl(currentUrl);
 
   if (!fullName && !profileUrl) {
