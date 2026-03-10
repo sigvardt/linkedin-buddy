@@ -683,6 +683,11 @@ Exposed tools:
 - `linkedin.connections.prepare_remove`
 - `linkedin.connections.prepare_follow`
 - `linkedin.connections.prepare_unfollow`
+- `linkedin.members.prepare_block`
+- `linkedin.members.prepare_unblock`
+- `linkedin.members.prepare_report`
+- `linkedin.privacy.get_settings`
+- `linkedin.privacy.prepare_update_setting`
 - `linkedin.feed.list`
 - `linkedin.feed.view_post`
 - `linkedin.feed.like`
