@@ -610,6 +610,17 @@ npm exec -w @linkedin-assistant/cli -- linkedin profile apply-spec --profile def
 - The bundled issue-210 example spec currently needs `--allow-partial` because skills (`#228`) plus industry/custom public URL (`#252`) are still tracked as follow-up gaps.
 - See `docs/profile-seeding.md` for the full workflow, bundled spec, and current blockers.
 
+Profile image generation commands:
+
+```bash
+npm exec -w @linkedin-assistant/cli -- linkedin assets generate-profile-images --profile default --spec docs/profile-seeds/issue-210-signikant-test-profile.json --post-count 6 --upload-profile-media --upload-delay-ms 4500 --output reports/profile-images.json
+```
+
+- `assets generate-profile-images` uses OpenAI image generation to create a cohesive profile photo, banner, and reusable post-image bundle from the seeded persona.
+- Generated files and the manifest are written under `artifacts/<run-id>/linkedin-ai-assets/<persona-slug>/<timestamp>/`.
+- `--upload-profile-media` reuses the existing profile photo/banner upload flow and paces the two uploads to avoid back-to-back updates.
+- See `docs/profile-image-generation.md` for the end-to-end workflow and the matching MCP tool.
+
 Confirm prepared actions by token:
 
 ```bash
@@ -646,6 +657,7 @@ Exposed tools:
 - `linkedin.profile.prepare_featured_add`
 - `linkedin.profile.prepare_featured_remove`
 - `linkedin.profile.prepare_featured_reorder`
+- `linkedin.assets.generate_profile_images`
 - `linkedin.search`
 - `linkedin.inbox.list_threads`
 - `linkedin.inbox.get_thread`

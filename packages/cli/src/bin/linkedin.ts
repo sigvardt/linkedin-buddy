@@ -32,6 +32,7 @@ import {
   createLocalDataDeletionPlan,
   createEmptyFixtureManifest,
   buildFixtureRouteKey,
+  buildLinkedInImagePersonaFromProfileSeed,
   evaluateDraftQuality,
   getLinkedInSelectorLocaleConfigWarning,
   isInRateLimitCooldown,
@@ -5758,6 +5759,61 @@ async function runProfileApplySpec(input: {
   }
 }
 
+async function runAssetsGenerateProfileImages(input: {
+  profileName: string;
+  specPath: string;
+  postImageCount: number;
+  uploadProfileMedia: boolean;
+  uploadDelayMs: number;
+  model?: string;
+  outputPath?: string;
+}, cdpUrl?: string): Promise<void> {
+  const resolvedSpecPath = path.resolve(input.specPath);
+  const rawSpec = await readJsonInputFile(resolvedSpecPath, "image persona spec");
+  const persona = buildLinkedInImagePersonaFromProfileSeed(rawSpec);
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.assets.generate_profile_images.start", {
+      profileName: input.profileName,
+      specPath: resolvedSpecPath,
+      postImageCount: input.postImageCount,
+      uploadProfileMedia: input.uploadProfileMedia,
+      model: input.model ?? null
+    });
+
+    const report: Record<string, unknown> = {
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      spec_path: resolvedSpecPath,
+      ...await runtime.imageAssets.generatePersonaImageSet({
+        persona,
+        postImageCount: input.postImageCount,
+        uploadProfileMedia: input.uploadProfileMedia,
+        profileName: input.profileName,
+        uploadDelayMs: input.uploadDelayMs,
+        operatorNote: `issue-211 persona images: ${path.basename(resolvedSpecPath)}`,
+        ...(input.model ? { model: input.model } : {})
+      })
+    };
+
+    if (input.outputPath) {
+      report.output_path = await writeOutputJsonFile(input.outputPath, report);
+    }
+
+    runtime.logger.log("info", "cli.assets.generate_profile_images.done", {
+      profileName: input.profileName,
+      specPath: resolvedSpecPath,
+      postImageCount: input.postImageCount,
+      uploadProfileMedia: input.uploadProfileMedia
+    });
+
+    printJson(report);
+  } finally {
+    runtime.close();
+  }
+}
+
 async function runSearch(input: {
   profileName: string;
   query: string;
@@ -8159,6 +8215,61 @@ export function createCliProgram(): Command {
           allowPartial: options.allowPartial,
           delayMs: coerceNonNegativeInt(options.delayMs, "delay-ms"),
           yes: options.yes,
+          ...(options.output ? { outputPath: options.output } : {})
+        }, readCdpUrl());
+      }
+    );
+
+  const assetsCommand = program
+    .command("assets")
+    .description("Generate LinkedIn-ready AI image assets");
+
+  assetsCommand
+    .command("generate-profile-images")
+    .description("Generate a profile photo, banner, and post images from a persona spec")
+    .requiredOption("--spec <path>", "Path to a JSON persona/profile seed spec")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("--post-count <count>", "Number of post images to generate", "6")
+    .option("--model <model>", "OpenAI image model override")
+    .option(
+      "--upload-profile-media",
+      "Upload the generated photo and banner through the existing LinkedIn profile flow",
+      false
+    )
+    .option(
+      "--upload-delay-ms <ms>",
+      "Base delay between the photo and banner upload when --upload-profile-media is enabled",
+      "4500"
+    )
+    .option("--output <path>", "Write the final JSON report to a file")
+    .addHelpText(
+      "after",
+      [
+        "",
+        "Notes:",
+        "  - requires OPENAI_API_KEY in the environment",
+        "  - generated assets are stored in the run artifacts directory under linkedin-ai-assets/",
+        "  - --upload-profile-media reuses the existing profile photo/banner upload actions and paces the two uploads",
+        "  - the issue-210 persona spec is a good default source for the test account"
+      ].join("\n")
+    )
+    .action(
+      async (options: {
+        profile: string;
+        spec: string;
+        postCount: string;
+        model?: string;
+        uploadProfileMedia: boolean;
+        uploadDelayMs: string;
+        output?: string;
+      }) => {
+        await runAssetsGenerateProfileImages({
+          profileName: options.profile,
+          specPath: options.spec,
+          postImageCount: coercePositiveInt(options.postCount, "post-count"),
+          uploadProfileMedia: options.uploadProfileMedia,
+          uploadDelayMs: coerceNonNegativeInt(options.uploadDelayMs, "upload-delay-ms"),
+          ...(options.model ? { model: options.model } : {}),
           ...(options.output ? { outputPath: options.output } : {})
         }, readCdpUrl());
       }

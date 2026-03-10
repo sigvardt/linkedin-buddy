@@ -1,14 +1,18 @@
 #!/usr/bin/env node
+import path from "node:path";
+import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import {
   ACTIVITY_EVENT_TYPES,
   ACTIVITY_WATCH_KINDS,
   ACTIVITY_WATCH_STATUSES,
+  DEFAULT_LINKEDIN_PERSONA_POST_IMAGE_COUNT,
   DEFAULT_FOLLOWUP_SINCE,
   LINKEDIN_FEED_REACTION_TYPES,
   LINKEDIN_POST_VISIBILITY_TYPES,
   LINKEDIN_SELECTOR_LOCALES,
   LinkedInAssistantError,
+  buildLinkedInImagePersonaFromProfileSeed,
   createCoreRuntime,
   normalizeLinkedInFeedReaction,
   normalizeLinkedInPostVisibility,
@@ -34,6 +38,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import {
   LINKEDIN_ACTIONS_CONFIRM_TOOL,
+  LINKEDIN_ASSETS_GENERATE_PROFILE_IMAGES_TOOL,
   LINKEDIN_ACTIVITY_DELIVERIES_LIST_TOOL,
   LINKEDIN_ACTIVITY_EVENTS_LIST_TOOL,
   LINKEDIN_ACTIVITY_POLLER_RUN_ONCE_TOOL,
@@ -151,6 +156,26 @@ function readPositiveNumber(
   return value;
 }
 
+function readNonNegativeNumber(
+  args: ToolArgs,
+  key: string,
+  fallback: number
+): number {
+  const value = args[key];
+  if (typeof value !== "number") {
+    return fallback;
+  }
+
+  if (!Number.isFinite(value) || value < 0) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `${key} must be zero or a positive number.`
+    );
+  }
+
+  return value;
+}
+
 function readBoolean(args: ToolArgs, key: string, fallback: boolean): boolean {
   const value = args[key];
   return typeof value === "boolean" ? value : fallback;
@@ -220,6 +245,40 @@ function readObject(
     "ACTION_PRECONDITION_FAILED",
     `${key} must be an object.`
   );
+}
+
+async function readJsonInputFile(
+  filePath: string,
+  label: string
+): Promise<unknown> {
+  const resolvedPath = path.resolve(filePath);
+  let rawValue = "";
+
+  try {
+    rawValue = await readFile(resolvedPath, "utf8");
+  } catch (error) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `Could not read ${label}.`,
+      {
+        path: resolvedPath,
+        cause: error instanceof Error ? error.message : String(error)
+      }
+    );
+  }
+
+  try {
+    return JSON.parse(rawValue) as unknown;
+  } catch (error) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `${label} must contain valid JSON.`,
+      {
+        path: resolvedPath,
+        cause: error instanceof Error ? error.message : String(error)
+      }
+    );
+  }
 }
 
 function coerceEnumValue<T extends string>(
@@ -1125,6 +1184,65 @@ async function handleProfilePrepareFeaturedReorder(
       run_id: runtime.runId,
       profile_name: profileName,
       ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleAssetsGenerateProfileImages(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const specPath = readRequiredString(args, "specPath");
+    const postImageCount = readPositiveNumber(
+      args,
+      "postImageCount",
+      DEFAULT_LINKEDIN_PERSONA_POST_IMAGE_COUNT
+    );
+    const uploadProfileMedia = readBoolean(args, "uploadProfileMedia", false);
+    const uploadDelayMs = readNonNegativeNumber(args, "uploadDelayMs", 4_500);
+    const model = readString(args, "model", "");
+    const operatorNote = readString(args, "operatorNote", "");
+    const resolvedSpecPath = path.resolve(specPath);
+    const persona = buildLinkedInImagePersonaFromProfileSeed(
+      await readJsonInputFile(resolvedSpecPath, "image persona spec")
+    );
+
+    runtime.logger.log("info", "mcp.assets.generate_profile_images.start", {
+      profileName,
+      specPath: resolvedSpecPath,
+      postImageCount,
+      uploadProfileMedia,
+      model: model || null
+    });
+
+    const report = await runtime.imageAssets.generatePersonaImageSet({
+      persona,
+      postImageCount,
+      uploadProfileMedia,
+      profileName,
+      uploadDelayMs,
+      operatorNote:
+        operatorNote || `issue-211 persona images: ${path.basename(resolvedSpecPath)}`,
+      ...(model ? { model } : {})
+    });
+
+    runtime.logger.log("info", "mcp.assets.generate_profile_images.done", {
+      profileName,
+      specPath: resolvedSpecPath,
+      postImageCount,
+      uploadProfileMedia
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      spec_path: resolvedSpecPath,
+      ...report
     });
   } finally {
     runtime.close();
@@ -3081,6 +3199,49 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
+        name: LINKEDIN_ASSETS_GENERATE_PROFILE_IMAGES_TOOL,
+        description:
+          "Generate a LinkedIn-ready profile photo, banner, and reusable post images from a local persona JSON spec using OpenAI. Optionally uploads the photo and banner through the existing LinkedIn profile upload flow.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["specPath"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            },
+            specPath: {
+              type: "string",
+              description: "Local path to the JSON persona/profile seed spec."
+            },
+            postImageCount: {
+              type: "number",
+              description:
+                "Number of post images to generate. Defaults to 6 and must be 10 or fewer."
+            },
+            model: {
+              type: "string",
+              description: "Optional OpenAI image model override."
+            },
+            uploadProfileMedia: {
+              type: "boolean",
+              description:
+                "If true, upload the generated profile photo and banner after generation."
+            },
+            uploadDelayMs: {
+              type: "number",
+              description:
+                "Base delay between the photo and banner uploads when uploadProfileMedia is true. Defaults to 4500."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Optional note attached to the upload actions."
+            }
+          })
+        }
+      },
+      {
         name: LINKEDIN_SEARCH_TOOL,
         description: withSelectorAuditHint(
           "Search LinkedIn for people, companies, or jobs."
@@ -4164,6 +4325,8 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
     handleProfilePrepareFeaturedRemove,
   [LINKEDIN_PROFILE_PREPARE_FEATURED_REORDER_TOOL]:
     handleProfilePrepareFeaturedReorder,
+  [LINKEDIN_ASSETS_GENERATE_PROFILE_IMAGES_TOOL]:
+    handleAssetsGenerateProfileImages,
   [LINKEDIN_SEARCH_TOOL]: handleSearch,
   [LINKEDIN_CONNECTIONS_LIST_TOOL]: handleConnectionsList,
   [LINKEDIN_CONNECTIONS_PENDING_TOOL]: handleConnectionsPending,
