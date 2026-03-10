@@ -621,6 +621,18 @@ npm exec -w @linkedin-assistant/cli -- linkedin assets generate-profile-images -
 - `--upload-profile-media` reuses the existing profile photo/banner upload flow and paces the two uploads to avoid back-to-back updates.
 - See `docs/profile-image-generation.md` for the end-to-end workflow and the matching MCP tool.
 
+Activity seeding command:
+
+```bash
+npm exec -w @linkedin-assistant/cli -- linkedin seed activity --profile default --spec docs/profile-seeds/issue-212-signikant-test-activity.json --delay-ms 4500 --yes --output reports/activity-seed.json
+```
+
+- `seed activity` applies a paced issue-212 activity spec for connections, posts, feed engagement, job browsing, messaging, and notifications.
+- Image-backed posts can reuse the issue-211 report through `assets.generatedImageManifestPath`.
+- The bundled spec is a starter template: replace the curated social targets before running it against the real test account.
+- Because it batches multiple real outbound actions, this workflow remains CLI-only; use the existing MCP read tools for verification after the run.
+- See `docs/activity-seeding.md` for the full workflow, keep-alive guidance, and verification steps.
+
 Confirm prepared actions by token:
 
 ```bash

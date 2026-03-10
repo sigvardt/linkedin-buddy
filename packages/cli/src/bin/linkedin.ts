@@ -192,6 +192,14 @@ import {
   type KeepAliveStopReport
 } from "../keepAliveOutput.js";
 import {
+  parseActivitySeedGeneratedImageManifest,
+  parseActivitySeedSpec,
+  type ActivitySeedGeneratedPostImage,
+  type ActivitySeedSpec,
+  type ActivitySeedPostSpec,
+  type ActivitySeedJobSearchSpec
+} from "../activitySeed.js";
+import {
   createProfileSeedPlan,
   parseProfileSeedSpec,
   type ProfileSeedPlanAction,
@@ -5605,7 +5613,9 @@ function createProfileSeedUnsupportedFieldsError(
   );
 }
 
-function sampleProfileSeedDelay(baseDelayMs: number): number {
+type CliRuntime = ReturnType<typeof createRuntime>;
+
+function sampleSeedDelay(baseDelayMs: number): number {
   if (baseDelayMs <= 0) {
     return 0;
   }
@@ -5617,7 +5627,7 @@ function sampleProfileSeedDelay(baseDelayMs: number): number {
 }
 
 function prepareProfileSeedAction(
-  runtime: ReturnType<typeof createRuntime>,
+  runtime: CliRuntime,
   action: ProfileSeedPlanAction
 ) {
   switch (action.kind) {
@@ -5628,6 +5638,179 @@ function prepareProfileSeedAction(
     case "remove_section_item":
       return runtime.profile.prepareRemoveSectionItem(action.input);
   }
+}
+
+interface ActivitySeedPlanSummary {
+  acceptPendingCount: number;
+  commentCount: number;
+  inviteCount: number;
+  jobSearchCount: number;
+  jobViewCount: number;
+  likeCount: number;
+  newThreadCount: number;
+  notificationCheckCount: number;
+  postCount: number;
+  replyCount: number;
+  totalReadSteps: number;
+  totalWriteActions: number;
+}
+
+function createActivitySeedPlanSummary(spec: ActivitySeedSpec): ActivitySeedPlanSummary {
+  const jobViewCount = spec.jobs.searches.reduce(
+    (total, search) => total + (search.viewTop ?? 0),
+    0
+  );
+  const totalWriteActions =
+    spec.connections.invites.length +
+    (spec.connections.acceptPending ? spec.connections.acceptPending.limit : 0) +
+    spec.posts.length +
+    spec.feed.likes.length +
+    spec.feed.comments.length +
+    spec.messaging.newThreads.length +
+    spec.messaging.replies.length;
+  const totalReadSteps =
+    spec.jobs.searches.length + (spec.notifications ? 1 : 0) + 3;
+
+  return {
+    acceptPendingCount: spec.connections.acceptPending?.limit ?? 0,
+    commentCount: spec.feed.comments.length,
+    inviteCount: spec.connections.invites.length,
+    jobSearchCount: spec.jobs.searches.length,
+    jobViewCount,
+    likeCount: spec.feed.likes.length,
+    newThreadCount: spec.messaging.newThreads.length,
+    notificationCheckCount: spec.notifications ? 1 : 0,
+    postCount: spec.posts.length,
+    replyCount: spec.messaging.replies.length,
+    totalReadSteps,
+    totalWriteActions
+  };
+}
+
+async function resolveActivitySeedGeneratedPostImages(
+  spec: ActivitySeedSpec,
+  resolvedSpecPath: string
+): Promise<{
+  manifestPath: string;
+  postImages: ActivitySeedGeneratedPostImage[];
+} | null> {
+  const manifestPathInput = spec.assets?.generatedImageManifestPath;
+  if (!manifestPathInput) {
+    return null;
+  }
+
+  const resolvedManifestPath = path.resolve(
+    path.dirname(resolvedSpecPath),
+    manifestPathInput
+  );
+  const rawManifest = await readJsonInputFile(
+    resolvedManifestPath,
+    "activity seed generated image manifest"
+  );
+  const manifest = parseActivitySeedGeneratedImageManifest(rawManifest);
+
+  return {
+    manifestPath: resolvedManifestPath,
+    postImages: manifest.postImages
+  };
+}
+
+function resolveActivitySeedPostMediaPath(
+  post: ActivitySeedPostSpec,
+  resolvedSpecPath: string,
+  generatedImages: readonly ActivitySeedGeneratedPostImage[]
+): string | undefined {
+  if (post.mediaPath) {
+    return path.resolve(path.dirname(resolvedSpecPath), post.mediaPath);
+  }
+
+  if (post.generatedImageIndex === undefined) {
+    return undefined;
+  }
+
+  if (generatedImages.length === 0) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      "posts.generatedImageIndex requires assets.generatedImageManifestPath to be configured."
+    );
+  }
+
+  const generatedImage = generatedImages[post.generatedImageIndex];
+  if (!generatedImage) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `posts.generatedImageIndex ${post.generatedImageIndex} is out of range for the configured generated image manifest.`
+    );
+  }
+
+  return generatedImage.absolutePath;
+}
+
+function normalizeComparableLinkedInIdentity(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (normalized.length === 0) {
+    return "";
+  }
+
+  try {
+    const parsed = new URL(normalized);
+    const cleanPath = parsed.pathname.replace(/\/+$/u, "");
+    return `${parsed.origin}${cleanPath}`;
+  } catch {
+    return normalized.replace(/\/+$/u, "");
+  }
+}
+
+function createActivitySeedOperatorNote(
+  resolvedSpecPath: string,
+  sectionLabel: string,
+  explicitNote?: string
+): string {
+  const baseNote = explicitNote?.trim();
+  if (baseNote) {
+    return baseNote;
+  }
+
+  return `activity seed: ${path.basename(resolvedSpecPath)} / ${sectionLabel}`;
+}
+
+function summarizeConfirmedAction(confirmed: {
+  actionType: string;
+  preparedActionId: string;
+  status: string;
+  result: Record<string, unknown>;
+  artifacts: string[];
+}): Record<string, unknown> {
+  return {
+    action_type: confirmed.actionType,
+    prepared_action_id: confirmed.preparedActionId,
+    status: confirmed.status,
+    result: confirmed.result,
+    artifacts: confirmed.artifacts
+  };
+}
+
+async function maybeSleepSeedDelay(delayMs: number): Promise<void> {
+  if (delayMs <= 0) {
+    return;
+  }
+
+  await sleep(sampleSeedDelay(delayMs));
+}
+
+async function maybeWarnAboutKeepAliveForSeeding(): Promise<number[]> {
+  const runningKeepAlivePids = await findRunningKeepAlivePids();
+  if (runningKeepAlivePids.length === 0) {
+    writeCliWarning(
+      "No running keepalive daemon was detected. For long issue-212 seeding runs, start `linkedin keepalive start` in another terminal first."
+    );
+  } else {
+    writeCliNotice(
+      `Detected keepalive daemon PID${runningKeepAlivePids.length === 1 ? "" : "s"}: ${runningKeepAlivePids.join(", ")}.`
+    );
+  }
+
+  return runningKeepAlivePids;
 }
 
 async function runProfileApplySpec(input: {
@@ -5718,7 +5901,7 @@ async function runProfileApplySpec(input: {
       });
 
       if (index < plan.actions.length - 1 && input.delayMs > 0) {
-        await sleep(sampleProfileSeedDelay(input.delayMs));
+        await sleep(sampleSeedDelay(input.delayMs));
       }
     }
 
@@ -5751,6 +5934,455 @@ async function runProfileApplySpec(input: {
       plannedActionCount: plan.actions.length,
       executedActionCount: actionResults.length,
       unsupportedFieldCount: plan.unsupportedFields.length
+    });
+
+    printJson(report);
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runActivitySeedJobSearch(
+  runtime: CliRuntime,
+  profileName: string,
+  search: ActivitySeedJobSearchSpec
+): Promise<Record<string, unknown>> {
+  const searchResult = await runtime.jobs.searchJobs({
+    profileName,
+    query: search.query,
+    ...(search.location ? { location: search.location } : {}),
+    ...(search.limit ? { limit: search.limit } : {})
+  });
+  const viewCount = Math.min(search.viewTop ?? 0, searchResult.results.length);
+  const viewedJobs: Record<string, unknown>[] = [];
+
+  for (const job of searchResult.results.slice(0, viewCount)) {
+    const detail = await runtime.jobs.viewJob({
+      profileName,
+      jobId: job.job_id
+    });
+    viewedJobs.push(detail as unknown as Record<string, unknown>);
+  }
+
+  return {
+    query: searchResult.query,
+    location: searchResult.location,
+    count: searchResult.count,
+    results: searchResult.results,
+    viewed_jobs: viewedJobs
+  };
+}
+
+async function runSeedActivity(input: {
+  profileName: string;
+  specPath: string;
+  delayMs: number;
+  yes: boolean;
+  outputPath?: string;
+}, cdpUrl?: string): Promise<void> {
+  const resolvedSpecPath = path.resolve(input.specPath);
+  const rawSpec = await readJsonInputFile(resolvedSpecPath, "activity seed spec");
+  const spec = parseActivitySeedSpec(rawSpec);
+  const planSummary = createActivitySeedPlanSummary(spec);
+  const generatedImages = await resolveActivitySeedGeneratedPostImages(spec, resolvedSpecPath);
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.seed.activity.start", {
+      profileName: input.profileName,
+      specPath: resolvedSpecPath,
+      delayMs: input.delayMs,
+      totalWriteActions: planSummary.totalWriteActions,
+      totalReadSteps: planSummary.totalReadSteps
+    });
+
+    const keepAlivePids = await maybeWarnAboutKeepAliveForSeeding();
+
+    if (planSummary.totalWriteActions > 0) {
+      writeCliNotice(
+        `Loaded ${resolvedSpecPath} with ${planSummary.totalWriteActions} write ${planSummary.totalWriteActions === 1 ? "action" : "actions"} and ${planSummary.totalReadSteps} read-only verification ${planSummary.totalReadSteps === 1 ? "step" : "steps"}.`
+      );
+    } else {
+      writeCliNotice(
+        `Loaded ${resolvedSpecPath}; no write actions are configured, so this run will only perform read-only checks.`
+      );
+    }
+
+    if (!input.yes && planSummary.totalWriteActions > 0) {
+      if (!stdin.isTTY || !stdout.isTTY) {
+        throw new LinkedInAssistantError(
+          "ACTION_PRECONDITION_FAILED",
+          "Refusing to apply an activity seed spec without --yes in non-interactive mode."
+        );
+      }
+
+      const confirmed = await promptYesNo(
+        `Execute ${planSummary.totalWriteActions} LinkedIn write ${planSummary.totalWriteActions === 1 ? "action" : "actions"} from this activity seed spec?`,
+        process.stderr
+      );
+      if (!confirmed) {
+        throw new LinkedInAssistantError(
+          "ACTION_PRECONDITION_FAILED",
+          "Operator declined activity seed execution."
+        );
+      }
+    }
+
+    const report: Record<string, unknown> = {
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      spec_path: resolvedSpecPath,
+      delay_ms: input.delayMs,
+      keep_alive_pids: keepAlivePids,
+      keep_alive_running: keepAlivePids.length > 0,
+      plan: planSummary,
+      evasion: runtime.evasion,
+      ...(generatedImages ? { generated_image_manifest_path: generatedImages.manifestPath } : {})
+    };
+
+    const connectionsSection: Record<string, unknown> = {
+      accepted_pending: [] as Record<string, unknown>[],
+      invites: [] as Record<string, unknown>[],
+      skipped_invites: [] as Record<string, unknown>[]
+    };
+
+    if (spec.connections.acceptPending) {
+      const pendingReceived = await runtime.connections.listPendingInvitations({
+        profileName: input.profileName,
+        filter: "received"
+      });
+      const pendingToAccept = pendingReceived.slice(0, spec.connections.acceptPending.limit);
+      connectionsSection.pending_received = pendingReceived;
+
+      for (const [index, invitation] of pendingToAccept.entries()) {
+        const prepared = runtime.connections.prepareAcceptInvitation({
+          profileName: input.profileName,
+          targetProfile: invitation.profile_url,
+          operatorNote: createActivitySeedOperatorNote(
+            resolvedSpecPath,
+            `accept pending ${index + 1}`,
+            undefined
+          )
+        });
+        const confirmed = await runtime.twoPhaseCommit.confirmByToken({
+          confirmToken: prepared.confirmToken
+        });
+        (connectionsSection.accepted_pending as Record<string, unknown>[]).push({
+          target_profile: invitation.profile_url,
+          full_name: invitation.full_name,
+          ...summarizeConfirmedAction(confirmed)
+        });
+        await maybeSleepSeedDelay(input.delayMs);
+      }
+    }
+
+    if (spec.connections.invites.length > 0) {
+      const [existingConnections, pendingSent] = await Promise.all([
+        runtime.connections.listConnections({
+          profileName: input.profileName,
+          limit: Math.max(40, spec.connections.invites.length + 20)
+        }),
+        runtime.connections.listPendingInvitations({
+          profileName: input.profileName,
+          filter: "sent"
+        })
+      ]);
+      const existingTargets = new Set(
+        existingConnections
+          .map((connection) => normalizeComparableLinkedInIdentity(connection.profile_url))
+          .filter((value) => value.length > 0)
+      );
+      const pendingTargets = new Set(
+        pendingSent
+          .map((invitation) => normalizeComparableLinkedInIdentity(invitation.profile_url))
+          .filter((value) => value.length > 0)
+      );
+
+      connectionsSection.connections_before = existingConnections;
+      connectionsSection.pending_sent = pendingSent;
+
+      for (const [index, invite] of spec.connections.invites.entries()) {
+        const normalizedTarget = normalizeComparableLinkedInIdentity(invite.targetProfile);
+        if (existingTargets.has(normalizedTarget)) {
+          (connectionsSection.skipped_invites as Record<string, unknown>[]).push({
+            target_profile: invite.targetProfile,
+            reason: "already_connected"
+          });
+          continue;
+        }
+        if (pendingTargets.has(normalizedTarget)) {
+          (connectionsSection.skipped_invites as Record<string, unknown>[]).push({
+            target_profile: invite.targetProfile,
+            reason: "invitation_already_pending"
+          });
+          continue;
+        }
+
+        const prepared = runtime.connections.prepareSendInvitation({
+          profileName: input.profileName,
+          targetProfile: invite.targetProfile,
+          ...(invite.note ? { note: invite.note } : {}),
+          operatorNote: createActivitySeedOperatorNote(
+            resolvedSpecPath,
+            `invite ${index + 1}`,
+            invite.operatorNote
+          )
+        });
+        const confirmed = await runtime.twoPhaseCommit.confirmByToken({
+          confirmToken: prepared.confirmToken
+        });
+        (connectionsSection.invites as Record<string, unknown>[]).push({
+          target_profile: invite.targetProfile,
+          ...(invite.note ? { note: invite.note } : {}),
+          ...summarizeConfirmedAction(confirmed)
+        });
+        pendingTargets.add(normalizedTarget);
+        await maybeSleepSeedDelay(input.delayMs);
+      }
+    }
+
+    report.connections = connectionsSection;
+
+    const postsSection: Record<string, unknown>[] = [];
+    for (const [index, post] of spec.posts.entries()) {
+      const mediaPath = resolveActivitySeedPostMediaPath(
+        post,
+        resolvedSpecPath,
+        generatedImages?.postImages ?? []
+      );
+      const visibility = post.visibility ?? "connections";
+      const operatorNote = createActivitySeedOperatorNote(
+        resolvedSpecPath,
+        `post ${index + 1}`,
+        post.operatorNote
+      );
+
+      const prepared = mediaPath
+        ? await runtime.posts.prepareCreateMedia({
+            profileName: input.profileName,
+            text: post.text,
+            mediaPaths: [mediaPath],
+            visibility,
+            operatorNote
+          })
+        : await runtime.posts.prepareCreate({
+            profileName: input.profileName,
+            text: post.text,
+            visibility,
+            operatorNote
+          });
+      const confirmed = await runtime.twoPhaseCommit.confirmByToken({
+        confirmToken: prepared.confirmToken
+      });
+      const publishedPostUrl =
+        typeof confirmed.result.published_post_url === "string" &&
+        confirmed.result.published_post_url.trim().length > 0
+          ? confirmed.result.published_post_url.trim()
+          : undefined;
+      const verification = publishedPostUrl
+        ? await runtime.feed.viewPost({
+            profileName: input.profileName,
+            postUrl: publishedPostUrl
+          })
+        : undefined;
+
+      postsSection.push({
+        text: post.text,
+        visibility,
+        ...(mediaPath ? { media_path: mediaPath } : {}),
+        ...summarizeConfirmedAction(confirmed),
+        ...(verification ? { verification } : {})
+      });
+      await maybeSleepSeedDelay(input.delayMs);
+    }
+    report.posts = postsSection;
+
+    const feedSection: Record<string, unknown> = {
+      liked: [] as Record<string, unknown>[],
+      commented: [] as Record<string, unknown>[]
+    };
+    if (
+      spec.feed.discoveryLimit ||
+      spec.feed.likes.length > 0 ||
+      spec.feed.comments.length > 0
+    ) {
+      const discoveryLimit =
+        spec.feed.discoveryLimit ??
+        Math.max(10, spec.feed.likes.length + spec.feed.comments.length + 3);
+      feedSection.feed_snapshot = await runtime.feed.viewFeed({
+        profileName: input.profileName,
+        limit: discoveryLimit
+      });
+    }
+
+    for (const [index, like] of spec.feed.likes.entries()) {
+      const prepared = runtime.feed.prepareLikePost({
+        profileName: input.profileName,
+        postUrl: like.postUrl,
+        ...(like.reaction ? { reaction: like.reaction } : {}),
+        operatorNote: createActivitySeedOperatorNote(
+          resolvedSpecPath,
+          `feed like ${index + 1}`,
+          like.operatorNote
+        )
+      });
+      const confirmed = await runtime.twoPhaseCommit.confirmByToken({
+        confirmToken: prepared.confirmToken
+      });
+      (feedSection.liked as Record<string, unknown>[]).push({
+        post_url: like.postUrl,
+        ...(like.reaction ? { reaction: like.reaction } : {}),
+        ...summarizeConfirmedAction(confirmed)
+      });
+      await maybeSleepSeedDelay(input.delayMs);
+    }
+
+    for (const [index, comment] of spec.feed.comments.entries()) {
+      const prepared = runtime.feed.prepareCommentOnPost({
+        profileName: input.profileName,
+        postUrl: comment.postUrl,
+        text: comment.text,
+        operatorNote: createActivitySeedOperatorNote(
+          resolvedSpecPath,
+          `feed comment ${index + 1}`,
+          comment.operatorNote
+        )
+      });
+      const confirmed = await runtime.twoPhaseCommit.confirmByToken({
+        confirmToken: prepared.confirmToken
+      });
+      (feedSection.commented as Record<string, unknown>[]).push({
+        post_url: comment.postUrl,
+        text: comment.text,
+        ...summarizeConfirmedAction(confirmed)
+      });
+      await maybeSleepSeedDelay(input.delayMs);
+    }
+
+    report.feed = feedSection;
+
+    const jobsSection: Record<string, unknown>[] = [];
+    for (const search of spec.jobs.searches) {
+      jobsSection.push(
+        await runActivitySeedJobSearch(runtime, input.profileName, search)
+      );
+    }
+    report.jobs = jobsSection;
+
+    const messagingSection: Record<string, unknown> = {
+      new_threads: [] as Record<string, unknown>[],
+      replies: [] as Record<string, unknown>[]
+    };
+    if (spec.messaging.newThreads.length > 0 || spec.messaging.replies.length > 0) {
+      messagingSection.threads_before = await runtime.inbox.listThreads({
+        profileName: input.profileName,
+        limit: 10
+      });
+    }
+
+    for (const [index, thread] of spec.messaging.newThreads.entries()) {
+      const prepared = await runtime.inbox.prepareNewThread({
+        profileName: input.profileName,
+        recipients: thread.recipients,
+        text: thread.text,
+        operatorNote: createActivitySeedOperatorNote(
+          resolvedSpecPath,
+          `new thread ${index + 1}`,
+          thread.operatorNote
+        )
+      });
+      const confirmed = await runtime.twoPhaseCommit.confirmByToken({
+        confirmToken: prepared.confirmToken
+      });
+      const threadUrl =
+        typeof confirmed.result.thread_url === "string" &&
+        confirmed.result.thread_url.trim().length > 0
+          ? confirmed.result.thread_url.trim()
+          : undefined;
+      const verification = threadUrl
+        ? await runtime.inbox.getThread({
+            profileName: input.profileName,
+            thread: threadUrl,
+            limit: 10
+          })
+        : undefined;
+      (messagingSection.new_threads as Record<string, unknown>[]).push({
+        recipients: thread.recipients,
+        text: thread.text,
+        ...summarizeConfirmedAction(confirmed),
+        ...(verification ? { verification } : {})
+      });
+      await maybeSleepSeedDelay(input.delayMs);
+    }
+
+    for (const [index, reply] of spec.messaging.replies.entries()) {
+      const prepared = await runtime.inbox.prepareReply({
+        profileName: input.profileName,
+        thread: reply.thread,
+        text: reply.text,
+        operatorNote: createActivitySeedOperatorNote(
+          resolvedSpecPath,
+          `reply ${index + 1}`,
+          reply.operatorNote
+        )
+      });
+      const confirmed = await runtime.twoPhaseCommit.confirmByToken({
+        confirmToken: prepared.confirmToken
+      });
+      const threadUrl =
+        typeof confirmed.result.thread_url === "string" &&
+        confirmed.result.thread_url.trim().length > 0
+          ? confirmed.result.thread_url.trim()
+          : reply.thread;
+      const verification = await runtime.inbox.getThread({
+        profileName: input.profileName,
+        thread: threadUrl,
+        limit: 10
+      });
+      (messagingSection.replies as Record<string, unknown>[]).push({
+        thread: reply.thread,
+        text: reply.text,
+        ...summarizeConfirmedAction(confirmed),
+        verification
+      });
+      await maybeSleepSeedDelay(input.delayMs);
+    }
+
+    report.messaging = messagingSection;
+
+    if (spec.notifications) {
+      report.notifications = await runtime.notifications.listNotifications({
+        profileName: input.profileName,
+        ...(typeof spec.notifications.limit === "number"
+          ? { limit: spec.notifications.limit }
+          : {})
+      });
+    }
+
+    report.verification = {
+      connections: await runtime.connections.listConnections({
+        profileName: input.profileName,
+        limit: Math.max(20, spec.connections.invites.length + 10)
+      }),
+      feed: await runtime.feed.viewFeed({
+        profileName: input.profileName,
+        limit: Math.max(10, spec.posts.length + 5)
+      }),
+      inbox_threads: await runtime.inbox.listThreads({
+        profileName: input.profileName,
+        limit: 10
+      })
+    };
+
+    if (input.outputPath) {
+      report.output_path = await writeOutputJsonFile(input.outputPath, report);
+    }
+
+    runtime.logger.log("info", "cli.seed.activity.done", {
+      profileName: input.profileName,
+      specPath: resolvedSpecPath,
+      totalWriteActions: planSummary.totalWriteActions,
+      totalReadSteps: planSummary.totalReadSteps
     });
 
     printJson(report);
@@ -8270,6 +8902,52 @@ export function createCliProgram(): Command {
           uploadProfileMedia: options.uploadProfileMedia,
           uploadDelayMs: coerceNonNegativeInt(options.uploadDelayMs, "upload-delay-ms"),
           ...(options.model ? { model: options.model } : {}),
+          ...(options.output ? { outputPath: options.output } : {})
+        }, readCdpUrl());
+      }
+    );
+
+  const seedCommand = program
+    .command("seed")
+    .description("Run reusable LinkedIn profile and activity seeding workflows");
+
+  seedCommand
+    .command("activity")
+    .description("Apply a paced activity seed spec for connections, posts, engagement, jobs, messaging, and notifications")
+    .requiredOption("--spec <path>", "Path to a JSON activity seed spec")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option(
+      "--delay-ms <ms>",
+      "Base delay between confirmed write actions",
+      "4500"
+    )
+    .option("-y, --yes", "Skip the interactive confirmation prompt", false)
+    .option("--output <path>", "Write the final JSON report to a file")
+    .addHelpText(
+      "after",
+      [
+        "",
+        "Notes:",
+        "  - this command batches real LinkedIn actions, so it stays CLI-only and asks for confirmation unless you pass --yes",
+        "  - start `linkedin keepalive start` first for longer seeding sessions",
+        "  - posts default to `connections` visibility when the spec omits visibility",
+        "  - generated-image posts can reuse the issue-211 image manifest via assets.generatedImageManifestPath",
+        "  - verification re-reads connections, feed, and inbox state at the end of the run"
+      ].join("\n")
+    )
+    .action(
+      async (options: {
+        profile: string;
+        spec: string;
+        delayMs: string;
+        yes: boolean;
+        output?: string;
+      }) => {
+        await runSeedActivity({
+          profileName: options.profile,
+          specPath: options.spec,
+          delayMs: coerceNonNegativeInt(options.delayMs, "delay-ms"),
+          yes: options.yes,
           ...(options.output ? { outputPath: options.output } : {})
         }, readCdpUrl());
       }
