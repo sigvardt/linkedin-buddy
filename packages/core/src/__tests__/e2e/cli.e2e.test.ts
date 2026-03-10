@@ -586,5 +586,84 @@ describe.sequential("CLI E2E", () => {
       profile_name: profileName,
       notifications: expect.any(Array)
     });
+
+    const notificationPreferences = await runCliCommand([
+      "notifications",
+      "preferences",
+      "get",
+      "--profile",
+      profileName,
+      "--notification",
+      fixtures.notificationId
+    ]);
+    expect(notificationPreferences.error).toBeUndefined();
+    expect(getLastJsonObject(notificationPreferences.stdout)).toMatchObject({
+      profile_name: profileName,
+      notification: {
+        id: fixtures.notificationId
+      },
+      preferences: expect.any(Array)
+    });
+    const notificationPreferencesPayload = getLastJsonObject(notificationPreferences.stdout);
+    const notificationPreferenceItems = notificationPreferencesPayload
+      .preferences as Array<Record<string, unknown>>;
+    const notificationPreferenceKey = notificationPreferenceItems[0]?.key as
+      | string
+      | undefined;
+    const notificationPreferenceEnabled = notificationPreferenceItems[0]?.enabled as
+      | boolean
+      | undefined;
+    expect(typeof notificationPreferenceKey).toBe("string");
+    expect(typeof notificationPreferenceEnabled).toBe("boolean");
+    if (
+      typeof notificationPreferenceKey !== "string" ||
+      typeof notificationPreferenceEnabled !== "boolean"
+    ) {
+      throw new Error("Expected at least one notification preference entry.");
+    }
+
+    const dismissNotification = await runCliCommand([
+      "notifications",
+      "dismiss",
+      "--profile",
+      profileName,
+      "--notification",
+      fixtures.notificationId
+    ]);
+    expect(dismissNotification.error).toBeUndefined();
+    expect(getLastJsonObject(dismissNotification.stdout)).toMatchObject({
+      profile_name: profileName,
+      preparedActionId: expect.stringMatching(/^pa_/),
+      confirmToken: expect.stringMatching(/^ct_/),
+      preview: {
+        notification: {
+          id: fixtures.notificationId
+        }
+      }
+    });
+
+    const prepareNotificationPreferenceUpdate = await runCliCommand([
+      "notifications",
+      "preferences",
+      "prepare-update",
+      "--profile",
+      profileName,
+      "--notification",
+      fixtures.notificationId,
+      "--set",
+      `${notificationPreferenceKey}=${notificationPreferenceEnabled ? "off" : "on"}`
+    ]);
+    expect(prepareNotificationPreferenceUpdate.error).toBeUndefined();
+    expect(getLastJsonObject(prepareNotificationPreferenceUpdate.stdout)).toMatchObject({
+      profile_name: profileName,
+      preparedActionId: expect.stringMatching(/^pa_/),
+      confirmToken: expect.stringMatching(/^ct_/),
+      preview: {
+        notification: {
+          id: fixtures.notificationId
+        },
+        changes: expect.any(Array)
+      }
+    });
   }, 240_000);
 });

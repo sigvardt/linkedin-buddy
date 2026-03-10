@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  createNotificationActionExecutors,
+  DISMISS_NOTIFICATION_ACTION_TYPE,
   LinkedInNotificationsService,
   type LinkedInNotification,
+  type LinkedInNotificationPreference,
+  type LinkedInNotificationPreferenceChangeInput,
   type ListNotificationsInput,
   type LinkedInNotificationsRuntime
 } from "../linkedinNotifications.js";
@@ -44,9 +48,35 @@ describe("LinkedInNotificationsService", () => {
     const runtimeKeys: (keyof LinkedInNotificationsRuntime)[] = [
       "auth",
       "cdpUrl",
+      "selectorLocale",
       "profileManager",
-      "logger"
+      "logger",
+      "rateLimiter",
+      "artifacts",
+      "confirmFailureArtifacts",
+      "twoPhaseCommit"
     ];
-    expect(runtimeKeys).toHaveLength(4);
+    expect(runtimeKeys).toHaveLength(9);
+  });
+
+  it("exports notification action executors", () => {
+    const executors = createNotificationActionExecutors();
+    expect(executors).toHaveProperty(DISMISS_NOTIFICATION_ACTION_TYPE);
+    expect(Object.keys(executors)).toContain("notifications.update_preferences");
+  });
+
+  it("notification preference interfaces are importable", () => {
+    const preference: LinkedInNotificationPreference = {
+      key: "this-post",
+      label: "This post",
+      enabled: true
+    };
+    const change: LinkedInNotificationPreferenceChangeInput = {
+      preference: "this-post",
+      enabled: false
+    };
+
+    expect(preference.key).toBe("this-post");
+    expect(change.enabled).toBe(false);
   });
 });

@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  LINKEDIN_NOTIFICATIONS_DISMISS_TOOL,
+  LINKEDIN_NOTIFICATIONS_PREFERENCES_GET_TOOL,
   LINKEDIN_MEMBERS_PREPARE_REPORT_TOOL,
   LINKEDIN_PRIVACY_GET_SETTINGS_TOOL
 } from "../index.js";
@@ -26,6 +28,10 @@ interface FakeRuntime {
   members: {
     prepareReportMember: ReturnType<typeof vi.fn>;
   };
+  notifications: {
+    getPreferences: ReturnType<typeof vi.fn>;
+    prepareDismiss: ReturnType<typeof vi.fn>;
+  };
   privacySettings: {
     getSettings: ReturnType<typeof vi.fn>;
   };
@@ -41,6 +47,10 @@ function createFakeRuntime(): FakeRuntime {
     },
     members: {
       prepareReportMember: vi.fn()
+    },
+    notifications: {
+      getPreferences: vi.fn(),
+      prepareDismiss: vi.fn()
     },
     privacySettings: {
       getSettings: vi.fn()
@@ -133,6 +143,85 @@ describe("handleToolCall", () => {
       targetProfile: "target-user",
       reason: "spam",
       details: "Repeated unsolicited outreach."
+    });
+    expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns notification preference payloads through the MCP contract", async () => {
+    fakeRuntime.notifications.getPreferences.mockResolvedValue({
+      notification: {
+        id: "notif-123",
+        type: "reaction",
+        message: "Fixture notification",
+        timestamp: "1h",
+        link: "https://www.linkedin.com/feed/update/notif-123",
+        is_read: false
+      },
+      heading: "Allow notifications about",
+      settings_url: "https://www.linkedin.com/mypreferences/d/categories/notifications",
+      preferences: [
+        {
+          key: "this-post",
+          label: "This post",
+          enabled: true
+        }
+      ]
+    });
+
+    const result = await handleToolCall(LINKEDIN_NOTIFICATIONS_PREFERENCES_GET_TOOL, {
+      profileName: "default",
+      notification: "notif-123"
+    });
+
+    expect("isError" in result && result.isError).toBe(false);
+    expect(parseToolPayload(result)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      notification: {
+        id: "notif-123"
+      },
+      preferences: [
+        expect.objectContaining({
+          key: "this-post",
+          enabled: true
+        })
+      ]
+    });
+    expect(fakeRuntime.notifications.getPreferences).toHaveBeenCalledWith({
+      profileName: "default",
+      notification: "notif-123"
+    });
+    expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("prepares dismiss notification actions through the MCP contract", async () => {
+    fakeRuntime.notifications.prepareDismiss.mockResolvedValue({
+      preparedActionId: "pa_test",
+      confirmToken: "ct_test",
+      expiresAtMs: 123,
+      preview: {
+        summary: "Dismiss LinkedIn notification",
+        notification: {
+          id: "notif-123"
+        }
+      }
+    });
+
+    const result = await handleToolCall(LINKEDIN_NOTIFICATIONS_DISMISS_TOOL, {
+      profileName: "default",
+      notification: "notif-123"
+    });
+
+    expect("isError" in result && result.isError).toBe(false);
+    expect(parseToolPayload(result)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      preparedActionId: "pa_test",
+      confirmToken: "ct_test"
+    });
+    expect(fakeRuntime.notifications.prepareDismiss).toHaveBeenCalledWith({
+      profileName: "default",
+      notification: "notif-123"
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });

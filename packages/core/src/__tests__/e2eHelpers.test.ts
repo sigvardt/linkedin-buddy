@@ -55,6 +55,18 @@ function createFixtureRuntime() {
           }
         ]
       }))
+    },
+    notifications: {
+      listNotifications: vi.fn(async () => [
+        {
+          id: "notif-123",
+          type: "reaction",
+          message: "Fixture notification",
+          timestamp: "1h",
+          link: "https://www.linkedin.com/feed/update/notif-123",
+          is_read: false
+        }
+      ])
     }
   } as unknown as Parameters<typeof getCliCoverageFixtures>[0];
 }
@@ -240,7 +252,9 @@ describe("E2E fixture helpers", () => {
           threadId: "thread-from-file",
           postUrl: "https://www.linkedin.com/feed/update/from-file",
           jobId: "job-from-file",
-          connectionTarget: "fixture-target"
+          connectionTarget: "fixture-target",
+          notificationId: "notif-from-file",
+          notificationLink: "https://www.linkedin.com/feed/update/notif-from-file"
         },
         null,
         2
@@ -255,11 +269,14 @@ describe("E2E fixture helpers", () => {
       threadId: "thread-from-file",
       postUrl: "https://www.linkedin.com/feed/update/from-file",
       jobId: "job-from-file",
-      connectionTarget: "fixture-target"
+      connectionTarget: "fixture-target",
+      notificationId: "notif-from-file",
+      notificationLink: "https://www.linkedin.com/feed/update/notif-from-file"
     });
     expect(runtime.inbox.listThreads).not.toHaveBeenCalled();
     expect(runtime.feed.viewFeed).not.toHaveBeenCalled();
     expect(runtime.jobs.searchJobs).not.toHaveBeenCalled();
+    expect(runtime.notifications.listNotifications).not.toHaveBeenCalled();
   });
 
   it("refreshes and rewrites the coverage fixture file when requested", async () => {
@@ -277,7 +294,9 @@ describe("E2E fixture helpers", () => {
       threadId: "thread-123",
       postUrl: "https://www.linkedin.com/feed/update/post-123",
       jobId: "job-123",
-      connectionTarget: "refresh-target"
+      connectionTarget: "refresh-target",
+      notificationId: "notif-123",
+      notificationLink: "https://www.linkedin.com/feed/update/notif-123"
     });
 
     const savedFixtures = JSON.parse(readFileSync(fixturePath, "utf8")) as Record<string, unknown>;
@@ -287,7 +306,9 @@ describe("E2E fixture helpers", () => {
       threadId: "thread-123",
       postUrl: "https://www.linkedin.com/feed/update/post-123",
       jobId: "job-123",
-      connectionTarget: "refresh-target"
+      connectionTarget: "refresh-target",
+      notificationId: "notif-123",
+      notificationLink: "https://www.linkedin.com/feed/update/notif-123"
     });
     expect(typeof savedFixtures.capturedAt).toBe("string");
   });

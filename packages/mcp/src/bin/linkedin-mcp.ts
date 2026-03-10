@@ -112,7 +112,11 @@ import {
   LINKEDIN_PRIVACY_PREPARE_UPDATE_SETTING_TOOL,
   LINKEDIN_JOBS_SEARCH_TOOL,
   LINKEDIN_JOBS_VIEW_TOOL,
+  LINKEDIN_NOTIFICATIONS_DISMISS_TOOL,
   LINKEDIN_NOTIFICATIONS_LIST_TOOL,
+  LINKEDIN_NOTIFICATIONS_MARK_READ_TOOL,
+  LINKEDIN_NOTIFICATIONS_PREFERENCES_GET_TOOL,
+  LINKEDIN_NOTIFICATIONS_PREFERENCES_PREPARE_UPDATE_TOOL,
   LINKEDIN_POST_PREPARE_CREATE_TOOL,
   LINKEDIN_POST_PREPARE_CREATE_MEDIA_TOOL,
   LINKEDIN_POST_PREPARE_CREATE_POLL_TOOL,
@@ -292,6 +296,47 @@ function readObject(
     "ACTION_PRECONDITION_FAILED",
     `${key} must be an object.`
   );
+}
+
+function readNotificationPreferenceChanges(
+  args: ToolArgs,
+  key: string
+): Array<{ preference: string; enabled: boolean }> {
+  const value = args[key];
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `${key} must be a non-empty array of { preference, enabled } objects.`
+    );
+  }
+
+  return value.map((item, index) => {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        `${key}[${index}] must be an object.`
+      );
+    }
+
+    const record = item as Record<string, unknown>;
+    const preference = record.preference;
+    const enabled = record.enabled;
+    if (
+      typeof preference !== "string" ||
+      preference.trim().length === 0 ||
+      typeof enabled !== "boolean"
+    ) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        `${key}[${index}] must include a non-empty string preference and boolean enabled.`
+      );
+    }
+
+    return {
+      preference: preference.trim(),
+      enabled
+    };
+  });
 }
 
 async function readJsonInputFile(
@@ -1730,6 +1775,147 @@ async function handleNotificationsList(args: ToolArgs): Promise<ToolResult> {
       profile_name: profileName,
       count: notifications.length,
       notifications
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleNotificationsMarkRead(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const notification = readRequiredString(args, "notification");
+
+    runtime.logger.log("info", "mcp.notifications.mark_read.start", {
+      profileName,
+      notification
+    });
+
+    const result = await runtime.notifications.markRead({
+      profileName,
+      notification
+    });
+
+    runtime.logger.log("info", "mcp.notifications.mark_read.done", {
+      profileName,
+      notificationId: result.notification.id,
+      status: result.status
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...result
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleNotificationsDismiss(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const notification = readRequiredString(args, "notification");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.notifications.dismiss.start", {
+      profileName,
+      notification
+    });
+
+    const prepared = await runtime.notifications.prepareDismiss({
+      profileName,
+      notification,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.notifications.dismiss.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleNotificationPreferencesGet(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const notification = readRequiredString(args, "notification");
+
+    runtime.logger.log("info", "mcp.notifications.preferences.get.start", {
+      profileName,
+      notification
+    });
+
+    const preferences = await runtime.notifications.getPreferences({
+      profileName,
+      notification
+    });
+
+    runtime.logger.log("info", "mcp.notifications.preferences.get.done", {
+      profileName,
+      notificationId: preferences.notification.id,
+      count: preferences.preferences.length
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...preferences
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleNotificationPreferencesPrepareUpdate(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const notification = readRequiredString(args, "notification");
+    const changes = readNotificationPreferenceChanges(args, "changes");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.notifications.preferences.prepare_update.start", {
+      profileName,
+      notification,
+      changeCount: changes.length
+    });
+
+    const prepared = await runtime.notifications.prepareUpdatePreferences({
+      profileName,
+      notification,
+      changes,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.notifications.preferences.prepare_update.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
     });
   } finally {
     runtime.close();
@@ -5000,6 +5186,130 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
+        name: LINKEDIN_NOTIFICATIONS_MARK_READ_TOOL,
+        description:
+          withSelectorAuditHint(
+            "Mark one LinkedIn notification as read immediately. Accepts a notification id, full notification link, or unique message text."
+          ),
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["notification"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            notification: {
+              type: "string",
+              description:
+                "Notification id from linkedin.notifications.list, the notification link, or a unique message fragment."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_NOTIFICATIONS_DISMISS_TOOL,
+        description:
+          withSelectorAuditHint(
+            "Prepare a two-phase dismiss for one LinkedIn notification. Returns a confirm token; use linkedin.actions.confirm to execute."
+          ),
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["notification"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            notification: {
+              type: "string",
+              description:
+                "Notification id from linkedin.notifications.list, the notification link, or a unique message fragment."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_NOTIFICATIONS_PREFERENCES_GET_TOOL,
+        description:
+          withSelectorAuditHint(
+            "Read the notification preference toggles exposed for one LinkedIn notification."
+          ),
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["notification"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            notification: {
+              type: "string",
+              description:
+                "Notification id from linkedin.notifications.list, the notification link, or a unique message fragment."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_NOTIFICATIONS_PREFERENCES_PREPARE_UPDATE_TOOL,
+        description:
+          withSelectorAuditHint(
+            "Prepare a two-phase update for one notification's preference toggles. Returns a confirm token; use linkedin.actions.confirm to execute."
+          ),
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["notification", "changes"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            notification: {
+              type: "string",
+              description:
+                "Notification id from linkedin.notifications.list, the notification link, or a unique message fragment."
+            },
+            changes: {
+              type: "array",
+              description:
+                "Requested notification preference changes as [{ preference, enabled }]. Use linkedin.notifications.preferences.get to discover preference keys first.",
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["preference", "enabled"],
+                properties: {
+                  preference: {
+                    type: "string",
+                    description: "Preference key or exact label."
+                  },
+                  enabled: {
+                    type: "boolean",
+                    description: "Desired on/off state."
+                  }
+                }
+              }
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
         name: LINKEDIN_JOBS_SEARCH_TOOL,
         description:
           withSelectorAuditHint(
@@ -5422,6 +5732,11 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   [LINKEDIN_POST_PREPARE_EDIT_TOOL]: handlePostPrepareEdit,
   [LINKEDIN_POST_PREPARE_DELETE_TOOL]: handlePostPrepareDelete,
   [LINKEDIN_NOTIFICATIONS_LIST_TOOL]: handleNotificationsList,
+  [LINKEDIN_NOTIFICATIONS_MARK_READ_TOOL]: handleNotificationsMarkRead,
+  [LINKEDIN_NOTIFICATIONS_DISMISS_TOOL]: handleNotificationsDismiss,
+  [LINKEDIN_NOTIFICATIONS_PREFERENCES_GET_TOOL]: handleNotificationPreferencesGet,
+  [LINKEDIN_NOTIFICATIONS_PREFERENCES_PREPARE_UPDATE_TOOL]:
+    handleNotificationPreferencesPrepareUpdate,
   [LINKEDIN_JOBS_SEARCH_TOOL]: handleJobsSearch,
   [LINKEDIN_JOBS_VIEW_TOOL]: handleJobsView,
   [LINKEDIN_ACTIVITY_WATCH_CREATE_TOOL]: handleActivityWatchCreate,

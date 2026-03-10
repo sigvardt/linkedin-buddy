@@ -358,6 +358,80 @@ describe.sequential("MCP E2E", () => {
       profile_name: profileName,
       notifications: expect.any(Array)
     });
+
+    const notificationPreferences = await callMcpTool(
+      MCP_TOOL_NAMES.notificationsPreferencesGet,
+      {
+        profileName,
+        notification: fixtures.notificationId
+      }
+    );
+    expect(notificationPreferences.isError).toBe(false);
+    expect(notificationPreferences.payload).toMatchObject({
+      profile_name: profileName,
+      notification: {
+        id: fixtures.notificationId
+      },
+      preferences: expect.any(Array)
+    });
+    const notificationPreferenceItems = notificationPreferences.payload
+      .preferences as Array<Record<string, unknown>>;
+    const notificationPreferenceKey = notificationPreferenceItems[0]?.key as
+      | string
+      | undefined;
+    const notificationPreferenceEnabled = notificationPreferenceItems[0]?.enabled as
+      | boolean
+      | undefined;
+    expect(typeof notificationPreferenceKey).toBe("string");
+    expect(typeof notificationPreferenceEnabled).toBe("boolean");
+    if (
+      typeof notificationPreferenceKey !== "string" ||
+      typeof notificationPreferenceEnabled !== "boolean"
+    ) {
+      throw new Error("Expected at least one notification preference entry.");
+    }
+
+    const notificationDismiss = await callMcpTool(MCP_TOOL_NAMES.notificationsDismiss, {
+      profileName,
+      notification: fixtures.notificationId
+    });
+    expect(notificationDismiss.isError).toBe(false);
+    expect(notificationDismiss.payload).toMatchObject({
+      profile_name: profileName,
+      preparedActionId: expect.stringMatching(/^pa_/),
+      confirmToken: expect.stringMatching(/^ct_/),
+      preview: {
+        notification: {
+          id: fixtures.notificationId
+        }
+      }
+    });
+
+    const notificationPreferenceUpdate = await callMcpTool(
+      MCP_TOOL_NAMES.notificationsPreferencesPrepareUpdate,
+      {
+        profileName,
+        notification: fixtures.notificationId,
+        changes: [
+          {
+            preference: notificationPreferenceKey,
+            enabled: !notificationPreferenceEnabled
+          }
+        ]
+      }
+    );
+    expect(notificationPreferenceUpdate.isError).toBe(false);
+    expect(notificationPreferenceUpdate.payload).toMatchObject({
+      profile_name: profileName,
+      preparedActionId: expect.stringMatching(/^pa_/),
+      confirmToken: expect.stringMatching(/^ct_/),
+      preview: {
+        notification: {
+          id: fixtures.notificationId
+        },
+        changes: expect.any(Array)
+      }
+    });
   }, 180_000);
 
   it("covers profile, search, and jobs tools", async (context) => {

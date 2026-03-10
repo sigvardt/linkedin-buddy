@@ -91,6 +91,13 @@ export const LINKEDIN_POST_PREPARE_CREATE_POLL_TOOL =
 export const LINKEDIN_POST_PREPARE_EDIT_TOOL = "linkedin.post.prepare_edit";
 export const LINKEDIN_POST_PREPARE_DELETE_TOOL = "linkedin.post.prepare_delete";
 export const LINKEDIN_NOTIFICATIONS_LIST_TOOL = "linkedin.notifications.list";
+export const LINKEDIN_NOTIFICATIONS_MARK_READ_TOOL =
+  "linkedin.notifications.mark_read";
+export const LINKEDIN_NOTIFICATIONS_DISMISS_TOOL = "linkedin.notifications.dismiss";
+export const LINKEDIN_NOTIFICATIONS_PREFERENCES_GET_TOOL =
+  "linkedin.notifications.preferences.get";
+export const LINKEDIN_NOTIFICATIONS_PREFERENCES_PREPARE_UPDATE_TOOL =
+  "linkedin.notifications.preferences.prepare_update";
 export const LINKEDIN_JOBS_SEARCH_TOOL = "linkedin.jobs.search";
 export const LINKEDIN_JOBS_VIEW_TOOL = "linkedin.jobs.view";
 export const LINKEDIN_ACTIVITY_WATCH_CREATE_TOOL = "linkedin.activity_watch.create";

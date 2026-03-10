@@ -39,7 +39,11 @@ import {
   LINKEDIN_MEMBERS_PREPARE_BLOCK_TOOL,
   LINKEDIN_MEMBERS_PREPARE_REPORT_TOOL,
   LINKEDIN_MEMBERS_PREPARE_UNBLOCK_TOOL,
+  LINKEDIN_NOTIFICATIONS_DISMISS_TOOL,
   LINKEDIN_NOTIFICATIONS_LIST_TOOL,
+  LINKEDIN_NOTIFICATIONS_MARK_READ_TOOL,
+  LINKEDIN_NOTIFICATIONS_PREFERENCES_GET_TOOL,
+  LINKEDIN_NOTIFICATIONS_PREFERENCES_PREPARE_UPDATE_TOOL,
   LINKEDIN_POST_PREPARE_CREATE_TOOL,
   LINKEDIN_POST_PREPARE_CREATE_MEDIA_TOOL,
   LINKEDIN_POST_PREPARE_CREATE_POLL_TOOL,
@@ -94,6 +98,8 @@ export interface CliCoverageFixtures {
   postUrl: string;
   jobId: string;
   connectionTarget: string;
+  notificationId: string;
+  notificationLink: string;
 }
 
 /** Optional execution controls shared by the CLI and MCP wrapper helpers. */
@@ -310,6 +316,14 @@ function parseCliCoverageFixtures(
     connectionTarget: assertNonEmptyString(
       record.connectionTarget,
       `${sourceLabel}.connectionTarget`
+    ),
+    notificationId: assertNonEmptyString(
+      record.notificationId,
+      `${sourceLabel}.notificationId`
+    ),
+    notificationLink: assertNonEmptyString(
+      record.notificationLink,
+      `${sourceLabel}.notificationLink`
     )
   };
 }
@@ -895,16 +909,45 @@ export async function getJob(runtime: CoreRuntime): Promise<{
   };
 }
 
+/** Discovers one notification target used by the CLI and MCP contract suites. */
+export async function getNotification(runtime: CoreRuntime): Promise<{
+  id: string;
+  link: string;
+  message: string;
+}> {
+  const profileName = getDefaultProfileName();
+  const notifications = await runtime.notifications.listNotifications({
+    profileName,
+    limit: 10
+  });
+
+  const notification = notifications[0];
+  if (!notification) {
+    throw new Error(
+      "No LinkedIn notification was available for E2E coverage. Refresh the test account activity or saved fixtures."
+    );
+  }
+
+  return {
+    id: notification.id,
+    link: notification.link,
+    message: notification.message
+  };
+}
+
 async function discoverCliCoverageFixtures(runtime: CoreRuntime): Promise<CliCoverageFixtures> {
   const thread = await getMessageThread(runtime);
   const post = await getFeedPost(runtime);
   const job = await getJob(runtime);
+  const notification = await getNotification(runtime);
 
   return {
     threadId: thread.thread_id,
     postUrl: post.post_url,
     jobId: job.job_id,
-    connectionTarget: getDefaultConnectionTarget()
+    connectionTarget: getDefaultConnectionTarget(),
+    notificationId: notification.id,
+    notificationLink: notification.link
   };
 }
 
@@ -984,6 +1027,11 @@ export const MCP_TOOL_NAMES = {
   postPrepareEdit: LINKEDIN_POST_PREPARE_EDIT_TOOL,
   postPrepareDelete: LINKEDIN_POST_PREPARE_DELETE_TOOL,
   notificationsList: LINKEDIN_NOTIFICATIONS_LIST_TOOL,
+  notificationsMarkRead: LINKEDIN_NOTIFICATIONS_MARK_READ_TOOL,
+  notificationsDismiss: LINKEDIN_NOTIFICATIONS_DISMISS_TOOL,
+  notificationsPreferencesGet: LINKEDIN_NOTIFICATIONS_PREFERENCES_GET_TOOL,
+  notificationsPreferencesPrepareUpdate:
+    LINKEDIN_NOTIFICATIONS_PREFERENCES_PREPARE_UPDATE_TOOL,
   jobsSearch: LINKEDIN_JOBS_SEARCH_TOOL,
   jobsView: LINKEDIN_JOBS_VIEW_TOOL,
   actionsConfirm: LINKEDIN_ACTIONS_CONFIRM_TOOL
