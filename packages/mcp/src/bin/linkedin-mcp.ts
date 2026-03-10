@@ -10,12 +10,14 @@ import {
   DEFAULT_LINKEDIN_PERSONA_POST_IMAGE_COUNT,
   DEFAULT_FOLLOWUP_SINCE,
   LINKEDIN_FEED_REACTION_TYPES,
+  LINKEDIN_INBOX_REACTION_TYPES,
   LINKEDIN_POST_VISIBILITY_TYPES,
   LINKEDIN_SELECTOR_LOCALES,
   LinkedInAssistantError,
   buildLinkedInImagePersonaFromProfileSeed,
   createCoreRuntime,
   normalizeLinkedInFeedReaction,
+  normalizeLinkedInInboxReaction,
   normalizeLinkedInPostVisibility,
   resolveFollowupSinceWindow,
   redactStructuredValue,
@@ -73,11 +75,16 @@ import {
   LINKEDIN_FEED_UNSAVE_POST_TOOL,
   LINKEDIN_FEED_VIEW_POST_TOOL,
   LINKEDIN_INBOX_GET_THREAD_TOOL,
+  LINKEDIN_INBOX_ARCHIVE_THREAD_TOOL,
   LINKEDIN_INBOX_LIST_THREADS_TOOL,
+  LINKEDIN_INBOX_MARK_UNREAD_TOOL,
   LINKEDIN_INBOX_PREPARE_ADD_RECIPIENTS_TOOL,
   LINKEDIN_INBOX_PREPARE_NEW_THREAD_TOOL,
+  LINKEDIN_INBOX_PREPARE_REACT_TOOL,
   LINKEDIN_INBOX_PREPARE_REPLY_TOOL,
+  LINKEDIN_INBOX_MUTE_THREAD_TOOL,
   LINKEDIN_INBOX_SEARCH_RECIPIENTS_TOOL,
+  LINKEDIN_INBOX_UNARCHIVE_THREAD_TOOL,
   LINKEDIN_PROFILE_PREPARE_FEATURED_ADD_TOOL,
   LINKEDIN_PROFILE_PREPARE_FEATURED_REMOVE_TOOL,
   LINKEDIN_PROFILE_PREPARE_FEATURED_REORDER_TOOL,
@@ -191,6 +198,30 @@ function readOptionalPositiveNumber(
   }
 
   return readPositiveNumber(args, key, 1);
+}
+
+function readOptionalNonNegativeNumber(
+  args: ToolArgs,
+  key: string
+): number | undefined {
+  if (!(key in args) || args[key] === undefined) {
+    return undefined;
+  }
+
+  const value = args[key];
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    !Number.isInteger(value) ||
+    value < 0
+  ) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `${key} must be a non-negative integer.`
+    );
+  }
+
+  return value;
 }
 
 function readStringArray(args: ToolArgs, key: string): string[] | undefined {
@@ -789,6 +820,180 @@ async function handlePrepareAddRecipients(args: ToolArgs): Promise<ToolResult> {
       run_id: runtime.runId,
       profile_name: profileName,
       ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handlePrepareReact(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const thread = readRequiredString(args, "thread");
+    const reaction = normalizeLinkedInInboxReaction(readString(args, "reaction", "like"));
+    const messageIndex = readOptionalNonNegativeNumber(args, "messageIndex");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.inbox.prepare_react.start", {
+      profileName,
+      thread,
+      reaction,
+      messageIndex
+    });
+
+    const prepared = await runtime.inbox.prepareReact({
+      profileName,
+      thread,
+      reaction,
+      ...(messageIndex !== undefined ? { messageIndex } : {}),
+      ...(operatorNote
+        ? {
+            operatorNote
+          }
+        : {})
+    });
+
+    runtime.logger.log("info", "mcp.inbox.prepare_react.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId,
+      reaction,
+      messageIndex
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleArchiveThread(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const thread = readRequiredString(args, "thread");
+
+    runtime.logger.log("info", "mcp.inbox.archive_thread.start", {
+      profileName,
+      thread
+    });
+
+    const result = await runtime.inbox.archiveThread({
+      profileName,
+      thread
+    });
+
+    runtime.logger.log("info", "mcp.inbox.archive_thread.done", {
+      profileName,
+      threadId: result.thread_id
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...result
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleUnarchiveThread(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const thread = readRequiredString(args, "thread");
+
+    runtime.logger.log("info", "mcp.inbox.unarchive_thread.start", {
+      profileName,
+      thread
+    });
+
+    const result = await runtime.inbox.unarchiveThread({
+      profileName,
+      thread
+    });
+
+    runtime.logger.log("info", "mcp.inbox.unarchive_thread.done", {
+      profileName,
+      threadId: result.thread_id
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...result
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleMarkUnread(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const thread = readRequiredString(args, "thread");
+
+    runtime.logger.log("info", "mcp.inbox.mark_unread.start", {
+      profileName,
+      thread
+    });
+
+    const result = await runtime.inbox.markUnread({
+      profileName,
+      thread
+    });
+
+    runtime.logger.log("info", "mcp.inbox.mark_unread.done", {
+      profileName,
+      threadId: result.thread_id
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...result
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleMuteThread(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const thread = readRequiredString(args, "thread");
+
+    runtime.logger.log("info", "mcp.inbox.mute_thread.start", {
+      profileName,
+      thread
+    });
+
+    const result = await runtime.inbox.muteThread({
+      profileName,
+      thread
+    });
+
+    runtime.logger.log("info", "mcp.inbox.mute_thread.done", {
+      profileName,
+      threadId: result.thread_id
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...result
     });
   } finally {
     runtime.close();
@@ -2876,6 +3081,124 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
+        name: LINKEDIN_INBOX_PREPARE_REACT_TOOL,
+        description:
+          "Prepare a two-phase reaction for a message in an existing LinkedIn thread. Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["thread"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            },
+            thread: {
+              type: "string",
+              description: "Thread id or LinkedIn thread URL."
+            },
+            reaction: {
+              type: "string",
+              description:
+                `Reaction to apply. Accepts canonical or alias values and normalizes to one of: ${LINKEDIN_INBOX_REACTION_TYPES.join(", ")}. Defaults to like.`
+            },
+            messageIndex: {
+              type: "integer",
+              description:
+                "Zero-based thread message index to react to. Defaults to the latest message returned by the thread."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note stored with the prepared action."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_INBOX_ARCHIVE_THREAD_TOOL,
+        description: withSelectorAuditHint(
+          "Archive a LinkedIn inbox thread immediately."
+        ),
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["thread"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            },
+            thread: {
+              type: "string",
+              description: "Thread id or LinkedIn thread URL."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_INBOX_UNARCHIVE_THREAD_TOOL,
+        description: withSelectorAuditHint(
+          "Move an archived LinkedIn inbox thread back to the main inbox immediately."
+        ),
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["thread"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            },
+            thread: {
+              type: "string",
+              description: "Thread id or LinkedIn thread URL."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_INBOX_MARK_UNREAD_TOOL,
+        description: withSelectorAuditHint(
+          "Mark a LinkedIn inbox thread as unread immediately."
+        ),
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["thread"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            },
+            thread: {
+              type: "string",
+              description: "Thread id or LinkedIn thread URL."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_INBOX_MUTE_THREAD_TOOL,
+        description: withSelectorAuditHint(
+          "Mute a LinkedIn inbox thread immediately."
+        ),
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["thread"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            },
+            thread: {
+              type: "string",
+              description: "Thread id or LinkedIn thread URL."
+            }
+          })
+        }
+      },
+      {
         name: LINKEDIN_PROFILE_VIEW_TOOL,
         description:
           withSelectorAuditHint(
@@ -4312,6 +4635,11 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   [LINKEDIN_INBOX_PREPARE_REPLY_TOOL]: handlePrepareReply,
   [LINKEDIN_INBOX_PREPARE_NEW_THREAD_TOOL]: handlePrepareNewThread,
   [LINKEDIN_INBOX_PREPARE_ADD_RECIPIENTS_TOOL]: handlePrepareAddRecipients,
+  [LINKEDIN_INBOX_PREPARE_REACT_TOOL]: handlePrepareReact,
+  [LINKEDIN_INBOX_ARCHIVE_THREAD_TOOL]: handleArchiveThread,
+  [LINKEDIN_INBOX_UNARCHIVE_THREAD_TOOL]: handleUnarchiveThread,
+  [LINKEDIN_INBOX_MARK_UNREAD_TOOL]: handleMarkUnread,
+  [LINKEDIN_INBOX_MUTE_THREAD_TOOL]: handleMuteThread,
   [LINKEDIN_PROFILE_VIEW_TOOL]: handleProfileView,
   [LINKEDIN_PROFILE_VIEW_EDITABLE_TOOL]: handleProfileViewEditable,
   [LINKEDIN_PROFILE_PREPARE_UPDATE_INTRO_TOOL]: handleProfilePrepareUpdateIntro,

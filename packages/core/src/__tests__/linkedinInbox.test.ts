@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   ADD_RECIPIENTS_ACTION_TYPE,
+  REACT_MESSAGE_ACTION_TYPE,
   SEND_MESSAGE_ACTION_TYPE,
   SEND_NEW_THREAD_ACTION_TYPE,
   LinkedInInboxService,
@@ -130,6 +131,7 @@ describe("LinkedIn inbox action executors", () => {
     expect(executors[SEND_MESSAGE_ACTION_TYPE]).toBeDefined();
     expect(executors[SEND_NEW_THREAD_ACTION_TYPE]).toBeDefined();
     expect(executors[ADD_RECIPIENTS_ACTION_TYPE]).toBeDefined();
+    expect(executors[REACT_MESSAGE_ACTION_TYPE]).toBeDefined();
   });
 });
 
@@ -232,6 +234,60 @@ describe("LinkedInInboxService", () => {
               profile_url: "https://www.linkedin.com/in/alexexample/"
             })
           ]
+        }
+      })
+    );
+    expect(result).toMatchObject({
+      preparedActionId: "pa_test",
+      confirmToken: "ct_test"
+    });
+  });
+
+  it("prepareReact targets the selected thread message and normalizes reaction aliases", async () => {
+    const { runtime, mocks } = createMockRuntime();
+    const service = new LinkedInInboxService(runtime);
+    vi.spyOn(service, "getThread").mockResolvedValue({
+      thread_id: "thread-1",
+      title: "Simon Miller",
+      unread_count: 0,
+      snippet: "Last message",
+      thread_url: "https://www.linkedin.com/messaging/thread/thread-1/",
+      messages: [
+        {
+          author: "Simon Miller",
+          sent_at: "2026-03-10T10:00:00.000Z",
+          text: "First message"
+        },
+        {
+          author: "Simon Miller",
+          sent_at: "2026-03-10T10:05:00.000Z",
+          text: "Second message"
+        }
+      ]
+    });
+
+    const result = await service.prepareReact({
+      profileName: "default",
+      thread: "thread-1",
+      reaction: "praise",
+      messageIndex: 1
+    });
+
+    expect(mocks.prepare).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actionType: REACT_MESSAGE_ACTION_TYPE,
+        target: expect.objectContaining({
+          profile_name: "default",
+          thread_id: "thread-1",
+          message: {
+            index: 1,
+            author: "Simon Miller",
+            sent_at: "2026-03-10T10:05:00.000Z",
+            text: "Second message"
+          }
+        }),
+        payload: {
+          reaction: "celebrate"
         }
       })
     );
