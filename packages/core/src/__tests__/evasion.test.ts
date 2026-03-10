@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Page } from "playwright-core";
 import {
+  applyFingerprintHardening,
   computeBezierPath,
   computeReadingPauseMs,
   detectCaptcha,
@@ -249,6 +250,35 @@ describe("EVASION_PROFILES", () => {
   });
 });
 
+// --- applyFingerprintHardening ---
+
+describe("applyFingerprintHardening", () => {
+  it("is a no-op in minimal mode", async () => {
+    const { evaluate, page } = createPageMock();
+
+    await applyFingerprintHardening(page, "minimal");
+
+    expect(evaluate).not.toHaveBeenCalled();
+  });
+
+  it("applies webdriver hardening in moderate mode", async () => {
+    const { evaluate, page } = createPageMock();
+
+    await applyFingerprintHardening(page, "moderate");
+
+    expect(evaluate).toHaveBeenCalledOnce();
+  });
+
+  it("adds canvas noise hardening in paranoid mode", async () => {
+    const { evaluate, evaluateCalls, page } = createPageMock();
+
+    await applyFingerprintHardening(page, "paranoid");
+
+    expect(evaluate).toHaveBeenCalledTimes(2);
+    expect(typeof (evaluateCalls[1] as { arg: unknown } | undefined)?.arg).toBe("number");
+  });
+});
+
 // --- simulateMomentumScroll ---
 
 describe("simulateMomentumScroll", () => {
@@ -490,6 +520,26 @@ describe("EvasionSession", () => {
       // Internal state is reflected in subsequent idle drift.
       // (We verify indirectly: calling idle with drift enabled should use the updated coords)
       expect(session.activeLevel).toBe("minimal"); // sanity check
+    });
+  });
+
+  describe("hardenFingerprint", () => {
+    it("skips hardening when the profile disables it", async () => {
+      const { evaluate, page } = createPageMock();
+      const session = new EvasionSession(page, "minimal");
+
+      await session.hardenFingerprint();
+
+      expect(evaluate).not.toHaveBeenCalled();
+    });
+
+    it("delegates hardening when the profile enables it", async () => {
+      const { evaluate, page } = createPageMock();
+      const session = new EvasionSession(page, "paranoid");
+
+      await session.hardenFingerprint();
+
+      expect(evaluate).toHaveBeenCalledTimes(2);
     });
   });
 
