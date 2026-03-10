@@ -510,6 +510,120 @@ describe.sequential("MCP E2E", () => {
           }
         }
       });
+
+      const addSkill = await callMcpTool(MCP_TOOL_NAMES.profilePrepareAddSkill, {
+        profileName,
+        skillName: "TypeScript"
+      });
+      expect(addSkill.isError).toBe(false);
+      expect(addSkill.payload).toMatchObject({
+        profile_name: profileName,
+        preparedActionId: expect.stringMatching(/^pa_/),
+        confirmToken: expect.stringMatching(/^ct_/),
+        preview: {
+          skill_name: "TypeScript",
+          target: {
+            profile_name: profileName
+          }
+        }
+      });
+
+      const reorderSkills = await callMcpTool(
+        MCP_TOOL_NAMES.profilePrepareReorderSkills,
+        {
+          profileName,
+          skillNames: ["TypeScript", "Playwright"]
+        }
+      );
+      expect(reorderSkills.isError).toBe(false);
+      expect(reorderSkills.payload).toMatchObject({
+        profile_name: profileName,
+        preparedActionId: expect.stringMatching(/^pa_/),
+        confirmToken: expect.stringMatching(/^ct_/),
+        preview: {
+          skill_names: ["TypeScript", "Playwright"],
+          target: {
+            profile_name: profileName
+          }
+        }
+      });
+
+      const endorseSkill = await callMcpTool(
+        MCP_TOOL_NAMES.profilePrepareEndorseSkill,
+        {
+          profileName,
+          target: fixtures.connectionTarget,
+          skillName: "JavaScript"
+        }
+      );
+      expect(endorseSkill.isError).toBe(false);
+      expect(endorseSkill.payload).toMatchObject({
+        profile_name: profileName,
+        preparedActionId: expect.stringMatching(/^pa_/),
+        confirmToken: expect.stringMatching(/^ct_/),
+        preview: {
+          skill_name: "JavaScript",
+          target: {
+            profile_name: profileName,
+            target_profile: fixtures.connectionTarget,
+            target_profile_url: expect.stringContaining("linkedin.com/in/")
+          }
+        }
+      });
+
+      const requestRecommendation = await callMcpTool(
+        MCP_TOOL_NAMES.profilePrepareRequestRecommendation,
+        {
+          profileName,
+          target: fixtures.connectionTarget,
+          relationship: "colleague",
+          message: "Would love a short recommendation when you have time."
+        }
+      );
+      expect(requestRecommendation.isError).toBe(false);
+      expect(requestRecommendation.payload).toMatchObject({
+        profile_name: profileName,
+        preparedActionId: expect.stringMatching(/^pa_/),
+        confirmToken: expect.stringMatching(/^ct_/),
+        preview: {
+          fields: {
+            relationship: "colleague",
+            message: "Would love a short recommendation when you have time."
+          },
+          target: {
+            profile_name: profileName,
+            target_profile: fixtures.connectionTarget,
+            target_profile_url: expect.stringContaining("linkedin.com/in/")
+          }
+        }
+      });
+
+      const writeRecommendation = await callMcpTool(
+        MCP_TOOL_NAMES.profilePrepareWriteRecommendation,
+        {
+          profileName,
+          target: fixtures.connectionTarget,
+          relationship: "colleague",
+          text: "A thoughtful collaborator who consistently follows through."
+        }
+      );
+      expect(writeRecommendation.isError).toBe(false);
+      expect(writeRecommendation.payload).toMatchObject({
+        profile_name: profileName,
+        preparedActionId: expect.stringMatching(/^pa_/),
+        confirmToken: expect.stringMatching(/^ct_/),
+        preview: {
+          fields: {
+            relationship: "colleague",
+            text: "A thoughtful collaborator who consistently follows through."
+          },
+          target: {
+            profile_name: profileName,
+            target_profile: fixtures.connectionTarget,
+            target_profile_url: expect.stringContaining("linkedin.com/in/")
+          }
+        }
+      });
     } finally {
       rmSync(tempDir, { force: true, recursive: true });
     }

@@ -76,6 +76,13 @@ export const UPLOAD_PROFILE_BANNER_ACTION_TYPE = "profile.upload_banner";
 export const ADD_PROFILE_FEATURED_ACTION_TYPE = "profile.featured_add";
 export const REMOVE_PROFILE_FEATURED_ACTION_TYPE = "profile.featured_remove";
 export const REORDER_PROFILE_FEATURED_ACTION_TYPE = "profile.featured_reorder";
+export const ADD_PROFILE_SKILL_ACTION_TYPE = "profile.skill_add";
+export const REORDER_PROFILE_SKILLS_ACTION_TYPE = "profile.skills_reorder";
+export const ENDORSE_PROFILE_SKILL_ACTION_TYPE = "profile.skill_endorse";
+export const REQUEST_PROFILE_RECOMMENDATION_ACTION_TYPE =
+  "profile.recommendation_request";
+export const WRITE_PROFILE_RECOMMENDATION_ACTION_TYPE =
+  "profile.recommendation_write";
 
 export const LINKEDIN_PROFILE_SECTION_TYPES = [
   "about",
@@ -236,6 +243,45 @@ export interface PrepareFeaturedRemoveInput {
 export interface PrepareFeaturedReorderInput {
   profileName?: string;
   itemIds: string[];
+  operatorNote?: string;
+}
+
+export interface PrepareAddSkillInput {
+  profileName?: string;
+  skillName: string;
+  operatorNote?: string;
+}
+
+export interface PrepareReorderSkillsInput {
+  profileName?: string;
+  skillNames: string[];
+  operatorNote?: string;
+}
+
+export interface PrepareEndorseSkillInput {
+  profileName?: string;
+  target: string;
+  skillName: string;
+  operatorNote?: string;
+}
+
+export interface PrepareRequestRecommendationInput {
+  profileName?: string;
+  target: string;
+  relationship?: string;
+  position?: string;
+  company?: string;
+  message?: string;
+  operatorNote?: string;
+}
+
+export interface PrepareWriteRecommendationInput {
+  profileName?: string;
+  target: string;
+  text: string;
+  relationship?: string;
+  position?: string;
+  company?: string;
   operatorNote?: string;
 }
 
@@ -446,6 +492,73 @@ const PROFILE_MEDIA_LABELS = {
       "Skift billede",
       "Vælg billede"
     ]
+  }
+} as const;
+
+const PROFILE_SKILL_LABELS = {
+  section: {
+    en: ["Skills"],
+    da: ["Kompetencer", "Færdigheder"]
+  },
+  add: {
+    en: ["Add skill", "Add a skill", "Add skills", "Skill"],
+    da: [
+      "Tilføj færdighed",
+      "Tilføj en færdighed",
+      "Tilføj kompetence",
+      "Tilføj kompetencer"
+    ]
+  },
+  showAll: {
+    en: ["Show all skills", "Show all"],
+    da: ["Vis alle færdigheder", "Vis alle kompetencer", "Vis alle"]
+  },
+  endorse: {
+    en: ["Endorse"],
+    da: ["Anerkend", "Støt", "Anbefal"]
+  }
+} as const;
+
+const PROFILE_RECOMMENDATION_LABELS = {
+  request: {
+    en: [
+      "Request a recommendation",
+      "Request recommendation",
+      "Ask for a recommendation"
+    ],
+    da: ["Bed om en anbefaling", "Anmod om en anbefaling"]
+  },
+  write: {
+    en: ["Recommend", "Write a recommendation", "Give recommendation"],
+    da: ["Anbefal", "Skriv en anbefaling", "Giv en anbefaling"]
+  },
+  next: {
+    en: ["Next", "Continue"],
+    da: ["Næste", "Fortsæt"]
+  },
+  send: {
+    en: ["Send", "Submit"],
+    da: ["Send", "Indsend"]
+  },
+  relationshipField: {
+    en: ["Relationship", "Relationship to"],
+    da: ["Relation", "Forhold"]
+  },
+  positionField: {
+    en: ["Position at the time", "Position"],
+    da: ["Stilling på det tidspunkt", "Stilling"]
+  },
+  companyField: {
+    en: ["Company at the time", "Company"],
+    da: ["Virksomhed på det tidspunkt", "Virksomhed"]
+  },
+  messageField: {
+    en: ["Message", "Add a message", "Personal message"],
+    da: ["Besked", "Tilføj en besked", "Personlig besked"]
+  },
+  textField: {
+    en: ["Recommendation", "Write a recommendation"],
+    da: ["Anbefaling", "Skriv en anbefaling"]
   }
 } as const;
 
@@ -824,6 +937,60 @@ const FEATURED_MEDIA_FIELD_DEFINITIONS = [
   }
 ] as const satisfies readonly EditableFieldDefinition[];
 
+const SKILL_FIELD_DEFINITIONS = [
+  {
+    key: "skillName",
+    aliases: ["skillName", "skill", "Skill", "Skills"],
+    control: "text"
+  }
+] as const satisfies readonly EditableFieldDefinition[];
+
+const RECOMMENDATION_COMMON_FIELD_DEFINITIONS = [
+  {
+    key: "relationship",
+    aliases: [
+      "relationship",
+      "Relationship",
+      "Relationship to",
+      "Your relationship"
+    ],
+    control: "select"
+  },
+  {
+    key: "position",
+    aliases: [
+      "position",
+      "Position",
+      "Position at the time",
+      "Your position"
+    ],
+    control: "select"
+  },
+  {
+    key: "company",
+    aliases: ["company", "Company", "Company at the time"],
+    control: "select"
+  }
+] as const satisfies readonly EditableFieldDefinition[];
+
+const RECOMMENDATION_REQUEST_FIELD_DEFINITIONS = [
+  ...RECOMMENDATION_COMMON_FIELD_DEFINITIONS,
+  {
+    key: "message",
+    aliases: ["message", "Message", "Add a message", "Personal message"],
+    control: "textarea"
+  }
+] as const satisfies readonly EditableFieldDefinition[];
+
+const RECOMMENDATION_WRITE_FIELD_DEFINITIONS = [
+  ...RECOMMENDATION_COMMON_FIELD_DEFINITIONS,
+  {
+    key: "text",
+    aliases: ["text", "recommendation", "Recommendation", "Write a recommendation"],
+    control: "textarea"
+  }
+] as const satisfies readonly EditableFieldDefinition[];
+
 function normalizeText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
 }
@@ -938,6 +1105,60 @@ function requireFilePath(value: string | undefined, label: string): string {
     "ACTION_PRECONDITION_FAILED",
     `${label} is required.`
   );
+}
+
+function requireNonEmptyText(value: string | undefined, label: string): string {
+  const normalizedValue = normalizeText(value);
+  if (normalizedValue.length > 0) {
+    return normalizedValue;
+  }
+
+  throw new LinkedInAssistantError(
+    "ACTION_PRECONDITION_FAILED",
+    `${label} is required.`
+  );
+}
+
+function resolveExternalProfileTarget(
+  target: string | undefined,
+  label: string
+): string {
+  const normalizedTarget = requireNonEmptyText(target, label);
+  if (normalizedTarget.toLowerCase() === "me") {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      `${label} must refer to another LinkedIn member.`
+    );
+  }
+
+  return resolveProfileUrl(normalizedTarget);
+}
+
+function normalizeSkillName(value: string | undefined): string {
+  return requireNonEmptyText(value, "skillName");
+}
+
+function normalizeSkillNames(skillNames: readonly string[]): string[] {
+  const normalizedSkillNames = skillNames
+    .filter((skillName): skillName is string => typeof skillName === "string")
+    .map((skillName) => normalizeText(skillName))
+    .filter((skillName) => skillName.length > 0);
+
+  if (normalizedSkillNames.length === 0) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      "skillNames must include at least one non-empty skill name."
+    );
+  }
+
+  if (new Set(normalizedSkillNames).size !== normalizedSkillNames.length) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      "skillNames must be unique."
+    );
+  }
+
+  return normalizedSkillNames;
 }
 
 function normalizeAbsoluteUrl(value: string | undefined, label: string): string {
@@ -1778,6 +1999,20 @@ function getProfileMediaActionLabels(
   return getLocalizedLabels(PROFILE_MEDIA_LABELS[action], locale);
 }
 
+function getSkillActionLabels(
+  action: keyof typeof PROFILE_SKILL_LABELS,
+  locale: LinkedInSelectorLocale
+): string[] {
+  return getLocalizedLabels(PROFILE_SKILL_LABELS[action], locale);
+}
+
+function getRecommendationActionLabels(
+  action: keyof typeof PROFILE_RECOMMENDATION_LABELS,
+  locale: LinkedInSelectorLocale
+): string[] {
+  return getLocalizedLabels(PROFILE_RECOMMENDATION_LABELS[action], locale);
+}
+
 function getSectionLabels(
   section: LinkedInProfileSectionType,
   locale: LinkedInSelectorLocale
@@ -2064,6 +2299,41 @@ function normalizeEditableValues(
   return normalized;
 }
 
+function normalizeOptionalEditableValues(
+  values: Record<string, unknown>,
+  definitions: readonly EditableFieldDefinition[]
+): Record<string, NormalizedEditableValue> {
+  const fieldMap = buildEditableFieldAliasMap(definitions);
+  const normalized: Record<string, NormalizedEditableValue> = {};
+
+  for (const [rawKey, rawValue] of Object.entries(values)) {
+    if (rawValue === undefined || rawValue === null) {
+      continue;
+    }
+
+    const definition = fieldMap.get(normalizeFieldKey(rawKey));
+    if (!definition) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        `Unsupported editable field "${rawKey}".`,
+        {
+          field: rawKey,
+          allowed_fields: definitions.map((definitionItem) => definitionItem.key)
+        }
+      );
+    }
+
+    const normalizedValue = normalizeEditableValue(rawValue);
+    if (typeof normalizedValue === "string" && normalizedValue.length === 0) {
+      continue;
+    }
+
+    normalized[definition.key] = normalizedValue;
+  }
+
+  return normalized;
+}
+
 function normalizeProfileSectionItemMatch(
   match: LinkedInProfileSectionItemMatch | Record<string, unknown> | undefined,
   itemId: string | undefined,
@@ -2307,6 +2577,21 @@ async function findFeaturedSectionRoot(
   selectorLocale: LinkedInSelectorLocale
 ): Promise<Locator | null> {
   const headingRegex = buildTextRegex(getFeaturedActionLabels("section", selectorLocale), true);
+  const candidate = page
+    .locator("section, div.pv-profile-card, div.artdeco-card")
+    .filter({
+      has: page.locator("h2, h3, .pvs-header__title").filter({ hasText: headingRegex }).first()
+    })
+    .first();
+
+  return (await isLocatorVisible(candidate)) ? candidate : null;
+}
+
+async function findSkillsSectionRoot(
+  page: Page,
+  selectorLocale: LinkedInSelectorLocale
+): Promise<Locator | null> {
+  const headingRegex = buildTextRegex(getSkillActionLabels("section", selectorLocale), true);
   const candidate = page
     .locator("section, div.pv-profile-card, div.artdeco-card")
     .filter({
@@ -2891,6 +3176,32 @@ async function clickDeleteInDialog(
   await page.locator("[role='dialog']").last().waitFor({ state: "hidden", timeout: 10_000 }).catch(
     () => undefined
   );
+  await waitForNetworkIdleBestEffort(page);
+}
+
+async function clickDialogAction(
+  page: Page,
+  dialog: Locator,
+  labels: readonly string[],
+  keyPrefix: string
+): Promise<void> {
+  const candidates: LocatorCandidate[] = [
+    ...createActionCandidates(dialog, labels, keyPrefix),
+    {
+      key: `${keyPrefix}-submit`,
+      locator: dialog.locator("button[type='submit']")
+    }
+  ];
+  const resolved = await findFirstVisibleLocator(candidates);
+  if (!resolved) {
+    throw new LinkedInAssistantError(
+      "TARGET_NOT_FOUND",
+      `Could not find the ${keyPrefix.replace(/-/g, " ")} button in the dialog.`
+    );
+  }
+
+  await resolved.locator.first().click();
+  await page.waitForTimeout(400);
   await waitForNetworkIdleBestEffort(page);
 }
 
@@ -3753,6 +4064,542 @@ async function reorderFeaturedItems(
   await clickSaveInDialog(page, dialog, selectorLocale);
 }
 
+function getCollectionItemLocator(root: Locator): Locator {
+  return root.locator(
+    ".pvs-list__paged-list-item, .pvs-list__item--line-separated, li.artdeco-list__item, li[class*='pvs-list__item'], li[class*='artdeco-models-table-row']"
+  );
+}
+
+async function readSkillRowName(locator: Locator): Promise<string> {
+  return locator.evaluate((element) => {
+    const normalize = (value: string | null | undefined): string =>
+      (value ?? "").replace(/\s+/g, " ").trim();
+
+    const lines = [
+      ...Array.from(
+        element.querySelectorAll(
+          ".t-bold span[aria-hidden='true'], .t-bold, .t-normal span[aria-hidden='true'], [data-field='skill'], [data-field='name']"
+        )
+      ).map((node) => normalize(node.textContent)),
+      ...normalize(element.textContent)
+        .split(/\n+/)
+        .map((line) => normalize(line))
+    ].filter((line) => line.length > 0);
+
+    return lines[0] ?? "";
+  });
+}
+
+function doesSkillNameMatch(actual: string, expected: string): boolean {
+  const normalizedActual = normalizeText(actual).toLowerCase();
+  const normalizedExpected = normalizeText(expected).toLowerCase();
+
+  return (
+    normalizedActual === normalizedExpected ||
+    normalizedActual.includes(normalizedExpected)
+  );
+}
+
+async function findMatchingSkillRow(
+  root: Locator,
+  skillName: string
+): Promise<{ row: Locator; index: number } | null> {
+  const rows = getCollectionItemLocator(root);
+  const rowCount = await rows.count();
+
+  for (let index = 0; index < rowCount; index += 1) {
+    const row = rows.nth(index);
+    const candidateSkillName = await readSkillRowName(row);
+    if (doesSkillNameMatch(candidateSkillName, skillName)) {
+      return { row, index };
+    }
+  }
+
+  return null;
+}
+
+async function maybeOpenSkillsListSurface(
+  page: Page,
+  sectionRoot: Locator,
+  selectorLocale: LinkedInSelectorLocale
+): Promise<Locator | null> {
+  const labels = getSkillActionLabels("showAll", selectorLocale);
+  const candidates: LocatorCandidate[] = [
+    ...createActionCandidates(sectionRoot, labels, "skills-show-all"),
+    ...createActionCandidates(sectionRoot, labels, "skills-show-all-link", "link"),
+    {
+      key: "skills-show-all-generic",
+      locator: sectionRoot
+        .locator("button, a, [role='button']")
+        .filter({ hasText: buildTextRegex(labels) })
+    }
+  ];
+  const resolved = await findFirstVisibleLocator(candidates);
+  if (!resolved) {
+    return null;
+  }
+
+  await resolved.locator.first().click();
+  await page.waitForTimeout(500);
+  await waitForNetworkIdleBestEffort(page);
+
+  return (await getVisibleDialogOrNull(page)) ?? page.locator("main");
+}
+
+async function openSkillsAddDialog(
+  page: Page,
+  selectorLocale: LinkedInSelectorLocale
+): Promise<Locator> {
+  const skillsRoot = await findSkillsSectionRoot(page, selectorLocale);
+  const directLabels = dedupeStrings([
+    ...getSkillActionLabels("add", selectorLocale),
+    ...getUiActionLabels("add", selectorLocale)
+  ]);
+
+  if (skillsRoot) {
+    const sectionCandidates: LocatorCandidate[] = [
+      ...createActionCandidates(skillsRoot, directLabels, "skills-add"),
+      ...createActionCandidates(skillsRoot, directLabels, "skills-add-link", "link"),
+      {
+        key: "skills-add-generic",
+        locator: skillsRoot
+          .locator("button, a, [role='button']")
+          .filter({ hasText: buildTextRegex(directLabels) })
+      }
+    ];
+    const resolvedSectionAdd = await findFirstVisibleLocator(sectionCandidates);
+    if (resolvedSectionAdd) {
+      return clickLocatorAndWaitForDialog(page, resolvedSectionAdd.locator);
+    }
+  }
+
+  const addSectionDialog = await openGlobalAddSectionDialog(page, selectorLocale);
+  const globalLabels = dedupeStrings([
+    ...getSkillActionLabels("add", selectorLocale),
+    ...getSkillActionLabels("section", selectorLocale)
+  ]);
+  const globalCandidates: LocatorCandidate[] = [
+    ...createActionCandidates(addSectionDialog, globalLabels, "skills-global"),
+    ...createActionCandidates(addSectionDialog, globalLabels, "skills-global-link", "link"),
+    {
+      key: "skills-global-generic",
+      locator: addSectionDialog
+        .locator("button, a, div[role='button'], li")
+        .filter({ hasText: buildTextRegex(globalLabels) })
+    }
+  ];
+  const resolvedGlobalAdd = await findFirstVisibleLocator(globalCandidates);
+  if (!resolvedGlobalAdd) {
+    throw new LinkedInAssistantError(
+      "TARGET_NOT_FOUND",
+      "Could not find the LinkedIn Skills add flow on the profile page."
+    );
+  }
+
+  await resolvedGlobalAdd.locator.first().click();
+  await page.waitForTimeout(500);
+  return waitForVisibleDialog(page);
+}
+
+async function findSkillInputLocator(dialog: Locator): Promise<Locator | null> {
+  const labelRegex = buildTextRegex(SKILL_FIELD_DEFINITIONS[0].aliases);
+  const candidates = [
+    dialog.getByLabel(labelRegex).first(),
+    dialog.locator("input[role='combobox']").first(),
+    dialog.locator("input[aria-autocomplete='list']").first(),
+    dialog.locator('input[name*="skill" i]').first(),
+    dialog.locator('input[id*="skill" i]').first(),
+    dialog.locator('input[placeholder*="skill" i]').first()
+  ];
+
+  for (const candidate of candidates) {
+    if (await isLocatorVisible(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+async function selectAutocompleteOption(
+  page: Page,
+  value: string
+): Promise<void> {
+  const exactRegex = buildTextRegex([value], true);
+  const fuzzyRegex = buildTextRegex([value]);
+  const candidates: LocatorCandidate[] = [
+    {
+      key: "autocomplete-exact-option",
+      locator: page.getByRole("option", { name: exactRegex })
+    },
+    {
+      key: "autocomplete-fuzzy-option",
+      locator: page.getByRole("option", { name: fuzzyRegex })
+    },
+    {
+      key: "autocomplete-fuzzy-list-item",
+      locator: page
+        .locator("[role='option'], li, [role='listitem']")
+        .filter({ hasText: fuzzyRegex })
+    }
+  ];
+  const resolved = await findFirstVisibleLocator(candidates);
+  if (resolved) {
+    await resolved.locator.first().click();
+    return;
+  }
+
+  await page.keyboard.press("ArrowDown").catch(() => undefined);
+  await page.keyboard.press("Enter").catch(() => undefined);
+}
+
+async function addSkill(
+  page: Page,
+  selectorLocale: LinkedInSelectorLocale,
+  skillName: string
+): Promise<void> {
+  const dialog = await openSkillsAddDialog(page, selectorLocale);
+  const skillInput = await findSkillInputLocator(dialog);
+  if (!skillInput) {
+    throw new LinkedInAssistantError(
+      "TARGET_NOT_FOUND",
+      "Could not find the skill input in the LinkedIn skills dialog."
+    );
+  }
+
+  await skillInput.click();
+  await skillInput.fill(skillName).catch(async () => {
+    await skillInput.press(`${process.platform === "darwin" ? "Meta" : "Control"}+A`).catch(
+      () => undefined
+    );
+    await skillInput.press("Backspace").catch(() => undefined);
+    await skillInput.type(skillName);
+  });
+  await page.waitForTimeout(500);
+  await selectAutocompleteOption(page, skillName);
+  await clickSaveInDialog(page, dialog, selectorLocale);
+}
+
+async function openSkillsEditDialog(
+  page: Page,
+  selectorLocale: LinkedInSelectorLocale
+): Promise<Locator> {
+  const skillsRoot = await findSkillsSectionRoot(page, selectorLocale);
+  if (!skillsRoot) {
+    throw new LinkedInAssistantError(
+      "TARGET_NOT_FOUND",
+      "Could not find the Skills section on the profile page."
+    );
+  }
+
+  const editCandidates = createActionCandidates(
+    skillsRoot,
+    getUiActionLabels("edit", selectorLocale),
+    "skills-edit"
+  );
+  const resolvedEdit = await findFirstVisibleLocator(editCandidates);
+  if (!resolvedEdit) {
+    throw new LinkedInAssistantError(
+      "TARGET_NOT_FOUND",
+      "Could not find the Skills edit control on the profile page."
+    );
+  }
+
+  return clickLocatorAndWaitForDialog(page, resolvedEdit.locator);
+}
+
+async function reorderSkills(
+  page: Page,
+  selectorLocale: LinkedInSelectorLocale,
+  skillNames: string[]
+): Promise<void> {
+  const dialog = await openSkillsEditDialog(page, selectorLocale);
+
+  for (let index = skillNames.length - 1; index >= 0; index -= 1) {
+    const skillName = skillNames[index]!;
+    const locatedRow = await findMatchingSkillRow(dialog, skillName);
+    if (!locatedRow) {
+      throw new LinkedInAssistantError(
+        "TARGET_NOT_FOUND",
+        "Could not find one of the requested skills in the reorder dialog.",
+        {
+          skill_name: skillName
+        }
+      );
+    }
+
+    if (locatedRow.index === 0) {
+      continue;
+    }
+
+    const firstRow = getCollectionItemLocator(dialog).first();
+    const sourceHandle = (await findVisibleDragHandle(locatedRow.row)) ?? locatedRow.row;
+    const targetHandle = (await findVisibleDragHandle(firstRow)) ?? firstRow;
+    await dragLocatorToTarget(page, sourceHandle, targetHandle);
+  }
+
+  await clickSaveInDialog(page, dialog, selectorLocale);
+}
+
+async function locateSkillRowOnProfile(
+  page: Page,
+  selectorLocale: LinkedInSelectorLocale,
+  skillName: string
+): Promise<Locator> {
+  const skillsRoot = await findSkillsSectionRoot(page, selectorLocale);
+  if (!skillsRoot) {
+    throw new LinkedInAssistantError(
+      "TARGET_NOT_FOUND",
+      "Could not find the Skills section on the target profile."
+    );
+  }
+
+  const directMatch = await findMatchingSkillRow(skillsRoot, skillName);
+  if (directMatch) {
+    return directMatch.row;
+  }
+
+  const expandedSurface = await maybeOpenSkillsListSurface(page, skillsRoot, selectorLocale);
+  if (expandedSurface) {
+    const expandedMatch = await findMatchingSkillRow(expandedSurface, skillName);
+    if (expandedMatch) {
+      return expandedMatch.row;
+    }
+  }
+
+  throw new LinkedInAssistantError(
+    "TARGET_NOT_FOUND",
+    "Could not find the requested skill on the target profile.",
+    {
+      skill_name: skillName
+    }
+  );
+}
+
+async function endorseSkill(
+  page: Page,
+  selectorLocale: LinkedInSelectorLocale,
+  targetProfileUrl: string,
+  skillName: string
+): Promise<"endorsed" | "already_endorsed"> {
+  await page.goto(targetProfileUrl, { waitUntil: "domcontentloaded" });
+  await waitForNetworkIdleBestEffort(page);
+  await waitForProfilePageReady(page);
+
+  const row = await locateSkillRowOnProfile(page, selectorLocale, skillName);
+  const endorseCandidates: LocatorCandidate[] = [
+    ...createActionCandidates(row, getSkillActionLabels("endorse", selectorLocale), "skill-endorse"),
+    {
+      key: "skill-endorse-generic",
+      locator: row
+        .locator("button, [role='button']")
+        .filter({ hasText: buildTextRegex(getSkillActionLabels("endorse", selectorLocale)) })
+    }
+  ];
+  const resolvedEndorse = await findFirstVisibleLocator(endorseCandidates);
+  if (resolvedEndorse) {
+    await resolvedEndorse.locator.first().click();
+    await page.waitForTimeout(400);
+    await waitForNetworkIdleBestEffort(page);
+    return "endorsed";
+  }
+
+  const rowText = normalizeText(await row.textContent().catch(() => ""));
+  if (/you(?:'|’)??ve endorsed|already endorsed/i.test(rowText)) {
+    return "already_endorsed";
+  }
+
+  throw new LinkedInAssistantError(
+    "TARGET_NOT_FOUND",
+    "Could not find an endorse control for the requested skill.",
+    {
+      skill_name: skillName
+    }
+  );
+}
+
+async function openTopCardMoreMenu(
+  page: Page,
+  selectorLocale: LinkedInSelectorLocale
+): Promise<Locator> {
+  const topCardRoot = getTopCardRoot(page);
+  const moreCandidates = createActionCandidates(
+    topCardRoot,
+    getUiActionLabels("more", selectorLocale),
+    "profile-top-more"
+  );
+  const resolvedMore = await findFirstVisibleLocator(moreCandidates);
+  if (!resolvedMore) {
+    throw new LinkedInAssistantError(
+      "TARGET_NOT_FOUND",
+      "Could not find the profile More actions menu."
+    );
+  }
+
+  return clickLocatorAndWaitForOverlay(page, resolvedMore.locator);
+}
+
+async function clickOverlayActionByLabels(
+  page: Page,
+  overlay: Locator,
+  labels: readonly string[],
+  keyPrefix: string
+): Promise<Locator> {
+  const candidates: LocatorCandidate[] = [
+    ...createActionCandidates(overlay, labels, keyPrefix),
+    ...createActionCandidates(overlay, labels, `${keyPrefix}-link`, "link"),
+    {
+      key: `${keyPrefix}-generic`,
+      locator: overlay
+        .locator("[role='menuitem'], button, a, div[role='button']")
+        .filter({ hasText: buildTextRegex(labels) })
+    }
+  ];
+  const resolved = await findFirstVisibleLocator(candidates);
+  if (!resolved) {
+    throw new LinkedInAssistantError(
+      "TARGET_NOT_FOUND",
+      `Could not find the ${keyPrefix.replace(/-/g, " ")} action.`
+    );
+  }
+
+  await resolved.locator.first().click();
+  await page.waitForTimeout(500);
+  return (await getVisibleDialogOrNull(page)) ?? overlay;
+}
+
+async function openRecommendationDialog(
+  page: Page,
+  selectorLocale: LinkedInSelectorLocale,
+  action: "request" | "write"
+): Promise<Locator> {
+  const overlay = await openTopCardMoreMenu(page, selectorLocale);
+  return clickOverlayActionByLabels(
+    page,
+    overlay,
+    getRecommendationActionLabels(action, selectorLocale),
+    `recommendation-${action}`
+  );
+}
+
+async function fillRecommendationFields(
+  page: Page,
+  dialog: Locator,
+  definitions: readonly EditableFieldDefinition[],
+  values: Record<string, NormalizedEditableValue>
+): Promise<void> {
+  for (const definition of definitions) {
+    await fillDialogFieldIfPresent(page, dialog, definition, values[definition.key]);
+  }
+}
+
+async function maybeAdvanceRecommendationDialog(
+  page: Page,
+  dialog: Locator,
+  selectorLocale: LinkedInSelectorLocale
+): Promise<Locator> {
+  const candidates: LocatorCandidate[] = [
+    ...createActionCandidates(
+      dialog,
+      getRecommendationActionLabels("next", selectorLocale),
+      "recommendation-next"
+    ),
+    {
+      key: "recommendation-next-submit",
+      locator: dialog.locator("button[type='submit']").filter({
+        hasText: buildTextRegex(getRecommendationActionLabels("next", selectorLocale))
+      })
+    }
+  ];
+  const resolved = await findFirstVisibleLocator(candidates);
+  if (!resolved) {
+    return dialog;
+  }
+
+  await resolved.locator.first().click();
+  await page.waitForTimeout(500);
+  return (await getVisibleDialogOrNull(page)) ?? dialog;
+}
+
+async function requestRecommendation(
+  page: Page,
+  selectorLocale: LinkedInSelectorLocale,
+  targetProfileUrl: string,
+  fields: Record<string, NormalizedEditableValue>
+): Promise<void> {
+  await page.goto(targetProfileUrl, { waitUntil: "domcontentloaded" });
+  await waitForNetworkIdleBestEffort(page);
+  await waitForProfilePageReady(page);
+
+  let dialog = await openRecommendationDialog(page, selectorLocale, "request");
+  await fillRecommendationFields(
+    page,
+    dialog,
+    RECOMMENDATION_COMMON_FIELD_DEFINITIONS,
+    fields
+  );
+  dialog = await maybeAdvanceRecommendationDialog(page, dialog, selectorLocale);
+  await fillDialogFieldIfPresent(
+    page,
+    dialog,
+    RECOMMENDATION_REQUEST_FIELD_DEFINITIONS[3]!,
+    fields.message
+  );
+  await clickDialogAction(
+    page,
+    dialog,
+    dedupeStrings([
+      ...getRecommendationActionLabels("send", selectorLocale),
+      ...getUiActionLabels("save", selectorLocale)
+    ]),
+    "recommendation-send"
+  );
+}
+
+async function writeRecommendation(
+  page: Page,
+  selectorLocale: LinkedInSelectorLocale,
+  targetProfileUrl: string,
+  fields: Record<string, NormalizedEditableValue>
+): Promise<void> {
+  await page.goto(targetProfileUrl, { waitUntil: "domcontentloaded" });
+  await waitForNetworkIdleBestEffort(page);
+  await waitForProfilePageReady(page);
+
+  let dialog = await openRecommendationDialog(page, selectorLocale, "write");
+  await fillRecommendationFields(
+    page,
+    dialog,
+    RECOMMENDATION_COMMON_FIELD_DEFINITIONS,
+    fields
+  );
+  dialog = await maybeAdvanceRecommendationDialog(page, dialog, selectorLocale);
+
+  const recommendationText = fields.text;
+  if (typeof recommendationText !== "string" || recommendationText.length === 0) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      "Write recommendation payload is missing text."
+    );
+  }
+
+  await fillDialogField(
+    page,
+    dialog,
+    RECOMMENDATION_WRITE_FIELD_DEFINITIONS[3]!,
+    recommendationText
+  );
+  await clickDialogAction(
+    page,
+    dialog,
+    dedupeStrings([
+      ...getRecommendationActionLabels("send", selectorLocale),
+      ...getUiActionLabels("save", selectorLocale)
+    ]),
+    "recommendation-send"
+  );
+}
+
 async function openProfileMediaAndUpload(
   page: Page,
   selectorLocale: LinkedInSelectorLocale,
@@ -3823,6 +4670,369 @@ function getPayloadRecord(
   }
 
   return value;
+}
+
+async function executeAddProfileSkill(
+  runtime: LinkedInProfileExecutorRuntime,
+  actionId: string,
+  target: Record<string, unknown>,
+  payload: Record<string, unknown>
+): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
+  const profileName = String(target.profile_name ?? "default");
+  const skillName = normalizeSkillName(
+    typeof payload.skill_name === "string" ? payload.skill_name : undefined
+  );
+
+  return runtime.profileManager.runWithContext(
+    {
+      cdpUrl: runtime.cdpUrl,
+      profileName,
+      headless: true
+    },
+    async (context) => {
+      const page = await getOrCreatePage(context);
+      return executeConfirmActionWithArtifacts({
+        runtime,
+        context,
+        page,
+        actionId,
+        actionType: ADD_PROFILE_SKILL_ACTION_TYPE,
+        profileName,
+        targetUrl: resolveProfileUrl("me"),
+        metadata: {
+          profile_name: profileName,
+          skill_name: skillName
+        },
+        errorDetails: {
+          profile_name: profileName,
+          skill_name: skillName
+        },
+        mapError: (error) =>
+          asLinkedInAssistantError(
+            error,
+            "UNKNOWN",
+            `Failed to add the LinkedIn skill "${skillName}".`
+          ),
+        execute: async () => {
+          await navigateToOwnProfile(page);
+          await addSkill(page, runtime.selectorLocale, skillName);
+
+          return {
+            ok: true,
+            result: {
+              status: "profile_skill_added",
+              skill_name: skillName
+            },
+            artifacts: []
+          };
+        }
+      });
+    }
+  );
+}
+
+async function executeReorderProfileSkills(
+  runtime: LinkedInProfileExecutorRuntime,
+  actionId: string,
+  target: Record<string, unknown>,
+  payload: Record<string, unknown>
+): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
+  const profileName = String(target.profile_name ?? "default");
+  const skillNames = normalizeSkillNames(
+    Array.isArray(payload.skill_names)
+      ? payload.skill_names.filter(
+          (skillName): skillName is string => typeof skillName === "string"
+        )
+      : []
+  );
+
+  return runtime.profileManager.runWithContext(
+    {
+      cdpUrl: runtime.cdpUrl,
+      profileName,
+      headless: true
+    },
+    async (context) => {
+      const page = await getOrCreatePage(context);
+      return executeConfirmActionWithArtifacts({
+        runtime,
+        context,
+        page,
+        actionId,
+        actionType: REORDER_PROFILE_SKILLS_ACTION_TYPE,
+        profileName,
+        targetUrl: resolveProfileUrl("me"),
+        metadata: {
+          profile_name: profileName,
+          skill_count: skillNames.length
+        },
+        errorDetails: {
+          profile_name: profileName,
+          skill_count: skillNames.length
+        },
+        mapError: (error) =>
+          asLinkedInAssistantError(
+            error,
+            "UNKNOWN",
+            "Failed to reorder LinkedIn skills."
+          ),
+        execute: async () => {
+          await navigateToOwnProfile(page);
+          await reorderSkills(page, runtime.selectorLocale, skillNames);
+
+          return {
+            ok: true,
+            result: {
+              status: "profile_skills_reordered",
+              skill_count: skillNames.length,
+              skill_names: skillNames
+            },
+            artifacts: []
+          };
+        }
+      });
+    }
+  );
+}
+
+async function executeEndorseProfileSkill(
+  runtime: LinkedInProfileExecutorRuntime,
+  actionId: string,
+  target: Record<string, unknown>,
+  payload: Record<string, unknown>
+): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
+  const profileName = String(target.profile_name ?? "default");
+  const targetProfileUrl = resolveExternalProfileTarget(
+    typeof target.target_profile_url === "string"
+      ? target.target_profile_url
+      : typeof target.target_profile === "string"
+        ? target.target_profile
+        : undefined,
+    "target"
+  );
+  const skillName = normalizeSkillName(
+    typeof payload.skill_name === "string" ? payload.skill_name : undefined
+  );
+
+  return runtime.profileManager.runWithContext(
+    {
+      cdpUrl: runtime.cdpUrl,
+      profileName,
+      headless: true
+    },
+    async (context) => {
+      const page = await getOrCreatePage(context);
+      return executeConfirmActionWithArtifacts({
+        runtime,
+        context,
+        page,
+        actionId,
+        actionType: ENDORSE_PROFILE_SKILL_ACTION_TYPE,
+        profileName,
+        targetUrl: targetProfileUrl,
+        metadata: {
+          profile_name: profileName,
+          target_profile_url: targetProfileUrl,
+          skill_name: skillName
+        },
+        errorDetails: {
+          profile_name: profileName,
+          target_profile_url: targetProfileUrl,
+          skill_name: skillName
+        },
+        mapError: (error) =>
+          asLinkedInAssistantError(
+            error,
+            "UNKNOWN",
+            `Failed to endorse "${skillName}" on the target LinkedIn profile.`
+          ),
+        execute: async () => {
+          const endorseResult = await endorseSkill(
+            page,
+            runtime.selectorLocale,
+            targetProfileUrl,
+            skillName
+          );
+
+          return {
+            ok: true,
+            result: {
+              status:
+                endorseResult === "already_endorsed"
+                  ? "profile_skill_already_endorsed"
+                  : "profile_skill_endorsed",
+              target_profile_url: targetProfileUrl,
+              skill_name: skillName
+            },
+            artifacts: []
+          };
+        }
+      });
+    }
+  );
+}
+
+async function executeRequestProfileRecommendation(
+  runtime: LinkedInProfileExecutorRuntime,
+  actionId: string,
+  target: Record<string, unknown>,
+  payload: Record<string, unknown>
+): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
+  const profileName = String(target.profile_name ?? "default");
+  const targetProfileUrl = resolveExternalProfileTarget(
+    typeof target.target_profile_url === "string"
+      ? target.target_profile_url
+      : typeof target.target_profile === "string"
+        ? target.target_profile
+        : undefined,
+    "target"
+  );
+  const fields = normalizeOptionalEditableValues(
+    getPayloadRecord(payload, "fields", "recommendation request"),
+    RECOMMENDATION_REQUEST_FIELD_DEFINITIONS
+  );
+
+  return runtime.profileManager.runWithContext(
+    {
+      cdpUrl: runtime.cdpUrl,
+      profileName,
+      headless: true
+    },
+    async (context) => {
+      const page = await getOrCreatePage(context);
+      return executeConfirmActionWithArtifacts({
+        runtime,
+        context,
+        page,
+        actionId,
+        actionType: REQUEST_PROFILE_RECOMMENDATION_ACTION_TYPE,
+        profileName,
+        targetUrl: targetProfileUrl,
+        metadata: {
+          profile_name: profileName,
+          target_profile_url: targetProfileUrl,
+          provided_fields: Object.keys(fields)
+        },
+        errorDetails: {
+          profile_name: profileName,
+          target_profile_url: targetProfileUrl,
+          provided_fields: Object.keys(fields)
+        },
+        mapError: (error) =>
+          asLinkedInAssistantError(
+            error,
+            "UNKNOWN",
+            "Failed to request a LinkedIn recommendation."
+          ),
+        execute: async () => {
+          await requestRecommendation(
+            page,
+            runtime.selectorLocale,
+            targetProfileUrl,
+            fields
+          );
+
+          return {
+            ok: true,
+            result: {
+              status: "profile_recommendation_requested",
+              target_profile_url: targetProfileUrl,
+              provided_fields: Object.keys(fields)
+            },
+            artifacts: []
+          };
+        }
+      });
+    }
+  );
+}
+
+async function executeWriteProfileRecommendation(
+  runtime: LinkedInProfileExecutorRuntime,
+  actionId: string,
+  target: Record<string, unknown>,
+  payload: Record<string, unknown>
+): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
+  const profileName = String(target.profile_name ?? "default");
+  const targetProfileUrl = resolveExternalProfileTarget(
+    typeof target.target_profile_url === "string"
+      ? target.target_profile_url
+      : typeof target.target_profile === "string"
+        ? target.target_profile
+        : undefined,
+    "target"
+  );
+  const fields = normalizeOptionalEditableValues(
+    getPayloadRecord(payload, "fields", "write recommendation"),
+    RECOMMENDATION_WRITE_FIELD_DEFINITIONS
+  );
+  const recommendationText = fields.text;
+  if (typeof recommendationText !== "string" || recommendationText.length === 0) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      "Write recommendation payload is missing text."
+    );
+  }
+
+  const textHash = createHash("sha256")
+    .update(recommendationText)
+    .digest("base64url")
+    .slice(0, 12);
+
+  return runtime.profileManager.runWithContext(
+    {
+      cdpUrl: runtime.cdpUrl,
+      profileName,
+      headless: true
+    },
+    async (context) => {
+      const page = await getOrCreatePage(context);
+      return executeConfirmActionWithArtifacts({
+        runtime,
+        context,
+        page,
+        actionId,
+        actionType: WRITE_PROFILE_RECOMMENDATION_ACTION_TYPE,
+        profileName,
+        targetUrl: targetProfileUrl,
+        metadata: {
+          profile_name: profileName,
+          target_profile_url: targetProfileUrl,
+          provided_fields: Object.keys(fields)
+        },
+        errorDetails: {
+          profile_name: profileName,
+          target_profile_url: targetProfileUrl,
+          provided_fields: Object.keys(fields)
+        },
+        mapError: (error) =>
+          asLinkedInAssistantError(
+            error,
+            "UNKNOWN",
+            "Failed to write a LinkedIn recommendation."
+          ),
+        execute: async () => {
+          await writeRecommendation(
+            page,
+            runtime.selectorLocale,
+            targetProfileUrl,
+            fields
+          );
+
+          return {
+            ok: true,
+            result: {
+              status: "profile_recommendation_written",
+              target_profile_url: targetProfileUrl,
+              text_sha256_prefix: textHash,
+              provided_fields: Object.keys(fields)
+            },
+            artifacts: []
+          };
+        }
+      });
+    }
+  );
 }
 
 async function executeUploadProfileMedia(
@@ -4554,6 +5764,86 @@ export class ReorderProfileFeaturedItemsActionExecutor
   }
 }
 
+export class AddProfileSkillActionExecutor
+  implements ActionExecutor<LinkedInProfileExecutorRuntime>
+{
+  async execute(
+    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>
+  ): Promise<ActionExecutorResult> {
+    const { result, artifacts } = await executeAddProfileSkill(
+      input.runtime,
+      input.action.id,
+      input.action.target,
+      input.action.payload
+    );
+    return { ok: true, result, artifacts };
+  }
+}
+
+export class ReorderProfileSkillsActionExecutor
+  implements ActionExecutor<LinkedInProfileExecutorRuntime>
+{
+  async execute(
+    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>
+  ): Promise<ActionExecutorResult> {
+    const { result, artifacts } = await executeReorderProfileSkills(
+      input.runtime,
+      input.action.id,
+      input.action.target,
+      input.action.payload
+    );
+    return { ok: true, result, artifacts };
+  }
+}
+
+export class EndorseProfileSkillActionExecutor
+  implements ActionExecutor<LinkedInProfileExecutorRuntime>
+{
+  async execute(
+    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>
+  ): Promise<ActionExecutorResult> {
+    const { result, artifacts } = await executeEndorseProfileSkill(
+      input.runtime,
+      input.action.id,
+      input.action.target,
+      input.action.payload
+    );
+    return { ok: true, result, artifacts };
+  }
+}
+
+export class RequestProfileRecommendationActionExecutor
+  implements ActionExecutor<LinkedInProfileExecutorRuntime>
+{
+  async execute(
+    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>
+  ): Promise<ActionExecutorResult> {
+    const { result, artifacts } = await executeRequestProfileRecommendation(
+      input.runtime,
+      input.action.id,
+      input.action.target,
+      input.action.payload
+    );
+    return { ok: true, result, artifacts };
+  }
+}
+
+export class WriteProfileRecommendationActionExecutor
+  implements ActionExecutor<LinkedInProfileExecutorRuntime>
+{
+  async execute(
+    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>
+  ): Promise<ActionExecutorResult> {
+    const { result, artifacts } = await executeWriteProfileRecommendation(
+      input.runtime,
+      input.action.id,
+      input.action.target,
+      input.action.payload
+    );
+    return { ok: true, result, artifacts };
+  }
+}
+
 export function createProfileActionExecutors(): Record<
   string,
   ActionExecutor<LinkedInProfileExecutorRuntime>
@@ -4570,7 +5860,15 @@ export function createProfileActionExecutors(): Record<
     [REMOVE_PROFILE_FEATURED_ACTION_TYPE]:
       new RemoveProfileFeaturedItemActionExecutor(),
     [REORDER_PROFILE_FEATURED_ACTION_TYPE]:
-      new ReorderProfileFeaturedItemsActionExecutor()
+      new ReorderProfileFeaturedItemsActionExecutor(),
+    [ADD_PROFILE_SKILL_ACTION_TYPE]: new AddProfileSkillActionExecutor(),
+    [REORDER_PROFILE_SKILLS_ACTION_TYPE]:
+      new ReorderProfileSkillsActionExecutor(),
+    [ENDORSE_PROFILE_SKILL_ACTION_TYPE]: new EndorseProfileSkillActionExecutor(),
+    [REQUEST_PROFILE_RECOMMENDATION_ACTION_TYPE]:
+      new RequestProfileRecommendationActionExecutor(),
+    [WRITE_PROFILE_RECOMMENDATION_ACTION_TYPE]:
+      new WriteProfileRecommendationActionExecutor()
   };
 }
 
@@ -4991,6 +6289,170 @@ export class LinkedInProfileService {
       target,
       payload: {
         item_ids: itemIds
+      },
+      preview,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+  }
+
+  prepareAddSkill(input: PrepareAddSkillInput): PreparedActionResult {
+    const profileName = input.profileName ?? "default";
+    const skillName = normalizeSkillName(input.skillName);
+
+    const target = {
+      profile_name: profileName
+    };
+    const preview = {
+      summary: `Add "${skillName}" to LinkedIn profile skills`,
+      target,
+      skill_name: skillName
+    };
+
+    return this.runtime.twoPhaseCommit.prepare({
+      actionType: ADD_PROFILE_SKILL_ACTION_TYPE,
+      target,
+      payload: {
+        skill_name: skillName
+      },
+      preview,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+  }
+
+  prepareReorderSkills(
+    input: PrepareReorderSkillsInput
+  ): PreparedActionResult {
+    const profileName = input.profileName ?? "default";
+    const skillNames = normalizeSkillNames(input.skillNames);
+
+    const target = {
+      profile_name: profileName
+    };
+    const preview = {
+      summary: `Reorder LinkedIn skills (${skillNames.length})`,
+      target,
+      skill_names: skillNames
+    };
+
+    return this.runtime.twoPhaseCommit.prepare({
+      actionType: REORDER_PROFILE_SKILLS_ACTION_TYPE,
+      target,
+      payload: {
+        skill_names: skillNames
+      },
+      preview,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+  }
+
+  prepareEndorseSkill(
+    input: PrepareEndorseSkillInput
+  ): PreparedActionResult {
+    const profileName = input.profileName ?? "default";
+    const skillName = normalizeSkillName(input.skillName);
+    const targetProfileUrl = resolveExternalProfileTarget(input.target, "target");
+
+    const target = {
+      profile_name: profileName,
+      target_profile: normalizeText(input.target),
+      target_profile_url: targetProfileUrl
+    };
+    const preview = {
+      summary: `Endorse "${skillName}" on a LinkedIn profile`,
+      target,
+      skill_name: skillName
+    };
+
+    return this.runtime.twoPhaseCommit.prepare({
+      actionType: ENDORSE_PROFILE_SKILL_ACTION_TYPE,
+      target,
+      payload: {
+        skill_name: skillName
+      },
+      preview,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+  }
+
+  prepareRequestRecommendation(
+    input: PrepareRequestRecommendationInput
+  ): PreparedActionResult {
+    const profileName = input.profileName ?? "default";
+    const targetProfileUrl = resolveExternalProfileTarget(input.target, "target");
+    const fields = normalizeOptionalEditableValues(
+      {
+        ...(input.relationship !== undefined
+          ? { relationship: input.relationship }
+          : {}),
+        ...(input.position !== undefined ? { position: input.position } : {}),
+        ...(input.company !== undefined ? { company: input.company } : {}),
+        ...(input.message !== undefined ? { message: input.message } : {})
+      },
+      RECOMMENDATION_REQUEST_FIELD_DEFINITIONS
+    );
+
+    const target = {
+      profile_name: profileName,
+      target_profile: normalizeText(input.target),
+      target_profile_url: targetProfileUrl
+    };
+    const preview = {
+      summary: "Request a LinkedIn recommendation",
+      target,
+      ...(Object.keys(fields).length > 0 ? { fields } : {})
+    };
+
+    return this.runtime.twoPhaseCommit.prepare({
+      actionType: REQUEST_PROFILE_RECOMMENDATION_ACTION_TYPE,
+      target,
+      payload: {
+        fields
+      },
+      preview,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+  }
+
+  prepareWriteRecommendation(
+    input: PrepareWriteRecommendationInput
+  ): PreparedActionResult {
+    const profileName = input.profileName ?? "default";
+    const targetProfileUrl = resolveExternalProfileTarget(input.target, "target");
+    const fields = normalizeOptionalEditableValues(
+      {
+        ...(input.relationship !== undefined
+          ? { relationship: input.relationship }
+          : {}),
+        ...(input.position !== undefined ? { position: input.position } : {}),
+        ...(input.company !== undefined ? { company: input.company } : {}),
+        text: input.text
+      },
+      RECOMMENDATION_WRITE_FIELD_DEFINITIONS
+    );
+
+    if (typeof fields.text !== "string" || fields.text.length === 0) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        "text is required."
+      );
+    }
+
+    const target = {
+      profile_name: profileName,
+      target_profile: normalizeText(input.target),
+      target_profile_url: targetProfileUrl
+    };
+    const preview = {
+      summary: "Write a LinkedIn recommendation",
+      target,
+      fields
+    };
+
+    return this.runtime.twoPhaseCommit.prepare({
+      actionType: WRITE_PROFILE_RECOMMENDATION_ACTION_TYPE,
+      target,
+      payload: {
+        fields
       },
       preview,
       ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})

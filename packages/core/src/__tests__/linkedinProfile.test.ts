@@ -5,15 +5,20 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AssistantDatabase } from "../db/database.js";
 import {
   ADD_PROFILE_FEATURED_ACTION_TYPE,
+  ADD_PROFILE_SKILL_ACTION_TYPE,
+  ENDORSE_PROFILE_SKILL_ACTION_TYPE,
   LINKEDIN_PROFILE_SECTION_TYPES,
   LINKEDIN_PROFILE_FEATURED_ITEM_KINDS,
   REMOVE_PROFILE_SECTION_ITEM_ACTION_TYPE,
   REMOVE_PROFILE_FEATURED_ACTION_TYPE,
   REORDER_PROFILE_FEATURED_ACTION_TYPE,
+  REORDER_PROFILE_SKILLS_ACTION_TYPE,
+  REQUEST_PROFILE_RECOMMENDATION_ACTION_TYPE,
   UPLOAD_PROFILE_BANNER_ACTION_TYPE,
   UPLOAD_PROFILE_PHOTO_ACTION_TYPE,
   UPSERT_PROFILE_SECTION_ITEM_ACTION_TYPE,
   UPDATE_PROFILE_INTRO_ACTION_TYPE,
+  WRITE_PROFILE_RECOMMENDATION_ACTION_TYPE,
   LinkedInProfileService,
   createProfileActionExecutors,
   resolveProfileUrl,
@@ -145,6 +150,15 @@ describe("profile action type constants", () => {
     expect(ADD_PROFILE_FEATURED_ACTION_TYPE).toBe("profile.featured_add");
     expect(REMOVE_PROFILE_FEATURED_ACTION_TYPE).toBe("profile.featured_remove");
     expect(REORDER_PROFILE_FEATURED_ACTION_TYPE).toBe("profile.featured_reorder");
+    expect(ADD_PROFILE_SKILL_ACTION_TYPE).toBe("profile.skill_add");
+    expect(REORDER_PROFILE_SKILLS_ACTION_TYPE).toBe("profile.skills_reorder");
+    expect(ENDORSE_PROFILE_SKILL_ACTION_TYPE).toBe("profile.skill_endorse");
+    expect(REQUEST_PROFILE_RECOMMENDATION_ACTION_TYPE).toBe(
+      "profile.recommendation_request"
+    );
+    expect(WRITE_PROFILE_RECOMMENDATION_ACTION_TYPE).toBe(
+      "profile.recommendation_write"
+    );
   });
 
   it("lists the supported editable profile sections", () => {
@@ -175,6 +189,11 @@ describe("createProfileActionExecutors", () => {
     expect(executors[ADD_PROFILE_FEATURED_ACTION_TYPE]).toBeDefined();
     expect(executors[REMOVE_PROFILE_FEATURED_ACTION_TYPE]).toBeDefined();
     expect(executors[REORDER_PROFILE_FEATURED_ACTION_TYPE]).toBeDefined();
+    expect(executors[ADD_PROFILE_SKILL_ACTION_TYPE]).toBeDefined();
+    expect(executors[REORDER_PROFILE_SKILLS_ACTION_TYPE]).toBeDefined();
+    expect(executors[ENDORSE_PROFILE_SKILL_ACTION_TYPE]).toBeDefined();
+    expect(executors[REQUEST_PROFILE_RECOMMENDATION_ACTION_TYPE]).toBeDefined();
+    expect(executors[WRITE_PROFILE_RECOMMENDATION_ACTION_TYPE]).toBeDefined();
   });
 
   it("exposes execute methods for each profile action executor", () => {
@@ -407,6 +426,151 @@ describe("LinkedInProfileService prepare helpers", () => {
           itemIds: ["not-a-featured-id"]
         })
       ).toThrow("view_editable.featured.items");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("prepares skill additions", () => {
+    const db = new AssistantDatabase(":memory:");
+
+    try {
+      const service = new LinkedInProfileService(createTestRuntime(db));
+      const prepared = service.prepareAddSkill({
+        profileName: "default",
+        skillName: "TypeScript"
+      });
+
+      expect(prepared.preview).toMatchObject({
+        summary: 'Add "TypeScript" to LinkedIn profile skills',
+        target: {
+          profile_name: "default"
+        },
+        skill_name: "TypeScript"
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("prepares skill reorder requests", () => {
+    const db = new AssistantDatabase(":memory:");
+
+    try {
+      const service = new LinkedInProfileService(createTestRuntime(db));
+      const prepared = service.prepareReorderSkills({
+        profileName: "default",
+        skillNames: ["TypeScript", "Playwright"]
+      });
+
+      expect(prepared.preview).toMatchObject({
+        summary: "Reorder LinkedIn skills (2)",
+        target: {
+          profile_name: "default"
+        },
+        skill_names: ["TypeScript", "Playwright"]
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("prepares skill endorsements against another profile", () => {
+    const db = new AssistantDatabase(":memory:");
+
+    try {
+      const service = new LinkedInProfileService(createTestRuntime(db));
+      const prepared = service.prepareEndorseSkill({
+        profileName: "default",
+        target: "realsimonmiller",
+        skillName: "JavaScript"
+      });
+
+      expect(prepared.preview).toMatchObject({
+        summary: 'Endorse "JavaScript" on a LinkedIn profile',
+        target: {
+          profile_name: "default",
+          target_profile: "realsimonmiller",
+          target_profile_url: "https://www.linkedin.com/in/realsimonmiller/"
+        },
+        skill_name: "JavaScript"
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("prepares recommendation requests with optional dialog fields", () => {
+    const db = new AssistantDatabase(":memory:");
+
+    try {
+      const service = new LinkedInProfileService(createTestRuntime(db));
+      const prepared = service.prepareRequestRecommendation({
+        profileName: "default",
+        target: "realsimonmiller",
+        relationship: "colleague",
+        message: "Would love a short recommendation when you have time."
+      });
+
+      expect(prepared.preview).toMatchObject({
+        summary: "Request a LinkedIn recommendation",
+        target: {
+          profile_name: "default",
+          target_profile: "realsimonmiller",
+          target_profile_url: "https://www.linkedin.com/in/realsimonmiller/"
+        },
+        fields: {
+          relationship: "colleague",
+          message: "Would love a short recommendation when you have time."
+        }
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("requires text when preparing written recommendations", () => {
+    const db = new AssistantDatabase(":memory:");
+
+    try {
+      const service = new LinkedInProfileService(createTestRuntime(db));
+
+      expect(() =>
+        service.prepareWriteRecommendation({
+          profileName: "default",
+          target: "realsimonmiller",
+          text: " "
+        })
+      ).toThrow("text is required");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("prepares written recommendations", () => {
+    const db = new AssistantDatabase(":memory:");
+
+    try {
+      const service = new LinkedInProfileService(createTestRuntime(db));
+      const prepared = service.prepareWriteRecommendation({
+        profileName: "default",
+        target: "realsimonmiller",
+        relationship: "colleague",
+        text: "A thoughtful collaborator who consistently follows through."
+      });
+
+      expect(prepared.preview).toMatchObject({
+        summary: "Write a LinkedIn recommendation",
+        target: {
+          profile_name: "default",
+          target_profile: "realsimonmiller",
+          target_profile_url: "https://www.linkedin.com/in/realsimonmiller/"
+        },
+        fields: {
+          relationship: "colleague",
+          text: "A thoughtful collaborator who consistently follows through."
+        }
+      });
     } finally {
       db.close();
     }
