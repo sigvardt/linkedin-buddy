@@ -15,6 +15,7 @@ export * from "./draftQualityTypes.js";
 export * from "./errors.js";
 export * from "./fixtureReplay.js";
 export * from "./healthCheck.js";
+export * from "./evasion.js";
 export * from "./humanize.js";
 export * from "./keepAlive.js";
 export * from "./localData.js";
