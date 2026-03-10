@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { pathToFileURL } from "node:url";
+import packageJson from "../../package.json" with { type: "json" };
 import {
   ACTIVITY_EVENT_TYPES,
   ACTIVITY_WATCH_KINDS,
@@ -2531,7 +2532,7 @@ async function handleConfirm(args: ToolArgs): Promise<ToolResult> {
 const server = new Server(
   {
     name: "linkedin-mcp",
-    version: "0.1.0"
+    version: packageJson.version
   },
   {
     capabilities: {

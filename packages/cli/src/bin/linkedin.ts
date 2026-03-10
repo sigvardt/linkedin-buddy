@@ -17,6 +17,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Command } from "commander";
+import packageJson from "../../package.json" with { type: "json" };
 import {
   ACTIVITY_EVENT_TYPES,
   ACTIVITY_WATCH_KINDS,
@@ -6173,7 +6174,7 @@ export function createCliProgram(): Command {
   program
     .name("linkedin")
     .description("LinkedIn assistant CLI")
-    .version("0.1.0")
+    .version(packageJson.version)
     .option(
       "--cdp-url <url>",
       "Connect to existing browser via CDP endpoint (e.g., http://127.0.0.1:18800)"

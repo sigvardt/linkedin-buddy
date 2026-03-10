@@ -1,0 +1,125 @@
+name: Release
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      RELEASE_MODE: ${{ github.event_name == 'workflow_dispatch' && 'manual' || 'scheduled' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Fetch tags
+        run: git fetch --force --tags origin
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Decide release
+        id: release
+        run: >
+          node ./scripts/prepare-release.mjs
+          --mode "$RELEASE_MODE"
+          --check-only
+          --notes-file "${{ runner.temp }}/release-notes.md"
+
+      - name: Nothing to release
+        if: steps.release.outputs.skip == 'true'
+        run: echo "${{ steps.release.outputs.reason }}"
+
+      - name: Install deps
+        if: steps.release.outputs.skip != 'true'
+        run: npm ci
+
+      - name: Install Chromium
+        if: steps.release.outputs.skip != 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Lint
+        if: steps.release.outputs.skip != 'true'
+        run: npm run lint
+
+      - name: Typecheck
+        if: steps.release.outputs.skip != 'true'
+        run: npm run typecheck
+
+      - name: Test
+        if: steps.release.outputs.skip != 'true'
+        run: npm test
+
+      - name: Fixture-backed E2E
+        if: steps.release.outputs.skip != 'true'
+        run: npm run test:e2e:fixtures
+
+      - name: Build
+        if: steps.release.outputs.skip != 'true'
+        run: npm run build
+
+      - name: Apply release version
+        if: steps.release.outputs.skip != 'true'
+        run: >
+          node ./scripts/prepare-release.mjs
+          --mode "$RELEASE_MODE"
+          --notes-file "${{ steps.release.outputs.release_notes_path }}"
+
+      - name: Create release commit and tag
+        if: steps.release.outputs.skip != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json packages/core/package.json packages/cli/package.json packages/mcp/package.json
+          git commit -m "chore(release): publish ${{ steps.release.outputs.version }} [skip ci]"
+          git tag -a "${{ steps.release.outputs.tag }}" -m "Release ${{ steps.release.outputs.tag }}"
+
+      - name: Publish core
+        if: steps.release.outputs.skip != 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish -w @linkedin-assistant/core --access public --provenance
+
+      - name: Publish CLI
+        if: steps.release.outputs.skip != 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish -w @linkedin-assistant/cli --access public --provenance
+
+      - name: Publish MCP
+        if: steps.release.outputs.skip != 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish -w @linkedin-assistant/mcp --access public --provenance
+
+      - name: Push release commit and tag
+        if: steps.release.outputs.skip != 'true'
+        run: |
+          git push origin HEAD:main
+          git push origin "${{ steps.release.outputs.tag }}"
+
+      - name: Create GitHub Release
+        if: steps.release.outputs.skip != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: ${{ steps.release.outputs.release_notes_path }}
+          make_latest: true
+          name: ${{ steps.release.outputs.tag }}
+          tag_name: ${{ steps.release.outputs.tag }}
