@@ -1,79 +1,72 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
-  cleanLinkedInEventDescription,
-  normalizeLinkedInEventUrl,
-  parseLinkedInEventRsvpState,
-  resolveEventUrl
+  EVENT_RSVP_ACTION_TYPE,
+  LinkedInEventsService,
+  buildEventSearchUrl,
+  buildEventViewUrl,
+  createEventActionExecutors
 } from "../linkedinEvents.js";
 
-describe("resolveEventUrl", () => {
-  it("accepts raw event ids", () => {
-    expect(resolveEventUrl("7424814333760700416")).toBe(
-      "https://www.linkedin.com/events/7424814333760700416/"
+describe("LinkedInEvents helpers", () => {
+  it("builds event search URLs", () => {
+    expect(buildEventSearchUrl("leadership")).toBe(
+      "https://www.linkedin.com/search/results/events/?keywords=leadership"
     );
   });
 
-  it("normalizes /events paths", () => {
-    expect(resolveEventUrl("/events/7424814333760700416/comments/")).toBe(
-      "https://www.linkedin.com/events/7424814333760700416/"
+  it("builds event view URLs", () => {
+    expect(buildEventViewUrl("7433954919704973312")).toBe(
+      "https://www.linkedin.com/events/7433954919704973312/"
     );
-  });
-
-  it("normalizes absolute LinkedIn event URLs", () => {
-    expect(
-      resolveEventUrl(
-        "https://www.linkedin.com/events/7424814333760700416/?foo=bar#fragment"
-      )
-    ).toBe("https://www.linkedin.com/events/7424814333760700416/");
-  });
-
-  it("rejects non-event LinkedIn URLs", () => {
-    expect(() =>
-      resolveEventUrl("https://www.linkedin.com/jobs/view/123/")
-    ).toThrow("Event URL must point to linkedin.com/events/.");
-  });
-
-  it("rejects invalid encoded event urls with a structured precondition error", () => {
-    expect(() =>
-      resolveEventUrl("https://www.linkedin.com/events/%E0%A4%A/")
-    ).toThrow("Event URL contains an invalid encoded path segment.");
   });
 });
 
-describe("normalizeLinkedInEventUrl", () => {
-  it("strips query strings and hashes", () => {
-    expect(
-      normalizeLinkedInEventUrl(
-        "https://www.linkedin.com/events/7424814333760700416/?foo=bar#fragment"
-      )
-    ).toBe("https://www.linkedin.com/events/7424814333760700416/");
+describe("createEventActionExecutors", () => {
+  it("registers the RSVP executor", () => {
+    const executors = createEventActionExecutors();
+
+    expect(Object.keys(executors)).toEqual([EVENT_RSVP_ACTION_TYPE]);
+    expect(executors[EVENT_RSVP_ACTION_TYPE]).toBeDefined();
   });
 });
 
-describe("cleanLinkedInEventDescription", () => {
-  it("removes the truncated see-more suffix", () => {
-    expect(
-      cleanLinkedInEventDescription(
-        "A practical, no-hype executive breakfast briefing. …more"
-      )
-    ).toBe("A practical, no-hype executive breakfast briefing.");
-  });
-});
+describe("LinkedInEventsService prepare flows", () => {
+  it("prepares attend RSVP actions with explicit payloads", () => {
+    const prepare = vi.fn((input: {
+      payload: Record<string, unknown>;
+      preview: Record<string, unknown>;
+    }) => ({
+      preparedActionId: "pa_event",
+      confirmToken: "ct_event",
+      expiresAtMs: 123,
+      preview: input.preview
+    }));
+    const service = new LinkedInEventsService({
+      twoPhaseCommit: { prepare }
+    } as unknown as ConstructorParameters<typeof LinkedInEventsService>[0]);
 
-describe("parseLinkedInEventRsvpState", () => {
-  it("detects unresolved RSVP flows from attend buttons", () => {
-    expect(parseLinkedInEventRsvpState(["Attend", "Share"])).toBe(
-      "not_responded"
+    const prepared = service.prepareRsvp({
+      event: "https://www.linkedin.com/events/7433954919704973312/"
+    });
+
+    expect(prepared.preview).toMatchObject({
+      summary: "RSVP attend for LinkedIn event 7433954919704973312",
+      target: {
+        event_id: "7433954919704973312",
+        event_url: "https://www.linkedin.com/events/7433954919704973312/",
+        profile_name: "default"
+      },
+      payload: {
+        response: "attend"
+      }
+    });
+    expect(prepare).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actionType: EVENT_RSVP_ACTION_TYPE,
+        payload: {
+          response: "attend"
+        }
+      })
     );
-  });
-
-  it("detects attending events from top-card actions", () => {
-    expect(parseLinkedInEventRsvpState(["Attending", "Invite"])).toBe(
-      "attending"
-    );
-  });
-
-  it("does not misclassify not attending as attending", () => {
-    expect(parseLinkedInEventRsvpState(["Not attending"])).toBe("declined");
   });
 });

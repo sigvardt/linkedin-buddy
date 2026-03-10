@@ -1,20 +1,62 @@
 import { type BrowserContext, type Page } from "playwright-core";
+import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
-import { LinkedInAssistantError, asLinkedInAssistantError } from "./errors.js";
-import type {
-  LinkedInEventSearchResult,
-  LinkedInSearchService
-} from "./linkedinSearch.js";
+import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
+import type { ConfirmFailureArtifactConfig } from "./config.js";
+import {
+  LinkedInAssistantError,
+  asLinkedInAssistantError
+} from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
+import type { LinkedInSelectorLocale } from "./selectorLocale.js";
+import type {
+  ActionExecutor,
+  ActionExecutorInput,
+  ActionExecutorRegistry,
+  ActionExecutorResult,
+  TwoPhaseCommitService
+} from "./twoPhaseCommit.js";
 
-/* eslint-disable no-undef -- DOM types are valid inside page.evaluate() */
+export const EVENT_RSVP_ACTION_TYPE = "events.rsvp";
+
+export type LinkedInEventRsvpState = "not_responded" | "attending" | "unknown";
+
+export interface LinkedInEventSearchResult {
+  event_id: string;
+  title: string;
+  date_time: string;
+  location: string;
+  organizer: string;
+  attendee_count: string;
+  description: string;
+  event_url: string;
+  is_online: boolean;
+}
+
+export interface LinkedInEventDetail {
+  event_id: string;
+  title: string;
+  event_url: string;
+  organizer: string;
+  date_time: string;
+  location: string;
+  attendee_count: string;
+  description: string;
+  is_online: boolean;
+  rsvp_state: LinkedInEventRsvpState;
+}
 
 export interface SearchEventsInput {
   profileName?: string;
   query: string;
   limit?: number;
+}
+
+export interface ViewEventInput {
+  profileName?: string;
+  event: string;
 }
 
 export interface SearchEventsOutput {
@@ -23,96 +65,98 @@ export interface SearchEventsOutput {
   count: number;
 }
 
-export interface ViewEventInput {
+export interface PrepareEventRsvpInput {
   profileName?: string;
-  target: string;
+  event: string;
+  operatorNote?: string;
 }
 
-export type LinkedInEventRsvpState =
-  | "attending"
-  | "interested"
-  | "declined"
-  | "not_responded"
-  | "unknown";
-
-export interface LinkedInEvent {
-  event_url: string;
-  event_id: string | null;
-  title: string;
-  status: string;
-  date: string;
-  location: string;
-  venue: string;
-  organizer: string;
-  organizer_url: string;
-  description: string;
-  attendee_count: string;
-  event_link: string;
-  rsvp_state: LinkedInEventRsvpState;
-}
-
-interface LinkedInEventSnapshot {
-  current_url: string;
-  title: string;
-  top_card_text: string;
-  status: string;
-  date: string;
-  location: string;
-  venue: string;
-  organizer: string;
-  organizer_url: string;
-  description: string;
-  attendee_count: string;
-  event_link: string;
-  action_texts: string[];
-}
-
-export interface LinkedInEventsRuntime {
+export interface LinkedInEventsExecutorRuntime {
   auth: LinkedInAuthService;
   cdpUrl?: string | undefined;
+  selectorLocale: LinkedInSelectorLocale;
   profileManager: ProfileManager;
   logger: JsonEventLogger;
-  search: Pick<LinkedInSearchService, "search">;
+  artifacts: ArtifactHelpers;
+  confirmFailureArtifacts: ConfirmFailureArtifactConfig;
+}
+
+export interface LinkedInEventsRuntime extends LinkedInEventsExecutorRuntime {
+  twoPhaseCommit: Pick<TwoPhaseCommitService<LinkedInEventsExecutorRuntime>, "prepare">;
+}
+
+interface EventSearchSnapshot {
+  event_id: string;
+  title: string;
+  date_time: string;
+  location: string;
+  organizer: string;
+  attendee_count: string;
+  description: string;
+  event_url: string;
+  is_online: boolean;
+}
+
+interface EventDetailSnapshot {
+  event_id: string;
+  title: string;
+  event_url: string;
+  organizer: string;
+  date_time: string;
+  location: string;
+  attendee_count: string;
+  description: string;
+  is_online: boolean;
+  rsvp_state: LinkedInEventRsvpState;
 }
 
 function normalizeText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
 }
 
-function isAbsoluteUrl(value: string): boolean {
-  return /^https?:\/\//i.test(value);
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function decodeEventPathSegment(value: string): string {
-  try {
-    return decodeURIComponent(value);
-  } catch (error) {
-    throw new LinkedInAssistantError(
-      "ACTION_PRECONDITION_FAILED",
-      "Event URL contains an invalid encoded path segment.",
-      {},
-      error instanceof Error ? { cause: error } : undefined
-    );
+function readSearchLimit(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 10;
   }
+
+  return Math.max(1, Math.floor(value));
 }
 
-function toInvalidEventUrlError(error: unknown): LinkedInAssistantError {
-  if (
-    error instanceof URIError ||
-    (error instanceof Error && /uri malformed/i.test(error.message))
-  ) {
-    return new LinkedInAssistantError(
-      "ACTION_PRECONDITION_FAILED",
-      "Event URL contains an invalid encoded path segment."
-    );
+function buildLocalizedRegex(
+  selectorLocale: LinkedInSelectorLocale,
+  english: readonly string[],
+  danish: readonly string[] = english,
+  options: { exact?: boolean } = {}
+): RegExp {
+  const phrases =
+    selectorLocale === "da" ? [...danish, ...english] : [...english, ...danish];
+  const body = phrases.map((phrase) => escapeRegExp(phrase)).join("|") || "^$";
+  const pattern = options.exact ? `^(?:${body})$` : `(?:${body})`;
+  return new RegExp(pattern, "iu");
+}
+
+async function waitForCondition(
+  condition: () => Promise<boolean>,
+  timeoutMs: number,
+  intervalMs = 250
+): Promise<boolean> {
+  const deadline = Date.now() + Math.max(0, timeoutMs);
+
+  while (Date.now() < deadline) {
+    if (await condition()) {
+      return true;
+    }
+
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, intervalMs);
+    });
   }
 
-  return new LinkedInAssistantError(
-    "ACTION_PRECONDITION_FAILED",
-    "Event URL must be a valid URL.",
-    {},
-    error instanceof Error ? { cause: error } : undefined
-  );
+  return condition();
 }
 
 async function getOrCreatePage(context: BrowserContext): Promise<Page> {
@@ -120,14 +164,86 @@ async function getOrCreatePage(context: BrowserContext): Promise<Page> {
   if (existing) {
     return existing;
   }
+
   return context.newPage();
 }
 
-async function waitForEventSurface(page: Page): Promise<void> {
+function extractEventId(value: string): string {
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return "";
+  }
+
+  const urlMatch = /\/events\/(\d+)/iu.exec(normalized);
+  if (urlMatch?.[1]) {
+    return urlMatch[1];
+  }
+
+  const idMatch = /^\d+$/u.exec(normalized);
+  return idMatch?.[0] ?? "";
+}
+
+export function buildEventSearchUrl(query: string): string {
+  return `https://www.linkedin.com/search/results/events/?keywords=${encodeURIComponent(query)}`;
+}
+
+export function buildEventViewUrl(eventId: string): string {
+  return `https://www.linkedin.com/events/${encodeURIComponent(eventId)}/`;
+}
+
+function resolveEventReference(event: string): {
+  eventId: string;
+  eventUrl: string;
+} {
+  const eventId = extractEventId(event);
+  if (!eventId) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      "event must be a LinkedIn event URL or numeric ID."
+    );
+  }
+
+  return {
+    eventId,
+    eventUrl: buildEventViewUrl(eventId)
+  };
+}
+
+async function waitForEventSearchSurface(page: Page): Promise<void> {
   const selectors = [
-    "main h1",
-    ".events-live-top-card__content",
-    ".events-live-top-card__main-content",
+    ".reusable-search__result-container",
+    "li.reusable-search__result-container",
+    ".scaffold-layout__main",
+    "main"
+  ];
+
+  for (const selector of selectors) {
+    try {
+      await page.locator(selector).first().waitFor({
+        state: "visible",
+        timeout: 5_000
+      });
+      return;
+    } catch {
+      // Try the next selector.
+    }
+  }
+
+  throw new LinkedInAssistantError(
+    "UI_CHANGED_SELECTOR_FAILED",
+    "Could not locate LinkedIn event search content.",
+    {
+      current_url: page.url(),
+      attempted_selectors: selectors
+    }
+  );
+}
+
+async function waitForEventDetailSurface(page: Page): Promise<void> {
+  const selectors = [
+    ".events-top-card",
+    ".events-details",
+    ".scaffold-layout__main",
     "main"
   ];
 
@@ -153,222 +269,348 @@ async function waitForEventSurface(page: Page): Promise<void> {
   );
 }
 
-export function resolveEventUrl(target: string): string {
-  const normalizedTarget = normalizeText(target);
-  if (!normalizedTarget) {
-    throw new LinkedInAssistantError(
-      "ACTION_PRECONDITION_FAILED",
-      "Event target is required."
-    );
+async function scrollSearchResultsIfNeeded(
+  page: Page,
+  extractor: (currentPage: Page, limit: number) => Promise<EventSearchSnapshot[]>,
+  limit: number
+): Promise<EventSearchSnapshot[]> {
+  let snapshots = await extractor(page, limit);
+
+  for (let pass = 0; pass < 6 && snapshots.length < limit; pass += 1) {
+    await page.mouse.wheel(0, 1_800);
+    await page.waitForTimeout(500);
+    snapshots = await extractor(page, limit);
   }
 
-  if (isAbsoluteUrl(normalizedTarget)) {
-    let parsedUrl: URL;
-    let hostname = "";
-    let segments: string[] = [];
-    try {
-      parsedUrl = new URL(normalizedTarget);
-      hostname = parsedUrl.hostname.toLowerCase();
-      segments = parsedUrl.pathname
-        .split("/")
-        .filter((segment) => segment.length > 0);
-    } catch (error) {
-      throw toInvalidEventUrlError(error);
-    }
-
-    const isLinkedInDomain =
-      hostname === "linkedin.com" || hostname.endsWith(".linkedin.com");
-
-    if (!isLinkedInDomain || segments[0] !== "events" || !segments[1]) {
-      throw new LinkedInAssistantError(
-        "ACTION_PRECONDITION_FAILED",
-        "Event URL must point to linkedin.com/events/.",
-        { target: normalizedTarget }
-      );
-    }
-
-    return `https://www.linkedin.com/events/${encodeURIComponent(
-      decodeEventPathSegment(segments[1])
-    )}/`;
-  }
-
-  if (normalizedTarget.startsWith("/events/")) {
-    const [, , eventId = ""] = normalizedTarget.split("/");
-    const normalizedEventId = normalizeText(eventId);
-    if (!normalizedEventId) {
-      throw new LinkedInAssistantError(
-        "ACTION_PRECONDITION_FAILED",
-        "Event target is required."
-      );
-    }
-
-    return `https://www.linkedin.com/events/${encodeURIComponent(
-      normalizedEventId
-    )}/`;
-  }
-
-  return `https://www.linkedin.com/events/${encodeURIComponent(normalizedTarget)}/`;
+  return snapshots;
 }
 
-export function normalizeLinkedInEventUrl(target: string): string {
-  const resolved = resolveEventUrl(target);
-
-  try {
-    const parsedUrl = new URL(resolved);
-    parsedUrl.search = "";
-    parsedUrl.hash = "";
-
-    const pathname = parsedUrl.pathname.endsWith("/")
-      ? parsedUrl.pathname
-      : `${parsedUrl.pathname}/`;
-
-    return `${parsedUrl.origin}${pathname}`;
-  } catch {
-    return resolved;
-  }
-}
-
-export function extractEventId(url: string): string | null {
-  const match = /\/events\/([^/?#]+)/i.exec(url);
-  const eventId = match?.[1];
-  if (!eventId) {
-    return null;
-  }
-
-  try {
-    return decodeURIComponent(eventId);
-  } catch {
-    return eventId;
-  }
-}
-
-export function cleanLinkedInEventDescription(value: string): string {
-  return normalizeText(value).replace(/\s*…more$/i, "");
-}
-
-function extractEventDate(snapshot: LinkedInEventSnapshot): string {
-  if (snapshot.date) {
-    return snapshot.date;
-  }
-
-  const organizer = snapshot.organizer
-    ? `Event by ${snapshot.organizer}`
-    : "Event by";
-  const pattern = new RegExp(
-    `${organizer}\\s+(.*?)\\s+(?:Event link|\\d[\\d,.]*\\s*(?:attendees|attendee)|Attend|Share|Report this event)`,
-    "i"
-  );
-  const match = pattern.exec(snapshot.top_card_text);
-  return normalizeText(match?.[1]);
-}
-
-export function parseLinkedInEventRsvpState(
-  actions: readonly string[]
-): LinkedInEventRsvpState {
-  const normalizedActions = actions
-    .map((value) => normalizeText(value).toLowerCase())
-    .filter((value) => value.length > 0);
-
-  if (
-    normalizedActions.some(
-      (value) =>
-        value.includes("not attending") || value.includes("declined")
-    )
-  ) {
-    return "declined";
-  }
-
-  if (normalizedActions.some((value) => value.includes("attending"))) {
-    return "attending";
-  }
-
-  if (
-    normalizedActions.some(
-      (value) => value.includes("interested") || value === "maybe"
-    )
-  ) {
-    return "interested";
-  }
-
-  if (normalizedActions.some((value) => value.includes("attend"))) {
-    return "not_responded";
-  }
-
-  return "unknown";
-}
-
-async function extractEventSnapshot(page: Page): Promise<LinkedInEventSnapshot> {
-  return page.evaluate(() => {
+async function extractEventSearchResults(
+  page: Page,
+  limit: number
+): Promise<EventSearchSnapshot[]> {
+  return page.evaluate((maxEvents: number) => {
     const normalize = (value: string | null | undefined): string =>
       (value ?? "").replace(/\s+/g, " ").trim();
 
-    const topCard = globalThis.document.querySelector(
-      ".events-live-top-card__content, .events-live-top-card__main-content"
+    const extractEventIdFromUrl = (value: string): string => {
+      const match = /\/events\/(\d+)/iu.exec(value);
+      return match?.[1] ?? "";
+    };
+
+    const cards = new Map<string, string>();
+    for (const link of Array.from(globalThis.document.links)) {
+      const href = normalize(link.href);
+      if (!href.includes("/events/") || !extractEventIdFromUrl(href)) {
+        continue;
+      }
+
+      const text = link.innerText ?? "";
+      if (!normalize(text) || /^view$/iu.test(normalize(text))) {
+        continue;
+      }
+
+      const existing = cards.get(href);
+      if (!existing || text.length > existing.length) {
+        cards.set(href, text);
+      }
+    }
+
+    return Array.from(cards.entries())
+      .slice(0, maxEvents)
+      .map(([eventUrl, rawText]) => {
+        const lines = rawText
+          .split("\n")
+          .map((line) => normalize(line))
+          .filter((line) => line.length > 0);
+        const title = lines[0] ?? "";
+        const dateTime =
+          lines.find((line) =>
+            /\b(?:AM|PM|Today|Tomorrow|Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b/iu.test(line)
+          ) ?? "";
+        const locationAndOrganizer =
+          lines.find(
+            (line) =>
+              line !== title &&
+              line !== dateTime &&
+              !/^\d[\d.,\s]*(?:attendee|attendees)\b$/iu.test(line)
+          ) ?? "";
+        const [locationPart, organizerPart] = locationAndOrganizer.split(/\s+•\s+By\s+/iu);
+        const attendeeCount =
+          lines.find((line) =>
+            /^\d[\d.,\s]*(?:attendee|attendees)\b$/iu.test(line)
+          ) ?? "";
+        const description = normalize(
+          lines
+            .filter(
+              (line) =>
+                line !== title &&
+                line !== dateTime &&
+                line !== locationAndOrganizer &&
+                line !== attendeeCount
+            )
+            .join(" ")
+        );
+        const location = normalize(locationPart);
+
+        return {
+          event_id: extractEventIdFromUrl(eventUrl),
+          title,
+          date_time: dateTime,
+          location,
+          organizer: normalize(organizerPart),
+          attendee_count: attendeeCount,
+          description,
+          event_url: eventUrl,
+          is_online: /^online$/iu.test(location)
+        } satisfies EventSearchSnapshot;
+      });
+  }, limit);
+}
+
+async function extractEventDetailSnapshot(page: Page): Promise<EventDetailSnapshot> {
+  return page.evaluate(() => {
+    const normalize = (value: string | null | undefined): string =>
+      (value ?? "").replace(/\s+/g, " ").trim();
+    const isDateTimeLine = (value: string): boolean =>
+      /\b(?:AM|PM|Mon|Tue|Wed|Thu|Fri|Sat|Sun|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b/iu.test(
+        value
+      );
+
+    const title =
+      normalize(globalThis.document.querySelector("main h1")?.textContent) || "";
+    const url = normalize(globalThis.window.location.href);
+    const eventId = /\/events\/(\d+)/iu.exec(url)?.[1] ?? "";
+    const lines = globalThis.document.body.innerText
+      .split("\n")
+      .map((line) => normalize(line))
+      .filter((line) => line.length > 0);
+    const organizerRaw =
+      lines.find((line) => /^Event by /iu.test(line)) ?? "";
+    const dateTimeCandidates = lines.filter(
+      (line) => line !== title && line !== organizerRaw && isDateTimeLine(line)
     );
-    const actionRoot = globalThis.document.querySelector(
-      ".events-live__top-card-content"
+    const dateTime = dateTimeCandidates.reduce<string>(
+      (longest, candidate) =>
+        candidate.length > longest.length ? candidate : longest,
+      ""
     );
-    const organizerLink = topCard?.querySelector(
-      "a[aria-label*='Event by']"
-    ) as HTMLAnchorElement | null;
-    const eventLink = topCard?.querySelector(
-      ".events-live-top-card__external-url"
-    ) as HTMLAnchorElement | null;
-    const descriptionRoot = globalThis.document.querySelector(
-      ".update-components-update-v2__commentary, .feed-shared-update-v2__description"
+    const attendeeCount =
+      lines.find((line) =>
+        /^\d[\d.,\s]*(?:attendee|attendees)\b$/iu.test(line)
+      ) ?? "";
+    const description = (() => {
+      const about = (() => {
+        const startIndex = lines.findIndex((line) => /^About$/iu.test(line));
+        if (startIndex < 0) {
+          return "";
+        }
+
+        const values: string[] = [];
+        for (let index = startIndex + 1; index < lines.length; index += 1) {
+          const line = lines[index] ?? "";
+          if (
+            /^(?:Speakers|Exclusive events to grow your career|Other events for you|About|Accessibility)$/iu.test(
+              line
+            )
+          ) {
+            break;
+          }
+          values.push(line);
+        }
+
+        return normalize(values.join(" "));
+      })();
+
+      return about;
+    })();
+    const dateTimeIndex = lines.findIndex((line) => line === dateTime);
+    const attendeeIndex = lines.findIndex((line) => line === attendeeCount);
+    const locationCandidate =
+      lines.find((line, index) => {
+        const isAfterDateTime = dateTimeIndex < 0 || index > dateTimeIndex;
+        const isBeforeAttendees = attendeeIndex < 0 || index < attendeeIndex;
+
+        return (
+          isAfterDateTime &&
+          isBeforeAttendees &&
+          line !== title &&
+          line !== organizerRaw &&
+          line !== dateTime &&
+          line !== attendeeCount &&
+          !/^Attend$/iu.test(line) &&
+          !/^Share$/iu.test(line) &&
+          !/^Details$/iu.test(line) &&
+          !/^Comments$/iu.test(line) &&
+          !/^About$/iu.test(line) &&
+          !/^Speakers$/iu.test(line) &&
+          !/^Event by /iu.test(line) &&
+          !/^\d+(?:,\d+)*\s+attendees$/iu.test(line) &&
+          !isDateTimeLine(line)
+        );
+      }) ?? "";
+    const liveBadgeVisible = lines.some((line) => /^Live\b/iu.test(line));
+    const attendButtonVisible = Array.from(
+      globalThis.document.querySelectorAll("button")
+    ).some((button) => /^Attend$/iu.test(normalize(button.textContent)));
+    const attendingButtonVisible = Array.from(
+      globalThis.document.querySelectorAll("button")
+    ).some((button) =>
+      /^(?:Attending|Going|Manage attendance)$/iu.test(
+        normalize(button.textContent)
+      )
+    );
+    const isOnline =
+      /^Online$/iu.test(locationCandidate) ||
+      /LinkedIn Live/iu.test(description) ||
+      liveBadgeVisible;
+
+    return {
+      event_id: eventId,
+      title,
+      event_url: url,
+      organizer: normalize(organizerRaw.replace(/^Event by /iu, "")),
+      date_time: dateTime,
+      location: locationCandidate || (isOnline ? "Online" : ""),
+      attendee_count: attendeeCount,
+      description,
+      is_online: isOnline,
+      rsvp_state: attendButtonVisible
+        ? "not_responded"
+        : attendingButtonVisible
+          ? "attending"
+          : "unknown"
+    } satisfies EventDetailSnapshot;
+  });
+}
+async function executeEventRsvp(
+  runtime: LinkedInEventsExecutorRuntime,
+  actionId: string,
+  target: Record<string, unknown>
+): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
+  const profileName = String(target.profile_name ?? "default");
+  const eventId = String(target.event_id ?? "");
+  const eventUrl =
+    normalizeText(String(target.event_url ?? "")) || buildEventViewUrl(eventId);
+
+  return runtime.profileManager.runWithContext(
+    {
+      cdpUrl: runtime.cdpUrl,
+      profileName,
+      headless: true
+    },
+    async (context) => {
+      const page = await getOrCreatePage(context);
+      return executeConfirmActionWithArtifacts({
+        runtime,
+        context,
+        page,
+        actionId,
+        actionType: EVENT_RSVP_ACTION_TYPE,
+        profileName,
+        targetUrl: eventUrl,
+        metadata: {
+          event_id: eventId,
+          event_url: eventUrl,
+          response: "attend"
+        },
+        errorDetails: {
+          event_id: eventId,
+          event_url: eventUrl,
+          response: "attend"
+        },
+        mapError: (error) =>
+          asLinkedInAssistantError(
+            error,
+            "UNKNOWN",
+            "Failed to execute LinkedIn event RSVP action."
+          ),
+        execute: async () => {
+          await page.goto(eventUrl, { waitUntil: "domcontentloaded" });
+          await waitForNetworkIdleBestEffort(page);
+          await waitForEventDetailSurface(page);
+
+          const attendRegex = buildLocalizedRegex(
+            runtime.selectorLocale,
+            ["Attend"],
+            ["Deltag"],
+            { exact: true }
+          );
+          await page.getByRole("button", {
+            name: attendRegex
+          }).first().click({ timeout: 5_000 });
+
+          const finished = await waitForCondition(async () => {
+            const attendVisible = await page
+              .getByRole("button", {
+                name: attendRegex
+              })
+              .first()
+              .isVisible()
+              .catch(() => false);
+            return !attendVisible;
+          }, 8_000);
+
+          if (!finished) {
+            throw new LinkedInAssistantError(
+              "UNKNOWN",
+              "LinkedIn RSVP flow could not be verified after clicking Attend.",
+              {
+                event_id: eventId,
+                event_url: eventUrl
+              }
+            );
+          }
+
+          return {
+            ok: true,
+            result: {
+              status: "event_rsvp_submitted",
+              response: "attend",
+              event_id: eventId,
+              event_url: eventUrl
+            },
+            artifacts: []
+          };
+        }
+      });
+    }
+  );
+}
+
+export class EventRsvpActionExecutor
+  implements ActionExecutor<LinkedInEventsExecutorRuntime>
+{
+  async execute(
+    input: ActionExecutorInput<LinkedInEventsExecutorRuntime>
+  ): Promise<ActionExecutorResult> {
+    const { result, artifacts } = await executeEventRsvp(
+      input.runtime,
+      input.action.id,
+      input.action.target
     );
 
     return {
-      current_url: globalThis.window.location.href,
-      title: normalize(
-        globalThis.document.querySelector("main h1, .events-live-top-card__title")
-          ?.textContent
-      ),
-      top_card_text: normalize(topCard?.textContent),
-      status: normalize(
-        globalThis.document.querySelector(
-          ".events-live-top-card__status-feedback--bold, .events-live-top-card__status-feedback"
-        )?.textContent
-      ),
-      date: normalize(
-        topCard?.querySelector(
-          ".display-flex.t-14.t-black.t-normal.pt2"
-        )?.textContent
-      ),
-      location: normalize(topCard?.querySelector("p.t-14.t-black")?.textContent),
-      venue: normalize(
-        topCard?.querySelector("p.t-14.t-black--light.t-normal")?.textContent
-      ),
-      organizer: normalize(organizerLink?.textContent),
-      organizer_url: normalize(organizerLink?.href),
-      description: normalize(descriptionRoot?.textContent),
-      attendee_count: normalize(
-        globalThis.document.querySelector(
-          ".events-components-shared-social-proof__copy-text"
-        )?.textContent
-      ),
-      event_link: normalize(eventLink?.href),
-      action_texts: Array.from(
-        (actionRoot ?? topCard ?? globalThis.document).querySelectorAll(
-          "button,a,[role='button']"
-        )
-      )
-        .map((element) => {
-          const text = normalize(element.textContent);
-          const ariaLabel = normalize(element.getAttribute("aria-label"));
-          return text || ariaLabel;
-        })
-        .filter((value) => value.length > 0)
-        .slice(0, 24)
+      ok: true,
+      result,
+      artifacts
     };
-  });
+  }
+}
+
+export function createEventActionExecutors(): ActionExecutorRegistry<LinkedInEventsExecutorRuntime> {
+  return {
+    [EVENT_RSVP_ACTION_TYPE]: new EventRsvpActionExecutor()
+  };
 }
 
 export class LinkedInEventsService {
   constructor(private readonly runtime: LinkedInEventsRuntime) {}
 
   async searchEvents(input: SearchEventsInput): Promise<SearchEventsOutput> {
+    const profileName = input.profileName ?? "default";
     const query = normalizeText(input.query);
+    const limit = readSearchLimit(input.limit);
     if (!query) {
       throw new LinkedInAssistantError(
         "ACTION_PRECONDITION_FAILED",
@@ -376,30 +618,64 @@ export class LinkedInEventsService {
       );
     }
 
-    const result = await this.runtime.search.search({
-      query,
-      category: "events",
-      ...(input.profileName ? { profileName: input.profileName } : {}),
-      ...(typeof input.limit === "number" ? { limit: input.limit } : {})
+    await this.runtime.auth.ensureAuthenticated({
+      profileName
     });
 
-    if (result.category !== "events") {
-      throw new LinkedInAssistantError(
+    try {
+      const snapshots = await this.runtime.profileManager.runWithPersistentContext(
+        profileName,
+        { headless: true },
+        async (context) => {
+          const page = await getOrCreatePage(context);
+          await page.goto(buildEventSearchUrl(query), {
+            waitUntil: "domcontentloaded"
+          });
+          await waitForNetworkIdleBestEffort(page);
+          await waitForEventSearchSurface(page);
+          await page
+            .locator(
+              ".reusable-search__result-container, li.reusable-search__result-container"
+            )
+            .first()
+            .waitFor({ state: "visible", timeout: 10_000 })
+            .catch(() => page.waitForTimeout(2_000));
+          return scrollSearchResultsIfNeeded(page, extractEventSearchResults, limit);
+        }
+      );
+
+      const results = snapshots
+        .map((snapshot) => ({
+          event_id: normalizeText(snapshot.event_id),
+          title: normalizeText(snapshot.title),
+          date_time: normalizeText(snapshot.date_time),
+          location: normalizeText(snapshot.location),
+          organizer: normalizeText(snapshot.organizer),
+          attendee_count: normalizeText(snapshot.attendee_count),
+          description: normalizeText(snapshot.description),
+          event_url: normalizeText(snapshot.event_url),
+          is_online: snapshot.is_online
+        }))
+        .filter((result) => result.title.length > 0 || result.event_url.length > 0)
+        .slice(0, limit);
+
+      return {
+        query,
+        results,
+        count: results.length
+      };
+    } catch (error) {
+      throw asLinkedInAssistantError(
+        error,
         "UNKNOWN",
-        "LinkedIn search returned an unexpected category for events search."
+        "Failed to search LinkedIn events."
       );
     }
-
-    return {
-      query: result.query,
-      results: result.results,
-      count: result.count
-    };
   }
 
-  async viewEvent(input: ViewEventInput): Promise<LinkedInEvent> {
+  async viewEvent(input: ViewEventInput): Promise<LinkedInEventDetail> {
     const profileName = input.profileName ?? "default";
-    const targetUrl = normalizeLinkedInEventUrl(input.target);
+    const { eventUrl } = resolveEventReference(input.event);
 
     await this.runtime.auth.ensureAuthenticated({
       profileName
@@ -411,70 +687,64 @@ export class LinkedInEventsService {
         { headless: true },
         async (context) => {
           const page = await getOrCreatePage(context);
-          await page.goto(targetUrl, {
-            waitUntil: "domcontentloaded"
-          });
+          await page.goto(eventUrl, { waitUntil: "domcontentloaded" });
           await waitForNetworkIdleBestEffort(page);
-          await waitForEventSurface(page);
-
-          const seeMoreButton = page
-            .locator("button[aria-label*='see more'], button:has-text('…more')")
-            .first();
-          if (await seeMoreButton.isVisible().catch(() => false)) {
-            await seeMoreButton.click().catch(() => undefined);
-            await page.waitForTimeout(500);
-          }
-
-          return extractEventSnapshot(page);
+          await waitForEventDetailSurface(page);
+          return extractEventDetailSnapshot(page);
         }
       );
 
-      const normalizedSnapshot: LinkedInEventSnapshot = {
-        ...snapshot,
-        current_url: normalizeLinkedInEventUrl(snapshot.current_url || targetUrl),
-        title: normalizeText(snapshot.title),
-        top_card_text: normalizeText(snapshot.top_card_text),
-        status: normalizeText(snapshot.status),
-        date: normalizeText(snapshot.date),
-        location: normalizeText(snapshot.location),
-        venue: normalizeText(snapshot.venue),
-        organizer: normalizeText(snapshot.organizer),
-        organizer_url: normalizeText(snapshot.organizer_url),
-        description: cleanLinkedInEventDescription(snapshot.description),
-        attendee_count: normalizeText(snapshot.attendee_count),
-        event_link: normalizeText(snapshot.event_link),
-        action_texts: snapshot.action_texts.map((value) => normalizeText(value))
-      };
-
       return {
-        event_url: normalizedSnapshot.current_url,
-        event_id: extractEventId(normalizedSnapshot.current_url),
-        title: normalizedSnapshot.title,
-        status: normalizedSnapshot.status,
-        date: extractEventDate(normalizedSnapshot),
-        location: normalizedSnapshot.location,
-        venue: normalizedSnapshot.venue,
-        organizer: normalizedSnapshot.organizer,
-        organizer_url: normalizedSnapshot.organizer_url,
-        description: normalizedSnapshot.description,
-        attendee_count: normalizedSnapshot.attendee_count,
-        event_link: normalizedSnapshot.event_link,
-        rsvp_state: parseLinkedInEventRsvpState(
-          normalizedSnapshot.action_texts
-        )
+        event_id: normalizeText(snapshot.event_id),
+        title: normalizeText(snapshot.title),
+        event_url: normalizeText(snapshot.event_url),
+        organizer: normalizeText(snapshot.organizer),
+        date_time: normalizeText(snapshot.date_time),
+        location: normalizeText(snapshot.location),
+        attendee_count: normalizeText(snapshot.attendee_count),
+        description: normalizeText(snapshot.description),
+        is_online: snapshot.is_online,
+        rsvp_state: snapshot.rsvp_state
       };
     } catch (error) {
-      if (error instanceof LinkedInAssistantError) {
-        throw error;
-      }
-
       throw asLinkedInAssistantError(
         error,
         "UNKNOWN",
-        "Failed to view LinkedIn event."
+        "Failed to view LinkedIn event details."
       );
     }
   }
-}
 
-/* eslint-enable no-undef */
+  prepareRsvp(
+    input: PrepareEventRsvpInput
+  ): {
+    preparedActionId: string;
+    confirmToken: string;
+    expiresAtMs: number;
+    preview: Record<string, unknown>;
+  } {
+    const profileName = input.profileName ?? "default";
+    const { eventId, eventUrl } = resolveEventReference(input.event);
+    const target = {
+      profile_name: profileName,
+      event_id: eventId,
+      event_url: eventUrl
+    };
+
+    return this.runtime.twoPhaseCommit.prepare({
+      actionType: EVENT_RSVP_ACTION_TYPE,
+      target,
+      payload: {
+        response: "attend"
+      },
+      preview: {
+        summary: `RSVP attend for LinkedIn event ${eventId}`,
+        target,
+        payload: {
+          response: "attend"
+        }
+      },
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+  }
+}

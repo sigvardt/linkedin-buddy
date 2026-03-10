@@ -1,18 +1,68 @@
 import { type BrowserContext, type Page } from "playwright-core";
+import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
-import { LinkedInAssistantError, asLinkedInAssistantError } from "./errors.js";
-import type {
-  LinkedInGroupSearchResult,
-  LinkedInSearchService
-} from "./linkedinSearch.js";
+import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
+import type { ConfirmFailureArtifactConfig } from "./config.js";
+import {
+  LinkedInAssistantError,
+  asLinkedInAssistantError
+} from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
+import {
+  buildLinkedInSelectorPhraseRegex,
+  type LinkedInSelectorLocale
+} from "./selectorLocale.js";
+import type {
+  ActionExecutor,
+  ActionExecutorInput,
+  ActionExecutorRegistry,
+  ActionExecutorResult,
+  TwoPhaseCommitService
+} from "./twoPhaseCommit.js";
+
+export const GROUP_JOIN_ACTION_TYPE = "groups.join";
+export const GROUP_LEAVE_ACTION_TYPE = "groups.leave";
+export const GROUP_POST_ACTION_TYPE = "groups.post";
+
+export type LinkedInGroupMembershipState =
+  | "member"
+  | "joinable"
+  | "pending"
+  | "unknown";
+
+export interface LinkedInGroupSearchResult {
+  group_id: string;
+  name: string;
+  group_url: string;
+  visibility: string;
+  member_count: string;
+  description: string;
+  membership_state: LinkedInGroupMembershipState;
+}
+
+export interface LinkedInGroupDetail {
+  group_id: string;
+  name: string;
+  group_url: string;
+  visibility: string;
+  member_count: string;
+  description: string;
+  about: string;
+  joined_at: string | null;
+  membership_state: LinkedInGroupMembershipState;
+}
 
 export interface SearchGroupsInput {
   profileName?: string;
   query: string;
   limit?: number;
+}
+
+export interface ViewGroupInput {
+  profileName?: string;
+  group: string;
 }
 
 export interface SearchGroupsOutput {
@@ -21,100 +71,108 @@ export interface SearchGroupsOutput {
   count: number;
 }
 
-export interface ViewGroupInput {
+export interface PrepareJoinGroupInput {
   profileName?: string;
-  target: string;
+  group: string;
+  operatorNote?: string;
 }
 
-export type LinkedInGroupJoinState =
-  | "joined"
-  | "not_joined"
-  | "requested"
-  | "unknown";
-
-export interface LinkedInGroup {
-  group_url: string;
-  group_id: string | null;
-  name: string;
-  description: string;
-  member_count: string;
-  group_type: string;
-  visibility_description: string;
-  join_state: LinkedInGroupJoinState;
+export interface PrepareLeaveGroupInput {
+  profileName?: string;
+  group: string;
+  operatorNote?: string;
 }
 
-interface LinkedInGroupsSnapshot {
-  current_url: string;
-  name: string;
-  header_text: string;
-  header_actions: string[];
-  about_text: string;
+export interface PreparePostToGroupInput {
+  profileName?: string;
+  group: string;
+  text: string;
+  operatorNote?: string;
 }
 
-export interface LinkedInGroupsRuntime {
+export interface LinkedInGroupsExecutorRuntime {
   auth: LinkedInAuthService;
   cdpUrl?: string | undefined;
+  selectorLocale: LinkedInSelectorLocale;
   profileManager: ProfileManager;
   logger: JsonEventLogger;
-  search: Pick<LinkedInSearchService, "search">;
+  artifacts: ArtifactHelpers;
+  confirmFailureArtifacts: ConfirmFailureArtifactConfig;
 }
 
-const GROUP_TYPE_PATTERN =
-  /\b(Public group|Private(?:\s+Listed|\s+Unlisted)?|Private group)\b/i;
-const GROUP_MEMBER_COUNT_PATTERN =
-  /(\d[\d,.]*\s*(?:[KMB])?\s+members?)/i;
+export interface LinkedInGroupsRuntime extends LinkedInGroupsExecutorRuntime {
+  twoPhaseCommit: Pick<TwoPhaseCommitService<LinkedInGroupsExecutorRuntime>, "prepare">;
+}
+
+interface GroupSearchSnapshot {
+  group_id: string;
+  name: string;
+  group_url: string;
+  visibility: string;
+  member_count: string;
+  description: string;
+  membership_state: LinkedInGroupMembershipState;
+}
+
+interface GroupDetailSnapshot {
+  group_id: string;
+  name: string;
+  group_url: string;
+  visibility: string;
+  member_count: string;
+  description: string;
+  about: string;
+  joined_at: string | null;
+  membership_state: LinkedInGroupMembershipState;
+}
 
 function normalizeText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
 }
 
-function escapeRegex(value: string): string {
+function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function stripPhrase(text: string, phrase: string): string {
-  const normalizedPhrase = normalizeText(phrase);
-  if (!normalizedPhrase) {
-    return text;
+function readSearchLimit(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 10;
   }
 
-  return text.replace(new RegExp(escapeRegex(normalizedPhrase), "gi"), " ");
+  return Math.max(1, Math.floor(value));
 }
 
-function isAbsoluteUrl(value: string): boolean {
-  return /^https?:\/\//i.test(value);
+function buildLocalizedRegex(
+  selectorLocale: LinkedInSelectorLocale,
+  english: readonly string[],
+  danish: readonly string[] = english,
+  options: { exact?: boolean } = {}
+): RegExp {
+  const phrases =
+    selectorLocale === "da" ? [...danish, ...english] : [...english, ...danish];
+  const body = phrases.map((phrase) => escapeRegExp(phrase)).join("|") || "^$";
+  const pattern = options.exact ? `^(?:${body})$` : `(?:${body})`;
+  return new RegExp(pattern, "iu");
 }
 
-function decodeGroupPathSegment(value: string): string {
-  try {
-    return decodeURIComponent(value);
-  } catch (error) {
-    throw new LinkedInAssistantError(
-      "ACTION_PRECONDITION_FAILED",
-      "Group URL contains an invalid encoded path segment.",
-      {},
-      error instanceof Error ? { cause: error } : undefined
-    );
+async function waitForCondition(
+  condition: () => Promise<boolean>,
+  timeoutMs: number,
+  intervalMs = 250
+): Promise<boolean> {
+  const deadline = Date.now() + Math.max(0, timeoutMs);
+
+  while (Date.now() < deadline) {
+    if (await condition()) {
+      return true;
+    }
+
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, intervalMs);
+    });
   }
-}
 
-function toInvalidGroupUrlError(error: unknown): LinkedInAssistantError {
-  if (
-    error instanceof URIError ||
-    (error instanceof Error && /uri malformed/i.test(error.message))
-  ) {
-    return new LinkedInAssistantError(
-      "ACTION_PRECONDITION_FAILED",
-      "Group URL contains an invalid encoded path segment."
-    );
-  }
-
-  return new LinkedInAssistantError(
-    "ACTION_PRECONDITION_FAILED",
-    "Group URL must be a valid URL.",
-    {},
-    error instanceof Error ? { cause: error } : undefined
-  );
+  return condition();
 }
 
 async function getOrCreatePage(context: BrowserContext): Promise<Page> {
@@ -122,15 +180,87 @@ async function getOrCreatePage(context: BrowserContext): Promise<Page> {
   if (existing) {
     return existing;
   }
+
   return context.newPage();
 }
 
-async function waitForGroupSurface(page: Page): Promise<void> {
+function extractGroupId(value: string): string {
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return "";
+  }
+
+  const urlMatch = /\/groups\/(\d+)/iu.exec(normalized);
+  if (urlMatch?.[1]) {
+    return urlMatch[1];
+  }
+
+  const idMatch = /^\d+$/u.exec(normalized);
+  return idMatch?.[0] ?? "";
+}
+
+export function buildGroupSearchUrl(query: string): string {
+  return `https://www.linkedin.com/search/results/groups/?keywords=${encodeURIComponent(query)}`;
+}
+
+export function buildGroupViewUrl(groupId: string): string {
+  return `https://www.linkedin.com/groups/${encodeURIComponent(groupId)}/`;
+}
+
+function resolveGroupReference(group: string): {
+  groupId: string;
+  groupUrl: string;
+} {
+  const groupId = extractGroupId(group);
+  if (!groupId) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      "group must be a LinkedIn group URL or numeric ID."
+    );
+  }
+
+  return {
+    groupId,
+    groupUrl: buildGroupViewUrl(groupId)
+  };
+}
+
+async function waitForGroupSearchSurface(page: Page): Promise<void> {
   const selectors = [
-    "main h1",
-    ".groups-entity",
+    ".reusable-search__result-container",
+    "li.reusable-search__result-container",
+    ".scaffold-layout__main",
+    "main"
+  ];
+
+  for (const selector of selectors) {
+    try {
+      await page.locator(selector).first().waitFor({
+        state: "visible",
+        timeout: 5_000
+      });
+      return;
+    } catch {
+      // Try the next selector.
+    }
+  }
+
+  throw new LinkedInAssistantError(
+    "UI_CHANGED_SELECTOR_FAILED",
+    "Could not locate LinkedIn group search content.",
+    {
+      current_url: page.url(),
+      attempted_selectors: selectors
+    }
+  );
+}
+
+async function waitForGroupDetailSurface(page: Page): Promise<void> {
+  const selectors = [
+    ".groups-details-view",
     ".groups-guest-view",
-    ".groups-details",
+    ".groups-header",
+    ".scaffold-layout__main",
     "main"
   ];
 
@@ -156,261 +286,563 @@ async function waitForGroupSurface(page: Page): Promise<void> {
   );
 }
 
-export function resolveGroupUrl(target: string): string {
-  const normalizedTarget = normalizeText(target);
-  if (!normalizedTarget) {
-    throw new LinkedInAssistantError(
-      "ACTION_PRECONDITION_FAILED",
-      "Group target is required."
-    );
+async function scrollSearchResultsIfNeeded(
+  page: Page,
+  extractor: (currentPage: Page, limit: number) => Promise<GroupSearchSnapshot[]>,
+  limit: number
+): Promise<GroupSearchSnapshot[]> {
+  let snapshots = await extractor(page, limit);
+
+  for (let pass = 0; pass < 6 && snapshots.length < limit; pass += 1) {
+    await page.mouse.wheel(0, 1_800);
+    await page.waitForTimeout(500);
+    snapshots = await extractor(page, limit);
   }
 
-  if (isAbsoluteUrl(normalizedTarget)) {
-    let parsedUrl: URL;
-    let hostname = "";
-    let segments: string[] = [];
-    try {
-      parsedUrl = new URL(normalizedTarget);
-      hostname = parsedUrl.hostname.toLowerCase();
-      segments = parsedUrl.pathname
-        .split("/")
-        .filter((segment) => segment.length > 0);
-    } catch (error) {
-      throw toInvalidGroupUrlError(error);
+  return snapshots;
+}
+
+async function extractGroupSearchResults(
+  page: Page,
+  limit: number
+): Promise<GroupSearchSnapshot[]> {
+  return page.evaluate((maxGroups: number) => {
+    const normalize = (value: string | null | undefined): string =>
+      (value ?? "").replace(/\s+/g, " ").trim();
+
+    const extractGroupIdFromUrl = (value: string): string => {
+      const match = /\/groups\/(\d+)/iu.exec(value);
+      return match?.[1] ?? "";
+    };
+
+    const cards = new Map<string, string>();
+    for (const link of Array.from(globalThis.document.links)) {
+      const href = normalize(link.href);
+      if (!href.includes("/groups/") || !extractGroupIdFromUrl(href)) {
+        continue;
+      }
+
+      const text = link.innerText ?? "";
+      if (!normalize(text) || /^more$/iu.test(normalize(text))) {
+        continue;
+      }
+
+      const existing = cards.get(href);
+      if (!existing || text.length > existing.length) {
+        cards.set(href, text);
+      }
     }
 
-    const isLinkedInDomain =
-      hostname === "linkedin.com" || hostname.endsWith(".linkedin.com");
+    return Array.from(cards.entries())
+      .slice(0, maxGroups)
+      .map(([groupUrl, rawText]) => {
+        const lines = rawText
+          .split("\n")
+          .map((line) => normalize(line))
+          .filter((line) => line.length > 0);
+        const visibility =
+          lines.find((line) =>
+            /(?:public|private)(?: listed)? group/iu.test(line)
+          ) ?? "";
+        const memberCount =
+          lines.find((line) => /\b(?:members|medlemmer)\b/iu.test(line)) ?? "";
+        const actionLabel =
+          lines.find((line) => /^(?:join|requested to join)$/iu.test(line)) ?? "";
+        const name = lines[0] ?? "";
+        const description = normalize(
+          lines
+            .filter(
+              (line) =>
+                line !== name &&
+                line !== visibility &&
+                line !== memberCount &&
+                line !== actionLabel
+            )
+            .join(" ")
+        );
+        const membershipState =
+          /^requested to join$/iu.test(actionLabel)
+            ? "pending"
+            : /^join$/iu.test(actionLabel)
+              ? "joinable"
+              : "unknown";
 
-    if (!isLinkedInDomain || segments[0] !== "groups" || !segments[1]) {
-      throw new LinkedInAssistantError(
-        "ACTION_PRECONDITION_FAILED",
-        "Group URL must point to linkedin.com/groups/.",
-        { target: normalizedTarget }
-      );
-    }
-
-    return `https://www.linkedin.com/groups/${encodeURIComponent(
-      decodeGroupPathSegment(segments[1])
-    )}/`;
-  }
-
-  if (normalizedTarget.startsWith("/groups/")) {
-    const [, , groupId = ""] = normalizedTarget.split("/");
-    const normalizedGroupId = normalizeText(groupId);
-    if (!normalizedGroupId) {
-      throw new LinkedInAssistantError(
-        "ACTION_PRECONDITION_FAILED",
-        "Group target is required."
-      );
-    }
-
-    return `https://www.linkedin.com/groups/${encodeURIComponent(
-      normalizedGroupId
-    )}/`;
-  }
-
-  return `https://www.linkedin.com/groups/${encodeURIComponent(normalizedTarget)}/`;
+        return {
+          group_id: extractGroupIdFromUrl(groupUrl),
+          name,
+          group_url: groupUrl,
+          visibility,
+          member_count: memberCount,
+          description,
+          membership_state: membershipState
+        } satisfies GroupSearchSnapshot;
+      });
+  }, limit);
 }
 
-export function normalizeLinkedInGroupUrl(target: string): string {
-  const resolved = resolveGroupUrl(target);
-
-  try {
-    const parsedUrl = new URL(resolved);
-    parsedUrl.search = "";
-    parsedUrl.hash = "";
-
-    const pathname = parsedUrl.pathname.endsWith("/")
-      ? parsedUrl.pathname
-      : `${parsedUrl.pathname}/`;
-
-    return `${parsedUrl.origin}${pathname}`;
-  } catch {
-    return resolved;
-  }
-}
-
-export function extractGroupId(url: string): string | null {
-  const match = /\/groups\/([^/?#]+)/i.exec(url);
-  const groupId = match?.[1];
-  if (!groupId) {
-    return null;
-  }
-
-  try {
-    return decodeURIComponent(groupId);
-  } catch {
-    return groupId;
-  }
-}
-
-export function cleanLinkedInGroupAboutText(value: string): string {
-  let text = normalizeText(value);
-  text = text.replace(/^Dialog content start\.?\s*/i, "");
-  text = text.replace(/^About this group\s*/i, "");
-  text = text.replace(/^Description\s*/i, "");
-
-  const detailsSectionMatch =
-    /\sDetails\s+(?=(?:Private|Public|Only members|Listed|Created\b|Group appears|Anyone, on or off LinkedIn))/i.exec(
-      text
-    );
-  const detailsIndex = detailsSectionMatch?.index ?? -1;
-  if (detailsIndex >= 0) {
-    text = text.slice(0, detailsIndex);
-  }
-
-  text = text.replace(
-    /\s*Show all(?: the details about the group.*)?$/i,
-    ""
-  );
-  text = text.replace(/\s*Done\s*Dialog content end\.?$/i, "");
-  return normalizeText(text);
-}
-
-function extractGroupType(
-  headerText: string,
-  actions: readonly string[]
-): string {
-  const actionMatch = actions
-    .map((value) => normalizeText(value))
-    .find((value) => GROUP_TYPE_PATTERN.test(value));
-
-  if (actionMatch) {
-    const match = GROUP_TYPE_PATTERN.exec(actionMatch);
-    if (match?.[1]) {
-      return normalizeText(match[1]);
-    }
-  }
-
-  const headerMatch = GROUP_TYPE_PATTERN.exec(headerText);
-  return normalizeText(headerMatch?.[1]);
-}
-
-function extractGroupMemberCount(
-  headerText: string,
-  aboutText: string
-): string {
-  const headerMatch = GROUP_MEMBER_COUNT_PATTERN.exec(headerText);
-  if (headerMatch?.[1]) {
-    return normalizeText(headerMatch[1]);
-  }
-
-  const aboutMatch = GROUP_MEMBER_COUNT_PATTERN.exec(aboutText);
-  return normalizeText(aboutMatch?.[1]);
-}
-
-export function parseLinkedInGroupJoinState(input: {
-  headerText: string;
-  actions: readonly string[];
-}): LinkedInGroupJoinState {
-  const haystacks = [input.headerText, ...input.actions]
-    .map((value) => normalizeText(value).toLowerCase())
-    .filter((value) => value.length > 0);
-
-  if (haystacks.some((value) => value.includes("requested"))) {
-    return "requested";
-  }
-
-  if (
-    haystacks.some(
-      (value) =>
-        value.includes("leave this group") ||
-        value.includes("manage notifications") ||
-        value.includes("update your settings")
-    )
-  ) {
-    return "joined";
-  }
-
-  if (
-    haystacks.some(
-      (value) =>
-        value === "join" ||
-        value.startsWith("join ") ||
-        value.includes(" group join")
-    )
-  ) {
-    return "not_joined";
-  }
-
-  return "unknown";
-}
-
-function buildGroupVisibilityDescription(input: {
-  name: string;
-  headerText: string;
-  actions: readonly string[];
-  groupType: string;
-  memberCount: string;
-}): string {
-  let value = normalizeText(input.headerText);
-  if (!value) {
-    return "";
-  }
-
-  if (input.name) {
-    value = value.replace(new RegExp(`^${escapeRegex(input.name)}\\s*`, "i"), "");
-  }
-
-  value = stripPhrase(value, input.groupType);
-  value = stripPhrase(value, input.memberCount);
-  value = stripPhrase(value, `Join ${input.name} group Join`);
-  value = stripPhrase(value, `Join ${input.name} group`);
-
-  for (const action of input.actions) {
-    value = stripPhrase(value, action);
-  }
-
-  return normalizeText(value);
-}
-
-async function extractGroupSnapshot(page: Page): Promise<LinkedInGroupsSnapshot> {
+async function extractGroupDetailSnapshot(page: Page): Promise<GroupDetailSnapshot> {
   return page.evaluate(() => {
     const normalize = (value: string | null | undefined): string =>
       (value ?? "").replace(/\s+/g, " ").trim();
 
-    const heading = globalThis.document.querySelector("main h1");
-    const headerRoot = heading?.closest("section,div,article");
-    const aboutRoot = Array.from(
-      globalThis.document.querySelectorAll("section,div,article,aside")
-    ).find((element) => {
-      const text = normalize(element.textContent);
-      return (
-        /^About this group\b/i.test(text) ||
-        /^Dialog content start\.?\s*About this group\b/i.test(text)
+    const title =
+      normalize(
+        globalThis.document.querySelector("main h1")?.textContent
+      ) ||
+      normalize(
+        globalThis.document.querySelector(".groups-header h1")?.textContent
       );
-    });
+    const url = normalize(globalThis.window.location.href);
+    const groupId = /\/groups\/(\d+)/iu.exec(url)?.[1] ?? "";
+    const lines = globalThis.document.body.innerText
+      .split("\n")
+      .map((line) => normalize(line))
+      .filter((line) => line.length > 0);
+    const visibility =
+      lines.find((line) =>
+        /^(?:public|private)(?: listed)?(?: group)?$/iu.test(line)
+      ) ?? "";
+    const memberCount =
+      lines.find((line) => /^\d[\d.,\s]*(?:members|medlemmer)\b$/iu.test(line)) ?? "";
 
-    const headerActions =
-      !headerRoot
-        ? []
-        : Array.from(
-            headerRoot.querySelectorAll("button,a,[role='button']")
-          )
-            .map((element) => {
-              const buttonText = normalize(element.textContent);
-              const ariaLabel = normalize(element.getAttribute("aria-label"));
-              return buttonText || ariaLabel;
-            })
-            .filter((value) => value.length > 0)
-            .slice(0, 24);
+    const extractSection = (
+      headingPattern: RegExp,
+      stopPatterns: RegExp[]
+    ): string => {
+      const startIndex = lines.findIndex((line) => headingPattern.test(line));
+      if (startIndex < 0) {
+        return "";
+      }
+
+      const values: string[] = [];
+      for (let index = startIndex + 1; index < lines.length; index += 1) {
+        const line = lines[index] ?? "";
+        if (stopPatterns.some((pattern) => pattern.test(line))) {
+          break;
+        }
+        values.push(line);
+      }
+
+      return normalize(values.join(" "));
+    };
+
+    const about = extractSection(/^(?:About this group|About)$/iu, [
+      /^(?:Show all|Member highlights|Admins|Members|About|Accessibility|Help Center)$/iu,
+      /^\d+\s+(?:connections|members)\b/iu
+    ]);
+    const joinedRaw =
+      lines.find((line) => /^Joined group:/iu.test(line)) ?? null;
+    const membershipState = lines.some((line) => /^Start a post in this group$/iu.test(line))
+      ? "member"
+      : lines.some((line) => /^Requested to join$/iu.test(line))
+        ? "pending"
+        : lines.some((line) => /^Join$/iu.test(line))
+          ? "joinable"
+          : "unknown";
 
     return {
-      current_url: globalThis.window.location.href,
-      name: normalize(heading?.textContent),
-      header_text: normalize(headerRoot?.textContent),
-      header_actions: headerActions,
-      about_text: normalize(aboutRoot?.textContent)
-    };
+      group_id: groupId,
+      name: title,
+      group_url: url,
+      visibility,
+      member_count: memberCount,
+      description: about,
+      about,
+      joined_at: joinedRaw ? normalize(joinedRaw.replace(/^Joined group:\s*/iu, "")) : null,
+      membership_state: membershipState
+    } satisfies GroupDetailSnapshot;
   });
+}
+async function isDialogVisible(page: Page): Promise<boolean> {
+  return page
+    .locator("div[role='dialog'], aside[role='dialog']")
+    .first()
+    .isVisible()
+    .catch(() => false);
+}
+
+async function executeJoinGroup(
+  runtime: LinkedInGroupsExecutorRuntime,
+  actionId: string,
+  target: Record<string, unknown>
+): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
+  const profileName = String(target.profile_name ?? "default");
+  const groupId = String(target.group_id ?? "");
+  const groupUrl =
+    normalizeText(String(target.group_url ?? "")) || buildGroupViewUrl(groupId);
+
+  return runtime.profileManager.runWithContext(
+    {
+      cdpUrl: runtime.cdpUrl,
+      profileName,
+      headless: true
+    },
+    async (context) => {
+      const page = await getOrCreatePage(context);
+      return executeConfirmActionWithArtifacts({
+        runtime,
+        context,
+        page,
+        actionId,
+        actionType: GROUP_JOIN_ACTION_TYPE,
+        profileName,
+        targetUrl: groupUrl,
+        metadata: {
+          group_id: groupId,
+          group_url: groupUrl
+        },
+        errorDetails: {
+          group_id: groupId,
+          group_url: groupUrl
+        },
+        mapError: (error) =>
+          asLinkedInAssistantError(
+            error,
+            "UNKNOWN",
+            "Failed to execute LinkedIn group join action."
+          ),
+        execute: async () => {
+          await page.goto(groupUrl, { waitUntil: "domcontentloaded" });
+          await waitForNetworkIdleBestEffort(page);
+          await waitForGroupDetailSurface(page);
+
+          const joinRegex = buildLocalizedRegex(
+            runtime.selectorLocale,
+            ["Join"],
+            ["Deltag", "Bliv medlem"],
+            { exact: true }
+          );
+          const joinButton = page.getByRole("button", {
+            name: joinRegex
+          }).first();
+          await joinButton.click({ timeout: 5_000 });
+
+          await waitForCondition(async () => {
+            const joinVisible = await page
+              .getByRole("button", {
+                name: joinRegex
+              })
+              .first()
+              .isVisible()
+              .catch(() => false);
+            if (!joinVisible) {
+              return true;
+            }
+
+            const bodyText = await page.locator("body").innerText().catch(() => "");
+            return /requested to join|joined group:/iu.test(bodyText);
+          }, 8_000);
+
+          const bodyText = await page.locator("body").innerText().catch(() => "");
+          const status = /requested to join/iu.test(bodyText)
+            ? "group_join_requested"
+            : /joined group:/iu.test(bodyText) ||
+                (await page
+                  .getByRole("button", {
+                    name: buildLinkedInSelectorPhraseRegex(
+                      "start_post",
+                      runtime.selectorLocale
+                    )
+                  })
+                  .first()
+                  .isVisible()
+                  .catch(() => false))
+              ? "group_joined"
+              : "group_join_submitted";
+
+          return {
+            ok: true,
+            result: {
+              status,
+              group_id: groupId,
+              group_url: groupUrl
+            },
+            artifacts: []
+          };
+        }
+      });
+    }
+  );
+}
+
+async function executeLeaveGroup(
+  runtime: LinkedInGroupsExecutorRuntime,
+  actionId: string,
+  target: Record<string, unknown>
+): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
+  const profileName = String(target.profile_name ?? "default");
+  const groupId = String(target.group_id ?? "");
+  const groupUrl =
+    normalizeText(String(target.group_url ?? "")) || buildGroupViewUrl(groupId);
+
+  return runtime.profileManager.runWithContext(
+    {
+      cdpUrl: runtime.cdpUrl,
+      profileName,
+      headless: true
+    },
+    async (context) => {
+      const page = await getOrCreatePage(context);
+      return executeConfirmActionWithArtifacts({
+        runtime,
+        context,
+        page,
+        actionId,
+        actionType: GROUP_LEAVE_ACTION_TYPE,
+        profileName,
+        targetUrl: groupUrl,
+        metadata: {
+          group_id: groupId,
+          group_url: groupUrl
+        },
+        errorDetails: {
+          group_id: groupId,
+          group_url: groupUrl
+        },
+        mapError: (error) =>
+          asLinkedInAssistantError(
+            error,
+            "UNKNOWN",
+            "Failed to execute LinkedIn group leave action."
+          ),
+        execute: async () => {
+          await page.goto(groupUrl, { waitUntil: "domcontentloaded" });
+          await waitForNetworkIdleBestEffort(page);
+          await waitForGroupDetailSurface(page);
+
+          await page.locator(".groups-action-dropdown__trigger").first().click({
+            timeout: 5_000
+          });
+          await page.waitForTimeout(500);
+
+          await page.getByText(
+            buildLocalizedRegex(
+              runtime.selectorLocale,
+              ["Leave this group"],
+              ["Forlad denne gruppe"],
+              { exact: true }
+            )
+          ).first().click({ timeout: 5_000 });
+
+          await page.getByRole("button", {
+            name: buildLinkedInSelectorPhraseRegex("leave", runtime.selectorLocale, {
+              exact: true
+            })
+          }).last().click({ timeout: 5_000 });
+
+          const joinRegex = buildLocalizedRegex(
+            runtime.selectorLocale,
+            ["Join"],
+            ["Deltag", "Bliv medlem"],
+            { exact: true }
+          );
+          const finished = await waitForCondition(
+            async () =>
+              await page
+                .getByRole("button", {
+                  name: joinRegex
+                })
+                .first()
+                .isVisible()
+                .catch(() => false),
+            8_000
+          );
+
+          if (!finished) {
+            throw new LinkedInAssistantError(
+              "UNKNOWN",
+              "LinkedIn leave group flow could not be verified after confirmation.",
+              {
+                group_id: groupId,
+                group_url: groupUrl
+              }
+            );
+          }
+
+          return {
+            ok: true,
+            result: {
+              status: "group_left",
+              group_id: groupId,
+              group_url: groupUrl
+            },
+            artifacts: []
+          };
+        }
+      });
+    }
+  );
+}
+
+async function executePostToGroup(
+  runtime: LinkedInGroupsExecutorRuntime,
+  actionId: string,
+  target: Record<string, unknown>,
+  payload: Record<string, unknown>
+): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
+  const profileName = String(target.profile_name ?? "default");
+  const groupId = String(target.group_id ?? "");
+  const groupUrl =
+    normalizeText(String(target.group_url ?? "")) || buildGroupViewUrl(groupId);
+  const text = normalizeText(String(payload.text ?? ""));
+
+  return runtime.profileManager.runWithContext(
+    {
+      cdpUrl: runtime.cdpUrl,
+      profileName,
+      headless: true
+    },
+    async (context) => {
+      const page = await getOrCreatePage(context);
+      return executeConfirmActionWithArtifacts({
+        runtime,
+        context,
+        page,
+        actionId,
+        actionType: GROUP_POST_ACTION_TYPE,
+        profileName,
+        targetUrl: groupUrl,
+        metadata: {
+          group_id: groupId,
+          group_url: groupUrl
+        },
+        errorDetails: {
+          group_id: groupId,
+          group_url: groupUrl
+        },
+        mapError: (error) =>
+          asLinkedInAssistantError(
+            error,
+            "UNKNOWN",
+            "Failed to execute LinkedIn group post action."
+          ),
+        execute: async () => {
+          await page.goto(groupUrl, { waitUntil: "domcontentloaded" });
+          await waitForNetworkIdleBestEffort(page);
+          await waitForGroupDetailSurface(page);
+
+          await page.getByRole("button", {
+            name: buildLinkedInSelectorPhraseRegex("start_post", runtime.selectorLocale)
+          }).first().click({ timeout: 5_000 });
+
+          const editor = page
+            .locator("div[role='textbox'][contenteditable='true']")
+            .first();
+          await editor.waitFor({ state: "visible", timeout: 5_000 });
+          await editor.fill(text);
+
+          await page.getByRole("button", {
+            name: buildLinkedInSelectorPhraseRegex("post", runtime.selectorLocale, {
+              exact: true
+            })
+          }).first().click({ timeout: 5_000 });
+
+          const closed = await waitForCondition(
+            async () => !(await isDialogVisible(page)),
+            8_000
+          );
+          if (!closed) {
+            throw new LinkedInAssistantError(
+              "UNKNOWN",
+              "LinkedIn group post composer stayed open after submitting the post.",
+              {
+                group_id: groupId,
+                group_url: groupUrl
+              }
+            );
+          }
+
+          return {
+            ok: true,
+            result: {
+              status: "group_post_published",
+              group_id: groupId,
+              group_url: groupUrl
+            },
+            artifacts: []
+          };
+        }
+      });
+    }
+  );
+}
+
+export class JoinGroupActionExecutor
+  implements ActionExecutor<LinkedInGroupsExecutorRuntime>
+{
+  async execute(
+    input: ActionExecutorInput<LinkedInGroupsExecutorRuntime>
+  ): Promise<ActionExecutorResult> {
+    const { result, artifacts } = await executeJoinGroup(
+      input.runtime,
+      input.action.id,
+      input.action.target
+    );
+
+    return {
+      ok: true,
+      result,
+      artifacts
+    };
+  }
+}
+
+export class LeaveGroupActionExecutor
+  implements ActionExecutor<LinkedInGroupsExecutorRuntime>
+{
+  async execute(
+    input: ActionExecutorInput<LinkedInGroupsExecutorRuntime>
+  ): Promise<ActionExecutorResult> {
+    const { result, artifacts } = await executeLeaveGroup(
+      input.runtime,
+      input.action.id,
+      input.action.target
+    );
+
+    return {
+      ok: true,
+      result,
+      artifacts
+    };
+  }
+}
+
+export class PostToGroupActionExecutor
+  implements ActionExecutor<LinkedInGroupsExecutorRuntime>
+{
+  async execute(
+    input: ActionExecutorInput<LinkedInGroupsExecutorRuntime>
+  ): Promise<ActionExecutorResult> {
+    const { result, artifacts } = await executePostToGroup(
+      input.runtime,
+      input.action.id,
+      input.action.target,
+      input.action.payload
+    );
+
+    return {
+      ok: true,
+      result,
+      artifacts
+    };
+  }
+}
+
+export function createGroupActionExecutors(): ActionExecutorRegistry<LinkedInGroupsExecutorRuntime> {
+  return {
+    [GROUP_JOIN_ACTION_TYPE]: new JoinGroupActionExecutor(),
+    [GROUP_LEAVE_ACTION_TYPE]: new LeaveGroupActionExecutor(),
+    [GROUP_POST_ACTION_TYPE]: new PostToGroupActionExecutor()
+  };
 }
 
 export class LinkedInGroupsService {
   constructor(private readonly runtime: LinkedInGroupsRuntime) {}
 
   async searchGroups(input: SearchGroupsInput): Promise<SearchGroupsOutput> {
+    const profileName = input.profileName ?? "default";
     const query = normalizeText(input.query);
+    const limit = readSearchLimit(input.limit);
     if (!query) {
       throw new LinkedInAssistantError(
         "ACTION_PRECONDITION_FAILED",
@@ -418,111 +850,196 @@ export class LinkedInGroupsService {
       );
     }
 
-    const result = await this.runtime.search.search({
-      query,
-      category: "groups",
-      ...(input.profileName ? { profileName: input.profileName } : {}),
-      ...(typeof input.limit === "number" ? { limit: input.limit } : {})
+    await this.runtime.auth.ensureAuthenticated({
+      profileName
     });
 
-    if (result.category !== "groups") {
-      throw new LinkedInAssistantError(
+    try {
+      const snapshots = await this.runtime.profileManager.runWithPersistentContext(
+        profileName,
+        { headless: true },
+        async (context) => {
+          const page = await getOrCreatePage(context);
+          await page.goto(buildGroupSearchUrl(query), {
+            waitUntil: "domcontentloaded"
+          });
+          await waitForNetworkIdleBestEffort(page);
+          await waitForGroupSearchSurface(page);
+          await page
+            .locator(
+              ".reusable-search__result-container, li.reusable-search__result-container"
+            )
+            .first()
+            .waitFor({ state: "visible", timeout: 10_000 })
+            .catch(() => page.waitForTimeout(2_000));
+          return scrollSearchResultsIfNeeded(page, extractGroupSearchResults, limit);
+        }
+      );
+
+      const results = snapshots
+        .map((snapshot) => ({
+          group_id: normalizeText(snapshot.group_id),
+          name: normalizeText(snapshot.name),
+          group_url: normalizeText(snapshot.group_url),
+          visibility: normalizeText(snapshot.visibility),
+          member_count: normalizeText(snapshot.member_count),
+          description: normalizeText(snapshot.description),
+          membership_state: snapshot.membership_state
+        }))
+        .filter((result) => result.name.length > 0 || result.group_url.length > 0)
+        .slice(0, limit);
+
+      return {
+        query,
+        results,
+        count: results.length
+      };
+    } catch (error) {
+      throw asLinkedInAssistantError(
+        error,
         "UNKNOWN",
-        "LinkedIn search returned an unexpected category for groups search."
+        "Failed to search LinkedIn groups."
       );
     }
-
-    return {
-      query: result.query,
-      results: result.results,
-      count: result.count
-    };
   }
 
-  async viewGroup(input: ViewGroupInput): Promise<LinkedInGroup> {
+  async viewGroup(input: ViewGroupInput): Promise<LinkedInGroupDetail> {
     const profileName = input.profileName ?? "default";
-    const targetUrl = normalizeLinkedInGroupUrl(input.target);
+    const { groupUrl } = resolveGroupReference(input.group);
 
     await this.runtime.auth.ensureAuthenticated({
       profileName
     });
 
     try {
-      let snapshot = await this.runtime.profileManager.runWithPersistentContext(
+      const snapshot = await this.runtime.profileManager.runWithPersistentContext(
         profileName,
         { headless: true },
         async (context) => {
           const page = await getOrCreatePage(context);
-          await page.goto(targetUrl, {
-            waitUntil: "domcontentloaded"
-          });
+          await page.goto(groupUrl, { waitUntil: "domcontentloaded" });
           await waitForNetworkIdleBestEffort(page);
-          await waitForGroupSurface(page);
-
-          let extracted = await extractGroupSnapshot(page);
-          if (!extracted.about_text) {
-            const aboutButton = page
-              .getByRole("button", { name: /open about group/i })
-              .first();
-            if (await aboutButton.isVisible().catch(() => false)) {
-              await aboutButton.click().catch(() => undefined);
-              await page.waitForTimeout(1_000);
-              extracted = await extractGroupSnapshot(page);
-            }
-          }
-
-          return extracted;
+          await waitForGroupDetailSurface(page);
+          return extractGroupDetailSnapshot(page);
         }
       );
 
-      snapshot = {
-        ...snapshot,
-        current_url: normalizeLinkedInGroupUrl(snapshot.current_url || targetUrl),
-        name: normalizeText(snapshot.name),
-        header_text: normalizeText(snapshot.header_text),
-        header_actions: snapshot.header_actions.map((value) => normalizeText(value)),
-        about_text: cleanLinkedInGroupAboutText(snapshot.about_text)
-      };
-
-      const groupType = extractGroupType(
-        snapshot.header_text,
-        snapshot.header_actions
-      );
-      const memberCount = extractGroupMemberCount(
-        snapshot.header_text,
-        snapshot.about_text
-      );
-      const visibilityDescription = buildGroupVisibilityDescription({
-        name: snapshot.name,
-        headerText: snapshot.header_text,
-        actions: snapshot.header_actions,
-        groupType,
-        memberCount
-      });
-
       return {
-        group_url: snapshot.current_url,
-        group_id: extractGroupId(snapshot.current_url),
-        name: snapshot.name,
-        description: snapshot.about_text || visibilityDescription,
-        member_count: memberCount,
-        group_type: groupType,
-        visibility_description: visibilityDescription,
-        join_state: parseLinkedInGroupJoinState({
-          headerText: snapshot.header_text,
-          actions: snapshot.header_actions
-        })
+        group_id: normalizeText(snapshot.group_id),
+        name: normalizeText(snapshot.name),
+        group_url: normalizeText(snapshot.group_url),
+        visibility: normalizeText(snapshot.visibility),
+        member_count: normalizeText(snapshot.member_count),
+        description: normalizeText(snapshot.description),
+        about: normalizeText(snapshot.about),
+        joined_at: snapshot.joined_at ? normalizeText(snapshot.joined_at) : null,
+        membership_state: snapshot.membership_state
       };
     } catch (error) {
-      if (error instanceof LinkedInAssistantError) {
-        throw error;
-      }
-
       throw asLinkedInAssistantError(
         error,
         "UNKNOWN",
-        "Failed to view LinkedIn group."
+        "Failed to view LinkedIn group details."
       );
     }
+  }
+
+  private prepareTargetedGroupAction(input: {
+    actionType: string;
+    profileName?: string;
+    group: string;
+    summary: string;
+    payload?: Record<string, unknown>;
+    operatorNote?: string;
+  }): {
+    preparedActionId: string;
+    confirmToken: string;
+    expiresAtMs: number;
+    preview: Record<string, unknown>;
+  } {
+    const profileName = input.profileName ?? "default";
+    const { groupId, groupUrl } = resolveGroupReference(input.group);
+    const target = {
+      profile_name: profileName,
+      group_id: groupId,
+      group_url: groupUrl
+    };
+
+    return this.runtime.twoPhaseCommit.prepare({
+      actionType: input.actionType,
+      target,
+      payload: input.payload ?? {},
+      preview: {
+        summary: input.summary,
+        target,
+        ...(input.payload ? { payload: input.payload } : {})
+      },
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+  }
+
+  prepareJoinGroup(
+    input: PrepareJoinGroupInput
+  ): {
+    preparedActionId: string;
+    confirmToken: string;
+    expiresAtMs: number;
+    preview: Record<string, unknown>;
+  } {
+    const { groupId } = resolveGroupReference(input.group);
+    return this.prepareTargetedGroupAction({
+      actionType: GROUP_JOIN_ACTION_TYPE,
+      group: input.group,
+      summary: `Join LinkedIn group ${groupId}`,
+      ...(input.profileName ? { profileName: input.profileName } : {}),
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+  }
+
+  prepareLeaveGroup(
+    input: PrepareLeaveGroupInput
+  ): {
+    preparedActionId: string;
+    confirmToken: string;
+    expiresAtMs: number;
+    preview: Record<string, unknown>;
+  } {
+    const { groupId } = resolveGroupReference(input.group);
+    return this.prepareTargetedGroupAction({
+      actionType: GROUP_LEAVE_ACTION_TYPE,
+      group: input.group,
+      summary: `Leave LinkedIn group ${groupId}`,
+      ...(input.profileName ? { profileName: input.profileName } : {}),
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+  }
+
+  preparePostToGroup(
+    input: PreparePostToGroupInput
+  ): {
+    preparedActionId: string;
+    confirmToken: string;
+    expiresAtMs: number;
+    preview: Record<string, unknown>;
+  } {
+    const text = normalizeText(input.text);
+    if (!text) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        "text is required."
+      );
+    }
+
+    const { groupId } = resolveGroupReference(input.group);
+    return this.prepareTargetedGroupAction({
+      actionType: GROUP_POST_ACTION_TYPE,
+      group: input.group,
+      summary: `Post in LinkedIn group ${groupId}`,
+      payload: {
+        text
+      },
+      ...(input.profileName ? { profileName: input.profileName } : {}),
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
   }
 }

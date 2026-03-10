@@ -1,86 +1,112 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
-  cleanLinkedInGroupAboutText,
-  normalizeLinkedInGroupUrl,
-  parseLinkedInGroupJoinState,
-  resolveGroupUrl
+  GROUP_JOIN_ACTION_TYPE,
+  GROUP_LEAVE_ACTION_TYPE,
+  GROUP_POST_ACTION_TYPE,
+  LinkedInGroupsService,
+  buildGroupSearchUrl,
+  buildGroupViewUrl,
+  createGroupActionExecutors
 } from "../linkedinGroups.js";
 
-describe("resolveGroupUrl", () => {
-  it("accepts raw group ids", () => {
-    expect(resolveGroupUrl("66325")).toBe("https://www.linkedin.com/groups/66325/");
-  });
-
-  it("normalizes /groups paths", () => {
-    expect(resolveGroupUrl("/groups/66325/about/")).toBe(
-      "https://www.linkedin.com/groups/66325/"
+describe("LinkedInGroups helpers", () => {
+  it("builds group search URLs", () => {
+    expect(buildGroupSearchUrl("technology")).toBe(
+      "https://www.linkedin.com/search/results/groups/?keywords=technology"
     );
   });
 
-  it("normalizes absolute LinkedIn group URLs", () => {
-    expect(
-      resolveGroupUrl("https://www.linkedin.com/groups/66325/?foo=bar#fragment")
-    ).toBe("https://www.linkedin.com/groups/66325/");
-  });
-
-  it("rejects non-group LinkedIn URLs", () => {
-    expect(() =>
-      resolveGroupUrl("https://www.linkedin.com/in/someone/")
-    ).toThrow("Group URL must point to linkedin.com/groups/.");
-  });
-
-  it("rejects invalid encoded group urls with a structured precondition error", () => {
-    expect(() =>
-      resolveGroupUrl("https://www.linkedin.com/groups/%E0%A4%A/")
-    ).toThrow("Group URL contains an invalid encoded path segment.");
+  it("builds group view URLs", () => {
+    expect(buildGroupViewUrl("9806731")).toBe(
+      "https://www.linkedin.com/groups/9806731/"
+    );
   });
 });
 
-describe("normalizeLinkedInGroupUrl", () => {
-  it("strips query strings and hashes", () => {
-    expect(
-      normalizeLinkedInGroupUrl(
-        "https://www.linkedin.com/groups/66325/?foo=bar#fragment"
-      )
-    ).toBe("https://www.linkedin.com/groups/66325/");
+describe("createGroupActionExecutors", () => {
+  it("registers the supported group action executors", () => {
+    const executors = createGroupActionExecutors();
+
+    expect(Object.keys(executors)).toHaveLength(3);
+    expect(executors[GROUP_JOIN_ACTION_TYPE]).toBeDefined();
+    expect(executors[GROUP_LEAVE_ACTION_TYPE]).toBeDefined();
+    expect(executors[GROUP_POST_ACTION_TYPE]).toBeDefined();
   });
 });
 
-describe("cleanLinkedInGroupAboutText", () => {
-  it("removes modal chrome and detail labels", () => {
-    expect(
-      cleanLinkedInGroupAboutText(
-        "Dialog content start. About this group Description LinkedIn's biggest marketing community. Details Public Anyone can see posts. Done Dialog content end."
-      )
-    ).toBe("LinkedIn's biggest marketing community.");
+describe("LinkedInGroupsService prepare flows", () => {
+  it("prepares join and leave actions with normalized targets", () => {
+    const prepare = vi.fn((input: { preview: Record<string, unknown> }) => ({
+      preparedActionId: "pa_group",
+      confirmToken: "ct_group",
+      expiresAtMs: 123,
+      preview: input.preview
+    }));
+    const service = new LinkedInGroupsService({
+      twoPhaseCommit: { prepare }
+    } as unknown as ConstructorParameters<typeof LinkedInGroupsService>[0]);
+
+    const joinPrepared = service.prepareJoinGroup({
+      group: "https://www.linkedin.com/groups/9806731/"
+    });
+    const leavePrepared = service.prepareLeaveGroup({
+      group: "9806731"
+    });
+
+    expect(joinPrepared.preview).toMatchObject({
+      summary: "Join LinkedIn group 9806731",
+      target: {
+        group_id: "9806731",
+        group_url: "https://www.linkedin.com/groups/9806731/",
+        profile_name: "default"
+      }
+    });
+    expect(leavePrepared.preview).toMatchObject({
+      summary: "Leave LinkedIn group 9806731"
+    });
+
+    expect(prepare).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ actionType: GROUP_JOIN_ACTION_TYPE })
+    );
+    expect(prepare).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ actionType: GROUP_LEAVE_ACTION_TYPE })
+    );
   });
 
-  it("keeps descriptions that mention details in normal prose", () => {
-    expect(
-      cleanLinkedInGroupAboutText(
-        "About this group We share details daily with growth marketers."
-      )
-    ).toBe("We share details daily with growth marketers.");
-  });
-});
+  it("prepares group posts with structured payloads", () => {
+    const prepare = vi.fn((input: {
+      payload: Record<string, unknown>;
+      preview: Record<string, unknown>;
+    }) => ({
+      preparedActionId: "pa_group_post",
+      confirmToken: "ct_group_post",
+      expiresAtMs: 123,
+      preview: input.preview
+    }));
+    const service = new LinkedInGroupsService({
+      twoPhaseCommit: { prepare }
+    } as unknown as ConstructorParameters<typeof LinkedInGroupsService>[0]);
 
-describe("parseLinkedInGroupJoinState", () => {
-  it("detects not joined groups from join actions", () => {
-    expect(
-      parseLinkedInGroupJoinState({
-        headerText: "Public group 2,977,869 members Join The Social Media Marketing Group group Join Share Report this group",
-        actions: ["Public group", "Join The Social Media Marketing Group group Join"]
+    const prepared = service.preparePostToGroup({
+      group: "9806731",
+      text: "Ship it."
+    });
+
+    expect(prepared.preview).toMatchObject({
+      summary: "Post in LinkedIn group 9806731",
+      payload: {
+        text: "Ship it."
+      }
+    });
+    expect(prepare).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actionType: GROUP_POST_ACTION_TYPE,
+        payload: {
+          text: "Ship it."
+        }
       })
-    ).toBe("not_joined");
-  });
-
-  it("detects joined groups from membership actions", () => {
-    expect(
-      parseLinkedInGroupJoinState({
-        headerText:
-          "Private Listed Share Manage notifications Update your settings Leave this group Report this group",
-        actions: ["Manage notifications", "Update your settings"]
-      })
-    ).toBe("joined");
+    );
   });
 });

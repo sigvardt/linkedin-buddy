@@ -119,6 +119,14 @@ import {
   LINKEDIN_PROFILE_VIEW_EDITABLE_TOOL,
   LINKEDIN_PRIVACY_GET_SETTINGS_TOOL,
   LINKEDIN_PRIVACY_PREPARE_UPDATE_SETTING_TOOL,
+  LINKEDIN_GROUPS_PREPARE_JOIN_TOOL,
+  LINKEDIN_GROUPS_PREPARE_LEAVE_TOOL,
+  LINKEDIN_GROUPS_PREPARE_POST_TOOL,
+  LINKEDIN_GROUPS_SEARCH_TOOL,
+  LINKEDIN_GROUPS_VIEW_TOOL,
+  LINKEDIN_EVENTS_PREPARE_RSVP_TOOL,
+  LINKEDIN_EVENTS_SEARCH_TOOL,
+  LINKEDIN_EVENTS_VIEW_TOOL,
   LINKEDIN_JOBS_SEARCH_TOOL,
   LINKEDIN_JOBS_VIEW_TOOL,
   LINKEDIN_NOTIFICATIONS_LIST_TOOL,
@@ -1841,6 +1849,278 @@ async function handleJobsView(args: ToolArgs): Promise<ToolResult> {
       run_id: runtime.runId,
       profile_name: profileName,
       job
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleGroupsSearch(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const query = readRequiredString(args, "query");
+    const limit = readPositiveNumber(args, "limit", 10);
+
+    runtime.logger.log("info", "mcp.groups.search.start", {
+      profileName,
+      query,
+      limit
+    });
+
+    const result = await runtime.groups.searchGroups({
+      profileName,
+      query,
+      limit
+    });
+
+    runtime.logger.log("info", "mcp.groups.search.done", {
+      profileName,
+      count: result.count
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...result
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleGroupsView(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const group = readRequiredString(args, "group");
+
+    runtime.logger.log("info", "mcp.groups.view.start", {
+      profileName,
+      group
+    });
+
+    const groupDetails = await runtime.groups.viewGroup({
+      profileName,
+      group
+    });
+
+    runtime.logger.log("info", "mcp.groups.view.done", {
+      profileName,
+      groupId: groupDetails.group_id
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      group: groupDetails
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleGroupsPrepareJoin(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const group = readRequiredString(args, "group");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.groups.prepare_join.start", {
+      profileName,
+      group
+    });
+
+    const prepared = runtime.groups.prepareJoinGroup({
+      profileName,
+      group,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.groups.prepare_join.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleGroupsPrepareLeave(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const group = readRequiredString(args, "group");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.groups.prepare_leave.start", {
+      profileName,
+      group
+    });
+
+    const prepared = runtime.groups.prepareLeaveGroup({
+      profileName,
+      group,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.groups.prepare_leave.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleGroupsPreparePost(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const group = readRequiredString(args, "group");
+    const text = readRequiredString(args, "text");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.groups.prepare_post.start", {
+      profileName,
+      group
+    });
+
+    const prepared = runtime.groups.preparePostToGroup({
+      profileName,
+      group,
+      text,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.groups.prepare_post.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleEventsSearch(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const query = readRequiredString(args, "query");
+    const limit = readPositiveNumber(args, "limit", 10);
+
+    runtime.logger.log("info", "mcp.events.search.start", {
+      profileName,
+      query,
+      limit
+    });
+
+    const result = await runtime.events.searchEvents({
+      profileName,
+      query,
+      limit
+    });
+
+    runtime.logger.log("info", "mcp.events.search.done", {
+      profileName,
+      count: result.count
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...result
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleEventsView(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const event = readRequiredString(args, "event");
+
+    runtime.logger.log("info", "mcp.events.view.start", {
+      profileName,
+      event
+    });
+
+    const eventDetails = await runtime.events.viewEvent({
+      profileName,
+      event
+    });
+
+    runtime.logger.log("info", "mcp.events.view.done", {
+      profileName,
+      eventId: eventDetails.event_id
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      event: eventDetails
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleEventsPrepareRsvp(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const event = readRequiredString(args, "event");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.events.prepare_rsvp.start", {
+      profileName,
+      event
+    });
+
+    const prepared = runtime.events.prepareRsvp({
+      profileName,
+      event,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.events.prepare_rsvp.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
     });
   } finally {
     runtime.close();
@@ -5469,6 +5749,210 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
+        name: LINKEDIN_GROUPS_SEARCH_TOOL,
+        description:
+          withSelectorAuditHint(
+            "Search LinkedIn groups by keyword and return matching communities."
+          ),
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["query"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            query: {
+              type: "string",
+              description: "Search keywords for LinkedIn groups."
+            },
+            limit: {
+              type: "number",
+              description: "Maximum number of results to return. Defaults to 10."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_GROUPS_VIEW_TOOL,
+        description:
+          withSelectorAuditHint(
+            "View details of a specific LinkedIn group by URL or numeric group ID."
+          ),
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["group"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            group: {
+              type: "string",
+              description: "LinkedIn group URL or numeric group ID."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_GROUPS_PREPARE_JOIN_TOOL,
+        description:
+          "Prepare to join a LinkedIn group (two-phase: returns confirm token). Use linkedin.actions.confirm to request or complete the join.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["group"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            group: {
+              type: "string",
+              description: "LinkedIn group URL or numeric group ID."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_GROUPS_PREPARE_LEAVE_TOOL,
+        description:
+          "Prepare to leave a LinkedIn group (two-phase: returns confirm token). Use linkedin.actions.confirm to complete the leave flow.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["group"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            group: {
+              type: "string",
+              description: "LinkedIn group URL or numeric group ID."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_GROUPS_PREPARE_POST_TOOL,
+        description:
+          "Prepare a post inside a LinkedIn group (two-phase: returns confirm token). Use linkedin.actions.confirm to publish the post.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["group", "text"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            group: {
+              type: "string",
+              description: "LinkedIn group URL or numeric group ID."
+            },
+            text: {
+              type: "string",
+              description: "Post text to publish inside the group."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_EVENTS_SEARCH_TOOL,
+        description:
+          withSelectorAuditHint(
+            "Search LinkedIn events by keyword and return matching event cards."
+          ),
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["query"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            query: {
+              type: "string",
+              description: "Search keywords for LinkedIn events."
+            },
+            limit: {
+              type: "number",
+              description: "Maximum number of results to return. Defaults to 10."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_EVENTS_VIEW_TOOL,
+        description:
+          withSelectorAuditHint(
+            "View details of a specific LinkedIn event by URL or numeric event ID."
+          ),
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["event"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            event: {
+              type: "string",
+              description: "LinkedIn event URL or numeric event ID."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_EVENTS_PREPARE_RSVP_TOOL,
+        description:
+          "Prepare to RSVP attend for a LinkedIn event (two-phase: returns confirm token). Use linkedin.actions.confirm to complete the RSVP.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["event"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            event: {
+              type: "string",
+              description: "LinkedIn event URL or numeric event ID."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
         name: LINKEDIN_ACTIVITY_WATCH_CREATE_TOOL,
         description:
           "Create a durable poll-based LinkedIn activity watch for one profile and activity source.",
@@ -5846,6 +6330,14 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   [LINKEDIN_EVENTS_VIEW_TOOL]: handleEventsView,
   [LINKEDIN_JOBS_SEARCH_TOOL]: handleJobsSearch,
   [LINKEDIN_JOBS_VIEW_TOOL]: handleJobsView,
+  [LINKEDIN_GROUPS_SEARCH_TOOL]: handleGroupsSearch,
+  [LINKEDIN_GROUPS_VIEW_TOOL]: handleGroupsView,
+  [LINKEDIN_GROUPS_PREPARE_JOIN_TOOL]: handleGroupsPrepareJoin,
+  [LINKEDIN_GROUPS_PREPARE_LEAVE_TOOL]: handleGroupsPrepareLeave,
+  [LINKEDIN_GROUPS_PREPARE_POST_TOOL]: handleGroupsPreparePost,
+  [LINKEDIN_EVENTS_SEARCH_TOOL]: handleEventsSearch,
+  [LINKEDIN_EVENTS_VIEW_TOOL]: handleEventsView,
+  [LINKEDIN_EVENTS_PREPARE_RSVP_TOOL]: handleEventsPrepareRsvp,
   [LINKEDIN_ACTIVITY_WATCH_CREATE_TOOL]: handleActivityWatchCreate,
   [LINKEDIN_ACTIVITY_WATCH_LIST_TOOL]: handleActivityWatchList,
   [LINKEDIN_ACTIVITY_WATCH_PAUSE_TOOL]: handleActivityWatchPause,
