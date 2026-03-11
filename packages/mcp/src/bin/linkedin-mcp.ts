@@ -110,6 +110,8 @@ import {
   LINKEDIN_PROFILE_PREPARE_UPLOAD_BANNER_TOOL,
   LINKEDIN_PROFILE_PREPARE_UPLOAD_PHOTO_TOOL,
   LINKEDIN_PROFILE_PREPARE_UPDATE_INTRO_TOOL,
+  LINKEDIN_PROFILE_PREPARE_UPDATE_PUBLIC_PROFILE_TOOL,
+  LINKEDIN_PROFILE_PREPARE_UPDATE_SETTINGS_TOOL,
   LINKEDIN_PROFILE_PREPARE_UPSERT_SECTION_ITEM_TOOL,
   LINKEDIN_PROFILE_VIEW_TOOL,
   LINKEDIN_PROFILE_VIEW_EDITABLE_TOOL,
@@ -1155,6 +1157,93 @@ async function handleProfilePrepareUpdateIntro(
     });
 
     runtime.logger.log("info", "mcp.profile.prepare_update_intro.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleProfilePrepareUpdateSettings(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const industry = readRequiredString(args, "industry");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.profile.prepare_update_settings.start", {
+      profileName
+    });
+
+    const prepared = runtime.profile.prepareUpdateSettings({
+      profileName,
+      industry,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.profile.prepare_update_settings.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleProfilePrepareUpdatePublicProfile(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const operatorNote = readString(args, "operatorNote", "");
+    const vanityName =
+      typeof args.vanityName === "string" ? readString(args, "vanityName", "") : "";
+    const publicProfileUrl =
+      typeof args.publicProfileUrl === "string"
+        ? readString(args, "publicProfileUrl", "")
+        : "";
+
+    if (!vanityName && !publicProfileUrl) {
+      throw new LinkedInAssistantError(
+        "ACTION_PRECONDITION_FAILED",
+        "vanityName or publicProfileUrl is required."
+      );
+    }
+
+    runtime.logger.log(
+      "info",
+      "mcp.profile.prepare_update_public_profile.start",
+      {
+        profileName
+      }
+    );
+
+    const prepared = runtime.profile.prepareUpdatePublicProfile({
+      profileName,
+      ...(vanityName ? { vanityName } : {}),
+      ...(publicProfileUrl ? { publicProfileUrl } : {}),
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.profile.prepare_update_public_profile.done", {
       profileName,
       preparedActionId: prepared.preparedActionId
     });
@@ -3827,6 +3916,58 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
+        name: LINKEDIN_PROFILE_PREPARE_UPDATE_SETTINGS_TOOL,
+        description:
+          "Prepare a LinkedIn profile settings update (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["industry"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            },
+            industry: {
+              type: "string",
+              description: "Primary professional category / industry."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Optional note attached to the prepared action."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_PROFILE_PREPARE_UPDATE_PUBLIC_PROFILE_TOOL,
+        description:
+          "Prepare a LinkedIn custom public profile URL update (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description: "Persistent Playwright profile name. Defaults to default."
+            },
+            vanityName: {
+              type: "string",
+              description: "Requested public profile vanity name (slug only)."
+            },
+            publicProfileUrl: {
+              type: "string",
+              description:
+                "Requested public profile URL. Use this instead of vanityName if you already have a linkedin.com/in/... URL."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Optional note attached to the prepared action."
+            }
+          })
+        }
+      },
+      {
         name: LINKEDIN_PROFILE_PREPARE_UPSERT_SECTION_ITEM_TOOL,
         description:
           "Prepare to create or update an editable LinkedIn profile section item (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
@@ -5546,6 +5687,10 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   [LINKEDIN_PROFILE_VIEW_TOOL]: handleProfileView,
   [LINKEDIN_PROFILE_VIEW_EDITABLE_TOOL]: handleProfileViewEditable,
   [LINKEDIN_PROFILE_PREPARE_UPDATE_INTRO_TOOL]: handleProfilePrepareUpdateIntro,
+  [LINKEDIN_PROFILE_PREPARE_UPDATE_SETTINGS_TOOL]:
+    handleProfilePrepareUpdateSettings,
+  [LINKEDIN_PROFILE_PREPARE_UPDATE_PUBLIC_PROFILE_TOOL]:
+    handleProfilePrepareUpdatePublicProfile,
   [LINKEDIN_PROFILE_PREPARE_UPSERT_SECTION_ITEM_TOOL]:
     handleProfilePrepareUpsertSectionItem,
   [LINKEDIN_PROFILE_PREPARE_REMOVE_SECTION_ITEM_TOOL]:

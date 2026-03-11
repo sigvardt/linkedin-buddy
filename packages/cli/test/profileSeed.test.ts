@@ -55,7 +55,8 @@ describe("profile seed planner", () => {
       intro: {
         firstName: "Avery",
         headline: "Automation Engineer at Example Labs",
-        industry: "Software Development"
+        industry: "Software Development",
+        customProfileUrl: "avery-cole-example"
       },
       about: "Building production LLM systems.",
       certifications: [
@@ -73,14 +74,15 @@ describe("profile seed planner", () => {
       firstName: "Avery",
       headline: "Automation Engineer at Example Labs"
     });
+    expect(spec.settings).toEqual({
+      industry: "Software Development"
+    });
     expect(spec.about).toBe("Building production LLM systems.");
     expect(spec.sections.certifications).toHaveLength(1);
+    expect(spec.publicProfile).toEqual({
+      vanityName: "avery-cole-example"
+    });
     expect(spec.unsupportedFields).toEqual([
-      {
-        path: "intro.industry",
-        reason: "Industry is not exposed by the current LinkedIn profile edit automation.",
-        issueNumber: 252
-      },
       {
         path: "skills",
         reason: "Skills are not exposed by the current LinkedIn profile edit automation.",
@@ -95,6 +97,8 @@ describe("profile seed planner", () => {
         headline: "Automation Engineer at Example Labs",
         location: "Copenhagen, Capital Region of Denmark, Denmark"
       },
+      industry: "Software Development",
+      publicProfileUrl: "avery-cole-example",
       about: "Building production LLM systems.",
       certifications: [],
       languages: [
@@ -112,12 +116,28 @@ describe("profile seed planner", () => {
     });
 
     expect(plan.actions.map((action) => action.kind)).toEqual([
+      "update_settings",
+      "update_public_profile",
       "update_intro",
       "upsert_section_item",
       "remove_section_item",
       "upsert_section_item"
     ]);
     expect(plan.actions[0]).toMatchObject({
+      kind: "update_settings",
+      input: {
+        profileName: "smoke",
+        industry: "Software Development"
+      }
+    });
+    expect(plan.actions[1]).toMatchObject({
+      kind: "update_public_profile",
+      input: {
+        profileName: "smoke",
+        vanityName: "avery-cole-example"
+      }
+    });
+    expect(plan.actions[2]).toMatchObject({
       kind: "update_intro",
       input: {
         profileName: "smoke",
@@ -125,7 +145,7 @@ describe("profile seed planner", () => {
         location: "Copenhagen, Capital Region of Denmark, Denmark"
       }
     });
-    expect(plan.actions[1]).toMatchObject({
+    expect(plan.actions[3]).toMatchObject({
       kind: "upsert_section_item",
       input: {
         profileName: "smoke",

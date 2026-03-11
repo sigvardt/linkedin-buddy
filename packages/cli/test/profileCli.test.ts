@@ -8,6 +8,8 @@ const profileCliMocks = vi.hoisted(() => ({
   confirmByToken: vi.fn(),
   createCoreRuntime: vi.fn(),
   loggerLog: vi.fn(),
+  prepareUpdatePublicProfile: vi.fn(),
+  prepareUpdateSettings: vi.fn(),
   prepareRemoveSectionItem: vi.fn(),
   prepareUpdateIntro: vi.fn(),
   prepareUpsertSectionItem: vi.fn(),
@@ -46,6 +48,8 @@ describe("CLI profile commands", () => {
       profile: {
         viewEditableProfile: profileCliMocks.viewEditableProfile,
         viewProfile: profileCliMocks.viewProfile,
+        prepareUpdatePublicProfile: profileCliMocks.prepareUpdatePublicProfile,
+        prepareUpdateSettings: profileCliMocks.prepareUpdateSettings,
         prepareUpdateIntro: profileCliMocks.prepareUpdateIntro,
         prepareUpsertSectionItem: profileCliMocks.prepareUpsertSectionItem,
         prepareRemoveSectionItem: profileCliMocks.prepareRemoveSectionItem
@@ -83,6 +87,18 @@ describe("CLI profile commands", () => {
       expiresAtMs: 1,
       preview: { summary: "Update intro" }
     });
+    profileCliMocks.prepareUpdateSettings.mockReturnValue({
+      preparedActionId: "pa_settings",
+      confirmToken: "ct_settings",
+      expiresAtMs: 1,
+      preview: { summary: "Update settings" }
+    });
+    profileCliMocks.prepareUpdatePublicProfile.mockReturnValue({
+      preparedActionId: "pa_public_profile",
+      confirmToken: "ct_public_profile",
+      expiresAtMs: 1,
+      preview: { summary: "Update public profile" }
+    });
     profileCliMocks.prepareUpsertSectionItem.mockReturnValue({
       preparedActionId: "pa_about",
       confirmToken: "ct_about",
@@ -96,6 +112,20 @@ describe("CLI profile commands", () => {
       preview: { summary: "Remove item" }
     });
     profileCliMocks.confirmByToken
+      .mockResolvedValueOnce({
+        preparedActionId: "pa_settings",
+        status: "executed",
+        actionType: "profile.update_settings",
+        result: { status: "profile_settings_updated" },
+        artifacts: []
+      })
+      .mockResolvedValueOnce({
+        preparedActionId: "pa_public_profile",
+        status: "executed",
+        actionType: "profile.update_public_profile",
+        result: { status: "profile_public_profile_updated" },
+        artifacts: []
+      })
       .mockResolvedValueOnce({
         preparedActionId: "pa_intro",
         status: "executed",
@@ -152,6 +182,55 @@ describe("CLI profile commands", () => {
     });
   });
 
+  it("prepares a profile settings update", async () => {
+    await runCli([
+      "node",
+      "linkedin",
+      "profile",
+      "update-settings",
+      "--profile",
+      "smoke",
+      "--industry",
+      "Software Development"
+    ]);
+
+    const output = JSON.parse(stdoutChunks.join("\n")) as {
+      confirmToken: string;
+      preview: { summary: string };
+    };
+
+    expect(output.confirmToken).toBe("ct_settings");
+    expect(output.preview.summary).toBe("Update settings");
+    expect(profileCliMocks.prepareUpdateSettings).toHaveBeenCalledWith({
+      profileName: "smoke",
+      industry: "Software Development"
+    });
+  });
+
+  it("prepares a custom public profile URL update", async () => {
+    await runCli([
+      "node",
+      "linkedin",
+      "profile",
+      "update-public-profile",
+      "avery-cole-example",
+      "--profile",
+      "smoke"
+    ]);
+
+    const output = JSON.parse(stdoutChunks.join("\n")) as {
+      confirmToken: string;
+      preview: { summary: string };
+    };
+
+    expect(output.confirmToken).toBe("ct_public_profile");
+    expect(output.preview.summary).toBe("Update public profile");
+    expect(profileCliMocks.prepareUpdatePublicProfile).toHaveBeenCalledWith({
+      profileName: "smoke",
+      vanityName: "avery-cole-example"
+    });
+  });
+
   it("applies a profile seed spec and reports unsupported fields when partial mode is enabled", async () => {
     const specPath = path.join(tempDir, "profile-spec.json");
     await writeFile(
@@ -160,7 +239,9 @@ describe("CLI profile commands", () => {
         {
           intro: {
             headline: "Automation Engineer at Example Labs",
-            location: "Copenhagen, Capital Region of Denmark, Denmark"
+            location: "Copenhagen, Capital Region of Denmark, Denmark",
+            industry: "Software Development",
+            customProfileUrl: "avery-cole-example"
           },
           about: "Building production LLM systems.",
           skills: ["TypeScript", "Python"]
@@ -193,8 +274,10 @@ describe("CLI profile commands", () => {
     };
 
     expect(output.profile_name).toBe("smoke");
-    expect(output.executed_action_count).toBe(2);
+    expect(output.executed_action_count).toBe(4);
     expect(output.actions.map((action) => action.action_type)).toEqual([
+      "profile.update_settings",
+      "profile.update_public_profile",
       "profile.update_intro",
       "profile.upsert_section_item"
     ]);
@@ -210,6 +293,18 @@ describe("CLI profile commands", () => {
         profileName: "smoke",
         headline: "Automation Engineer at Example Labs",
         location: "Copenhagen, Capital Region of Denmark, Denmark"
+      })
+    );
+    expect(profileCliMocks.prepareUpdateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profileName: "smoke",
+        industry: "Software Development"
+      })
+    );
+    expect(profileCliMocks.prepareUpdatePublicProfile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profileName: "smoke",
+        vanityName: "avery-cole-example"
       })
     );
     expect(profileCliMocks.prepareUpsertSectionItem).toHaveBeenCalledWith(
