@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" fill="none" role="img" aria-labelledby="title desc">
+<title>Prepare first. Confirm only when the preview looks right</title>
+<desc>Outbound actions are staged with tokens, previews, and local state so write flows stay auditable instead of surprising.</desc>
+<defs>
+<filter id="card-shadow" x="-20%" y="-20%" width="140%" height="160%">
+<feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#0f172a" flood-opacity=".12"/>
+</filter>
+<pattern id="bg-grid" width="48" height="48" patternUnits="userSpaceOnUse">
+<path d="M48 0H0V48" fill="none" stroke="#E8EEF5" stroke-width="1"/>
+</pattern>
+<marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="12" markerHeight="12" orient="auto-start-reverse">
+<path d="M0 0L12 6L0 12Z" fill="#0F172A"/>
+</marker>
+</defs>
+<rect width="1280" height="720" fill="#FFF7ED"/>
+<rect width="1280" height="720" fill="url(#bg-grid)" opacity=".45"/>
+<circle cx="1080" cy="124" r="176" fill="#14B8A6" opacity=".12"/>
+<circle cx="170" cy="604" r="156" fill="#FF7A59" opacity=".1"/>
+<circle cx="936" cy="612" r="114" fill="#38BDF8" opacity=".08"/>
+<path d="M112 188C184 154 248 150 334 176" fill="none" stroke="#14B8A6" stroke-linecap="round" stroke-width="8"/>
+<circle cx="334" cy="176" r="10" fill="#14B8A6"/>
+<g>
+<rect x="72" y="56" width="222" height="32" rx="16" fill="#0F172A" stroke="none" stroke-width="1.5"/>
+<text x="183" y="77.1" fill="#FFF7ED" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">FEATURE ILLUSTRATION</text>
+</g>
+<text x="72" y="138" fill="#0F172A" font-family="'Sora', 'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif" font-size="48" font-weight="700" letter-spacing="-.8">Prepare first. Confirm only when the preview looks right</text>
+<text x="72" y="178" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="22" font-weight="500">Outbound actions are staged with tokens, previews, and local state</text>
+<text x="72" y="212" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="22" font-weight="500">so write flows stay auditable instead of surprising.</text>
+<g filter="url(#card-shadow)">
+<rect x="70" y="242" width="220" height="126" rx="28" fill="#FFFFFF" stroke="#D7E0EA" stroke-width="2"/>
+<circle cx="106" cy="278" r="22" fill="#14B8A6" stroke="#0F172A" stroke-width="2"/>
+<text x="106" y="286" fill="#0F172A" font-family="'Sora', 'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif" font-size="20" font-weight="700" text-anchor="middle">1</text>
+<text x="142" y="286" fill="#0F172A" font-family="'Sora', 'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif" font-size="25" font-weight="700">Prepare</text>
+<text x="98" y="334" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="17" font-weight="500">Stage the action</text>
+<text x="98" y="358" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="17" font-weight="500">Persist it in SQLite</text>
+</g>
+<g filter="url(#card-shadow)">
+<rect x="316" y="242" width="220" height="126" rx="28" fill="#FFFFFF" stroke="#D7E0EA" stroke-width="2"/>
+<circle cx="352" cy="278" r="22" fill="#F59E0B" stroke="#0F172A" stroke-width="2"/>
+<text x="352" y="286" fill="#0F172A" font-family="'Sora', 'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif" font-size="20" font-weight="700" text-anchor="middle">2</text>
+<text x="388" y="286" fill="#0F172A" font-family="'Sora', 'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif" font-size="25" font-weight="700">Preview</text>
+<text x="344" y="334" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="17" font-weight="500">See the exact change</text>
+<text x="344" y="358" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="17" font-weight="500">Inspect the confirm token</text>
+</g>
+<g filter="url(#card-shadow)">
+<rect x="562" y="242" width="220" height="126" rx="28" fill="#FFFFFF" stroke="#D7E0EA" stroke-width="2"/>
+<circle cx="598" cy="278" r="22" fill="#34D399" stroke="#0F172A" stroke-width="2"/>
+<text x="598" y="286" fill="#0F172A" font-family="'Sora', 'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif" font-size="20" font-weight="700" text-anchor="middle">3</text>
+<text x="634" y="286" fill="#0F172A" font-family="'Sora', 'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif" font-size="25" font-weight="700">Confirm</text>
+<text x="590" y="334" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="17" font-weight="500">Approve with a token</text>
+<text x="590" y="358" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="17" font-weight="500">Record the final result</text>
+</g>
+<path d="M290 305H316" fill="none" stroke="#0F172A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M536 305H562" fill="none" stroke="#0F172A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+<g filter="url(#card-shadow)">
+<rect x="70" y="410" width="720" height="238" rx="30" fill="#111827" stroke="#0B1220" stroke-width="2"/>
+<circle cx="104" cy="444" r="8" fill="#FF7A59"/>
+<circle cx="132" cy="444" r="8" fill="#F59E0B"/>
+<circle cx="160" cy="444" r="8" fill="#14B8A6"/>
+<text x="762" y="450" fill="#E5E7EB" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="18" font-weight="600" text-anchor="end">Two-phase flow</text>
+<text x="104" y="506" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#14B8A6">$</tspan><tspan dx="8" fill="#FFFFFF"> linkedin inbox prepare-reply --thread safe-demo-thread --text &quot;Thanks for reaching out.&quot;</tspan></text>
+<text x="104" y="540" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#34D399">✓</tspan><tspan dx="8" fill="#E5E7EB"> prepared action pa_0178</tspan></text>
+<text x="104" y="574" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#34D399">✓</tspan><tspan dx="8" fill="#E5E7EB"> confirm token ct_a1c6h2q4 demo-preview</tspan></text>
+<text x="104" y="608" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#FF7A59">›</tspan><tspan dx="8" fill="#E5E7EB"> Preview: reply to safe-demo-contact</tspan></text>
+<text x="104" y="642" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#14B8A6">$</tspan><tspan dx="8" fill="#FFFFFF"> linkedin actions confirm --token ct_a1c6h2q4</tspan></text>
+<text x="104" y="676" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#34D399">✓</tspan><tspan dx="8" fill="#E5E7EB"> reply sent and recorded locally</tspan></text>
+</g>
+<g filter="url(#card-shadow)">
+<rect x="830" y="242" width="376" height="406" rx="28" fill="#FFFFFF" stroke="#D7E0EA" stroke-width="2"/>
+<g>
+<rect x="854" y="262" width="97" height="30" rx="15" fill="#FF7A59" stroke="none" stroke-width="1.5"/>
+<text x="902.5" y="282.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Preview</text>
+</g>
+<text x="854" y="324" fill="#0F172A" font-family="'Sora', 'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif" font-size="34" font-weight="700">Review before anything happens</text>
+<text x="854" y="362" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="20" font-weight="500">Thread: safe-demo-thread</text>
+<text x="854" y="396" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="20" font-weight="500">Recipient: safe-demo-contact</text>
+<text x="854" y="430" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="20" font-weight="500">Draft: Thanks for reaching out.</text>
+<text x="854" y="464" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="20" font-weight="500">Expires in: 15 minutes</text>
+<text x="854" y="498" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="20" font-weight="500">Artifacts: preview JSON + logs</text>
+</g>
+<g>
+<rect x="72" y="666" width="97" height="30" rx="15" fill="#FFFFFF" stroke="none" stroke-width="1.5"/>
+<text x="120.5" y="686.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Replies</text>
+</g>
+<g>
+<rect x="183" y="666" width="97" height="30" rx="15" fill="#FFFFFF" stroke="none" stroke-width="1.5"/>
+<text x="231.5" y="686.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Invites</text>
+</g>
+<g>
+<rect x="294" y="666" width="107" height="30" rx="15" fill="#FF7A59" stroke="none" stroke-width="1.5"/>
+<text x="347.5" y="686.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Comments</text>
+</g>
+<g>
+<rect x="415" y="666" width="94" height="30" rx="15" fill="#FFFFFF" stroke="none" stroke-width="1.5"/>
+<text x="462" y="686.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Posts</text>
+</g>
+<g>
+<rect x="523" y="666" width="155" height="30" rx="15" fill="#FFFFFF" stroke="none" stroke-width="1.5"/>
+<text x="600.5" y="686.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Profile edits</text>
+</g>
+</svg>
