@@ -11,6 +11,7 @@ import {
   LINKEDIN_PROFILE_SECTION_TYPES,
   LINKEDIN_PROFILE_FEATURED_ITEM_KINDS,
   PROFILE_GLOBAL_ADD_SECTION_CONTROL,
+  PROFILE_INTRO_EDITOR_SURFACE_SELECTORS,
   PROFILE_MEDIA_STRUCTURAL_SELECTORS,
   PROFILE_TOP_CARD_HEADING_SELECTORS,
   PROFILE_TOP_CARD_STRUCTURAL_SELECTORS,
@@ -647,6 +648,16 @@ describe("createProfileActionExecutors", () => {
     expect(PROFILE_GLOBAL_ADD_SECTION_CONTROL.labels.en).toContain("Add section");
     expect(PROFILE_GLOBAL_ADD_SECTION_CONTROL.roles).toContain("button");
     expect(PROFILE_GLOBAL_ADD_SECTION_CONTROL.roles).toContain("link");
+  });
+
+  it("keeps selector fallbacks for the current intro editor surfaces", () => {
+    expect(PROFILE_INTRO_EDITOR_SURFACE_SELECTORS.topCardHeadings).toContain("h2");
+    expect(PROFILE_INTRO_EDITOR_SURFACE_SELECTORS.dialogRootSelector).toContain(
+      "dialog[data-testid='dialog']"
+    );
+    expect(PROFILE_INTRO_EDITOR_SURFACE_SELECTORS.pageRootSelectors).toContain(
+      "[data-testid='lazy-column']"
+    );
   });
 });
 
