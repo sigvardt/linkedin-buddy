@@ -13,10 +13,24 @@ const rateLimitStateMocks = vi.hoisted(() => ({
   }))
 }));
 
+const humanizeMocks = vi.hoisted(() => ({
+  attachHumanizeLogger: vi.fn(),
+  detachHumanizeLogger: vi.fn(),
+  type: vi.fn(async () => undefined)
+}));
+
 vi.mock("../auth/rateLimitState.js", () => ({
   clearRateLimitState: rateLimitStateMocks.clearRateLimitState,
   isInRateLimitCooldown: rateLimitStateMocks.isInRateLimitCooldown,
   recordRateLimit: rateLimitStateMocks.recordRateLimit
+}));
+
+vi.mock("../humanize.js", () => ({
+  attachHumanizeLogger: humanizeMocks.attachHumanizeLogger,
+  detachHumanizeLogger: humanizeMocks.detachHumanizeLogger,
+  humanize: vi.fn(() => ({
+    type: humanizeMocks.type
+  }))
 }));
 
 function createMockPage(options: {
@@ -47,6 +61,8 @@ function createMockPage(options: {
     }),
     locator: vi.fn((selector: string) => {
       const visible = options.isVisible(selector, currentUrl);
+      const click = vi.fn(async () => undefined);
+      const count = vi.fn(async () => (visible ? 1 : 0));
       const isVisible = vi.fn(async () => visible);
       const textContent = vi.fn(async () => {
         return options.textContent?.(selector, currentUrl) ?? null;
@@ -56,6 +72,8 @@ function createMockPage(options: {
       });
       const first = vi.fn();
       const mockLocator = {
+        click,
+        count,
         first,
         getAttribute,
         isVisible,
@@ -93,6 +111,7 @@ describe("LinkedInAuthService auth flow", () => {
       active: false,
       state: null
     });
+    humanizeMocks.type.mockResolvedValue(undefined);
   });
 
   it("openLogin does not force navigation to feed while polling login", async () => {
@@ -240,5 +259,55 @@ describe("LinkedInAuthService auth flow", () => {
       code: "RATE_LIMITED",
       message: expect.stringContaining("linkedin rate-limit --clear")
     });
+  });
+
+  it("headlessLogin classifies CAPTCHA checkpoints with shared selectors", async () => {
+    let waitCount = 0;
+    const checkpointUrl = "https://www.linkedin.com/checkpoint/challenge/AgCaptcha";
+
+    const { page, setUrl } = createMockPage({
+      initialUrl: "https://www.linkedin.com/login",
+      onWait: () => {
+        waitCount += 1;
+        if (waitCount === 1) {
+          setUrl(checkpointUrl);
+        }
+      },
+      isVisible: (selector, currentUrl) => {
+        if (selector.includes("session_key")) {
+          return currentUrl.includes("/login");
+        }
+
+        if (selector === "form[action*='checkpoint']") {
+          return currentUrl.includes("/checkpoint");
+        }
+
+        if (selector === "[data-sitekey]") {
+          return currentUrl.includes("/checkpoint");
+        }
+
+        return false;
+      }
+    });
+
+    const context = createContextWithPage(page);
+    const profileManager = {
+      runWithContext: vi.fn(async (_options, callback) => callback(context))
+    } as const;
+    const auth = new LinkedInAuthService(profileManager as unknown as ProfileManager);
+
+    const result = await auth.headlessLogin({
+      email: "linkedin-mcp@signikant.com",
+      password: "secret",
+      pollIntervalMs: 1,
+      timeoutMs: 100
+    });
+
+    expect(result.authenticated).toBe(false);
+    expect(result.checkpoint).toBe(true);
+    expect(result.checkpointType).toBe("captcha");
+    expect(result.currentUrl).toBe(checkpointUrl);
+    expect(rateLimitStateMocks.recordRateLimit).not.toHaveBeenCalled();
+    expect(humanizeMocks.type).toHaveBeenCalledTimes(2);
   });
 });
