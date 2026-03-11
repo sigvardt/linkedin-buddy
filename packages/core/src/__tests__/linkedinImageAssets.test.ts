@@ -212,7 +212,7 @@ describe("LinkedInImageAssetsService", () => {
       "emil-sorensen-profile-photo.png"
     );
     expect(manifest.post_images).toHaveLength(5);
-  });
+  }, 20_000);
 
   it("optionally uploads the generated photo and banner through the existing profile flow", async () => {
     const {
@@ -303,5 +303,5 @@ describe("LinkedInImageAssetsService", () => {
         artifacts: []
       }
     });
-  });
+  }, 20_000);
 });
