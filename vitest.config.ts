@@ -1,6 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 const repoRoot = path.dirname(fileURLToPath(import.meta.url));
 
@@ -20,9 +20,13 @@ export default defineConfig({
       "packages/**/src/__tests__/**/*.test.ts"
     ],
     exclude: [
-      "**/node_modules/**",
+      ...configDefaults.exclude,
       "**/dist/**",
       "**/*.e2e.test.ts"
-    ]
+    ],
+    coverage: {
+      include: ["packages/*/src/**/*.{ts,tsx}"],
+      exclude: ["packages/**/src/**/__tests__/**"]
+    }
   }
 });
