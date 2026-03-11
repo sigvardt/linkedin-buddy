@@ -297,7 +297,7 @@ describe("LinkedInAuthService auth flow", () => {
     const auth = new LinkedInAuthService(profileManager as unknown as ProfileManager);
 
     const result = await auth.headlessLogin({
-      email: "linkedin-mcp@signikant.com",
+      email: "test@example.com",
       password: "secret",
       pollIntervalMs: 1,
       timeoutMs: 100
