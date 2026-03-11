@@ -12,6 +12,7 @@ import {
   LINKEDIN_GROUPS_PREPARE_POST_TOOL,
   LINKEDIN_GROUPS_SEARCH_TOOL,
   LINKEDIN_GROUPS_VIEW_TOOL,
+  LINKEDIN_INBOX_SEARCH_RECIPIENTS_TOOL,
   LINKEDIN_MEMBERS_PREPARE_REPORT_TOOL,
   LINKEDIN_NEWSLETTER_LIST_TOOL,
   LINKEDIN_NEWSLETTER_PREPARE_CREATE_TOOL,
@@ -135,6 +136,26 @@ describe("handleToolCall", () => {
     fakeRuntime = createFakeRuntime();
     runtimeFactory.mockReturnValue(fakeRuntime);
     ({ handleToolCall } = await import("../bin/linkedin-mcp.js"));
+  });
+
+  it("rejects invalid arguments before creating a runtime", async () => {
+    runtimeFactory.mockClear();
+
+    const result = await handleToolCall(LINKEDIN_INBOX_SEARCH_RECIPIENTS_TOOL, {
+      query: "Simon Miller",
+      limit: "5" as unknown as number
+    });
+
+    expect("isError" in result && result.isError).toBe(true);
+    expect(parseToolPayload(result)).toMatchObject({
+      code: "ACTION_PRECONDITION_FAILED",
+      message: "limit must be a finite number.",
+      details: {
+        path: "limit",
+        actual_type: "string"
+      }
+    });
+    expect(runtimeFactory).not.toHaveBeenCalled();
   });
 
   it("returns privacy settings payloads through the MCP contract", async () => {
