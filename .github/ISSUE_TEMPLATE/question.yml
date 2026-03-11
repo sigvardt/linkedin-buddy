@@ -1,0 +1,34 @@
+name: Question
+description: Ask for help using LinkedIn Buddy, the CLI, MCP server, or docs.
+title: "[Question]: "
+labels:
+  - question
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Questions are welcome. Tell us what you are trying to do and what you have already read or tried.
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to do?
+      placeholder: I want to connect Claude Desktop to linkedin-mcp and search jobs.
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: What have you already tried?
+      placeholder: I followed the README quick start and ran npm run build.
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: OS, Node version, and the command or config involved.
+  - type: textarea
+    id: details
+    attributes:
+      label: Extra details
+      description: Error output, screenshots, or relevant links.

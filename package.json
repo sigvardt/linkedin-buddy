@@ -2,7 +2,36 @@
   "name": "linkedin-buddy",
   "version": "0.1.0",
   "private": true,
+  "description": "Open-source LinkedIn MCP server, LinkedIn CLI, and TypeScript automation toolkit for inbox, search, feed, jobs, profile, and safe confirmed actions.",
   "type": "module",
+  "homepage": "https://github.com/sigvardt/linkedin-buddy/tree/main/docs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sigvardt/linkedin-buddy.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sigvardt/linkedin-buddy/issues"
+  },
+  "keywords": [
+    "linkedin",
+    "linkedin-api",
+    "linkedin-automation",
+    "linkedin-cli",
+    "linkedin-mcp",
+    "linkedin-mcp-server",
+    "linkedin-toolkit",
+    "linkedin-search",
+    "linkedin-jobs",
+    "linkedin-messaging",
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "playwright",
+    "browser-automation",
+    "typescript",
+    "nodejs",
+    "ai-agents"
+  ],
   "engines": {
     "node": ">=22.0.0"
   },

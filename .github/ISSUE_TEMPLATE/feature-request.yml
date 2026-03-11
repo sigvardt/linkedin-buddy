@@ -1,0 +1,44 @@
+name: Feature request
+description: Suggest an improvement to the LinkedIn CLI, MCP server, core runtime, or docs.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea. Clear problem statements help us evaluate feature requests quickly.
+  - type: input
+    id: summary
+    attributes:
+      label: Summary
+      description: Short title for the idea.
+      placeholder: Add linkedin.groups.search to the CLI
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What is hard today, and who is affected?
+      placeholder: I can access groups through MCP, but not from the CLI.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the ideal command, tool, or workflow.
+      placeholder: Add a linkedin groups search command with query and limit options.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds or other approaches you have considered.
+  - type: textarea
+    id: extra
+    attributes:
+      label: Extra context
+      description: Related tools, screenshots, or implementation notes.

@@ -1,6 +1,7 @@
 {
   "name": "@linkedin-buddy/mcp",
   "version": "0.1.0",
+  "description": "LinkedIn MCP server for AI agents and MCP clients with LinkedIn search, inbox, feed, jobs, notifications, and confirmed actions.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -24,9 +25,17 @@
   "homepage": "https://github.com/sigvardt/linkedin-buddy/tree/main/packages/mcp",
   "keywords": [
     "linkedin",
-    "automation",
+    "linkedin-mcp",
+    "linkedin-mcp-server",
+    "linkedin-api",
+    "linkedin-automation",
+    "model-context-protocol",
     "mcp",
-    "playwright"
+    "mcp-server",
+    "ai-agents",
+    "playwright",
+    "typescript",
+    "nodejs"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",

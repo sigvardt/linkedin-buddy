@@ -1,0 +1,58 @@
+name: Bug report
+description: Report a reproducible problem in the CLI, MCP server, core runtime, or docs.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please include enough detail for us to reproduce it quickly.
+  - type: input
+    id: summary
+    attributes:
+      label: Summary
+      description: One-line description of the problem.
+      placeholder: linkedin inbox list crashes after login
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Share the exact commands, config, and sequence that trigger the issue.
+      placeholder: |
+        1. Run ...
+        2. Authenticate with ...
+        3. Execute ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      placeholder: The command should return JSON with thread summaries.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      placeholder: Paste the error, stack trace, or describe the incorrect behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Node version, OS, package version or commit, and any relevant env vars.
+      placeholder: |
+        - Node:
+        - OS:
+        - Commit or release:
+        - Command:
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Screenshots, logs, artifacts, or links to related issues.
