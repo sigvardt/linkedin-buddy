@@ -14,11 +14,11 @@ import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
 import {
   DEFAULT_LINKEDIN_SELECTOR_LOCALE,
-  buildLinkedInAriaLabelContainsSelector,
   buildLinkedInSelectorPhraseRegex,
   formatLinkedInSelectorRegexHint,
   type LinkedInSelectorLocale
 } from "./selectorLocale.js";
+import { createFeedPostComposerTriggerCandidates } from "./feedPostComposerTriggerSelectors.js";
 
 /**
  * Canonical LinkedIn page identifiers covered by the built-in selector audit.
@@ -290,29 +290,10 @@ function createSelectorAuditSelectorDefinition(
 function createDefaultSelectorAuditRegistry(
   selectorLocale: LinkedInSelectorLocale = DEFAULT_LINKEDIN_SELECTOR_LOCALE
 ): SelectorAuditPageDefinition[] {
-  const startPostExactRegex = buildLinkedInSelectorPhraseRegex(
-    "start_post",
-    selectorLocale,
-    { exact: true }
-  );
-  const startPostRegexHint = formatLinkedInSelectorRegexHint(
-    "start_post",
-    selectorLocale,
-    { exact: true }
-  );
-  const startPostTextRegex = buildLinkedInSelectorPhraseRegex(
-    "start_post",
-    selectorLocale
-  );
-  const startPostTextRegexHint = formatLinkedInSelectorRegexHint(
-    "start_post",
-    selectorLocale
-  );
-  const startPostAriaSelector = buildLinkedInAriaLabelContainsSelector(
-    ["button", "[role='button']"],
-    "start_post",
-    selectorLocale
-  );
+  const postComposerTriggerCandidates = createFeedPostComposerTriggerCandidates(selectorLocale);
+  const postComposerTriggerPrimary = postComposerTriggerCandidates[0]!;
+  const postComposerTriggerSecondary = postComposerTriggerCandidates[1]!;
+  const postComposerTriggerTertiary = postComposerTriggerCandidates[2]!;
   const inboxSurfaceRegex = buildLinkedInSelectorPhraseRegex(
     ["messaging", "write_message"],
     selectorLocale
@@ -371,28 +352,9 @@ function createDefaultSelectorAuditRegistry(
           "post_composer_trigger",
           "Feed post composer trigger",
           {
-            primary: {
-              key: "role-button-start-post",
-              selectorHint: `getByRole(button, ${startPostRegexHint})`,
-              locatorFactory: (page) =>
-                page.getByRole("button", { name: startPostExactRegex })
-            },
-            secondary: {
-              key: "aria-or-share-box-start-post",
-              selectorHint: `${startPostAriaSelector}, .share-box-feed-entry__trigger, .share-box__open`,
-              locatorFactory: (page) =>
-                page.locator(
-                  `${startPostAriaSelector}, .share-box-feed-entry__trigger, .share-box__open`
-                )
-            },
-            tertiary: {
-              key: "text-start-post",
-              selectorHint: `button, [role='button'] hasText ${startPostTextRegexHint}`,
-              locatorFactory: (page) =>
-                page
-                  .locator("button, [role='button']")
-                  .filter({ hasText: startPostTextRegex })
-            }
+            primary: postComposerTriggerPrimary,
+            secondary: postComposerTriggerSecondary,
+            tertiary: postComposerTriggerTertiary
           }
         )
       ]
