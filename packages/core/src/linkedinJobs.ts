@@ -322,7 +322,7 @@ function getRequiredStringField(
     return value.trim();
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `Prepared action ${actionId} is missing ${location}.${key}.`,
     {
@@ -355,7 +355,7 @@ function getOptionalAnswersField(
   }
 
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `Prepared action ${actionId} is missing a valid ${location}.${key} object.`,
       {
@@ -386,7 +386,7 @@ function getOptionalAnswersField(
       continue;
     }
 
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `Prepared action ${actionId} contains an unsupported value at ${location}.${key}.${answerKey}.`,
       {
@@ -465,7 +465,7 @@ function normalizeEasyApplyAnswerValue(
   if (typeof value === "string") {
     const normalized = normalizeText(value);
     if (!normalized) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `answers.${key} must not be empty when provided.`
       );
@@ -475,7 +475,7 @@ function normalizeEasyApplyAnswerValue(
 
   if (typeof value === "boolean" || typeof value === "number") {
     if (typeof value === "number" && !Number.isFinite(value)) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `answers.${key} must be a finite number.`
       );
@@ -490,7 +490,7 @@ function normalizeEasyApplyAnswerValue(
       .filter((item) => item.length > 0);
 
     if (normalizedValues.length === 0 || normalizedValues.length !== value.length) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `answers.${key} must be a non-empty array of strings.`
       );
@@ -499,7 +499,7 @@ function normalizeEasyApplyAnswerValue(
     return normalizedValues;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `answers.${key} must be a string, boolean, number, or string array.`
   );
@@ -516,7 +516,7 @@ function normalizeEasyApplyAnswers(
   for (const [key, value] of Object.entries(input)) {
     const normalizedKey = normalizeText(key);
     if (!normalizedKey) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "answers contains an empty field name."
       );
@@ -539,7 +539,7 @@ function validateEmail(value: string | undefined): string | undefined {
   }
 
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(normalized)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "email must look like a valid email address."
     );
@@ -560,7 +560,7 @@ function validateResumePath(value: string | undefined): string | undefined {
 
   const resolvedPath = path.resolve(normalized);
   if (!existsSync(resolvedPath)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `resumePath does not exist: ${resolvedPath}`
     );
@@ -568,7 +568,7 @@ function validateResumePath(value: string | undefined): string | undefined {
 
   const stats = statSync(resolvedPath);
   if (!stats.isFile()) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `resumePath must point to a file: ${resolvedPath}`
     );
@@ -584,7 +584,7 @@ function validateEasyApplyInput(
   const jobId = normalizeText(input.jobId);
 
   if (!jobId) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "jobId is required."
     );
@@ -753,7 +753,7 @@ async function waitForJobAlertsSurface(page: Page): Promise<void> {
     }
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "UI_CHANGED_SELECTOR_FAILED",
     "Could not locate LinkedIn job alerts content.",
     {
@@ -1362,7 +1362,7 @@ async function markJobsButton(
           ? "Could not locate a LinkedIn job alert toggle on the search page."
           : "Could not locate a LinkedIn job save toggle on the job page.";
 
-    throw new LinkedInAssistantError("UI_CHANGED_SELECTOR_FAILED", message, {
+    throw new LinkedInBuddyError("UI_CHANGED_SELECTOR_FAILED", message, {
       current_url: page.url(),
       button_kind: kind
     });
@@ -1811,7 +1811,7 @@ async function applyEasyApplyFieldValue(
     );
 
     if (!clicked) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `No Easy Apply radio option matched "${String(value)}" for "${field.label}".`,
         {
@@ -1865,7 +1865,7 @@ async function applyEasyApplyFieldValue(
   );
 
   if (selectionResult.length === 0 && values.length > 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `No Easy Apply checkbox option matched "${values.join(", ")}" for "${field.label}".`,
       {
@@ -1897,7 +1897,7 @@ async function fillEasyApplyStep(
   }
 
   if (missingRequiredFields.length > 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "Easy Apply requires additional answers before confirmation.",
       {
@@ -1940,7 +1940,7 @@ async function clickEasyApplyPrimaryAction(page: Page): Promise<string> {
   }
 
   if (bestIndex < 0 || bestScore <= 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UI_CHANGED_SELECTOR_FAILED",
       "Could not determine the primary Easy Apply action button.",
       {
@@ -2014,7 +2014,7 @@ export class SaveJobActionExecutor
             job_url: jobUrl
           },
           mapError: (error) =>
-            asLinkedInAssistantError(
+            asLinkedInBuddyError(
               error,
               "UNKNOWN",
               "Failed to execute LinkedIn save job action."
@@ -2024,7 +2024,7 @@ export class SaveJobActionExecutor
               SAVE_JOB_RATE_LIMIT_CONFIG
             );
             if (!rateLimitState.allowed) {
-              throw new LinkedInAssistantError(
+              throw new LinkedInBuddyError(
                 "RATE_LIMITED",
                 "LinkedIn save job confirm is rate limited for the current window.",
                 {
@@ -2051,7 +2051,7 @@ export class SaveJobActionExecutor
             }, 8_000);
 
             if (!verified) {
-              throw new LinkedInAssistantError(
+              throw new LinkedInBuddyError(
                 "UNKNOWN",
                 "Save job action could not be verified on the LinkedIn job page.",
                 {
@@ -2133,7 +2133,7 @@ export class UnsaveJobActionExecutor
             job_url: jobUrl
           },
           mapError: (error) =>
-            asLinkedInAssistantError(
+            asLinkedInBuddyError(
               error,
               "UNKNOWN",
               "Failed to execute LinkedIn unsave job action."
@@ -2143,7 +2143,7 @@ export class UnsaveJobActionExecutor
               UNSAVE_JOB_RATE_LIMIT_CONFIG
             );
             if (!rateLimitState.allowed) {
-              throw new LinkedInAssistantError(
+              throw new LinkedInBuddyError(
                 "RATE_LIMITED",
                 "LinkedIn unsave job confirm is rate limited for the current window.",
                 {
@@ -2170,7 +2170,7 @@ export class UnsaveJobActionExecutor
             }, 8_000);
 
             if (!verified) {
-              throw new LinkedInAssistantError(
+              throw new LinkedInBuddyError(
                 "UNKNOWN",
                 "Unsave job action could not be verified on the LinkedIn job page.",
                 {
@@ -2260,7 +2260,7 @@ export class CreateJobAlertActionExecutor
             search_url: searchUrl
           },
           mapError: (error) =>
-            asLinkedInAssistantError(
+            asLinkedInBuddyError(
               error,
               "UNKNOWN",
               "Failed to create a LinkedIn job alert."
@@ -2270,7 +2270,7 @@ export class CreateJobAlertActionExecutor
               CREATE_JOB_ALERT_RATE_LIMIT_CONFIG
             );
             if (!rateLimitState.allowed) {
-              throw new LinkedInAssistantError(
+              throw new LinkedInBuddyError(
                 "RATE_LIMITED",
                 "LinkedIn job-alert creation is rate limited for the current window.",
                 {
@@ -2297,7 +2297,7 @@ export class CreateJobAlertActionExecutor
             }, 8_000);
 
             if (!verified) {
-              throw new LinkedInAssistantError(
+              throw new LinkedInBuddyError(
                 "UNKNOWN",
                 "Job alert creation could not be verified on the search page.",
                 {
@@ -2395,7 +2395,7 @@ export class RemoveJobAlertActionExecutor
             search_url: searchUrl
           },
           mapError: (error) =>
-            asLinkedInAssistantError(
+            asLinkedInBuddyError(
               error,
               "UNKNOWN",
               "Failed to remove a LinkedIn job alert."
@@ -2405,7 +2405,7 @@ export class RemoveJobAlertActionExecutor
               REMOVE_JOB_ALERT_RATE_LIMIT_CONFIG
             );
             if (!rateLimitState.allowed) {
-              throw new LinkedInAssistantError(
+              throw new LinkedInBuddyError(
                 "RATE_LIMITED",
                 "LinkedIn job-alert removal is rate limited for the current window.",
                 {
@@ -2432,7 +2432,7 @@ export class RemoveJobAlertActionExecutor
             }, 8_000);
 
             if (!verified) {
-              throw new LinkedInAssistantError(
+              throw new LinkedInBuddyError(
                 "UNKNOWN",
                 "Job alert removal could not be verified on the search page.",
                 {
@@ -2538,7 +2538,7 @@ export class EasyApplyJobActionExecutor
             job_url: jobUrl
           },
           mapError: (error) =>
-            asLinkedInAssistantError(
+            asLinkedInBuddyError(
               error,
               "UNKNOWN",
               "Failed to submit a LinkedIn Easy Apply application."
@@ -2546,7 +2546,7 @@ export class EasyApplyJobActionExecutor
           execute: async () => {
             const rateLimitState = runtime.rateLimiter.consume(EASY_APPLY_RATE_LIMIT_CONFIG);
             if (!rateLimitState.allowed) {
-              throw new LinkedInAssistantError(
+              throw new LinkedInBuddyError(
                 "RATE_LIMITED",
                 "LinkedIn Easy Apply confirm is rate limited for the current window.",
                 {
@@ -2571,7 +2571,7 @@ export class EasyApplyJobActionExecutor
             }, 8_000);
 
             if (!dialogVisible) {
-              throw new LinkedInAssistantError(
+              throw new LinkedInBuddyError(
                 "UI_CHANGED_SELECTOR_FAILED",
                 "Easy Apply modal did not appear after clicking the Easy Apply button.",
                 {
@@ -2607,7 +2607,7 @@ export class EasyApplyJobActionExecutor
               currentActionLabel = snapshot.primaryActionLabel;
               const actionKind = classifyEasyApplyActionLabel(currentActionLabel);
               if (actionKind === "unknown") {
-                throw new LinkedInAssistantError(
+                throw new LinkedInBuddyError(
                   "UI_CHANGED_SELECTOR_FAILED",
                   "Easy Apply surfaced an unsupported primary action button.",
                   {
@@ -2630,7 +2630,7 @@ export class EasyApplyJobActionExecutor
 
             const success = await waitForEasyApplySuccess(page);
             if (!success) {
-              throw new LinkedInAssistantError(
+              throw new LinkedInBuddyError(
                 "UNKNOWN",
                 "Easy Apply submission could not be verified.",
                 {
@@ -2708,7 +2708,7 @@ export class LinkedInJobsService {
     const jobId = normalizeText(input.jobId);
 
     if (!jobId) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "jobId is required."
       );
@@ -2908,10 +2908,10 @@ export class LinkedInJobsService {
         count: alerts.length
       };
     } catch (error) {
-      if (error instanceof LinkedInAssistantError) {
+      if (error instanceof LinkedInBuddyError) {
         throw error;
       }
-      throw asLinkedInAssistantError(
+      throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
         "Failed to list LinkedIn job alerts."
@@ -2930,7 +2930,7 @@ export class LinkedInJobsService {
     const location = normalizeText(input.location);
 
     if (!query) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "query is required."
       );
@@ -2993,7 +2993,7 @@ export class LinkedInJobsService {
         (alert) => normalizeText(alert.alert_id) === providedAlertId
       );
       if (!matchedAlert) {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "TARGET_NOT_FOUND",
           `Could not find a LinkedIn job alert with id "${providedAlertId}".`,
           {
@@ -3007,7 +3007,7 @@ export class LinkedInJobsService {
     }
 
     if (!searchUrl) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "Provide alertId, searchUrl, or query to remove a job alert."
       );

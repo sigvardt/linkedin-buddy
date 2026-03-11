@@ -6946,7 +6946,7 @@ async function readEasyApplyAnswersFile(
 
   const raw = await readJsonInputFile(filePath, "Easy Apply answers");
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "Easy Apply answers file must contain a JSON object."
     );
