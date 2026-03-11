@@ -1,5 +1,6 @@
 import type { BrowserContext, Page } from "playwright-core";
 import { resolveEvasionConfig, type EvasionConfig } from "../config.js";
+import { detectCaptcha } from "../evasion/browser.js";
 import { LinkedInAssistantError } from "../errors.js";
 import { attachHumanizeLogger, detachHumanizeLogger, humanize } from "../humanize.js";
 import type { JsonEventLogger } from "../logging.js";
@@ -408,10 +409,7 @@ export class LinkedInAuthService {
               page,
               "input[name='pin'], input#input__phone_verification_pin, input[name*='verification'], input[name*='code']"
             );
-            const hasCaptcha = await isVisibleSafe(
-              page,
-              "iframe[src*='captcha'], #captcha, iframe[src*='recaptcha'], .recaptcha"
-            );
+            const hasCaptcha = await detectCaptcha(page);
 
             let hasAppApproval = false;
             if (!hasCodeInput && !hasCaptcha) {
