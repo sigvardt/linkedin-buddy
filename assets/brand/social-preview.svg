@@ -1,0 +1,236 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" role="img" aria-labelledby="title desc">
+  <title id="title">LinkedIn Buddy social preview</title>
+  <desc id="desc">LinkedIn Buddy social preview banner with mascot, tagline, and CLI plus MCP cues.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0%" x2="100%" y1="0%" y2="100%">
+      <stop offset="0%" stop-color="#fff7ed"/>
+      <stop offset="60%" stop-color="#effcf8"/>
+      <stop offset="100%" stop-color="#e3f7ff"/>
+    </linearGradient>
+    <radialGradient id="glow-coral" cx="0%" cy="100%" r="80%">
+      <stop offset="0%" stop-color="#ff7a59" stop-opacity=".28"/>
+      <stop offset="100%" stop-color="#ff7a59" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow-mint" cx="100%" cy="0%" r="85%">
+      <stop offset="0%" stop-color="#14b8a6" stop-opacity=".26"/>
+      <stop offset="100%" stop-color="#14b8a6" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="card-shadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="24" stdDeviation="22" flood-color="#0f172a" flood-opacity=".12"/>
+    </filter>
+    <filter id="soft-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#0f172a" flood-opacity=".12"/>
+    </filter>
+  </defs>
+  <rect width="1280" height="640" fill="url(#bg)"/>
+  <rect width="1280" height="640" fill="url(#glow-coral)"/>
+  <rect width="1280" height="640" fill="url(#glow-mint)"/>
+  <circle cx="141" cy="552" r="166" fill="#ff7a59" opacity=".1"/>
+  <circle cx="1118" cy="102" r="152" fill="#14b8a6" opacity=".12"/>
+  <path d="M96 516C166 472 226 467 312 488" fill="none" stroke="#ff7a59" stroke-linecap="round" stroke-width="10"/>
+  <circle cx="312" cy="488" r="14" fill="#ff7a59"/>
+  <path d="M282 120C360 90 432 110 502 162" fill="none" stroke="#14b8a6" stroke-linecap="round" stroke-width="9"/>
+  <circle cx="282" cy="120" r="12" fill="#14b8a6"/>
+  <g filter="url(#soft-shadow)" transform="translate(76 70)">
+    <rect x="0" y="0" width="396" height="500" rx="116" fill="#fffaf4" stroke="#0f172a" stroke-width="8"/>
+    <rect x="48" y="52" width="248" height="248" rx="88" fill="#ffffff" opacity=".72"/>
+    <path
+      d="M124 104H286C319.14 104 346 130.86 346 164V244C346 277.14 319.14 304 286 304H225L162 362C151.26 371.89 134 364.28 134 349.62V304H124C90.86 304 64 277.14 64 244V164C64 130.86 90.86 104 124 104Z"
+      fill="#14b8a6"
+      stroke="#0f172a"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      stroke-width="14"
+    />
+    <path
+      d="M122 136C140 118 172 108 216 108"
+      fill="none"
+      opacity=".55"
+      stroke="#ffffff"
+      stroke-linecap="round"
+      stroke-width="10"
+    />
+    <circle cx="174" cy="203" r="10" fill="#0f172a"/>
+    <circle cx="241" cy="203" r="10" fill="#0f172a"/>
+    <path
+      d="M167 247C181 266 234 266 248 247"
+      fill="none"
+      stroke="#0f172a"
+      stroke-linecap="round"
+      stroke-width="11"
+    />
+    <circle cx="150" cy="233" r="8" fill="#ff7a59" opacity=".6"/>
+    <circle cx="264" cy="233" r="8" fill="#ff7a59" opacity=".6"/>
+    <path
+      d="M330 64L344 89L370 102L344 115L330 141L317 115L290 102L317 89Z"
+      fill="#ff7a59"
+      stroke="#0f172a"
+      stroke-linejoin="round"
+      stroke-width="10"
+    />
+    <text
+      x="48"
+      y="406"
+      fill="#0f172a"
+      font-family="'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif"
+      font-size="34"
+      font-weight="700"
+    >
+      Beacon Buddy
+    </text>
+    <text
+      x="48"
+      y="448"
+      fill="#334155"
+      font-family="'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif"
+      font-size="20"
+      font-weight="500"
+    >
+      Friendly by default.
+    </text>
+    <text
+      x="48"
+      y="476"
+      fill="#334155"
+      font-family="'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif"
+      font-size="20"
+      font-weight="500"
+    >
+      Crisp at badge size.
+    </text>
+  </g>
+  <g transform="translate(510 108)">
+    <text
+      x="0"
+      y="88"
+      fill="#0f172a"
+      font-family="'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif"
+      font-size="82"
+      font-weight="700"
+      letter-spacing="-2.5"
+    >
+      LinkedIn Buddy
+    </text>
+    <text
+      x="0"
+      y="146"
+      fill="#334155"
+      font-family="'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif"
+      font-size="34"
+      font-weight="500"
+    >
+      Friendly automation toolkit
+    </text>
+    <text
+      x="0"
+      y="188"
+      fill="#334155"
+      font-family="'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif"
+      font-size="34"
+      font-weight="500"
+    >
+      for CLI + MCP workflows
+    </text>
+    <g transform="translate(0 222)">
+      <rect width="96" height="40" rx="20" fill="#0f172a"/>
+      <text
+        x="48"
+        y="27"
+        fill="#fff7ed"
+        font-family="'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif"
+        font-size="22"
+        font-weight="700"
+        text-anchor="middle"
+      >
+        CLI
+      </text>
+      <rect x="112" width="108" height="40" rx="20" fill="#14b8a6"/>
+      <text
+        x="166"
+        y="27"
+        fill="#0f172a"
+        font-family="'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif"
+        font-size="22"
+        font-weight="700"
+        text-anchor="middle"
+      >
+        MCP
+      </text>
+      <rect x="236" width="156" height="40" rx="20" fill="#ff7a59"/>
+      <text
+        x="314"
+        y="27"
+        fill="#0f172a"
+        font-family="'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif"
+        font-size="22"
+        font-weight="700"
+        text-anchor="middle"
+      >
+        Playwright
+      </text>
+    </g>
+    <g filter="url(#card-shadow)" transform="translate(0 308)">
+      <rect width="594" height="178" rx="34" fill="#111827"/>
+      <circle cx="44" cy="36" r="9" fill="#ff7a59"/>
+      <circle cx="72" cy="36" r="9" fill="#f59e0b"/>
+      <circle cx="100" cy="36" r="9" fill="#14b8a6"/>
+      <text
+        x="40"
+        y="86"
+        fill="#14b8a6"
+        font-family="'SFMono-Regular', 'JetBrains Mono', Menlo, Consolas, monospace"
+        font-size="24"
+        font-weight="700"
+      >
+        $
+      </text>
+      <text
+        x="70"
+        y="86"
+        fill="#f8fafc"
+        font-family="'SFMono-Regular', 'JetBrains Mono', Menlo, Consolas, monospace"
+        font-size="24"
+      >
+        linkedin status
+      </text>
+      <text
+        x="40"
+        y="120"
+        fill="#14b8a6"
+        font-family="'SFMono-Regular', 'JetBrains Mono', Menlo, Consolas, monospace"
+        font-size="24"
+        font-weight="700"
+      >
+        $
+      </text>
+      <text
+        x="70"
+        y="120"
+        fill="#f8fafc"
+        font-family="'SFMono-Regular', 'JetBrains Mono', Menlo, Consolas, monospace"
+        font-size="24"
+      >
+        linkedin search people "product design"
+      </text>
+      <text
+        x="40"
+        y="154"
+        fill="#14b8a6"
+        font-family="'SFMono-Regular', 'JetBrains Mono', Menlo, Consolas, monospace"
+        font-size="24"
+        font-weight="700"
+      >
+        $
+      </text>
+      <text
+        x="70"
+        y="154"
+        fill="#f8fafc"
+        font-family="'SFMono-Regular', 'JetBrains Mono', Menlo, Consolas, monospace"
+        font-size="24"
+      >
+        linkedin-mcp
+      </text>
+    </g>
+  </g>
+</svg>

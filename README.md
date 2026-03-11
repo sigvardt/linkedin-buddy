@@ -1,6 +1,12 @@
+<p align="center">
+  <img src="./assets/brand/logo-mark.svg" alt="LinkedIn Buddy logo mark" width="120" height="120" />
+</p>
+
 # linkedin-buddy
 
 LinkedIn automation monorepo with a shared TypeScript core, local CLI, and MCP stdio server.
+
+Brand assets live in [docs/brand-guidelines.md](./docs/brand-guidelines.md), with the social preview source in [assets/brand/social-preview.svg](./assets/brand/social-preview.svg).
 
 ## Monorepo Layout
 
