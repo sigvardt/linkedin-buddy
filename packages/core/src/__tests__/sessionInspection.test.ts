@@ -14,7 +14,9 @@ function createMockPage(options: {
     currentUrl: string
   ) => string | null;
   isVisible?: (selector: string) => boolean;
+  selfProfileGotoUrl?: string;
   textContent?: (selector: string, currentUrl: string) => string | null;
+  waitForUrlResult?: string;
 }): Page {
   let currentUrl = options.url;
 
@@ -22,8 +24,32 @@ function createMockPage(options: {
     goto: vi.fn(async (url: string) => {
       currentUrl =
         url === "https://www.linkedin.com/in/me/"
-          ? "https://www.linkedin.com/in/test-member/"
+          ? (options.selfProfileGotoUrl ??
+            "https://www.linkedin.com/in/test-member/")
           : url;
+    }),
+    waitForURL: vi.fn(async (matcher: unknown) => {
+      if (options.waitForUrlResult) {
+        currentUrl = options.waitForUrlResult;
+      }
+
+      if (typeof matcher === "function") {
+        if (matcher(new URL(currentUrl)) !== true) {
+          throw new Error("Timed out waiting for URL");
+        }
+        return;
+      }
+
+      if (matcher instanceof RegExp) {
+        if (!matcher.test(currentUrl)) {
+          throw new Error("Timed out waiting for URL");
+        }
+        return;
+      }
+
+      if (typeof matcher === "string" && matcher !== currentUrl) {
+        throw new Error("Timed out waiting for URL");
+      }
     }),
     url: vi.fn(() => currentUrl),
     locator: vi.fn((selector: string) => {
@@ -121,6 +147,21 @@ describe("inspectLinkedInSession", () => {
     expect(status.reason).toContain("Login form");
   });
 
+  it("prefers login detection over checkpoint-form false positives on login pages", async () => {
+    const page = createMockPage({
+      url: "https://www.linkedin.com/uas/login?session_redirect=https%3A%2F%2Fwww.linkedin.com%2Ffeed%2F",
+      isVisible: (selector) =>
+        selector.includes("input[name='session_key']") ||
+        selector.includes("form[action*='checkpoint']")
+    });
+
+    const status = await inspectLinkedInSession(page);
+
+    expect(status.authenticated).toBe(false);
+    expect(status.checkpointDetected).toBe(false);
+    expect(status.reason).toBe("Login form is visible.");
+  });
+
   it("authenticates when the localized profile-menu aria label is visible", async () => {
     const page = createMockPage({
       url: "https://www.linkedin.com/feed/",
@@ -198,6 +239,63 @@ describe("inspectLinkedInSession", () => {
     expect(page.goto).toHaveBeenCalledWith("https://www.linkedin.com/in/me/", {
       waitUntil: "domcontentloaded",
       timeout: 10_000
+    });
+  });
+
+  it("waits for /in/me/ to resolve before extracting identity", async () => {
+    const page = createMockPage({
+      url: "https://www.linkedin.com/feed/",
+      getAttribute: (selector, name, currentUrl) => {
+        if (
+          selector === "link[rel='canonical']" &&
+          name === "href" &&
+          currentUrl.includes("/in/resolved-member/")
+        ) {
+          return "https://www.linkedin.com/in/resolved-member/";
+        }
+
+        return null;
+      },
+      selfProfileGotoUrl: "https://www.linkedin.com/in/me/",
+      textContent: (selector, currentUrl) => {
+        if (selector === "main h1" && currentUrl.includes("/in/resolved-member/")) {
+          return "Resolved Member";
+        }
+
+        return null;
+      },
+      waitForUrlResult: "https://www.linkedin.com/in/resolved-member/"
+    });
+
+    const identity = await inspectAuthenticatedLinkedInIdentity(page);
+
+    expect(identity).toEqual({
+      fullName: "Resolved Member",
+      profileUrl: "https://www.linkedin.com/in/resolved-member/",
+      vanityName: "resolved-member"
+    });
+    expect(page.waitForURL).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not report /in/me/ as a resolved public profile URL", async () => {
+    const page = createMockPage({
+      url: "https://www.linkedin.com/feed/",
+      selfProfileGotoUrl: "https://www.linkedin.com/in/me/",
+      textContent: (selector, currentUrl) => {
+        if (selector === "main h1" && currentUrl.includes("/in/me/")) {
+          return "Fallback Name";
+        }
+
+        return null;
+      }
+    });
+
+    const identity = await inspectAuthenticatedLinkedInIdentity(page);
+
+    expect(identity).toEqual({
+      fullName: "Fallback Name",
+      profileUrl: null,
+      vanityName: null
     });
   });
 });

@@ -35,6 +35,17 @@ npm run test:e2e -- --require-session
 The same strict behavior is available through
 `LINKEDIN_E2E_REQUIRE_SESSION=1`.
 
+Important:
+
+- the live runner checks the browser attached to `LINKEDIN_CDP_URL`, not a
+  separate local persistent profile created by plain CLI commands
+- if `linkedin status --profile <name>` looks healthy but `npm run test:e2e`
+  still says auth is missing, verify the attached browser directly:
+
+```bash
+linkedin --cdp-url http://localhost:18800 status --profile default
+```
+
 The runner forwards any remaining arguments to Vitest, so focused reruns stay
 simple:
 

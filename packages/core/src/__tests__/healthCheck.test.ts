@@ -12,7 +12,9 @@ function createMockPage(opts: {
   url: string;
   evaluateResult?: unknown;
   isVisible?: (selector: string) => boolean;
+  selfProfileGotoUrl?: string;
   textContent?: (selector: string, currentUrl: string) => string | null;
+  waitForUrlResult?: string;
 }): Page {
   let currentUrl = opts.url;
 
@@ -27,8 +29,32 @@ function createMockPage(opts: {
     goto: vi.fn(async (url: string) => {
       currentUrl =
         url === "https://www.linkedin.com/in/me/"
-          ? "https://www.linkedin.com/in/test-health/"
+          ? (opts.selfProfileGotoUrl ??
+            "https://www.linkedin.com/in/test-health/")
           : opts.url;
+    }),
+    waitForURL: vi.fn(async (matcher: unknown) => {
+      if (opts.waitForUrlResult) {
+        currentUrl = opts.waitForUrlResult;
+      }
+
+      if (typeof matcher === "function") {
+        if (matcher(new URL(currentUrl)) !== true) {
+          throw new Error("Timed out waiting for URL");
+        }
+        return;
+      }
+
+      if (matcher instanceof RegExp) {
+        if (!matcher.test(currentUrl)) {
+          throw new Error("Timed out waiting for URL");
+        }
+        return;
+      }
+
+      if (typeof matcher === "string" && matcher !== currentUrl) {
+        throw new Error("Timed out waiting for URL");
+      }
     }),
     locator: vi.fn((selector: string) => {
       const visible = opts.isVisible?.(selector) ?? false;
@@ -268,6 +294,33 @@ describe("checkLinkedInSession", () => {
       fullName: "Health Check User",
       profileUrl: "https://www.linkedin.com/in/test-health/",
       vanityName: "test-health"
+    });
+  });
+
+  it("keeps health identity partial when /in/me/ never resolves", async () => {
+    const page = createMockPage({
+      url: "https://www.linkedin.com/feed/",
+      isVisible: (selector) => selector === "nav.global-nav",
+      selfProfileGotoUrl: "https://www.linkedin.com/in/me/",
+      textContent: (selector, currentUrl) => {
+        if (selector === "main h1" && currentUrl.includes("/in/me/")) {
+          return "Health Fallback";
+        }
+
+        return null;
+      }
+    });
+    const context = createMockContext({
+      connected: true,
+      pages: [page]
+    });
+
+    const status = await checkLinkedInSession(context);
+
+    expect(status.identity).toEqual({
+      fullName: "Health Fallback",
+      profileUrl: null,
+      vanityName: null
     });
   });
 });
