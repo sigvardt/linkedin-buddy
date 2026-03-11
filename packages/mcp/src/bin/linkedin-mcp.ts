@@ -49,6 +49,10 @@ import {
 import {
   LINKEDIN_ACTIONS_CONFIRM_TOOL,
   LINKEDIN_ASSETS_GENERATE_PROFILE_IMAGES_TOOL,
+  LINKEDIN_ANALYTICS_CONTENT_METRICS_TOOL,
+  LINKEDIN_ANALYTICS_POST_METRICS_TOOL,
+  LINKEDIN_ANALYTICS_PROFILE_VIEWS_TOOL,
+  LINKEDIN_ANALYTICS_SEARCH_APPEARANCES_TOOL,
   LINKEDIN_ACTIVITY_DELIVERIES_LIST_TOOL,
   LINKEDIN_ACTIVITY_EVENTS_LIST_TOOL,
   LINKEDIN_ACTIVITY_POLLER_RUN_ONCE_TOOL,
@@ -1742,6 +1746,140 @@ async function handleAssetsGenerateProfileImages(
       profile_name: profileName,
       spec_path: resolvedSpecPath,
       ...report
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleAnalyticsProfileViews(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+
+    runtime.logger.log("info", "mcp.analytics.profile_views.start", {
+      profileName
+    });
+
+    const summary = await runtime.analytics.getProfileViews({
+      profileName
+    });
+
+    runtime.logger.log("info", "mcp.analytics.profile_views.done", {
+      profileName,
+      card_count: summary.cards.length,
+      metric_count: summary.metrics.length
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...summary
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleAnalyticsSearchAppearances(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+
+    runtime.logger.log("info", "mcp.analytics.search_appearances.start", {
+      profileName
+    });
+
+    const summary = await runtime.analytics.getSearchAppearances({
+      profileName
+    });
+
+    runtime.logger.log("info", "mcp.analytics.search_appearances.done", {
+      profileName,
+      card_count: summary.cards.length,
+      metric_count: summary.metrics.length
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...summary
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleAnalyticsContentMetrics(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const limit = readPositiveNumber(args, "limit", 4);
+
+    runtime.logger.log("info", "mcp.analytics.content_metrics.start", {
+      profileName,
+      limit
+    });
+
+    const summary = await runtime.analytics.getContentMetrics({
+      profileName,
+      limit
+    });
+
+    runtime.logger.log("info", "mcp.analytics.content_metrics.done", {
+      profileName,
+      card_count: summary.cards.length,
+      metric_count: summary.metrics.length
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...summary
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleAnalyticsPostMetrics(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const postUrl = readRequiredString(args, "postUrl");
+
+    runtime.logger.log("info", "mcp.analytics.post_metrics.start", {
+      profileName,
+      postUrl
+    });
+
+    const summary = await runtime.analytics.getPostMetrics({
+      profileName,
+      postUrl
+    });
+
+    runtime.logger.log("info", "mcp.analytics.post_metrics.done", {
+      profileName,
+      post_url: summary.post.post_url,
+      metric_count: summary.metrics.length
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...summary
     });
   } finally {
     runtime.close();
@@ -4564,6 +4702,88 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
+        name: LINKEDIN_ANALYTICS_PROFILE_VIEWS_TOOL,
+        description:
+          withSelectorAuditHint(
+            "Read the logged-in member's LinkedIn profile-view analytics cards with normalized numeric metrics."
+          ),
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_ANALYTICS_SEARCH_APPEARANCES_TOOL,
+        description:
+          withSelectorAuditHint(
+            "Read the logged-in member's LinkedIn search-appearance analytics cards with normalized numeric metrics."
+          ),
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_ANALYTICS_CONTENT_METRICS_TOOL,
+        description:
+          withSelectorAuditHint(
+            "Read LinkedIn content and impression analytics cards from the logged-in member's profile analytics surface."
+          ),
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            limit: {
+              type: "number",
+              description:
+                "Maximum number of content analytics cards to return. Defaults to 4."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_ANALYTICS_POST_METRICS_TOOL,
+        description:
+          withSelectorAuditHint(
+            "Read normalized engagement metrics for one LinkedIn post URL, URN, or activity/share identifier."
+          ),
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["postUrl"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            postUrl: {
+              type: "string",
+              description: "LinkedIn post URL, URN, or activity/share identifier."
+            }
+          })
+        }
+      },
+      {
         name: LINKEDIN_SEARCH_TOOL,
         description: withSelectorAuditHint(
           `Search LinkedIn for ${SEARCH_CATEGORIES.join(", ")}.`
@@ -6052,6 +6272,11 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
     handleProfilePrepareWriteRecommendation,
   [LINKEDIN_ASSETS_GENERATE_PROFILE_IMAGES_TOOL]:
     handleAssetsGenerateProfileImages,
+  [LINKEDIN_ANALYTICS_PROFILE_VIEWS_TOOL]: handleAnalyticsProfileViews,
+  [LINKEDIN_ANALYTICS_SEARCH_APPEARANCES_TOOL]:
+    handleAnalyticsSearchAppearances,
+  [LINKEDIN_ANALYTICS_CONTENT_METRICS_TOOL]: handleAnalyticsContentMetrics,
+  [LINKEDIN_ANALYTICS_POST_METRICS_TOOL]: handleAnalyticsPostMetrics,
   [LINKEDIN_SEARCH_TOOL]: handleSearch,
   [LINKEDIN_CONNECTIONS_LIST_TOOL]: handleConnectionsList,
   [LINKEDIN_CONNECTIONS_PENDING_TOOL]: handleConnectionsPending,

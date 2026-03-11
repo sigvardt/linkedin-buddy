@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  LINKEDIN_ANALYTICS_POST_METRICS_TOOL,
+  LINKEDIN_ANALYTICS_PROFILE_VIEWS_TOOL,
   LINKEDIN_EVENTS_SEARCH_TOOL,
   LINKEDIN_EVENTS_VIEW_TOOL,
   LINKEDIN_EVENTS_PREPARE_RSVP_TOOL,
@@ -27,6 +29,10 @@ vi.mock("@linkedin-assistant/core", async () => {
 });
 
 interface FakeRuntime {
+  analytics: {
+    getPostMetrics: ReturnType<typeof vi.fn>;
+    getProfileViews: ReturnType<typeof vi.fn>;
+  };
   close: ReturnType<typeof vi.fn>;
   companyPages: {
     prepareFollowCompanyPage: ReturnType<typeof vi.fn>;
@@ -59,6 +65,10 @@ interface FakeRuntime {
 function createFakeRuntime(): FakeRuntime {
   return {
     runId: "run_test",
+    analytics: {
+      getPostMetrics: vi.fn(),
+      getProfileViews: vi.fn()
+    },
     close: vi.fn(),
     companyPages: {
       prepareFollowCompanyPage: vi.fn(),
@@ -139,6 +149,69 @@ describe("handleToolCall", () => {
       ]
     });
     expect(fakeRuntime.privacySettings.getSettings).toHaveBeenCalledWith({
+      profileName: "default"
+    });
+    expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns profile-view analytics payloads through the MCP contract", async () => {
+    fakeRuntime.analytics.getProfileViews.mockResolvedValue({
+      surface: "profile_views",
+      source_url: "https://www.linkedin.com/in/me/",
+      observed_at: "2026-03-11T12:00:00.000Z",
+      metrics: [
+        {
+          metric_key: "profile_views",
+          label: "Profile views",
+          value: 42,
+          value_text: "42",
+          delta_value: null,
+          delta_text: null,
+          unit: "count",
+          trend: "unknown",
+          observed_at: "2026-03-11T12:00:00.000Z"
+        }
+      ],
+      cards: [
+        {
+          card_key: "profile_views",
+          title: "Profile views",
+          description: "See who's viewed your profile.",
+          href: "https://www.linkedin.com/in/me/",
+          metrics: [
+            {
+              metric_key: "profile_views",
+              label: "Profile views",
+              value: 42,
+              value_text: "42",
+              delta_value: null,
+              delta_text: null,
+              unit: "count",
+              trend: "unknown",
+              observed_at: "2026-03-11T12:00:00.000Z"
+            }
+          ]
+        }
+      ]
+    });
+
+    const result = await handleToolCall(LINKEDIN_ANALYTICS_PROFILE_VIEWS_TOOL, {
+      profileName: "default"
+    });
+
+    expect("isError" in result && result.isError).toBe(false);
+    expect(parseToolPayload(result)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      surface: "profile_views",
+      metrics: [
+        expect.objectContaining({
+          metric_key: "profile_views",
+          value: 42
+        })
+      ]
+    });
+    expect(fakeRuntime.analytics.getProfileViews).toHaveBeenCalledWith({
       profileName: "default"
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
@@ -448,6 +521,77 @@ describe("handleToolCall", () => {
     expect(fakeRuntime.events.prepareRsvp).toHaveBeenCalledWith({
       profileName: "default",
       event: "7433954919704973312"
+    });
+    expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns post-metrics payloads through the MCP contract", async () => {
+    fakeRuntime.analytics.getPostMetrics.mockResolvedValue({
+      surface: "post_metrics",
+      source_url: "https://www.linkedin.com/feed/update/urn:li:activity:123/",
+      observed_at: "2026-03-11T12:00:00.000Z",
+      metrics: [
+        {
+          metric_key: "reactions",
+          label: "Reactions",
+          value: 12,
+          value_text: "12",
+          delta_value: null,
+          delta_text: null,
+          unit: "count",
+          trend: "unknown",
+          observed_at: "2026-03-11T12:00:00.000Z"
+        }
+      ],
+      cards: [
+        {
+          card_key: "post_engagement",
+          title: "Post engagement",
+          description: "Read from the live LinkedIn post surface.",
+          href: "https://www.linkedin.com/feed/update/urn:li:activity:123/",
+          metrics: [
+            {
+              metric_key: "reactions",
+              label: "Reactions",
+              value: 12,
+              value_text: "12",
+              delta_value: null,
+              delta_text: null,
+              unit: "count",
+              trend: "unknown",
+              observed_at: "2026-03-11T12:00:00.000Z"
+            }
+          ]
+        }
+      ],
+      post: {
+        post_id: "123",
+        post_url: "https://www.linkedin.com/feed/update/urn:li:activity:123/",
+        author_name: "Joi Ascend",
+        author_headline: "Automation operator",
+        posted_at: "1d",
+        text: "Testing metrics."
+      }
+    });
+
+    const result = await handleToolCall(LINKEDIN_ANALYTICS_POST_METRICS_TOOL, {
+      profileName: "default",
+      postUrl: "urn:li:activity:123"
+    });
+
+    expect("isError" in result && result.isError).toBe(false);
+    expect(parseToolPayload(result)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      surface: "post_metrics",
+      post: {
+        post_id: "123",
+        author_name: "Joi Ascend"
+      }
+    });
+    expect(fakeRuntime.analytics.getPostMetrics).toHaveBeenCalledWith({
+      profileName: "default",
+      postUrl: "urn:li:activity:123"
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });

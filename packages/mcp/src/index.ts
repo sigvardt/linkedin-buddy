@@ -52,6 +52,14 @@ export const LINKEDIN_PROFILE_PREPARE_WRITE_RECOMMENDATION_TOOL =
   "linkedin.profile.prepare_write_recommendation";
 export const LINKEDIN_ASSETS_GENERATE_PROFILE_IMAGES_TOOL =
   "linkedin.assets.generate_profile_images";
+export const LINKEDIN_ANALYTICS_PROFILE_VIEWS_TOOL =
+  "linkedin.analytics.profile_views";
+export const LINKEDIN_ANALYTICS_SEARCH_APPEARANCES_TOOL =
+  "linkedin.analytics.search_appearances";
+export const LINKEDIN_ANALYTICS_POST_METRICS_TOOL =
+  "linkedin.analytics.post_metrics";
+export const LINKEDIN_ANALYTICS_CONTENT_METRICS_TOOL =
+  "linkedin.analytics.content_metrics";
 export const LINKEDIN_SEARCH_TOOL = "linkedin.search";
 export const LINKEDIN_CONNECTIONS_LIST_TOOL = "linkedin.connections.list";
 export const LINKEDIN_CONNECTIONS_PENDING_TOOL = "linkedin.connections.pending";
