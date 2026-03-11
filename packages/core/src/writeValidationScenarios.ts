@@ -1,4 +1,4 @@
-import { LinkedInAssistantError } from "./errors.js";
+import { LinkedInBuddyError } from "./errors.js";
 import {
   LIKE_POST_ACTION_TYPE,
   normalizeLinkedInFeedReaction,
@@ -49,7 +49,7 @@ function buildWriteValidationMessageText(): string {
 function resolveThreadUrl(thread: string): string {
   const trimmedThread = thread.trim();
   if (!trimmedThread) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "Thread identifier is required."
     );
@@ -80,7 +80,7 @@ function getRequiredTarget<T>(
     return target as T;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `Write-validation account "${accountId}" is missing targets.${String(actionType)} in config.json.`,
     {
@@ -401,7 +401,7 @@ export const WRITE_VALIDATION_SCENARIOS = [
         });
 
       if (!preparedFollowup) {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
           `No accepted connection follow-up could be prepared for ${target.profileUrlKey}.`,
           {

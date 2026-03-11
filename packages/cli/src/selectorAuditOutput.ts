@@ -1,13 +1,13 @@
 import type {
   JsonLogEntry,
-  LinkedInAssistantErrorPayload,
+  LinkedInBuddyErrorPayload,
   SelectorAuditFailureSummary,
   SelectorAuditFallbackSummary,
   SelectorAuditPageSummary,
   SelectorAuditPageWarningSummary,
   SelectorAuditReport,
   SelectorAuditResult
-} from "@linkedin-assistant/core";
+} from "@linkedin-buddy/core";
 
 /**
  * Output formats supported by the selector audit CLI.
@@ -266,7 +266,7 @@ export function formatSelectorAuditReport(
  * Formats a structured selector audit failure into a concise terminal message.
  */
 export function formatSelectorAuditError(
-  payload: LinkedInAssistantErrorPayload
+  payload: LinkedInBuddyErrorPayload
 ): string {
   const lines = [`Selector audit failed [${payload.code}]`, payload.message];
   const detailEntries = Object.entries(payload.details);

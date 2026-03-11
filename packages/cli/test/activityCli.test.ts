@@ -13,7 +13,7 @@ const activityCliMocks = vi.hoisted(() => ({
   loggerLog: vi.fn()
 }));
 
-vi.mock("@linkedin-assistant/core", async () => {
+vi.mock("@linkedin-buddy/core", async () => {
   const actual = await import("../../core/src/index.js");
 
   return {
@@ -23,9 +23,9 @@ vi.mock("@linkedin-assistant/core", async () => {
 });
 
 import {
-  LinkedInAssistantError,
+  LinkedInBuddyError,
   resolveConfigPaths
-} from "@linkedin-assistant/core";
+} from "@linkedin-buddy/core";
 import { createCliProgram, runCli } from "../src/bin/linkedin.js";
 
 function setInteractiveMode(inputIsTty: boolean, outputIsTty: boolean): void {
@@ -115,10 +115,10 @@ describe("linkedin activity CLI UX", () => {
     tempDir = await import("node:fs/promises").then(({ mkdtemp }) =>
       mkdtemp(path.join(os.tmpdir(), "linkedin-cli-activity-"))
     );
-    previousActivityEnabled = process.env.LINKEDIN_ASSISTANT_ACTIVITY_ENABLED;
-    previousHome = process.env.LINKEDIN_ASSISTANT_HOME;
-    process.env.LINKEDIN_ASSISTANT_HOME = path.join(tempDir, "assistant-home");
-    delete process.env.LINKEDIN_ASSISTANT_ACTIVITY_ENABLED;
+    previousActivityEnabled = process.env.LINKEDIN_BUDDY_ACTIVITY_ENABLED;
+    previousHome = process.env.LINKEDIN_BUDDY_HOME;
+    process.env.LINKEDIN_BUDDY_HOME = path.join(tempDir, "buddy-home");
+    delete process.env.LINKEDIN_BUDDY_ACTIVITY_ENABLED;
 
     process.exitCode = undefined;
     stderrChunks = [];
@@ -187,15 +187,15 @@ describe("linkedin activity CLI UX", () => {
     process.exitCode = undefined;
 
     if (previousActivityEnabled === undefined) {
-      delete process.env.LINKEDIN_ASSISTANT_ACTIVITY_ENABLED;
+      delete process.env.LINKEDIN_BUDDY_ACTIVITY_ENABLED;
     } else {
-      process.env.LINKEDIN_ASSISTANT_ACTIVITY_ENABLED = previousActivityEnabled;
+      process.env.LINKEDIN_BUDDY_ACTIVITY_ENABLED = previousActivityEnabled;
     }
 
     if (previousHome === undefined) {
-      delete process.env.LINKEDIN_ASSISTANT_HOME;
+      delete process.env.LINKEDIN_BUDDY_HOME;
     } else {
-      process.env.LINKEDIN_ASSISTANT_HOME = previousHome;
+      process.env.LINKEDIN_BUDDY_HOME = previousHome;
     }
 
     await rm(tempDir, { recursive: true, force: true });
@@ -250,7 +250,7 @@ describe("linkedin activity CLI UX", () => {
 
   it("formats thrown activity command errors for humans", async () => {
     activityCliMocks.activityWatchesCreateWebhookSubscription.mockImplementation(() => {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "deliveryUrl must be a valid URL.",
         {
@@ -313,7 +313,7 @@ describe("linkedin activity CLI UX", () => {
   });
 
   it("shows actionable config guidance in human-readable status output", async () => {
-    process.env.LINKEDIN_ASSISTANT_ACTIVITY_ENABLED = "sometimes";
+    process.env.LINKEDIN_BUDDY_ACTIVITY_ENABLED = "sometimes";
 
     await runCli(["node", "linkedin", "activity", "status", "--profile", "default"]);
 
@@ -321,8 +321,8 @@ describe("linkedin activity CLI UX", () => {
 
     expect(output).toContain("Activity daemon status for profile default");
     expect(output).toContain("Config Issue");
-    expect(output).toContain("Setting: LINKEDIN_ASSISTANT_ACTIVITY_ENABLED");
-    expect(output).toContain("Example: LINKEDIN_ASSISTANT_ACTIVITY_ENABLED=false");
+    expect(output).toContain("Setting: LINKEDIN_BUDDY_ACTIVITY_ENABLED");
+    expect(output).toContain("Example: LINKEDIN_BUDDY_ACTIVITY_ENABLED=false");
     expect(output).toContain("Suggested fix:");
     expect(process.exitCode).toBe(1);
   });

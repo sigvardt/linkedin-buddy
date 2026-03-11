@@ -2,10 +2,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resolveSchedulerConfig } from "../src/index.js";
 
 const SCHEDULER_ENV_KEYS = [
-  "LINKEDIN_ASSISTANT_SCHEDULER_TIMEZONE",
-  "LINKEDIN_ASSISTANT_SCHEDULER_ENABLED_LANES",
-  "LINKEDIN_ASSISTANT_SCHEDULER_MAX_JOBS_PER_TICK",
-  "LINKEDIN_ASSISTANT_SCHEDULER_MAX_ACTIVE_JOBS_PER_PROFILE"
+  "LINKEDIN_BUDDY_SCHEDULER_TIMEZONE",
+  "LINKEDIN_BUDDY_SCHEDULER_ENABLED_LANES",
+  "LINKEDIN_BUDDY_SCHEDULER_MAX_JOBS_PER_TICK",
+  "LINKEDIN_BUDDY_SCHEDULER_MAX_ACTIVE_JOBS_PER_PROFILE"
 ] as const;
 
 describe("resolveSchedulerConfig", () => {
@@ -31,7 +31,7 @@ describe("resolveSchedulerConfig", () => {
   });
 
   it("rejects invalid scheduler timezones", () => {
-    process.env.LINKEDIN_ASSISTANT_SCHEDULER_TIMEZONE = "Mars/Olympus";
+    process.env.LINKEDIN_BUDDY_SCHEDULER_TIMEZONE = "Mars/Olympus";
 
     expect(() => resolveSchedulerConfig()).toThrowError(
       /must be a valid IANA timezone/i
@@ -39,8 +39,8 @@ describe("resolveSchedulerConfig", () => {
   });
 
   it("rejects per-tick limits that exceed the per-profile active job cap", () => {
-    process.env.LINKEDIN_ASSISTANT_SCHEDULER_MAX_JOBS_PER_TICK = "5";
-    process.env.LINKEDIN_ASSISTANT_SCHEDULER_MAX_ACTIVE_JOBS_PER_PROFILE = "4";
+    process.env.LINKEDIN_BUDDY_SCHEDULER_MAX_JOBS_PER_TICK = "5";
+    process.env.LINKEDIN_BUDDY_SCHEDULER_MAX_ACTIVE_JOBS_PER_PROFILE = "4";
 
     expect(() => resolveSchedulerConfig()).toThrowError(
       /MAX_JOBS_PER_TICK.*MAX_ACTIVE_JOBS_PER_PROFILE/i
@@ -48,7 +48,7 @@ describe("resolveSchedulerConfig", () => {
   });
 
   it("rejects unsupported scheduler lanes with supported lane guidance", () => {
-    process.env.LINKEDIN_ASSISTANT_SCHEDULER_ENABLED_LANES =
+    process.env.LINKEDIN_BUDDY_SCHEDULER_ENABLED_LANES =
       "followup_preparation,coffee_break";
 
     expect(() => resolveSchedulerConfig()).toThrowError(
@@ -57,7 +57,7 @@ describe("resolveSchedulerConfig", () => {
   });
 
   it("parses the per-profile active job cap from the environment", () => {
-    process.env.LINKEDIN_ASSISTANT_SCHEDULER_MAX_ACTIVE_JOBS_PER_PROFILE = "7";
+    process.env.LINKEDIN_BUDDY_SCHEDULER_MAX_ACTIVE_JOBS_PER_PROFILE = "7";
 
     expect(resolveSchedulerConfig().maxActiveJobsPerProfile).toBe(7);
   });

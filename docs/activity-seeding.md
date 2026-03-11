@@ -9,7 +9,7 @@ and the image bundle is generated (#211).
 - The target LinkedIn browser profile must already be authenticated.
 - For longer runs, start the keep-alive daemon first:
   ```bash
-  npm exec -w @linkedin-assistant/cli -- linkedin keepalive start --profile <profile>
+  npm exec -w @linkedin-buddy/cli -- linkedin keepalive start --profile <profile>
   ```
 - If you want image-backed posts, run issue #211 first and keep its JSON report
   available so the activity seed can reuse the generated post images.
@@ -17,7 +17,7 @@ and the image bundle is generated (#211).
 ## CLI command
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin seed activity \
+npm exec -w @linkedin-buddy/cli -- linkedin seed activity \
   --profile <profile> \
   --spec docs/profile-seeds/issue-212-signikant-test-activity.json \
   --delay-ms 4500 \

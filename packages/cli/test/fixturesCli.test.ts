@@ -2,10 +2,10 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { stdin, stdout } from "node:process";
-import type { LinkedInReplayPageType } from "@linkedin-assistant/core";
+import type { LinkedInReplayPageType } from "@linkedin-buddy/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@linkedin-assistant/core", async () =>
+vi.mock("@linkedin-buddy/core", async () =>
   await import("../../core/src/index.js")
 );
 

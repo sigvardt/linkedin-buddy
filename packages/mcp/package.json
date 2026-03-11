@@ -1,5 +1,5 @@
 {
-  "name": "@linkedin-assistant/mcp",
+  "name": "@linkedin-buddy/mcp",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
@@ -33,7 +33,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@linkedin-assistant/core": "0.1.0",
+    "@linkedin-buddy/core": "0.1.0",
     "@modelcontextprotocol/sdk": "^1.27.1"
   }
 }

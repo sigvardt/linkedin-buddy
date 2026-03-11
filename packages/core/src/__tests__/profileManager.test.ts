@@ -16,10 +16,10 @@ vi.mock("playwright-core", () => ({
 }));
 
 const TEST_PATHS: ConfigPaths = {
-  baseDir: "/tmp/linkedin-assistant",
-  artifactsDir: "/tmp/linkedin-assistant/artifacts",
-  profilesDir: "/tmp/linkedin-assistant/profiles",
-  dbPath: "/tmp/linkedin-assistant/state.sqlite"
+  baseDir: "/tmp/linkedin-buddy",
+  artifactsDir: "/tmp/linkedin-buddy/artifacts",
+  profilesDir: "/tmp/linkedin-buddy/profiles",
+  dbPath: "/tmp/linkedin-buddy/state.sqlite"
 };
 
 beforeEach(() => {

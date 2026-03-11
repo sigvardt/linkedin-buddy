@@ -116,7 +116,7 @@ Rationale:
 ### 4) Use `config.json` as the phase-1 account registry
 
 The dormant SQLite `account` table is a useful long-term signal, but the safest
-phase-1 source of truth is `LINKEDIN_ASSISTANT_HOME/config.json`.
+phase-1 source of truth is `LINKEDIN_BUDDY_HOME/config.json`.
 
 Why config first:
 
@@ -308,7 +308,7 @@ Recommended policy defaults:
 ### Multi-account isolation
 
 Tier 3 should assume multiple logical LinkedIn accounts will eventually share
-one assistant home, even if only one is active today.
+one buddy home, even if only one is active today.
 
 Phase-1 isolation rules:
 

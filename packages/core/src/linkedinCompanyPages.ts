@@ -3,7 +3,7 @@ import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
 import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
 import type { ConfirmFailureArtifactConfig } from "./config.js";
-import { LinkedInAssistantError, asLinkedInAssistantError } from "./errors.js";
+import { LinkedInBuddyError, asLinkedInBuddyError } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
@@ -92,7 +92,7 @@ function isAbsoluteUrl(value: string): boolean {
 export function resolveCompanyPageUrl(target: string): string {
   const trimmedTarget = normalizeText(target);
   if (!trimmedTarget) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "Company page target is required."
     );
@@ -103,7 +103,7 @@ export function resolveCompanyPageUrl(target: string): string {
     try {
       parsedUrl = new URL(trimmedTarget);
     } catch (error) {
-      throw asLinkedInAssistantError(
+      throw asLinkedInBuddyError(
         error,
         "ACTION_PRECONDITION_FAILED",
         "Company page URL must be a valid URL."
@@ -115,7 +115,7 @@ export function resolveCompanyPageUrl(target: string): string {
       hostname === "linkedin.com" || hostname.endsWith(".linkedin.com");
     const segments = parsedUrl.pathname.split("/").filter((segment) => segment.length > 0);
     if (!isLinkedInDomain || segments[0] !== "company" || !segments[1]) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "Company page URL must point to linkedin.com/company/.",
         { target: trimmedTarget }
@@ -130,7 +130,7 @@ export function resolveCompanyPageUrl(target: string): string {
     const [, , slug = ""] = trimmedTarget.split("/");
     const normalizedSlug = normalizeText(slug);
     if (!normalizedSlug) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "Company page target is required."
       );
@@ -331,7 +331,7 @@ async function clickCompanyAction(input: {
   const found = await findVisibleLocator(input.page, candidates);
 
   if (!found) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${input.actionLabel} action is not available for "${input.targetCompany}".`,
       {
@@ -481,7 +481,7 @@ async function executeFollowCompanyPage(
           company_url: companyUrl
         },
         mapError: (error) =>
-          asLinkedInAssistantError(
+          asLinkedInBuddyError(
             error,
             "UNKNOWN",
             "Failed to execute LinkedIn company follow action."
@@ -498,7 +498,7 @@ async function executeFollowCompanyPage(
             runtime.selectorLocale
           );
           if (followState === "following") {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "ACTION_PRECONDITION_FAILED",
               `Already following company "${targetCompany}".`,
               {
@@ -526,7 +526,7 @@ async function executeFollowCompanyPage(
           }, 5_000);
 
           if (!followed) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "UNKNOWN",
               "Company follow action could not be verified after clicking the control.",
               {
@@ -589,7 +589,7 @@ async function executeUnfollowCompanyPage(
           company_url: companyUrl
         },
         mapError: (error) =>
-          asLinkedInAssistantError(
+          asLinkedInBuddyError(
             error,
             "UNKNOWN",
             "Failed to execute LinkedIn company unfollow action."
@@ -606,7 +606,7 @@ async function executeUnfollowCompanyPage(
             runtime.selectorLocale
           );
           if (followState === "not_following") {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "ACTION_PRECONDITION_FAILED",
               `Already not following company "${targetCompany}".`,
               {
@@ -634,7 +634,7 @@ async function executeUnfollowCompanyPage(
           }, 5_000);
 
           if (!unfollowed) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "UNKNOWN",
               "Company unfollow action could not be verified after clicking the control.",
               {
@@ -719,7 +719,7 @@ export class LinkedInCompanyPagesService {
     const profileName = input.profileName ?? "default";
     const targetCompany = normalizeText(input.targetCompany);
     if (!targetCompany) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "targetCompany is required."
       );
@@ -787,10 +787,10 @@ export class LinkedInCompanyPagesService {
         }
       );
     } catch (error) {
-      if (error instanceof LinkedInAssistantError) {
+      if (error instanceof LinkedInBuddyError) {
         throw error;
       }
-      throw asLinkedInAssistantError(
+      throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
         "Failed to view LinkedIn company page."

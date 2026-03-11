@@ -2,15 +2,15 @@
 
 ## Repo Overview
 
-LinkedIn Assistant — Playwright-based browser automation for LinkedIn with CLI and MCP server.
+LinkedIn Buddy — Playwright-based browser automation for LinkedIn with CLI and MCP server.
 
 ## Monorepo Structure
 
 ```
 packages/
-  core/       @linkedin-assistant/core    — automation library, DB, rate limiter, two-phase commit
-  cli/        @linkedin-assistant/cli     — operator CLI (binary: linkedin)
-  mcp/        @linkedin-assistant/mcp     — MCP stdio server (binary: linkedin-mcp)
+  core/       @linkedin-buddy/core    — automation library, DB, rate limiter, two-phase commit
+  cli/        @linkedin-buddy/cli     — operator CLI (binary: linkedin)
+  mcp/        @linkedin-buddy/mcp     — MCP stdio server (binary: linkedin-mcp)
 scripts/      integration test scripts
 ```
 
@@ -84,7 +84,7 @@ npm run build
 - **Node version:** 22+
 - **Imports:** Use `.js` extension in import paths (TypeScript ESM convention)
 - **Exports:** All core modules re-exported via `packages/core/src/index.ts`
-- **Error handling:** Use `LinkedInAssistantError` with structured error codes
+- **Error handling:** Use `LinkedInBuddyError` with structured error codes
 - **Two-phase commit pattern:** Every outbound action must:
   1. Have a `prepare*` method that stores action in DB and returns confirm token
   2. Have an `ActionExecutor` class that implements the `execute` method
@@ -142,3 +142,14 @@ Violating these rules risks real social interactions on Joakim's LinkedIn accoun
 - `feat #N: description` for new features
 - `fix #N: description` for bug fixes
 - `chore: description` for maintenance
+
+## Agent Orchestrator (ao) Session
+
+You are running inside an Agent Orchestrator managed workspace.
+Session metadata is updated automatically via shell wrappers.
+
+If automatic updates fail, you can manually update metadata:
+```bash
+~/.ao/bin/ao-metadata-helper.sh  # sourced automatically
+# Then call: update_ao_metadata <key> <value>
+```

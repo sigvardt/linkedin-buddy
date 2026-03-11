@@ -11,7 +11,7 @@ const readlineMocks = vi.hoisted(() => ({
   question: vi.fn(async () => "")
 }));
 
-vi.mock("@linkedin-assistant/core", async () =>
+vi.mock("@linkedin-buddy/core", async () =>
   await import("../../core/src/index.js")
 );
 
@@ -22,7 +22,7 @@ vi.mock("node:readline/promises", () => ({
   }))
 }));
 
-import * as core from "@linkedin-assistant/core";
+import * as core from "@linkedin-buddy/core";
 import { runCli } from "../src/bin/linkedin.js";
 
 interface Deferred<T> {

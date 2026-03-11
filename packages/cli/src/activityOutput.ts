@@ -4,10 +4,10 @@ import type {
   ActivityWatch,
   ActivityWebhookConfig,
   CreatedWebhookSubscription,
-  LinkedInAssistantErrorPayload,
+  LinkedInBuddyErrorPayload,
   WebhookDeliveryAttemptRecord,
   WebhookSubscription
-} from "@linkedin-assistant/core";
+} from "@linkedin-buddy/core";
 
 export type ActivityOutputMode = "human" | "json";
 
@@ -115,7 +115,7 @@ export interface ActivityStartReport {
   state_path: string;
   log_path: string;
   activity_config?: ActivityWebhookConfig;
-  activity_config_error?: LinkedInAssistantErrorPayload;
+  activity_config_error?: LinkedInBuddyErrorPayload;
 }
 
 export interface ActivityStatusReport {
@@ -133,7 +133,7 @@ export interface ActivityStatusReport {
   recent_event_count: number;
   recent_delivery_count: number;
   activity_config?: ActivityWebhookConfig;
-  activity_config_error?: LinkedInAssistantErrorPayload;
+  activity_config_error?: LinkedInBuddyErrorPayload;
 }
 
 export interface ActivityStopReport {
@@ -309,7 +309,7 @@ function formatActivitySummary(summary: ActivityDaemonStateSummary): string {
 }
 
 function readString(
-  details: LinkedInAssistantErrorPayload["details"],
+  details: LinkedInBuddyErrorPayload["details"],
   key: string
 ): string | null {
   const value = details[key];
@@ -319,7 +319,7 @@ function readString(
 }
 
 function readNumber(
-  details: LinkedInAssistantErrorPayload["details"],
+  details: LinkedInBuddyErrorPayload["details"],
   key: string
 ): number | null {
   const value = details[key];
@@ -327,7 +327,7 @@ function readNumber(
 }
 
 function readStringArray(
-  details: LinkedInAssistantErrorPayload["details"],
+  details: LinkedInBuddyErrorPayload["details"],
   key: string
 ): string[] | null {
   const value = details[key];
@@ -342,7 +342,7 @@ function readStringArray(
   return strings.length > 0 ? strings : null;
 }
 
-function formatActivityErrorDetails(error: LinkedInAssistantErrorPayload): string[] {
+function formatActivityErrorDetails(error: LinkedInBuddyErrorPayload): string[] {
   const lines = [sanitizeConsoleText(error.message)];
   const env = readString(error.details, "env");
   const field = readString(error.details, "field");
@@ -431,12 +431,12 @@ function formatActivityErrorDetails(error: LinkedInAssistantErrorPayload): strin
   return lines;
 }
 
-function formatActivityErrorNextSteps(error: LinkedInAssistantErrorPayload): string[] {
+function formatActivityErrorNextSteps(error: LinkedInBuddyErrorPayload): string[] {
   const env = readString(error.details, "env");
   const field = readString(error.details, "field");
   const steps: string[] = [];
 
-  if (env?.startsWith("LINKEDIN_ASSISTANT_ACTIVITY_")) {
+  if (env?.startsWith("LINKEDIN_BUDDY_ACTIVITY_")) {
     steps.push(
       "Fix the activity setting above, or unset it to fall back to the default value."
     );
@@ -490,7 +490,7 @@ export function resolveActivityOutputMode(
   return input.json || !stdoutIsTty ? "json" : "human";
 }
 
-export function formatActivityError(error: LinkedInAssistantErrorPayload): string {
+export function formatActivityError(error: LinkedInBuddyErrorPayload): string {
   const lines = [
     `Activity command failed [${sanitizeConsoleText(error.code)}]`,
     ...formatActivityErrorDetails(error)

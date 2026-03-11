@@ -4,7 +4,7 @@ import {
   AssistantDatabase,
   type SchedulerJobInsert
 } from "../db/database.js";
-import { LinkedInAssistantError } from "../errors.js";
+import { LinkedInBuddyError } from "../errors.js";
 import {
   FOLLOWUP_AFTER_ACCEPT_ACTION_TYPE,
   type LinkedInAcceptedConnection,
@@ -1201,7 +1201,7 @@ describe("LinkedInSchedulerService", () => {
     const db = new AssistantDatabase(":memory:");
     const followups = {
       listAcceptedConnections: vi.fn(async () => {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
           "Profile is busy; lock file is already being held."
         );
@@ -1330,7 +1330,7 @@ describe("LinkedInSchedulerService", () => {
     const followups = {
       listAcceptedConnections: vi.fn(async () => [connection]),
       prepareFollowupForAcceptedConnection: vi.fn(async () => {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "NETWORK_ERROR",
           "Temporary network issue."
         );
@@ -1396,7 +1396,7 @@ describe("LinkedInSchedulerService", () => {
     const followups = {
       listAcceptedConnections: vi.fn(async () => [connection]),
       prepareFollowupForAcceptedConnection: vi.fn(async () => {
-        throw new LinkedInAssistantError("NETWORK_ERROR", "Still failing.");
+        throw new LinkedInBuddyError("NETWORK_ERROR", "Still failing.");
       })
     };
 
@@ -1442,7 +1442,7 @@ describe("LinkedInSchedulerService", () => {
     const followups = {
       listAcceptedConnections: vi.fn(async () => []),
       prepareFollowupForAcceptedConnection: vi.fn(async () => {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "TARGET_NOT_FOUND",
           "Profile default not found."
         );
@@ -1831,7 +1831,7 @@ describe("LinkedInSchedulerService", () => {
     const followups = {
       listAcceptedConnections: vi.fn(async () => []),
       prepareFollowupForAcceptedConnection: vi.fn(async () => {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
           "synthetic scheduler target failure"
         );

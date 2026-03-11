@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { ensureConfigPaths, resolveConfigPaths } from "./config.js";
-import { LinkedInAssistantError } from "./errors.js";
+import { LinkedInBuddyError } from "./errors.js";
 import {
   normalizeLinkedInFeedReaction,
   type LinkedInFeedReaction
@@ -16,7 +16,7 @@ import {
   resolveProfileUrl
 } from "./linkedinProfile.js";
 
-const LINKEDIN_ASSISTANT_CONFIG_FILENAME = "config.json";
+const LINKEDIN_BUDDY_CONFIG_FILENAME = "config.json";
 
 /** Allowed account designations for write-validation registry entries. */
 export const WRITE_VALIDATION_ACCOUNT_DESIGNATIONS = [
@@ -108,7 +108,7 @@ function assertJsonRecord(
     return value;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     message,
     details
@@ -129,7 +129,7 @@ function parseOptionalTarget<T>(
 
 function assertNonEmptyString(value: unknown, label: string): string {
   if (typeof value !== "string") {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a string.`
     );
@@ -137,7 +137,7 @@ function assertNonEmptyString(value: unknown, label: string): string {
 
   const normalized = value.trim();
   if (normalized.length === 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must not be empty.`
     );
@@ -149,7 +149,7 @@ function assertNonEmptyString(value: unknown, label: string): string {
 function assertLocalIdentifier(value: unknown, label: string): string {
   const normalized = assertNonEmptyString(value, label);
   if (normalized === "." || normalized === ".." || normalized.includes("/") || normalized.includes("\\")) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must not contain path separators or relative path segments.`
     );
@@ -164,7 +164,7 @@ function assertOptionalString(value: unknown, label: string): string | undefined
   }
 
   if (typeof value !== "string") {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a string.`
     );
@@ -185,7 +185,7 @@ function parseAccountDesignation(
     return value;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `${label} must be one of: ${WRITE_VALIDATION_ACCOUNT_DESIGNATIONS.join(", ")}.`,
     {
@@ -196,7 +196,7 @@ function parseAccountDesignation(
 }
 
 function resolveConfigPath(baseDir?: string): string {
-  return path.join(resolveConfigPaths(baseDir).baseDir, LINKEDIN_ASSISTANT_CONFIG_FILENAME);
+  return path.join(resolveConfigPaths(baseDir).baseDir, LINKEDIN_BUDDY_CONFIG_FILENAME);
 }
 
 function readConfigShape(baseDir?: string): { config: JsonRecord; configPath: string } {
@@ -213,9 +213,9 @@ function readConfigShape(baseDir?: string): { config: JsonRecord; configPath: st
   try {
     parsed = JSON.parse(readFileSync(configPath, "utf8"));
   } catch (error) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      `Failed to parse LinkedIn assistant config file at ${configPath}.`,
+      `Failed to parse LinkedIn Buddy config file at ${configPath}.`,
       {
         config_path: configPath,
         message: error instanceof Error ? error.message : String(error)
@@ -225,9 +225,9 @@ function readConfigShape(baseDir?: string): { config: JsonRecord; configPath: st
   }
 
   if (!isRecord(parsed)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      `LinkedIn assistant config file at ${configPath} must contain a JSON object.`,
+      `LinkedIn Buddy config file at ${configPath} must contain a JSON object.`,
       {
         config_path: configPath
       }
@@ -293,7 +293,7 @@ function normalizeThreadTarget(value: unknown, label: string): string {
   try {
     parsedUrl = new URL(normalized);
   } catch (error) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a valid LinkedIn messaging thread URL or thread id.`,
       {
@@ -306,7 +306,7 @@ function normalizeThreadTarget(value: unknown, label: string): string {
   }
 
   if (!isLinkedInHost(parsedUrl.hostname) || !parsedUrl.pathname.startsWith("/messaging/thread/")) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a LinkedIn messaging thread URL or thread id.`,
       {
@@ -328,7 +328,7 @@ function normalizePostUrl(value: unknown, label: string): string {
   try {
     const parsed = new URL(normalized);
     if (!isLinkedInHost(parsed.hostname)) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `${label} must be a valid LinkedIn post URL.`,
         {
@@ -340,11 +340,11 @@ function normalizePostUrl(value: unknown, label: string): string {
 
     return parsed.toString();
   } catch (error) {
-    if (error instanceof LinkedInAssistantError) {
+    if (error instanceof LinkedInBuddyError) {
       throw error;
     }
 
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a valid LinkedIn post URL.`,
       {
@@ -457,7 +457,7 @@ function parseTargets(
   }
 
   if (!isRecord(value)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a JSON object.`
     );
@@ -615,7 +615,7 @@ export function resolveWriteValidationAccount(
     return account;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `No write-validation account named "${normalizedAccountId}" was found. Register it with "linkedin accounts add ${normalizedAccountId} --designation secondary --session ${normalizedAccountId}" or update ${registry.configPath}.`,
     {
@@ -646,7 +646,7 @@ export async function upsertWriteValidationAccount(
   );
 
   if (accounts[normalizedAccountId] !== undefined && !input.overwrite) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `Write-validation account "${normalizedAccountId}" already exists. Rerun with overwrite enabled to replace it.`,
       {

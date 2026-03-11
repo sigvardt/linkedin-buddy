@@ -4,9 +4,9 @@
 human-in-the-loop harness for validating real LinkedIn write operations against
 an approved secondary account.
 
-Examples below use the `linkedin` binary; `owa` is an equivalent alias.
+Examples below use the `linkedin` binary; `linkedin-buddy` is an equivalent alias.
 
-The feature is also exported from `@linkedin-assistant/core` through
+The feature is also exported from `@linkedin-buddy/core` through
 `packages/core/src/writeValidation.ts` for custom harnesses.
 
 For the Tier 2 read-only rehearsal lane, see `docs/live-validation.md`.
@@ -19,13 +19,13 @@ Capture or refresh an encrypted stored session for the dedicated secondary
 account:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin auth session --session secondary-session
+npm exec -w @linkedin-buddy/cli -- linkedin auth session --session secondary-session
 ```
 
 Register the secondary account and its approved targets:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin accounts add secondary \
+npm exec -w @linkedin-buddy/cli -- linkedin accounts add secondary \
   --designation secondary \
   --session secondary-session \
   --profile secondary \
@@ -43,7 +43,7 @@ npm exec -w @linkedin-assistant/cli -- linkedin accounts add secondary \
 Run the Tier 3 harness:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin test live --write-validation --account secondary
+npm exec -w @linkedin-buddy/cli -- linkedin test live --write-validation --account secondary
 ```
 
 ## Safety model
@@ -115,7 +115,7 @@ to the next scenario. If you cancel some actions, the overall run outcome become
 ## Account registry
 
 Write validation resolves account metadata from
-`LINKEDIN_ASSISTANT_HOME/config.json` under `writeValidation.accounts`.
+`LINKEDIN_BUDDY_HOME/config.json` under `writeValidation.accounts`.
 Register or update entries with `linkedin accounts add` or the hidden
 `linkedin accounts:add` alias.
 
@@ -197,7 +197,7 @@ like:
 ```json
 {
   "saved": true,
-  "config_path": "/tmp/linkedin-assistant/config.json",
+  "config_path": "/tmp/linkedin-buddy/config.json",
   "account": {
     "id": "secondary",
     "designation": "secondary",
@@ -213,7 +213,7 @@ Use `--force` when you are updating an existing account entry.
 ### `send_message`
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin accounts add secondary \
+npm exec -w @linkedin-buddy/cli -- linkedin accounts add secondary \
   --designation secondary \
   --session secondary-session \
   --message-thread /messaging/thread/abc123/ \
@@ -231,7 +231,7 @@ large payload, verification still checks the final message text.
 ### `connections.send_invitation`
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin accounts add secondary \
+npm exec -w @linkedin-buddy/cli -- linkedin accounts add secondary \
   --designation secondary \
   --session secondary-session \
   --invite-profile https://www.linkedin.com/in/test-target/ \
@@ -245,7 +245,7 @@ invitations list.
 ### `network.followup_after_accept`
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin accounts add secondary \
+npm exec -w @linkedin-buddy/cli -- linkedin accounts add secondary \
   --designation secondary \
   --session secondary-session \
   --followup-profile https://www.linkedin.com/in/test-target/ \
@@ -260,7 +260,7 @@ typing simulation layer as other composer-based actions.
 ### `feed.like_post`
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin accounts add secondary \
+npm exec -w @linkedin-buddy/cli -- linkedin accounts add secondary \
   --designation secondary \
   --session secondary-session \
   --reaction-post https://www.linkedin.com/feed/update/urn:li:activity:123/ \
@@ -274,7 +274,7 @@ reported the target reaction as active.
 ### `post.create`
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin accounts add secondary \
+npm exec -w @linkedin-buddy/cli -- linkedin accounts add secondary \
   --designation secondary \
   --session secondary-session \
   --post-visibility connections \
@@ -291,7 +291,7 @@ direct-input fallback behavior for very long text or typing safety timeouts.
 ### Run the full fixed suite
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin test live --write-validation --account secondary
+npm exec -w @linkedin-buddy/cli -- linkedin test live --write-validation --account secondary
 ```
 
 Expected interactive output looks like:
@@ -317,7 +317,7 @@ full harness and answer `yes` only for the action you want to validate.
 Cancel the others by answering anything else.
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin test live --write-validation --account secondary
+npm exec -w @linkedin-buddy/cli -- linkedin test live --write-validation --account secondary
 ```
 
 Example flow when only `send_message` is approved during the prompts:
@@ -339,7 +339,7 @@ Tier 3 has no dedicated `--dry-run` flag. The recommended no-write rehearsal is
 Tier 2 live read-only validation against the same stored session:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin test live --read-only --session secondary-session --yes
+npm exec -w @linkedin-buddy/cli -- linkedin test live --read-only --session secondary-session --yes
 ```
 
 Expected progress looks like:
@@ -356,7 +356,7 @@ Tier 3 writes.
 
 ```bash
 mkdir -p reports
-npm exec -w @linkedin-assistant/cli -- linkedin test live --write-validation --account secondary --json > reports/write-validation.json
+npm exec -w @linkedin-buddy/cli -- linkedin test live --write-validation --account secondary --json > reports/write-validation.json
 ```
 
 In JSON mode, prompts still go to `stderr`, while the final report goes to
@@ -378,7 +378,7 @@ Every completed run writes a standalone HTML report automatically. No extra flag
 is required.
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin test live --write-validation --account secondary --json > reports/write-validation.json
+npm exec -w @linkedin-buddy/cli -- linkedin test live --write-validation --account secondary --json > reports/write-validation.json
 jq -r '.html_report_path' reports/write-validation.json
 ```
 
@@ -398,7 +398,7 @@ Open /tmp/live-write-validation/report.html in a browser for the color-coded val
 ### Slow the pace between real actions
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin test live --write-validation --account secondary --cooldown-seconds 20 --timeout-seconds 45
+npm exec -w @linkedin-buddy/cli -- linkedin test live --write-validation --account secondary --cooldown-seconds 20 --timeout-seconds 45
 ```
 
 Use this when the account is rate-limited or the target surfaces load slowly.
@@ -428,7 +428,7 @@ These flags are explicitly rejected for Tier 3:
 `--retry-base-delay-ms`, and `--retry-max-delay-ms`. They belong to the
 read-only lane and do not affect `--write-validation` runs.
 
-Use `npm exec -w @linkedin-assistant/cli -- linkedin test live --help` for the
+Use `npm exec -w @linkedin-buddy/cli -- linkedin test live --help` for the
 built-in help text. The hidden `linkedin test:live` alias accepts the same
 options.
 
@@ -494,7 +494,7 @@ Each completed run writes:
   `artifacts/<run-id>/live-write-validation/report.html`
 - the structured audit log for that run at `artifacts/<run-id>/events.jsonl`
 - a stable latest snapshot at
-  `LINKEDIN_ASSISTANT_HOME/live-write-validation/<account>/latest-report.json`
+  `LINKEDIN_BUDDY_HOME/live-write-validation/<account>/latest-report.json`
 
 Each action result records:
 

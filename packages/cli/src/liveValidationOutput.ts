@@ -2,13 +2,13 @@ import {
   LINKEDIN_READ_ONLY_VALIDATION_OPERATIONS,
   type JsonLogEntry,
   type LinkedInReadOnlyValidationOperationId,
-  type LinkedInAssistantErrorPayload,
+  type LinkedInBuddyErrorPayload,
   type ReadOnlyValidationDiffChange,
   type ReadOnlyValidationDiffEntry,
   type ReadOnlyValidationOperationResult,
   type ReadOnlyValidationReport,
   type ReadOnlyValidationStatus
-} from "@linkedin-assistant/core";
+} from "@linkedin-buddy/core";
 
 /**
  * Console output modes supported by the live validation CLI.
@@ -342,7 +342,7 @@ function readSessionName(details: Record<string, unknown>): string | null {
 }
 
 function formatReadOnlyValidationSuggestion(
-  payload: LinkedInAssistantErrorPayload
+  payload: LinkedInBuddyErrorPayload
 ): string {
   switch (payload.code) {
     case "ACTION_PRECONDITION_FAILED":
@@ -627,7 +627,7 @@ export function formatReadOnlyValidationReport(
  * error summary.
  */
 export function formatReadOnlyValidationError(
-  payload: LinkedInAssistantErrorPayload,
+  payload: LinkedInBuddyErrorPayload,
   options: FormatReadOnlyValidationErrorOptions = {}
 ): string {
   const color = options.color ?? false;

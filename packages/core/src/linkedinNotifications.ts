@@ -1,8 +1,8 @@
 import { type BrowserContext, type Page } from "playwright-core";
 import type { LinkedInAuthService } from "./auth/session.js";
 import {
-  LinkedInAssistantError,
-  asLinkedInAssistantError
+  LinkedInBuddyError,
+  asLinkedInBuddyError
 } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
@@ -81,7 +81,7 @@ async function waitForNotificationsSurface(page: Page): Promise<void> {
     }
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "UI_CHANGED_SELECTOR_FAILED",
     "Could not locate LinkedIn notification content.",
     {
@@ -402,10 +402,10 @@ export class LinkedInNotificationsService {
         }
       );
     } catch (error) {
-      if (error instanceof LinkedInAssistantError) {
+      if (error instanceof LinkedInBuddyError) {
         throw error;
       }
-      throw asLinkedInAssistantError(
+      throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
         "Failed to list LinkedIn notifications."

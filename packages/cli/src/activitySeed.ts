@@ -1,4 +1,4 @@
-import { LinkedInAssistantError } from "@linkedin-assistant/core";
+import { LinkedInBuddyError } from "@linkedin-buddy/core";
 
 export interface ActivitySeedGeneratedPostImage {
   absolutePath: string;
@@ -100,7 +100,7 @@ export interface ActivitySeedSpec {
 
 export function parseActivitySeedSpec(input: unknown): ActivitySeedSpec {
   if (!isRecord(input)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "Activity seed spec must be a JSON object."
     );
@@ -123,7 +123,7 @@ export function parseActivitySeedGeneratedImageManifest(
   input: unknown
 ): ActivitySeedGeneratedImageManifest {
   if (!isRecord(input)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "Generated image manifest must be a JSON object."
     );
@@ -131,7 +131,7 @@ export function parseActivitySeedGeneratedImageManifest(
 
   const rawPostImages = input.post_images;
   if (!Array.isArray(rawPostImages)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       'Generated image manifest must include a "post_images" array.'
     );
@@ -146,7 +146,7 @@ export function parseActivitySeedGeneratedImageManifest(
 
 function normalizeAssetsSpec(value: unknown): ActivitySeedAssetsSpec {
   if (!isRecord(value)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "activity seed assets must be a JSON object."
     );
@@ -176,7 +176,7 @@ function normalizeConnectionsSpec(value: unknown): ActivitySeedConnectionsSpec {
 
 function normalizeAcceptPendingSpec(value: unknown): ActivitySeedAcceptPendingSpec {
   if (!isRecord(value)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "connections.acceptPending must be a JSON object."
     );
@@ -189,7 +189,7 @@ function normalizeAcceptPendingSpec(value: unknown): ActivitySeedAcceptPendingSp
 
 function normalizeInviteSpec(value: unknown, label: string): ActivitySeedInviteSpec {
   if (!isRecord(value)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a JSON object.`
     );
@@ -212,7 +212,7 @@ function normalizePostsSpec(value: unknown): ActivitySeedPostSpec[] {
   }
 
   if (!Array.isArray(value)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "posts must be a JSON array."
     );
@@ -223,7 +223,7 @@ function normalizePostsSpec(value: unknown): ActivitySeedPostSpec[] {
 
 function normalizePostSpec(value: unknown, label: string): ActivitySeedPostSpec {
   if (!isRecord(value)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a JSON object.`
     );
@@ -239,7 +239,7 @@ function normalizePostSpec(value: unknown, label: string): ActivitySeedPostSpec 
   );
 
   if (mediaPath && generatedImageIndex !== undefined) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} cannot include both mediaPath and generatedImageIndex.`
     );
@@ -281,7 +281,7 @@ function normalizeFeedLikeSpec(
   label: string
 ): ActivitySeedFeedLikeSpec {
   if (!isRecord(value)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a JSON object.`
     );
@@ -303,7 +303,7 @@ function normalizeFeedCommentSpec(
   label: string
 ): ActivitySeedFeedCommentSpec {
   if (!isRecord(value)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a JSON object.`
     );
@@ -337,7 +337,7 @@ function normalizeJobSearchSpec(
   label: string
 ): ActivitySeedJobSearchSpec {
   if (!isRecord(value)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a JSON object.`
     );
@@ -378,7 +378,7 @@ function normalizeNewThreadSpec(
   label: string
 ): ActivitySeedNewThreadSpec {
   if (!isRecord(value)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a JSON object.`
     );
@@ -389,7 +389,7 @@ function normalizeNewThreadSpec(
   const operatorNote = readOptionalString(value.operatorNote);
 
   if (recipients.length === 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label}.recipients must include at least one recipient.`
     );
@@ -404,7 +404,7 @@ function normalizeNewThreadSpec(
 
 function normalizeReplySpec(value: unknown, label: string): ActivitySeedReplySpec {
   if (!isRecord(value)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a JSON object.`
     );
@@ -434,7 +434,7 @@ function normalizeGeneratedPostImage(
   label: string
 ): ActivitySeedGeneratedPostImage {
   if (!isRecord(value)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a JSON object.`
     );
@@ -457,7 +457,7 @@ function normalizeOptionalRecord(value: unknown): Record<string, unknown> {
     return value;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     "Expected a JSON object."
   );
@@ -479,7 +479,7 @@ function readOptionalString(value: unknown): string | undefined {
 function readRequiredString(value: unknown, label: string): string {
   const normalized = normalizeText(value);
   if (normalized.length === 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a non-empty string.`
     );
@@ -490,7 +490,7 @@ function readRequiredString(value: unknown, label: string): string {
 
 function readPositiveInt(value: unknown, label: string): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a whole number greater than 0.`
     );
@@ -513,7 +513,7 @@ function readOptionalNonNegativeInt(value: unknown, label: string): number | und
   }
 
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a whole number greater than or equal to 0.`
     );
@@ -524,7 +524,7 @@ function readOptionalNonNegativeInt(value: unknown, label: string): number | und
 
 function readStringArray(value: unknown, label: string): string[] {
   if (!Array.isArray(value)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be an array of strings.`
     );

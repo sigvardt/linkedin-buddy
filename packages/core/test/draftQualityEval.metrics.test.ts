@@ -1,7 +1,7 @@
 import { performance } from "node:perf_hooks";
 import { describe, expect, it } from "vitest";
 import {
-  LinkedInAssistantError,
+  LinkedInBuddyError,
   evaluateDraftQuality,
   parseDraftQualityCandidateSet,
   parseDraftQualityDataset,
@@ -750,7 +750,7 @@ describe("draft quality evaluator parsing and integration", () => {
       }
     }
   ])("rejects %s", ({ payload }) => {
-    expect(() => parseDraftQualityDataset(payload)).toThrowError(LinkedInAssistantError);
+    expect(() => parseDraftQualityDataset(payload)).toThrowError(LinkedInBuddyError);
   });
 
   it("rejects visually empty candidate drafts made only of zero-width characters", () => {
@@ -798,7 +798,7 @@ describe("draft quality evaluator parsing and integration", () => {
           }
         ]
       })
-    ).toThrowError(LinkedInAssistantError);
+    ).toThrowError(LinkedInBuddyError);
   });
 
   it("rejects duplicate participant ids, duplicate message ids, and unknown participant references", () => {
@@ -851,7 +851,7 @@ describe("draft quality evaluator parsing and integration", () => {
           }
         ]
       })
-    ).toThrowError(LinkedInAssistantError);
+    ).toThrowError(LinkedInBuddyError);
 
     expect(() =>
       parseDraftQualityDataset({
@@ -903,7 +903,7 @@ describe("draft quality evaluator parsing and integration", () => {
           }
         ]
       })
-    ).toThrowError(LinkedInAssistantError);
+    ).toThrowError(LinkedInBuddyError);
 
     expect(() =>
       parseDraftQualityDataset({
@@ -950,7 +950,7 @@ describe("draft quality evaluator parsing and integration", () => {
           }
         ]
       })
-    ).toThrowError(LinkedInAssistantError);
+    ).toThrowError(LinkedInBuddyError);
   });
 
   it("rejects metadata that exceeds the maximum nesting depth", () => {
@@ -1007,7 +1007,7 @@ describe("draft quality evaluator parsing and integration", () => {
           }
         ]
       })
-    ).toThrowError(LinkedInAssistantError);
+    ).toThrowError(LinkedInBuddyError);
   });
 
   it("evaluates a mixed multi-case batch end to end", async () => {

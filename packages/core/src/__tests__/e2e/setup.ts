@@ -20,10 +20,10 @@ import { createCoreRuntime, type CoreRuntime } from "../../runtime.js";
 /** Default CDP endpoint used by the shared real-session E2E harness. */
 export const DEFAULT_E2E_CDP_URL = "http://localhost:18800";
 
-/** Prefix used for temporary assistant-home directories created by E2E suites. */
+/** Prefix used for temporary buddy-home directories created by E2E suites. */
 export const E2E_BASE_DIR_PREFIX = "linkedin-e2e-shared-";
 
-/** Metadata file stored inside each temporary E2E assistant-home directory. */
+/** Metadata file stored inside each temporary E2E buddy-home directory. */
 export const E2E_OWNER_METADATA_FILE = ".owner.json";
 
 let sharedRuntime: CoreRuntime | undefined;
@@ -347,7 +347,7 @@ export function getCdpUrl(): string | undefined {
 }
 
 /**
- * Returns the shared assistant-home directory used by the E2E harness,
+ * Returns the shared buddy-home directory used by the E2E harness,
  * creating and ownership-tagging it on first use.
  */
 export function getE2EBaseDir(): string {
@@ -363,28 +363,28 @@ export function getE2EBaseDir(): string {
 }
 
 /**
- * Temporarily overrides `LINKEDIN_ASSISTANT_HOME` while executing `callback`.
+ * Temporarily overrides `LINKEDIN_BUDDY_HOME` while executing `callback`.
  */
 export async function withAssistantHome<T>(
   assistantHome: string,
   callback: () => Promise<T>
 ): Promise<T> {
-  const previousHome = process.env.LINKEDIN_ASSISTANT_HOME;
-  process.env.LINKEDIN_ASSISTANT_HOME = assistantHome;
+  const previousHome = process.env.LINKEDIN_BUDDY_HOME;
+  process.env.LINKEDIN_BUDDY_HOME = assistantHome;
 
   try {
     return await callback();
   } finally {
     if (previousHome === undefined) {
-      delete process.env.LINKEDIN_ASSISTANT_HOME;
+      delete process.env.LINKEDIN_BUDDY_HOME;
     } else {
-      process.env.LINKEDIN_ASSISTANT_HOME = previousHome;
+      process.env.LINKEDIN_BUDDY_HOME = previousHome;
     }
   }
 }
 
 /**
- * Runs `callback` inside the shared E2E assistant-home directory.
+ * Runs `callback` inside the shared E2E buddy-home directory.
  */
 export async function withE2EEnvironment<T>(callback: () => Promise<T>): Promise<T> {
   return withAssistantHome(getE2EBaseDir(), callback);
@@ -550,7 +550,7 @@ export function skipIfE2EUnavailable<TFixtures>(
 }
 
 /**
- * Closes the shared runtime and removes the shared temporary assistant-home
+ * Closes the shared runtime and removes the shared temporary buddy-home
  * directory.
  */
 export function cleanupRuntime(): void {

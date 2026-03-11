@@ -40,7 +40,7 @@ Audit completed on 2026-03-10 before publication hardening for issue #247.
 - `.github/workflows/secret-scan.yml` for automated tracked-file and full-history scanning
 - `.gitleaksignore` as the reviewed baseline for historical false positives
 - `scripts/security-audit.mjs` for current-tree checks in local development and CI
-- `.gitignore` additions for env files, repo-local assistant state, reports,
+- `.gitignore` additions for env files, repo-local buddy state, reports,
   session exports, and temporary security artifacts
 
 ## Credential Rotation

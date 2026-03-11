@@ -95,19 +95,19 @@ jobs:
         if: steps.release.outputs.skip != 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish -w @linkedin-assistant/core --access public --provenance
+        run: npm publish -w @linkedin-buddy/core --access public --provenance
 
       - name: Publish CLI
         if: steps.release.outputs.skip != 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish -w @linkedin-assistant/cli --access public --provenance
+        run: npm publish -w @linkedin-buddy/cli --access public --provenance
 
       - name: Publish MCP
         if: steps.release.outputs.skip != 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish -w @linkedin-assistant/mcp --access public --provenance
+        run: npm publish -w @linkedin-buddy/mcp --access public --provenance
 
       - name: Push release commit and tag
         if: steps.release.outputs.skip != 'true'

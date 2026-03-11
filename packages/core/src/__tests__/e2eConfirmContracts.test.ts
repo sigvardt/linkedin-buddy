@@ -12,7 +12,7 @@ import {
   type PreparedActionResult
 } from "./e2e/helpers.js";
 
-const originalAssistantHome = process.env.LINKEDIN_ASSISTANT_HOME;
+const originalAssistantHome = process.env.LINKEDIN_BUDDY_HOME;
 const tempDirs: string[] = [];
 
 afterEach(() => {
@@ -26,11 +26,11 @@ afterEach(() => {
   }
 
   if (originalAssistantHome === undefined) {
-    delete process.env.LINKEDIN_ASSISTANT_HOME;
+    delete process.env.LINKEDIN_BUDDY_HOME;
     return;
   }
 
-  process.env.LINKEDIN_ASSISTANT_HOME = originalAssistantHome;
+  process.env.LINKEDIN_BUDDY_HOME = originalAssistantHome;
 });
 
 function createTempAssistantHome(): string {

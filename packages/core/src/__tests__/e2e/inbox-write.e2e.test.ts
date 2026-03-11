@@ -32,7 +32,7 @@ describe("Inbox Write E2E (2PC send_message)", () => {
     const simonThread = await getMessageThread(runtime);
 
     const timestamp = new Date().toISOString();
-    const messageText = `E2E test message from linkedin-owa-agentools [${timestamp}]`;
+    const messageText = `E2E test message from linkedin-buddy [${timestamp}]`;
 
     const prepared = await runtime.inbox.prepareReply({
       thread: simonThread.thread_id,

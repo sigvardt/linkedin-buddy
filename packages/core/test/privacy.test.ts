@@ -6,12 +6,12 @@ import {
   ArtifactHelpers,
   AssistantDatabase,
   JsonEventLogger,
-  LinkedInAssistantError,
+  LinkedInBuddyError,
   TwoPhaseCommitService,
   ensureConfigPaths,
   redactStructuredValue,
   resolveConfigPaths,
-  toLinkedInAssistantErrorPayload,
+  toLinkedInBuddyErrorPayload,
   type PrivacyConfig
 } from "../src/index.js";
 
@@ -226,7 +226,7 @@ describe("privacy redaction", () => {
   });
 
   it("redacts structured error payloads", () => {
-    const error = new LinkedInAssistantError(
+    const error = new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       'Prepared action belongs to profile "Simon Miller", but "default" was requested.',
       {
@@ -241,7 +241,7 @@ describe("privacy redaction", () => {
       }
     );
 
-    const payload = toLinkedInAssistantErrorPayload(error, privacyConfig);
+    const payload = toLinkedInBuddyErrorPayload(error, privacyConfig);
     const serialized = JSON.stringify(payload);
 
     expect(serialized).not.toContain("Simon Miller");

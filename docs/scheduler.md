@@ -17,7 +17,7 @@ Use this guide when you need to:
 
 - start or inspect the local follow-up scheduler from the CLI
 - tune scheduler timing, business hours, or retry behavior
-- embed the scheduler service from `@linkedin-assistant/core`
+- embed the scheduler service from `@linkedin-buddy/core`
 - understand how the scheduler queue relates to follow-up state and two-phase
   confirmation
 
@@ -26,20 +26,20 @@ Use this guide when you need to:
 Run a one-off scheduler tick:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin scheduler run-once --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin scheduler run-once --profile default
 ```
 
 Start the background daemon and inspect the queue:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin scheduler start --profile default
-npm exec -w @linkedin-assistant/cli -- linkedin scheduler status --profile default --jobs 10
+npm exec -w @linkedin-buddy/cli -- linkedin scheduler start --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin scheduler status --profile default --jobs 10
 ```
 
 Stop the daemon when you are done:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin scheduler stop --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin scheduler stop --profile default
 ```
 
 Notes:
@@ -75,20 +75,20 @@ Scheduler config is environment-driven and resolved in
 
 | Environment variable | Default | Purpose |
 | --- | --- | --- |
-| `LINKEDIN_ASSISTANT_SCHEDULER_ENABLED` | `true` | Master on/off switch for scheduler work |
-| `LINKEDIN_ASSISTANT_SCHEDULER_ENABLED_LANES` | `followup_preparation` | Comma-separated enabled lanes; set to an empty string to disable all lanes |
-| `LINKEDIN_ASSISTANT_SCHEDULER_POLL_INTERVAL_SECONDS` | `300` | Background daemon poll interval |
-| `LINKEDIN_ASSISTANT_SCHEDULER_MAX_JOBS_PER_TICK` | `2` | Maximum due jobs leased and processed in one tick |
-| `LINKEDIN_ASSISTANT_SCHEDULER_MAX_ACTIVE_JOBS_PER_PROFILE` | `100` | Cap on pending + leased + prepared scheduler jobs for one profile |
-| `LINKEDIN_ASSISTANT_SCHEDULER_LEASE_SECONDS` | `120` | Lease TTL for claimed jobs before another worker may reclaim them |
-| `LINKEDIN_ASSISTANT_SCHEDULER_FOLLOWUP_DELAY_MINUTES` | `15` | Delay after acceptance before a follow-up job becomes due |
-| `LINKEDIN_ASSISTANT_SCHEDULER_FOLLOWUP_LOOKBACK_DAYS` | `30` | Accepted-connection discovery window used during refresh |
-| `LINKEDIN_ASSISTANT_SCHEDULER_BUSINESS_START` | `09:00` | Inclusive local business-hours start time (`HH:MM`) |
-| `LINKEDIN_ASSISTANT_SCHEDULER_BUSINESS_END` | `17:00` | Exclusive local business-hours end time (`HH:MM`) |
-| `LINKEDIN_ASSISTANT_SCHEDULER_TIMEZONE` | local system timezone | IANA timezone used for business-hours evaluation; falls back to `UTC` only if the local timezone cannot be resolved |
-| `LINKEDIN_ASSISTANT_SCHEDULER_MAX_ATTEMPTS` | `5` | Maximum attempts before a job is marked failed |
-| `LINKEDIN_ASSISTANT_SCHEDULER_INITIAL_BACKOFF_SECONDS` | `300` | Initial retry backoff for retryable failures |
-| `LINKEDIN_ASSISTANT_SCHEDULER_MAX_BACKOFF_SECONDS` | `21600` | Maximum retry backoff cap |
+| `LINKEDIN_BUDDY_SCHEDULER_ENABLED` | `true` | Master on/off switch for scheduler work |
+| `LINKEDIN_BUDDY_SCHEDULER_ENABLED_LANES` | `followup_preparation` | Comma-separated enabled lanes; set to an empty string to disable all lanes |
+| `LINKEDIN_BUDDY_SCHEDULER_POLL_INTERVAL_SECONDS` | `300` | Background daemon poll interval |
+| `LINKEDIN_BUDDY_SCHEDULER_MAX_JOBS_PER_TICK` | `2` | Maximum due jobs leased and processed in one tick |
+| `LINKEDIN_BUDDY_SCHEDULER_MAX_ACTIVE_JOBS_PER_PROFILE` | `100` | Cap on pending + leased + prepared scheduler jobs for one profile |
+| `LINKEDIN_BUDDY_SCHEDULER_LEASE_SECONDS` | `120` | Lease TTL for claimed jobs before another worker may reclaim them |
+| `LINKEDIN_BUDDY_SCHEDULER_FOLLOWUP_DELAY_MINUTES` | `15` | Delay after acceptance before a follow-up job becomes due |
+| `LINKEDIN_BUDDY_SCHEDULER_FOLLOWUP_LOOKBACK_DAYS` | `30` | Accepted-connection discovery window used during refresh |
+| `LINKEDIN_BUDDY_SCHEDULER_BUSINESS_START` | `09:00` | Inclusive local business-hours start time (`HH:MM`) |
+| `LINKEDIN_BUDDY_SCHEDULER_BUSINESS_END` | `17:00` | Exclusive local business-hours end time (`HH:MM`) |
+| `LINKEDIN_BUDDY_SCHEDULER_TIMEZONE` | local system timezone | IANA timezone used for business-hours evaluation; falls back to `UTC` only if the local timezone cannot be resolved |
+| `LINKEDIN_BUDDY_SCHEDULER_MAX_ATTEMPTS` | `5` | Maximum attempts before a job is marked failed |
+| `LINKEDIN_BUDDY_SCHEDULER_INITIAL_BACKOFF_SECONDS` | `300` | Initial retry backoff for retryable failures |
+| `LINKEDIN_BUDDY_SCHEDULER_MAX_BACKOFF_SECONDS` | `21600` | Maximum retry backoff cap |
 
 Current lane guidance:
 
@@ -99,13 +99,13 @@ Current lane guidance:
 Example shell configuration:
 
 ```bash
-export LINKEDIN_ASSISTANT_SCHEDULER_TIMEZONE=Europe/Copenhagen
-export LINKEDIN_ASSISTANT_SCHEDULER_BUSINESS_START=08:30
-export LINKEDIN_ASSISTANT_SCHEDULER_BUSINESS_END=16:30
-export LINKEDIN_ASSISTANT_SCHEDULER_POLL_INTERVAL_SECONDS=180
-export LINKEDIN_ASSISTANT_SCHEDULER_FOLLOWUP_DELAY_MINUTES=30
+export LINKEDIN_BUDDY_SCHEDULER_TIMEZONE=Europe/Copenhagen
+export LINKEDIN_BUDDY_SCHEDULER_BUSINESS_START=08:30
+export LINKEDIN_BUDDY_SCHEDULER_BUSINESS_END=16:30
+export LINKEDIN_BUDDY_SCHEDULER_POLL_INTERVAL_SECONDS=180
+export LINKEDIN_BUDDY_SCHEDULER_FOLLOWUP_DELAY_MINUTES=30
 
-npm exec -w @linkedin-assistant/cli -- linkedin scheduler start --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin scheduler start --profile default
 ```
 
 ## CLI workflow
@@ -114,7 +114,7 @@ npm exec -w @linkedin-assistant/cli -- linkedin scheduler start --profile defaul
 
 Starts a detached daemon for one profile. The daemon wakes up on the configured
 poll interval, creates a fresh core runtime for each tick, and writes state and
-event logs under the scheduler directory inside `LINKEDIN_ASSISTANT_HOME`.
+event logs under the scheduler directory inside `LINKEDIN_BUDDY_HOME`.
 
 ### `linkedin scheduler status`
 
@@ -141,14 +141,14 @@ prepared follow-up actions untouched.
 ## Core API
 
 Programmatic integrations can run one scheduler tick directly from
-`@linkedin-assistant/core`:
+`@linkedin-buddy/core`:
 
 ```ts
 import {
   LinkedInSchedulerService,
   createCoreRuntime,
   resolveSchedulerConfig
-} from "@linkedin-assistant/core";
+} from "@linkedin-buddy/core";
 
 const runtime = createCoreRuntime();
 
@@ -207,7 +207,7 @@ The scheduler subsystem is deliberately narrow in phase 1.
 
 - due follow-up jobs are aligned into the configured local business-hours window
 - retryable failures use exponential backoff capped by
-  `LINKEDIN_ASSISTANT_SCHEDULER_MAX_BACKOFF_SECONDS`
+  `LINKEDIN_BUDDY_SCHEDULER_MAX_BACKOFF_SECONDS`
 - invalid scheduler env vars fail fast with structured config errors that are
   surfaced in both human and JSON CLI output
 
@@ -215,9 +215,9 @@ The scheduler subsystem is deliberately narrow in phase 1.
 
 By default, scheduler state lives under:
 
-- `~/.linkedin-assistant/linkedin-owa-agentools/scheduler/*.pid`
-- `~/.linkedin-assistant/linkedin-owa-agentools/scheduler/*.state.json`
-- `~/.linkedin-assistant/linkedin-owa-agentools/scheduler/*.events.jsonl`
+- `~/.linkedin-buddy/linkedin-buddy/scheduler/*.pid`
+- `~/.linkedin-buddy/linkedin-buddy/scheduler/*.state.json`
+- `~/.linkedin-buddy/linkedin-buddy/scheduler/*.events.jsonl`
 
 The CLI `status` command also reports the exact state and event-log paths for
 the selected profile.

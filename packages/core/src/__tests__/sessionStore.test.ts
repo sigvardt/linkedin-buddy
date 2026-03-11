@@ -101,7 +101,7 @@ describe("LinkedInSessionStore", () => {
 
       await expect(store.load("missing")).rejects.toMatchObject({
         code: "AUTH_REQUIRED",
-        message: expect.stringContaining("owa auth:session")
+        message: expect.stringContaining("linkedin-buddy auth session")
       });
     } finally {
       await rm(tempDir, { recursive: true, force: true });

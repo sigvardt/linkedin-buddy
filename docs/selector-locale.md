@@ -1,6 +1,6 @@
 # Selector locale support
 
-`selectorLocale` makes LinkedIn Assistant more resilient when LinkedIn renders
+`selectorLocale` makes LinkedIn Buddy more resilient when LinkedIn renders
 buttons, headings, or `aria-label` text in a language other than English.
 The existing structural selectors still stay first where possible; the locale
 layer only changes the text-bearing fallbacks.
@@ -9,7 +9,7 @@ Use this guide when you need to:
 
 - run the CLI against a localized LinkedIn UI
 - pass locale-aware settings through MCP
-- embed `@linkedin-assistant/core` with an explicit selector locale
+- embed `@linkedin-buddy/core` with an explicit selector locale
 - replace hardcoded English selectors in feature code
 
 ## Supported locales
@@ -37,7 +37,7 @@ browser language and override your setting.
 Precedence is:
 
 1. explicit runtime input
-2. `LINKEDIN_ASSISTANT_SELECTOR_LOCALE`
+2. `LINKEDIN_BUDDY_SELECTOR_LOCALE`
 3. default `en`
 
 The explicit input depends on the surface you are using:
@@ -56,7 +56,7 @@ command, MCP request, core runtime options, or environment instead.
 Set a shell-wide default with:
 
 ```bash
-export LINKEDIN_ASSISTANT_SELECTOR_LOCALE=da
+export LINKEDIN_BUDDY_SELECTOR_LOCALE=da
 ```
 
 This is useful when you repeatedly work in the same localized LinkedIn session.
@@ -69,17 +69,17 @@ mutation, diagnostic, and keepalive commands.
 
 ```bash
 # Run one command with Danish selector phrases first
-npm exec -w @linkedin-assistant/cli -- linkedin status --profile default --selector-locale da
+npm exec -w @linkedin-buddy/cli -- linkedin status --profile default --selector-locale da
 
 # Audit localized selectors while keeping English as the safety net
-npm exec -w @linkedin-assistant/cli -- linkedin audit selectors --profile default --selector-locale da
+npm exec -w @linkedin-buddy/cli -- linkedin audit selectors --profile default --selector-locale da
 
 # Start the keepalive daemon with the same selector locale
-npm exec -w @linkedin-assistant/cli -- linkedin keepalive start --profile default --selector-locale da
+npm exec -w @linkedin-buddy/cli -- linkedin keepalive start --profile default --selector-locale da
 
 # Fall back to the shell default instead of passing the flag every time
-export LINKEDIN_ASSISTANT_SELECTOR_LOCALE=da-DK
-npm exec -w @linkedin-assistant/cli -- linkedin inbox list --profile default
+export LINKEDIN_BUDDY_SELECTOR_LOCALE=da-DK
+npm exec -w @linkedin-buddy/cli -- linkedin inbox list --profile default
 ```
 
 What to expect:
@@ -145,7 +145,7 @@ Notes:
 Programmatic integrations should pass locale directly into the runtime:
 
 ```ts
-import { createCoreRuntime } from "@linkedin-assistant/core";
+import { createCoreRuntime } from "@linkedin-buddy/core";
 
 const runtime = createCoreRuntime({
   selectorLocale: "da-DK"
@@ -231,7 +231,7 @@ instead:
 
 1. remove ad-hoc command wrappers that swap English-only selectors
 2. set `--selector-locale <locale>` for one-off runs or
-   `LINKEDIN_ASSISTANT_SELECTOR_LOCALE` for a shell-wide default
+   `LINKEDIN_BUDDY_SELECTOR_LOCALE` for a shell-wide default
 3. run `linkedin audit selectors --selector-locale <locale>` to verify the
    built-in selector coverage before troubleshooting individual flows
 
@@ -294,7 +294,7 @@ Migration checklist:
   per module
 - keep selector keys and error payloads stable so audit and runtime telemetry do
   not churn across locales
-- rerun `npm exec -w @linkedin-assistant/cli -- linkedin audit selectors --profile default --selector-locale <locale>` after changing text-bearing selectors
+- rerun `npm exec -w @linkedin-buddy/cli -- linkedin audit selectors --profile default --selector-locale <locale>` after changing text-bearing selectors
 
 ## Troubleshooting
 

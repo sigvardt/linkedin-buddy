@@ -2,7 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { LinkedInAssistantError } from "../../errors.js";
+import { LinkedInBuddyError } from "../../errors.js";
 import { createCoreRuntime, type CoreRuntime } from "../../runtime.js";
 import {
   LinkedInSelectorAuditService,
@@ -40,13 +40,13 @@ async function createIsolatedRuntime(): Promise<{
 async function expectAssistantError(
   promise: Promise<unknown>,
   expectedCode: string
-): Promise<LinkedInAssistantError> {
+): Promise<LinkedInBuddyError> {
   try {
     await promise;
     throw new Error(`Expected ${expectedCode} error.`);
   } catch (error) {
-    expect(error).toBeInstanceOf(LinkedInAssistantError);
-    const assistantError = error as LinkedInAssistantError;
+    expect(error).toBeInstanceOf(LinkedInBuddyError);
+    const assistantError = error as LinkedInBuddyError;
     expect(assistantError.code).toBe(expectedCode);
     return assistantError;
   }

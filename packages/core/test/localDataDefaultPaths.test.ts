@@ -89,8 +89,8 @@ describe("local data deletion default paths", () => {
   let mockHomeDir = "";
 
   beforeEach(async () => {
-    previousAssistantHome = process.env.LINKEDIN_ASSISTANT_HOME;
-    delete process.env.LINKEDIN_ASSISTANT_HOME;
+    previousAssistantHome = process.env.LINKEDIN_BUDDY_HOME;
+    delete process.env.LINKEDIN_BUDDY_HOME;
 
     tempDir = await mkdtemp(path.join(os.tmpdir(), "linkedin-local-defaults-"));
     mockHomeDir = path.join(tempDir, "mock-home");
@@ -102,9 +102,9 @@ describe("local data deletion default paths", () => {
     vi.resetModules();
 
     if (typeof previousAssistantHome === "string") {
-      process.env.LINKEDIN_ASSISTANT_HOME = previousAssistantHome;
+      process.env.LINKEDIN_BUDDY_HOME = previousAssistantHome;
     } else {
-      delete process.env.LINKEDIN_ASSISTANT_HOME;
+      delete process.env.LINKEDIN_BUDDY_HOME;
     }
 
     await rm(tempDir, { recursive: true, force: true });
@@ -121,7 +121,7 @@ describe("local data deletion default paths", () => {
       rateLimitState.resolveLegacyRateLimitStateFilePath();
 
     expect(config.resolveConfigPaths().baseDir).toBe(
-      path.join(mockHomeDir, ".linkedin-assistant", "linkedin-owa-agentools")
+      path.join(mockHomeDir, ".linkedin-buddy", "linkedin-buddy")
     );
     expect(plan.targets).toEqual(
       expect.arrayContaining([

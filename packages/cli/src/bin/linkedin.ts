@@ -23,12 +23,12 @@ import {
   ACTIVITY_WATCH_KINDS,
   ACTIVITY_WATCH_STATUSES,
   DEFAULT_FOLLOWUP_SINCE,
-  LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS_ENV,
-  LINKEDIN_ASSISTANT_EVASION_LEVEL_ENV,
-  LINKEDIN_ASSISTANT_SELECTOR_LOCALE_ENV,
+  LINKEDIN_BUDDY_EVASION_DIAGNOSTICS_ENV,
+  LINKEDIN_BUDDY_EVASION_LEVEL_ENV,
+  LINKEDIN_BUDDY_SELECTOR_LOCALE_ENV,
   AssistantDatabase,
   alignToBusinessHours,
-  asLinkedInAssistantError,
+  asLinkedInBuddyError,
   clearRateLimitState,
   createLocalDataDeletionPlan,
   createEmptyFixtureManifest,
@@ -49,7 +49,7 @@ import {
   LINKEDIN_SELECTOR_LOCALES,
   LINKEDIN_WRITE_VALIDATION_ACTIONS,
   SEARCH_CATEGORIES,
-  LinkedInAssistantError,
+  LinkedInBuddyError,
   LinkedInSchedulerService,
   DEFAULT_FIXTURE_STALENESS_DAYS,
   createCoreRuntime,
@@ -80,7 +80,7 @@ import {
   runLinkedInWriteValidation,
   runReadOnlyLinkedInLiveValidation,
   upsertWriteValidationAccount,
-  toLinkedInAssistantErrorPayload,
+  toLinkedInBuddyErrorPayload,
   WEBHOOK_DELIVERY_ATTEMPT_STATUSES,
   WEBHOOK_SUBSCRIPTION_STATUSES,
   writeLinkedInFixtureManifest,
@@ -109,7 +109,7 @@ import {
   type WriteValidationAccountTargets,
   type WriteValidationActionPreview,
   type WriteValidationReport
-} from "@linkedin-assistant/core";
+} from "@linkedin-buddy/core";
 import {
   DraftQualityProgressReporter,
   formatDraftQualityError,
@@ -275,7 +275,7 @@ function coercePositiveInt(value: string, label: string): number {
   const normalized = value.trim();
   const parsed = Number.parseInt(normalized, 10);
   if (!/^\d+$/u.test(normalized) || !Number.isFinite(parsed) || parsed <= 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a positive integer.`
     );
@@ -287,7 +287,7 @@ function coerceNonNegativeInt(value: string, label: string): number {
   const normalized = value.trim();
   const parsed = Number.parseInt(normalized, 10);
   if (!/^\d+$/u.test(normalized) || !Number.isFinite(parsed) || parsed < 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a non-negative integer.`
     );
@@ -300,7 +300,7 @@ function coerceSearchCategory(value: string): SearchCategory {
     return value;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `category must be one of: ${SEARCH_CATEGORIES.join(", ")}.`
   );
@@ -309,14 +309,14 @@ function coerceSearchCategory(value: string): SearchCategory {
 function coerceProfileName(value: string, label: string = "profile"): string {
   const normalized = value.trim();
   if (normalized.length === 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must not be empty.`
     );
   }
 
   if (normalized === "." || normalized === ".." || /[\\/]/.test(normalized)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must not contain path separators or relative path segments.`
     );
@@ -398,7 +398,7 @@ function coerceFixtureReplayPageType(value: string): LinkedInReplayPageType {
     return normalized;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `page must be one of: ${LINKEDIN_REPLAY_PAGE_TYPES.join(", ")}.`
   );
@@ -415,7 +415,7 @@ function collectFixtureReplayPageTypes(
     .map((item) => coerceFixtureReplayPageType(item));
 
   if (nextValues.length === 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "page must include at least one page type when --page is provided."
     );
@@ -431,7 +431,7 @@ function collectNonEmptyStrings(value: string, previous: string[]): string[] {
     .filter((item) => item.length > 0);
 
   if (nextValues.length === 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "Option must include at least one value when provided."
     );
@@ -638,7 +638,7 @@ async function runFixturesCheck(input: {
 
 async function runFixturesRecord(input: FixtureRecordInput): Promise<void> {
   if (!stdin.isTTY || !stdout.isTTY) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "fixtures:record requires an interactive terminal because it pauses for manual navigation."
     );
@@ -961,7 +961,7 @@ async function readJsonInputFile(filePath: string, label: string): Promise<unkno
   try {
     const fileStats = await stat(resolvedPath);
     if (!fileStats.isFile()) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `Expected ${label} path to point to a file.`,
         {
@@ -971,7 +971,7 @@ async function readJsonInputFile(filePath: string, label: string): Promise<unkno
     }
 
     if (fileStats.size > MAX_JSON_INPUT_BYTES) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `${label} exceeds the maximum supported size of ${MAX_JSON_INPUT_BYTES} bytes.`,
         {
@@ -984,7 +984,7 @@ async function readJsonInputFile(filePath: string, label: string): Promise<unkno
 
     raw = await readFile(resolvedPath, "utf8");
   } catch (error) {
-    if (error instanceof LinkedInAssistantError) {
+    if (error instanceof LinkedInBuddyError) {
       throw error;
     }
 
@@ -993,7 +993,7 @@ async function readJsonInputFile(filePath: string, label: string): Promise<unkno
       "code" in error &&
       error.code === "ENOENT"
     ) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `Could not read ${label}.`,
         {
@@ -1004,7 +1004,7 @@ async function readJsonInputFile(filePath: string, label: string): Promise<unkno
       );
     }
 
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `Could not read ${label}.`,
       {
@@ -1018,7 +1018,7 @@ async function readJsonInputFile(filePath: string, label: string): Promise<unkno
   try {
     return JSON.parse(raw) as unknown;
   } catch (error) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `Could not parse ${label} as JSON.`,
       {
@@ -1321,7 +1321,7 @@ function shouldUseAnsiColor(
 
 function assertInteractiveTerminal(operation: string): void {
   if (!stdin.isTTY || !stdout.isTTY) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `Refusing to ${operation} in non-interactive mode.`
     );
@@ -1547,8 +1547,8 @@ function extractLocalDataDeletionFailures(
   return value.filter(isLocalDataDeletionFailure);
 }
 
-function formatLocalDataDeletionError(error: unknown): LinkedInAssistantError {
-  const assistantError = asLinkedInAssistantError(
+function formatLocalDataDeletionError(error: unknown): LinkedInBuddyError {
+  const assistantError = asLinkedInBuddyError(
     error,
     "UNKNOWN",
     "Local data deletion failed."
@@ -1569,7 +1569,7 @@ function formatLocalDataDeletionError(error: unknown): LinkedInAssistantError {
       ? `${deletedCount} ${pluralize(deletedCount, "path")} ${deletedCount === 1 ? "was" : "were"} removed before the failure.`
       : "No paths were removed before the failure.";
 
-  return new LinkedInAssistantError(
+  return new LinkedInBuddyError(
     assistantError.code,
     `Local data deletion completed with ${failedPaths.length} ${pluralize(failedPaths.length, "failure")}. ${deletedSummary} First blocked path: ${firstFailure.path}. ${firstFailure.recoveryHint ?? "Review failed_paths for recovery guidance and retry."}`,
     assistantError.details,
@@ -1577,7 +1577,7 @@ function formatLocalDataDeletionError(error: unknown): LinkedInAssistantError {
   );
 }
 
-function printLocalDataDeletionFailure(error: LinkedInAssistantError): void {
+function printLocalDataDeletionFailure(error: LinkedInBuddyError): void {
   const failedPaths = extractLocalDataDeletionFailures(error.details.failed_paths);
   if (failedPaths.length === 0) {
     return;
@@ -1674,7 +1674,7 @@ function assertCdpUrlUnsupportedForDataDelete(cdpUrl?: string): void {
     return;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     "The data delete command only deletes tool-owned local filesystem state and does not support --cdp-url."
   );
@@ -1686,7 +1686,7 @@ async function assertNoRunningKeepAliveDaemons(): Promise<void> {
     return;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `Stop running keepalive daemons before deleting local data. Active PID${runningKeepAlivePids.length === 1 ? "" : "s"}: ${runningKeepAlivePids.join(", ")}.`,
     {
@@ -1819,7 +1819,7 @@ function assertNoExternalSessionOverrideForStoredSession(cdpUrl?: string): void 
     return;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     "Stored-session auth and read-only live validation do not support --cdp-url. Omit --cdp-url to use the encrypted stored session flow."
   );
@@ -1866,7 +1866,7 @@ async function runAuthSessionCapture(input: {
 
 function isStoredSessionRefreshError(error: unknown): boolean {
   return (
-    error instanceof LinkedInAssistantError &&
+    error instanceof LinkedInBuddyError &&
     (error.code === "AUTH_REQUIRED" || error.code === "CAPTCHA_OR_CHALLENGE")
   );
 }
@@ -1884,7 +1884,7 @@ async function maybeRefreshStoredSession(
     return false;
   }
 
-  const errorPayload = toLinkedInAssistantErrorPayload(error, cliPrivacyConfig);
+  const errorPayload = toLinkedInBuddyErrorPayload(error, cliPrivacyConfig);
   writeCliNotice(
     errorPayload.code === "CAPTCHA_OR_CHALLENGE"
       ? "LinkedIn requested extra verification before the validation could continue."
@@ -1913,7 +1913,7 @@ function createReadOnlyValidationPrompter(
     promptOutput.write(`Read-only step: ${operation.summary}\n`);
     const confirmed = await promptYesNo("Continue with this step?", promptOutput);
     if (!confirmed) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "Read-only live validation was cancelled by the operator.",
         {
@@ -1959,7 +1959,7 @@ function emitReadOnlyValidationFailure(
     throw error;
   }
 
-  const errorPayload = toLinkedInAssistantErrorPayload(error, cliPrivacyConfig);
+  const errorPayload = toLinkedInBuddyErrorPayload(error, cliPrivacyConfig);
   process.stderr.write(
     `${formatReadOnlyValidationError(errorPayload, {
       color: shouldUseAnsiColor(process.stderr),
@@ -1973,7 +1973,7 @@ function validateReadOnlyValidationCliInput(input: {
   retryMaxDelayMs: number;
 }): void {
   if (input.retryMaxDelayMs < input.retryBaseDelayMs) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "retry-max-delay-ms must be greater than or equal to retry-base-delay-ms.",
       {
@@ -2013,7 +2013,7 @@ async function runLiveReadOnlyValidation(input: {
     validateReadOnlyValidationCliInput(input);
 
     if (!input.readOnly) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         'Live validation is currently restricted to read-only mode. Rerun the command with "--read-only".'
       );
@@ -2178,7 +2178,7 @@ function assertKeepAliveVerbosityOptions(input: {
   verbose?: boolean;
 }): void {
   if (input.quiet && input.verbose) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       'Choose either "--quiet" or "--verbose", not both.'
     );
@@ -2204,7 +2204,7 @@ async function runKeepAliveCliAction(
     }
 
     process.stderr.write(
-      `${formatKeepAliveError(toLinkedInAssistantErrorPayload(error, cliPrivacyConfig), {
+      `${formatKeepAliveError(toLinkedInBuddyErrorPayload(error, cliPrivacyConfig), {
         quiet: options.quiet
       })}\n`
     );
@@ -2273,7 +2273,7 @@ async function runKeepAliveStart(input: {
 
   const cliEntrypoint = resolveKeepAliveCliEntrypoint();
   if (!cliEntrypoint) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UNKNOWN",
       "Could not resolve CLI entrypoint for keepalive daemon startup."
     );
@@ -2307,7 +2307,7 @@ async function runKeepAliveStart(input: {
   daemon.unref();
 
   if (!daemon.pid) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UNKNOWN",
       "Keepalive daemon did not return a process id."
     );
@@ -2426,7 +2426,7 @@ async function runKeepAliveStop(
   try {
     process.kill(pid, "SIGTERM");
   } catch (error) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UNKNOWN",
       "Failed to send SIGTERM to keepalive daemon.",
       {
@@ -2838,7 +2838,7 @@ function resolveSchedulerStatusConfig(): Pick<
     };
   } catch (error) {
     return {
-      scheduler_config_error: toLinkedInAssistantErrorPayload(error, cliPrivacyConfig)
+      scheduler_config_error: toLinkedInBuddyErrorPayload(error, cliPrivacyConfig)
     };
   }
 }
@@ -2982,7 +2982,7 @@ async function runSchedulerCliAction(
 
     process.stderr.write(
       `${formatSchedulerError(
-        toLinkedInAssistantErrorPayload(error, cliPrivacyConfig)
+        toLinkedInBuddyErrorPayload(error, cliPrivacyConfig)
       )}\n`
     );
     process.exitCode = 1;
@@ -3064,7 +3064,7 @@ async function runSchedulerStart(
   const schedulerConfig = resolveSchedulerConfig();
   const cliEntrypoint = resolveKeepAliveCliEntrypoint();
   if (!cliEntrypoint) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UNKNOWN",
       "Could not resolve CLI entrypoint for scheduler daemon startup."
     );
@@ -3087,7 +3087,7 @@ async function runSchedulerStart(
   daemon.unref();
 
   if (!daemon.pid) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UNKNOWN",
       "Scheduler daemon did not return a process id."
     );
@@ -3183,7 +3183,7 @@ async function runSchedulerStop(
   try {
     process.kill(pid, "SIGTERM");
   } catch (error) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UNKNOWN",
       "Failed to send SIGTERM to scheduler daemon.",
       {
@@ -3493,7 +3493,7 @@ function sanitizeActivityPersistenceRecord<T extends object>(
 
 function asCliObject(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "Activity target must be a JSON object."
     );
@@ -3509,11 +3509,11 @@ function parseJsonObjectString(
   try {
     return asCliObject(JSON.parse(value));
   } catch (error) {
-    if (error instanceof LinkedInAssistantError) {
+    if (error instanceof LinkedInBuddyError) {
       throw error;
     }
 
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be valid JSON object text.`,
       {
@@ -3532,7 +3532,7 @@ async function readActivityTargetInput(input: {
     typeof input.targetFile === "string" ? input.targetFile.trim() : "";
 
   if (target && targetFile) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "Specify either --target or --target-file, not both."
     );
@@ -3559,7 +3559,7 @@ function coerceEnumValue<T extends string>(
     return normalized as T;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `${label} must be one of: ${allowed.join(", ")}.`
   );
@@ -3704,7 +3704,7 @@ function resolveActivityStatusConfig(): Pick<
     };
   } catch (error) {
     return {
-      activity_config_error: toLinkedInAssistantErrorPayload(error, cliPrivacyConfig)
+      activity_config_error: toLinkedInBuddyErrorPayload(error, cliPrivacyConfig)
     };
   }
 }
@@ -3739,7 +3739,7 @@ async function runActivityCliAction(
 
     process.stderr.write(
       `${formatActivityError(
-        toLinkedInAssistantErrorPayload(error, cliPrivacyConfig)
+        toLinkedInBuddyErrorPayload(error, cliPrivacyConfig)
       )}\n`
     );
     process.exitCode = 1;
@@ -4268,7 +4268,7 @@ async function runActivityStart(
   const activityConfig = resolveActivityWebhookConfig();
   const cliEntrypoint = resolveKeepAliveCliEntrypoint();
   if (!cliEntrypoint) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UNKNOWN",
       "Could not resolve CLI entrypoint for activity daemon startup."
     );
@@ -4291,7 +4291,7 @@ async function runActivityStart(
   daemon.unref();
 
   if (!daemon.pid) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UNKNOWN",
       "Activity daemon did not return a process id."
     );
@@ -4436,7 +4436,7 @@ async function runActivityStop(
   try {
     process.kill(pid, "SIGTERM");
   } catch (error) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UNKNOWN",
       "Failed to send SIGTERM to activity daemon.",
       {
@@ -5941,8 +5941,8 @@ function summarizeProfileSeedUnsupportedFields(
 
 function createProfileSeedUnsupportedFieldsError(
   unsupportedFields: readonly ProfileSeedUnsupportedField[]
-): LinkedInAssistantError {
-  return new LinkedInAssistantError(
+): LinkedInBuddyError {
+  return new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `Profile seed spec includes unsupported fields: ${summarizeProfileSeedUnsupportedFields(unsupportedFields)}. Remove them or rerun with --allow-partial.`,
     {
@@ -6075,7 +6075,7 @@ function resolveActivitySeedPostMediaPath(
   }
 
   if (generatedImages.length === 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "posts.generatedImageIndex requires assets.generatedImageManifestPath to be configured."
     );
@@ -6083,7 +6083,7 @@ function resolveActivitySeedPostMediaPath(
 
   const generatedImage = generatedImages[post.generatedImageIndex];
   if (!generatedImage) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `posts.generatedImageIndex ${post.generatedImageIndex} is out of range for the configured generated image manifest.`
     );
@@ -6211,7 +6211,7 @@ async function runProfileApplySpec(input: {
 
     if (!input.yes && plan.actions.length > 0) {
       if (!stdin.isTTY || !stdout.isTTY) {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
           "Refusing to apply a profile seed spec without --yes in non-interactive mode."
         );
@@ -6222,7 +6222,7 @@ async function runProfileApplySpec(input: {
         process.stderr
       );
       if (!confirmed) {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
           "Operator declined profile seed execution."
         );
@@ -6356,7 +6356,7 @@ async function runSeedActivity(input: {
 
     if (!input.yes && planSummary.totalWriteActions > 0) {
       if (!stdin.isTTY || !stdout.isTTY) {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
           "Refusing to apply an activity seed spec without --yes in non-interactive mode."
         );
@@ -6367,7 +6367,7 @@ async function runSeedActivity(input: {
         process.stderr
       );
       if (!confirmed) {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
           "Operator declined activity seed execution."
         );
@@ -7012,7 +7012,7 @@ async function runSelectorAudit(input: {
       process.exitCode = 1;
     }
   } catch (error) {
-    const errorPayload = toLinkedInAssistantErrorPayload(error, cliPrivacyConfig);
+    const errorPayload = toLinkedInBuddyErrorPayload(error, cliPrivacyConfig);
 
     runtime?.logger.log("error", "cli.audit.selectors.failed", {
       profileName,
@@ -7102,7 +7102,7 @@ async function runDraftQualityAudit(input: {
       throw error;
     }
 
-    const errorPayload = toLinkedInAssistantErrorPayload(error, cliPrivacyConfig);
+    const errorPayload = toLinkedInBuddyErrorPayload(error, cliPrivacyConfig);
     process.stderr.write(`${formatDraftQualityError(errorPayload)}\n`);
     process.exitCode = 1;
   }
@@ -7134,7 +7134,7 @@ async function runConfirmAction(input: {
 
     const preparedProfileName = readTargetProfileName(preview.target);
     if (preparedProfileName && preparedProfileName !== input.profileName) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `Prepared action belongs to profile "${preparedProfileName}", but "${input.profileName}" was requested.`,
         {
@@ -7165,7 +7165,7 @@ async function runConfirmAction(input: {
 
     if (!input.yes) {
       if (!stdin.isTTY || !stdout.isTTY) {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
           "Refusing to confirm action without --yes in non-interactive mode."
         );
@@ -7173,7 +7173,7 @@ async function runConfirmAction(input: {
 
       const confirmed = await promptYesNo("Confirm this action?");
       if (!confirmed) {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
           "Operator declined action confirmation."
         );
@@ -7206,7 +7206,7 @@ export function createCliProgram(): Command {
 
   program
     .name("linkedin")
-    .description("LinkedIn assistant CLI")
+    .description("LinkedIn Buddy CLI")
     .version(packageJson.version)
     .option(
       "--cdp-url <url>",
@@ -7223,8 +7223,8 @@ export function createCliProgram(): Command {
       [
         "",
         "Selector locale:",
-        `  --selector-locale <locale> overrides ${LINKEDIN_ASSISTANT_SELECTOR_LOCALE_ENV} for one command.`,
-        `  ${LINKEDIN_ASSISTANT_SELECTOR_LOCALE_ENV}=da sets the default for the current shell.`,
+        `  --selector-locale <locale> overrides ${LINKEDIN_BUDDY_SELECTOR_LOCALE_ENV} for one command.`,
+        `  ${LINKEDIN_BUDDY_SELECTOR_LOCALE_ENV}=da sets the default for the current shell.`,
         "  Unsupported locale values fall back to English with a warning on stderr.",
         "",
         "Diagnostics:",
@@ -7263,8 +7263,8 @@ export function createCliProgram(): Command {
         "",
         "Diagnostics:",
         "  - output includes an evasion block with the resolved level, enabled features, and diagnostics flag",
-        `  - ${LINKEDIN_ASSISTANT_EVASION_LEVEL_ENV}=minimal|moderate|paranoid sets the default anti-bot profile`,
-        `  - ${LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS_ENV}=true records debug evasion events in the run log`
+        `  - ${LINKEDIN_BUDDY_EVASION_LEVEL_ENV}=minimal|moderate|paranoid sets the default anti-bot profile`,
+        `  - ${LINKEDIN_BUDDY_EVASION_DIAGNOSTICS_ENV}=true records debug evasion events in the run log`
       ].join("\n")
     )
     .action(async (options: { profile: string }) => {
@@ -7305,7 +7305,7 @@ export function createCliProgram(): Command {
           "Examples:",
           "  linkedin auth session",
           "  linkedin auth session --session smoke --timeout-minutes 15",
-          "  linkedin auth:session --session smoke"
+          "  linkedin auth session --session smoke"
         ].join("\n")
       )
       .action(
@@ -7377,7 +7377,7 @@ export function createCliProgram(): Command {
         [
           "",
           "Examples:",
-          "  owa accounts add secondary --designation secondary --session secondary-session --profile secondary",
+          "  linkedin-buddy accounts add secondary --designation secondary --session secondary-session --profile secondary",
           "  linkedin accounts add secondary --designation secondary --session secondary-session --message-thread /messaging/thread/abc/ --invite-profile https://www.linkedin.com/in/test-user/",
           "",
           "Notes:",
@@ -7519,7 +7519,7 @@ export function createCliProgram(): Command {
           "  - --no-progress hides the live progress stream for either validation mode",
           "",
           "Configuration:",
-          "  - LINKEDIN_ASSISTANT_HOME stores the encrypted session, reports, and latest-report.json",
+          "  - LINKEDIN_BUDDY_HOME stores the encrypted session, reports, and latest-report.json",
           "  - PLAYWRIGHT_EXECUTABLE_PATH overrides Chromium if Playwright cannot find one",
           "",
           "Write validation workflow:",
@@ -7642,7 +7642,7 @@ export function createCliProgram(): Command {
 
   const dataCommand = program
     .command("data")
-    .description("Preview and delete tool-owned local LinkedIn Assistant data");
+    .description("Preview and delete tool-owned local LinkedIn Buddy data");
 
   dataCommand
     .command("delete")
@@ -8419,14 +8419,14 @@ export function createCliProgram(): Command {
           }
 
           if (!email) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "ACTION_PRECONDITION_FAILED",
               "Headless login requires --email or LINKEDIN_EMAIL environment variable."
             );
           }
 
           if (!password) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "ACTION_PRECONDITION_FAILED",
               "Headless login requires --password or LINKEDIN_PASSWORD environment variable."
             );
@@ -8532,7 +8532,7 @@ export function createCliProgram(): Command {
           "",
           "Examples:",
           "  linkedin fixtures record --page feed --page messaging",
-          "  owa fixtures:record --set da-dk --page feed,notifications --no-har",
+          "  linkedin-buddy fixtures record --set da-dk --page feed,notifications --no-har",
           "",
           "Next steps:",
           "  linkedin fixtures check --set <name>",
@@ -8563,7 +8563,7 @@ export function createCliProgram(): Command {
           "",
           "Examples:",
           "  linkedin fixtures check",
-          "  owa fixtures:check --set ci --max-age-days 14",
+          "  linkedin-buddy fixtures check --set ci --max-age-days 14",
           "",
           "Follow-up:",
           "  Re-record stale pages with linkedin fixtures record --set <name> --page <type>",
@@ -8747,7 +8747,7 @@ export function createCliProgram(): Command {
       async (options: { profile: string; filter: string }) => {
         const filter = options.filter as "sent" | "received" | "all";
         if (!["sent", "received", "all"].includes(filter)) {
-          throw new LinkedInAssistantError(
+          throw new LinkedInBuddyError(
             "ACTION_PRECONDITION_FAILED",
             "Filter must be 'sent', 'received', or 'all'."
           );
@@ -9603,8 +9603,8 @@ export function createCliProgram(): Command {
         "",
         "Diagnostics:",
         "  - output includes session.evasion with the resolved anti-bot profile and diagnostics status",
-        `  - ${LINKEDIN_ASSISTANT_EVASION_LEVEL_ENV}=minimal|moderate|paranoid selects the default anti-bot profile`,
-        `  - ${LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS_ENV}=true records debug evasion events in the run log`
+        `  - ${LINKEDIN_BUDDY_EVASION_LEVEL_ENV}=minimal|moderate|paranoid selects the default anti-bot profile`,
+        `  - ${LINKEDIN_BUDDY_EVASION_DIAGNOSTICS_ENV}=true records debug evasion events in the run log`
       ].join("\n")
     )
     .action(async (options: { profile: string }) => {
@@ -9658,7 +9658,7 @@ function isDirectExecution(moduleUrl: string): boolean {
 
 if (isDirectExecution(import.meta.url)) {
   runCli().catch((error: unknown) => {
-    const payload = toLinkedInAssistantErrorPayload(error, cliPrivacyConfig);
+    const payload = toLinkedInBuddyErrorPayload(error, cliPrivacyConfig);
     console.error(JSON.stringify(payload, null, 2));
     process.exit(process.exitCode ?? 1);
   });
@@ -9672,7 +9672,7 @@ function coerceWriteValidationDesignation(
     return normalized;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     'designation must be either "primary" or "secondary".'
   );
@@ -9740,21 +9740,21 @@ function resolveLiveWriteValidationAccountId(input: {
   session: string;
 }): string {
   if (input.readOnly) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       'Choose either "--read-only" or "--write-validation", not both.'
     );
   }
 
   if (!input.account) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       'Write validation requires "--account <id>".'
     );
   }
 
   if (input.session !== "default") {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       'Write validation resolves stored sessions through the account registry. Remove "--session" and rerun.'
     );
@@ -9832,7 +9832,7 @@ function emitWriteValidationFailure(
     throw error;
   }
 
-  const errorPayload = toLinkedInAssistantErrorPayload(error, cliPrivacyConfig);
+  const errorPayload = toLinkedInBuddyErrorPayload(error, cliPrivacyConfig);
   process.stderr.write(
     `${formatWriteValidationError(errorPayload, {
       color: shouldUseAnsiColor(process.stderr),
@@ -9849,7 +9849,7 @@ function assertWriteValidationExecutionPreconditions(
   assertInteractiveTerminal("run write validation");
 
   if (input.yes) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       'Write validation requires typing "yes" for every action. Remove "--yes" and rerun.'
     );

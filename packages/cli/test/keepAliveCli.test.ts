@@ -11,13 +11,13 @@ const keepAliveCliMocks = vi.hoisted(() => ({
   }))
 }));
 
-vi.mock("@linkedin-assistant/core", async () => await import("../../core/src/index.js"));
+vi.mock("@linkedin-buddy/core", async () => await import("../../core/src/index.js"));
 
 vi.mock("node:child_process", () => ({
   spawn: keepAliveCliMocks.spawn
 }));
 
-import { resolveConfigPaths } from "@linkedin-assistant/core";
+import { resolveConfigPaths } from "@linkedin-buddy/core";
 import { createCliProgram, runCli } from "../src/bin/linkedin.js";
 
 interface KeepAliveStateFile {
@@ -104,7 +104,7 @@ describe("linkedin keepalive CLI UX", () => {
 
   beforeEach(async () => {
     tempDir = await mkdtemp(path.join(os.tmpdir(), "linkedin-cli-keepalive-"));
-    process.env.LINKEDIN_ASSISTANT_HOME = path.join(tempDir, "assistant-home");
+    process.env.LINKEDIN_BUDDY_HOME = path.join(tempDir, "buddy-home");
     process.exitCode = undefined;
     stdoutChunks = [];
     stderrChunks = [];
@@ -136,7 +136,7 @@ describe("linkedin keepalive CLI UX", () => {
     stdoutWriteSpy.mockRestore();
     stderrWriteSpy.mockRestore();
     process.exitCode = undefined;
-    delete process.env.LINKEDIN_ASSISTANT_HOME;
+    delete process.env.LINKEDIN_BUDDY_HOME;
     await rm(tempDir, { recursive: true, force: true });
   });
 

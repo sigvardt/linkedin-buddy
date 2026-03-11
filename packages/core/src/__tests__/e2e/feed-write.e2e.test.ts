@@ -39,7 +39,7 @@ describe("Feed Write E2E (2PC comment_on_post)", () => {
     expect(targetPostUrl).toContain("linkedin.com");
 
     const timestamp = new Date().toISOString();
-    const commentText = `E2E test comment from linkedin-owa-agentools [${timestamp}]`;
+    const commentText = `E2E test comment from linkedin-buddy [${timestamp}]`;
 
     const prepared = runtime.feed.prepareCommentOnPost({
       postUrl: targetPostUrl,

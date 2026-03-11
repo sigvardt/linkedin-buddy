@@ -4,7 +4,7 @@ import path from "node:path";
 import { stdin, stdout } from "node:process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@linkedin-assistant/core", async () => await import("../../core/src/index.js"));
+vi.mock("@linkedin-buddy/core", async () => await import("../../core/src/index.js"));
 
 import { runCli } from "../src/bin/linkedin.js";
 

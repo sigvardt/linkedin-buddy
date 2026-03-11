@@ -12,7 +12,7 @@ import {
   LinkedInSessionStore,
   type LinkedInBrowserStorageState
 } from "./auth/sessionStore.js";
-import { LinkedInAssistantError } from "./errors.js";
+import { LinkedInBuddyError } from "./errors.js";
 import {
   ProfileManager,
   type PersistentContextOptions
@@ -30,8 +30,8 @@ function getOrCreatePage(context: BrowserContext): Promise<Page> {
   return existing ? Promise.resolve(existing) : context.newPage();
 }
 
-function createStoredSessionCdpError(): LinkedInAssistantError {
-  return new LinkedInAssistantError(
+function createStoredSessionCdpError(): LinkedInBuddyError {
+  return new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     "Stored-session write validation does not support CDP or external browser attachment."
   );
@@ -200,7 +200,7 @@ class StoredSessionAuthService extends LinkedInAuthService {
 
   override async ensureAuthenticated(): Promise<SessionStatus> {
     if (!this.sessionStatus.authenticated) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         this.sessionStatus.currentUrl.includes("/checkpoint")
           ? "CAPTCHA_OR_CHALLENGE"
           : "AUTH_REQUIRED",
@@ -286,7 +286,7 @@ export async function createWriteValidationRuntime(input: {
       const inspection = await profileManager.inspectSession();
 
       if (!inspection.authenticated) {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           inspection.currentUrl.includes("/checkpoint")
             ? "CAPTCHA_OR_CHALLENGE"
             : "AUTH_REQUIRED",

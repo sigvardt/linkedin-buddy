@@ -16,7 +16,7 @@ import {
   type E2ESuite
 } from "./e2e/setup.js";
 
-const originalAssistantHome = process.env.LINKEDIN_ASSISTANT_HOME;
+const originalAssistantHome = process.env.LINKEDIN_BUDDY_HOME;
 const savedCdpEndpoint = process.env.LINKEDIN_CDP_URL;
 const originalReplayEnabled = process.env.LINKEDIN_E2E_REPLAY;
 const originalFixtureManifest = process.env.LINKEDIN_E2E_FIXTURE_MANIFEST;
@@ -35,7 +35,7 @@ afterEach(() => {
   cleanupRuntime();
   vi.restoreAllMocks();
 
-  restoreOptionalEnvVar("LINKEDIN_ASSISTANT_HOME", originalAssistantHome);
+  restoreOptionalEnvVar("LINKEDIN_BUDDY_HOME", originalAssistantHome);
   restoreOptionalEnvVar("LINKEDIN_CDP_URL", savedCdpEndpoint);
   restoreOptionalEnvVar("LINKEDIN_E2E_REPLAY", originalReplayEnabled);
   restoreOptionalEnvVar("LINKEDIN_E2E_FIXTURE_MANIFEST", originalFixtureManifest);
@@ -43,31 +43,31 @@ afterEach(() => {
 });
 
 describe("E2E setup helpers", () => {
-  it("uses a stable assistant home inside E2E environment callbacks", async () => {
-    process.env.LINKEDIN_ASSISTANT_HOME = "/tmp/original-linkedin-home";
+  it("uses a stable buddy home inside E2E environment callbacks", async () => {
+    process.env.LINKEDIN_BUDDY_HOME = "/tmp/original-linkedin-home";
 
     const baseDir = getE2EBaseDir();
     expect(existsSync(baseDir)).toBe(true);
 
     await withE2EEnvironment(async () => {
-      expect(process.env.LINKEDIN_ASSISTANT_HOME).toBe(baseDir);
+      expect(process.env.LINKEDIN_BUDDY_HOME).toBe(baseDir);
       expect(getE2EBaseDir()).toBe(baseDir);
     });
 
-    expect(process.env.LINKEDIN_ASSISTANT_HOME).toBe("/tmp/original-linkedin-home");
+    expect(process.env.LINKEDIN_BUDDY_HOME).toBe("/tmp/original-linkedin-home");
   });
 
-  it("restores the previous assistant home after explicit overrides", async () => {
-    process.env.LINKEDIN_ASSISTANT_HOME = "/tmp/original-linkedin-home";
+  it("restores the previous buddy home after explicit overrides", async () => {
+    process.env.LINKEDIN_BUDDY_HOME = "/tmp/original-linkedin-home";
 
     await withAssistantHome("/tmp/isolated-linkedin-home", async () => {
-      expect(process.env.LINKEDIN_ASSISTANT_HOME).toBe("/tmp/isolated-linkedin-home");
+      expect(process.env.LINKEDIN_BUDDY_HOME).toBe("/tmp/isolated-linkedin-home");
     });
 
-    expect(process.env.LINKEDIN_ASSISTANT_HOME).toBe("/tmp/original-linkedin-home");
+    expect(process.env.LINKEDIN_BUDDY_HOME).toBe("/tmp/original-linkedin-home");
   });
 
-  it("cleans up the shared E2E assistant home between runs", () => {
+  it("cleans up the shared E2E buddy home between runs", () => {
     const firstDir = getE2EBaseDir();
     expect(existsSync(firstDir)).toBe(true);
 

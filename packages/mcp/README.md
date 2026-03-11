@@ -1,6 +1,6 @@
-# `@linkedin-assistant/mcp`
+# `@linkedin-buddy/mcp`
 
-MCP stdio server for LinkedIn Assistant.
+MCP stdio server for LinkedIn Buddy.
 
 ## Activity polling tools
 
@@ -33,8 +33,8 @@ Important details:
 
 - tool inputs do not accept evasion-specific args today
 - the MCP process inherits evasion defaults from
-  `LINKEDIN_ASSISTANT_EVASION_LEVEL` and
-  `LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS` when the server starts
+  `LINKEDIN_BUDDY_EVASION_LEVEL` and
+  `LINKEDIN_BUDDY_EVASION_DIAGNOSTICS` when the server starts
 - enabling diagnostics affects the run log, not the MCP tool schema
 
 See `../../docs/evasion.md` for the JSON path reference, configuration model,
@@ -71,7 +71,7 @@ for message and post composition, so it stays CLI-only.
 Use the CLI for Tier 3:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin test live --write-validation --account secondary
+npm exec -w @linkedin-buddy/cli -- linkedin test live --write-validation --account secondary
 ```
 
 See `../../docs/write-validation.md` for the full Tier 3 guide.

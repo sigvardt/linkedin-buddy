@@ -13,8 +13,8 @@ import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
 import type { ConfirmFailureArtifactConfig } from "./config.js";
 import type { AssistantDatabase } from "./db/database.js";
 import {
-  LinkedInAssistantError,
-  asLinkedInAssistantError
+  LinkedInBuddyError,
+  asLinkedInBuddyError
 } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
@@ -733,7 +733,7 @@ function isAbsoluteUrl(value: string): boolean {
 function resolveThreadUrl(thread: string): string {
   const trimmedThread = thread.trim();
   if (!trimmedThread) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "Thread identifier is required."
     );
@@ -743,7 +743,7 @@ function resolveThreadUrl(thread: string): string {
     const parsedUrl = new URL(trimmedThread);
     const threadId = parseThreadIdFromUrl(parsedUrl.toString());
     if (!threadId) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "Thread URL must point to /messaging/thread/.",
         { thread: trimmedThread }
@@ -838,7 +838,7 @@ function normalizeRecipientTargets(values: string[]): string[] {
     }
 
     if (!isLikelyProfileTarget(normalizedValue)) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "Recipients must be LinkedIn profile URLs, /in/ paths, or vanity names. Use linkedin.inbox.search_recipients to resolve free-text names.",
         {
@@ -860,14 +860,14 @@ function normalizeRecipientTargets(values: string[]): string[] {
   }
 
   if (normalizedTargets.length === 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "At least one recipient is required."
     );
   }
 
   if (normalizedTargets.length > MAX_RECIPIENTS_PER_ACTION) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `Recipients must contain no more than ${MAX_RECIPIENTS_PER_ACTION} entries.`,
       {
@@ -899,7 +899,7 @@ function resolveMessageIndex(
   requestedIndex: number | undefined
 ): number {
   if (messages.length === 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "Thread reactions require at least one message in the thread."
     );
@@ -910,7 +910,7 @@ function resolveMessageIndex(
   }
 
   if (!Number.isInteger(requestedIndex) || requestedIndex < 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "messageIndex must be a non-negative integer.",
       {
@@ -920,7 +920,7 @@ function resolveMessageIndex(
   }
 
   if (requestedIndex >= messages.length) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `messageIndex must be between 0 and ${messages.length - 1}.`,
       {
@@ -968,7 +968,7 @@ function parsePreparedThreadMessageTarget(
   const value = source[key];
   const record = asRecord(value);
   if (!record) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `Prepared action ${actionId} is missing ${location}.${key}.`,
       {
@@ -981,7 +981,7 @@ function parsePreparedThreadMessageTarget(
 
   const indexValue = record.index;
   if (typeof indexValue !== "number" || !Number.isInteger(indexValue) || indexValue < 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `Prepared action ${actionId} has invalid ${location}.${key}.index.`,
       {
@@ -1094,7 +1094,7 @@ function getRequiredRecordStringField(
     return value.trim();
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `Prepared action ${actionId} is missing ${location}.${key}.`,
     {
@@ -1120,7 +1120,7 @@ function parsePreparedRecipient(
 ): LinkedInInboxRecipient {
   const record = asRecord(value);
   if (!record) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `Prepared action ${actionId} has invalid ${location}.`,
       {
@@ -1149,7 +1149,7 @@ function getRequiredPreparedRecipients(
 ): LinkedInInboxRecipient[] {
   const value = source[key];
   if (!Array.isArray(value) || value.length === 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `Prepared action ${actionId} is missing ${location}.${key}.`,
       {
@@ -1195,7 +1195,7 @@ function getRequiredStringField(
     return value.trim();
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `Prepared action ${actionId} is missing ${location}.${key}.`,
     {
@@ -1221,25 +1221,25 @@ function toAutomationError(
   error: unknown,
   message: string,
   details: Record<string, unknown>
-): LinkedInAssistantError {
-  if (error instanceof LinkedInAssistantError) {
+): LinkedInBuddyError {
+  if (error instanceof LinkedInBuddyError) {
     return error;
   }
 
   if (error instanceof playwrightErrors.TimeoutError) {
-    return new LinkedInAssistantError("TIMEOUT", message, details, { cause: error });
+    return new LinkedInBuddyError("TIMEOUT", message, details, { cause: error });
   }
 
   if (
     error instanceof Error &&
     /(net::|ERR_|ECONN|ENOTFOUND|EAI_AGAIN|socket hang up)/i.test(error.message)
   ) {
-    return new LinkedInAssistantError("NETWORK_ERROR", message, details, {
+    return new LinkedInBuddyError("NETWORK_ERROR", message, details, {
       cause: error
     });
   }
 
-  return asLinkedInAssistantError(error, "UNKNOWN", message);
+  return asLinkedInBuddyError(error, "UNKNOWN", message);
 }
 
 function formatRateLimitState(
@@ -1280,7 +1280,7 @@ async function waitForThreadSurface(page: Page): Promise<void> {
     }
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "UI_CHANGED_SELECTOR_FAILED",
     "Could not locate LinkedIn thread surface.",
     {
@@ -1558,7 +1558,7 @@ async function extractThreadDetail(
   );
 
   if (!snapshot.thread_id || !snapshot.thread_url) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
       "Could not resolve thread details from the current LinkedIn page.",
       { current_url: page.url() }
@@ -1704,7 +1704,7 @@ async function findVisibleLocatorOrThrow(
     return visibleLocator;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "UI_CHANGED_SELECTOR_FAILED",
     `Could not locate LinkedIn selector group "${selectorKey}".`,
     {
@@ -1870,7 +1870,7 @@ async function findThreadMessageLocator(
   target: LinkedInThreadMessageTarget,
   artifactPaths: string[]
 ): Promise<{ locator: Locator; key: string }> {
-  const markerAttribute = "data-linkedin-assistant-target-message";
+  const markerAttribute = "data-linkedin-buddy-target-message";
   const targetMetadata = await page.evaluate(
     ({ attributeName, author, index, textSnippet }) => {
       const normalize = (value: string | null | undefined): string =>
@@ -1945,7 +1945,7 @@ async function findThreadMessageLocator(
   );
 
   if (!targetMetadata.ok) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "Prepared reaction target no longer matches the current thread message list.",
       {
@@ -1956,7 +1956,7 @@ async function findThreadMessageLocator(
   }
 
   if (!targetMetadata.authorMatches || !targetMetadata.textMatches) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "Prepared reaction target no longer matches the selected thread message.",
       {
@@ -1974,7 +1974,7 @@ async function findThreadMessageLocator(
   const locator = page.locator(`[${markerAttribute}='true']`).first();
   const visible = await locator.isVisible().catch(() => false);
   if (!visible) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UI_CHANGED_SELECTOR_FAILED",
       'Could not resolve the prepared thread message in the current LinkedIn thread.',
       {
@@ -2564,7 +2564,7 @@ async function selectRecipientsInComposer(input: {
     const remainingValue = normalizeText(await readEditableValue(recipientInput.locator));
 
     if (!chipVisible && remainingValue.toLowerCase() === recipient.full_name.toLowerCase()) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "TARGET_NOT_FOUND",
         `Could not resolve recipient "${recipient.full_name}" in the LinkedIn composer.`,
         {
@@ -2680,7 +2680,7 @@ function validateThreadTarget(
 ): void {
   const expectedThreadId = getOptionalStringField(action.target, "thread_id");
   if (expectedThreadId && expectedThreadId !== threadDetail.thread_id) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "Thread ID mismatch while confirming prepared send_message action.",
       {
@@ -2701,7 +2701,7 @@ function validateThreadTarget(
     expectedParticipantName &&
     !threadDetail.title.toLowerCase().includes(expectedParticipantName.toLowerCase())
   ) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "Thread participant validation failed before sending message.",
       {
@@ -2820,7 +2820,7 @@ async function executeThreadReaction(input: {
       reactionButton.locator,
       input.runtime.selectorLocale
     );
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UNKNOWN",
       "Message reaction action could not be verified on the target thread.",
       {
@@ -2890,7 +2890,7 @@ async function executeThreadMenuMutation(input: {
   }
 
   if (!verified) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UNKNOWN",
       `Thread action ${input.actionType} could not be verified.`,
       {
@@ -2926,7 +2926,7 @@ export class LinkedInInboxService {
       });
       const resolvedRecipient = toInboxRecipientFromProfile(profile);
       if (!resolvedRecipient.full_name || !resolvedRecipient.profile_url) {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "TARGET_NOT_FOUND",
           `Could not resolve LinkedIn recipient "${recipientTarget}".`,
           {
@@ -2946,7 +2946,7 @@ export class LinkedInInboxService {
     }
 
     if (resolvedRecipients.length === 0) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "TARGET_NOT_FOUND",
         "Could not resolve any LinkedIn recipients.",
         {
@@ -2967,7 +2967,7 @@ export class LinkedInInboxService {
     const limit = input.limit ?? 10;
 
     if (!query) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "query is required."
       );
@@ -2982,7 +2982,7 @@ export class LinkedInInboxService {
       });
 
       if (search.category !== "people") {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "UNKNOWN",
           "Expected LinkedIn people search results for recipient search.",
           {
@@ -3104,7 +3104,7 @@ export class LinkedInInboxService {
     const text = normalizeText(input.text);
 
     if (!text) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "Reply text must not be empty."
       );
@@ -3202,7 +3202,7 @@ export class LinkedInInboxService {
     const text = normalizeText(input.text);
 
     if (!text) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "Message text must not be empty."
       );
@@ -3284,7 +3284,7 @@ export class LinkedInInboxService {
       );
 
       if (recipientsToAdd.length === 0) {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
           "All requested recipients are already present in the thread.",
           {
@@ -3444,7 +3444,7 @@ export class LinkedInInboxService {
           const artifactPaths: string[] = [];
           const rateLimitState = this.runtime.rateLimiter.consume(input.rateLimitConfig);
           if (!rateLimitState.allowed) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "RATE_LIMITED",
               `LinkedIn ${input.actionType} is rate limited for the current window.`,
               {
@@ -3652,7 +3652,7 @@ class SendMessageActionExecutor
               SEND_MESSAGE_RATE_LIMIT_CONFIG
             );
             if (!rateLimitState.allowed) {
-              throw new LinkedInAssistantError(
+              throw new LinkedInBuddyError(
                 "RATE_LIMITED",
                 "LinkedIn send_message confirm is rate limited for the current window.",
                 {
@@ -3762,7 +3762,7 @@ class SendNewThreadActionExecutor
               SEND_MESSAGE_RATE_LIMIT_CONFIG
             );
             if (!rateLimitState.allowed) {
-              throw new LinkedInAssistantError(
+              throw new LinkedInBuddyError(
                 "RATE_LIMITED",
                 "LinkedIn new-thread send confirm is rate limited for the current window.",
                 {
@@ -3896,7 +3896,7 @@ class AddRecipientsActionExecutor
               ADD_RECIPIENTS_RATE_LIMIT_CONFIG
             );
             if (!rateLimitState.allowed) {
-              throw new LinkedInAssistantError(
+              throw new LinkedInBuddyError(
                 "RATE_LIMITED",
                 "LinkedIn add_recipients confirm is rate limited for the current window.",
                 {
@@ -4028,7 +4028,7 @@ class ReactMessageActionExecutor
               REACT_MESSAGE_RATE_LIMIT_CONFIG
             );
             if (!rateLimitState.allowed) {
-              throw new LinkedInAssistantError(
+              throw new LinkedInBuddyError(
                 "RATE_LIMITED",
                 "LinkedIn inbox reactions are rate limited for the current window.",
                 {

@@ -1,11 +1,11 @@
 import {
   LINKEDIN_WRITE_VALIDATION_ACTIONS,
   type JsonLogEntry,
-  type LinkedInAssistantErrorPayload,
+  type LinkedInBuddyErrorPayload,
   type WriteValidationActionResult,
   type WriteValidationReport,
   type WriteValidationResultStatus
-} from "@linkedin-assistant/core";
+} from "@linkedin-buddy/core";
 
 /** Output modes supported by the Tier 3 CLI formatter. */
 export type WriteValidationOutputMode = "human" | "json";
@@ -413,7 +413,7 @@ function buildMissingTargetSuggestion(
 }
 
 function formatWriteValidationSuggestion(
-  error: LinkedInAssistantErrorPayload
+  error: LinkedInBuddyErrorPayload
 ): string {
   const sessionName = readSessionName(error.details) ?? "secondary-session";
   const accountId = readAccountId(error.details) ?? "secondary";
@@ -718,7 +718,7 @@ export function formatWriteValidationReport(
 
 /** Formats a structured write-validation failure into human-readable CLI guidance. */
 export function formatWriteValidationError(
-  error: LinkedInAssistantErrorPayload,
+  error: LinkedInBuddyErrorPayload,
   options: FormatWriteValidationErrorOptions = {}
 ): string {
   const color = options.color === true;

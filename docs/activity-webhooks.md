@@ -27,7 +27,7 @@ Use this guide when you need to:
 Create a watch for LinkedIn notifications:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin activity watch add \
+npm exec -w @linkedin-buddy/cli -- linkedin activity watch add \
   --profile default \
   --kind notifications \
   --interval-seconds 600
@@ -36,7 +36,7 @@ npm exec -w @linkedin-assistant/cli -- linkedin activity watch add \
 Attach a webhook receiver:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin activity webhook add \
+npm exec -w @linkedin-buddy/cli -- linkedin activity webhook add \
   --watch <watch-id> \
   --url https://example.com/hooks/linkedin
 ```
@@ -44,17 +44,17 @@ npm exec -w @linkedin-assistant/cli -- linkedin activity webhook add \
 Poll immediately and inspect history:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin activity run-once --profile default
-npm exec -w @linkedin-assistant/cli -- linkedin activity events --profile default --limit 20
-npm exec -w @linkedin-assistant/cli -- linkedin activity deliveries --profile default --limit 20
+npm exec -w @linkedin-buddy/cli -- linkedin activity run-once --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin activity events --profile default --limit 20
+npm exec -w @linkedin-buddy/cli -- linkedin activity deliveries --profile default --limit 20
 ```
 
 Start the local daemon when you want background polling:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin activity start --profile default
-npm exec -w @linkedin-assistant/cli -- linkedin activity status --profile default
-npm exec -w @linkedin-assistant/cli -- linkedin activity stop --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin activity start --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin activity status --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin activity stop --profile default
 ```
 
 Notes:
@@ -81,7 +81,7 @@ Scheduling rules:
 - cron supports numbers, ranges, lists, and step values
 - day-of-week accepts `0` or `7` for Sunday
 - cron evaluation uses the **local time zone of the machine running the CLI**
-- the effective minimum interval is `max(kind minimum, LINKEDIN_ASSISTANT_ACTIVITY_MIN_POLL_INTERVAL_SECONDS)`
+- the effective minimum interval is `max(kind minimum, LINKEDIN_BUDDY_ACTIVITY_MIN_POLL_INTERVAL_SECONDS)`
 
 You can pass the target object inline with `--target '<json>'` or from disk with
 `--target-file path/to/target.json`.
@@ -100,20 +100,20 @@ Example targets:
 
 ```bash
 # Only unread inbox threads, and inspect up to 15 messages per changed thread
-npm exec -w @linkedin-assistant/cli -- linkedin activity watch add \
+npm exec -w @linkedin-buddy/cli -- linkedin activity watch add \
   --profile default \
   --kind inbox_threads \
   --target '{"unreadOnly":true,"limit":10,"messageLimit":15}'
 
 # Watch one profile on a daily cron
-npm exec -w @linkedin-assistant/cli -- linkedin activity watch add \
+npm exec -w @linkedin-buddy/cli -- linkedin activity watch add \
   --profile default \
   --kind profile_watch \
   --cron '0 9 * * *' \
   --target '{"target":"https://www.linkedin.com/in/example-person/"}'
 
 # Only track sent invitations
-npm exec -w @linkedin-assistant/cli -- linkedin activity watch add \
+npm exec -w @linkedin-buddy/cli -- linkedin activity watch add \
   --profile default \
   --kind pending_invitations \
   --target '{"direction":"sent"}'
@@ -136,7 +136,7 @@ npm exec -w @linkedin-assistant/cli -- linkedin activity watch add \
 ### Add a watch
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin activity watch add \
+npm exec -w @linkedin-buddy/cli -- linkedin activity watch add \
   --profile default \
   --kind notifications \
   --interval-seconds 900
@@ -151,13 +151,13 @@ watch record.
 List all watches for a profile:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin activity watch list --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin activity watch list --profile default
 ```
 
 Filter by status:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin activity watch list \
+npm exec -w @linkedin-buddy/cli -- linkedin activity watch list \
   --profile default \
   --status active
 ```
@@ -165,15 +165,15 @@ npm exec -w @linkedin-assistant/cli -- linkedin activity watch list \
 Pause, resume, or remove one watch by id:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin activity watch pause <watch-id>
-npm exec -w @linkedin-assistant/cli -- linkedin activity watch resume <watch-id>
-npm exec -w @linkedin-assistant/cli -- linkedin activity watch remove <watch-id>
+npm exec -w @linkedin-buddy/cli -- linkedin activity watch pause <watch-id>
+npm exec -w @linkedin-buddy/cli -- linkedin activity watch resume <watch-id>
+npm exec -w @linkedin-buddy/cli -- linkedin activity watch remove <watch-id>
 ```
 
 Important behavior:
 
 - `resume` makes the watch **due immediately** by setting `next_poll_at` to now
-- create and resume enforce `LINKEDIN_ASSISTANT_ACTIVITY_MAX_CONCURRENT_WATCHES`
+- create and resume enforce `LINKEDIN_BUDDY_ACTIVITY_MAX_CONCURRENT_WATCHES`
 - removing a watch deletes its entity state, events, subscriptions, and
   delivery attempts through SQLite foreign-key cascades
 
@@ -182,7 +182,7 @@ Important behavior:
 Create a subscription:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin activity webhook add \
+npm exec -w @linkedin-buddy/cli -- linkedin activity webhook add \
   --watch <watch-id> \
   --url https://example.com/hooks/linkedin \
   --event linkedin.notifications.item.created \
@@ -203,13 +203,13 @@ secret is stored locally in SQLite so later delivery attempts can be signed.
 List subscriptions:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin activity webhook list --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin activity webhook list --profile default
 ```
 
 Filter by watch or status:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin activity webhook list \
+npm exec -w @linkedin-buddy/cli -- linkedin activity webhook list \
   --profile default \
   --watch <watch-id> \
   --status active
@@ -218,9 +218,9 @@ npm exec -w @linkedin-assistant/cli -- linkedin activity webhook list \
 Pause, resume, or remove one subscription:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin activity webhook pause <subscription-id>
-npm exec -w @linkedin-assistant/cli -- linkedin activity webhook resume <subscription-id>
-npm exec -w @linkedin-assistant/cli -- linkedin activity webhook remove <subscription-id>
+npm exec -w @linkedin-buddy/cli -- linkedin activity webhook pause <subscription-id>
+npm exec -w @linkedin-buddy/cli -- linkedin activity webhook resume <subscription-id>
+npm exec -w @linkedin-buddy/cli -- linkedin activity webhook remove <subscription-id>
 ```
 
 ### Poll now
@@ -229,8 +229,8 @@ There is no separate `activity watch poll` subcommand. To poll the due watch set
 for a profile immediately, use `run-once` or its `tick` alias:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin activity run-once --profile default
-npm exec -w @linkedin-assistant/cli -- linkedin activity tick --profile default --json
+npm exec -w @linkedin-buddy/cli -- linkedin activity run-once --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin activity tick --profile default --json
 ```
 
 One tick always processes **webhook deliveries first**, then claims due watches
@@ -249,7 +249,7 @@ is dead-lettered.
 Use event history to see what the poller detected:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin activity events \
+npm exec -w @linkedin-buddy/cli -- linkedin activity events \
   --profile default \
   --watch <watch-id> \
   --limit 20
@@ -258,7 +258,7 @@ npm exec -w @linkedin-assistant/cli -- linkedin activity events \
 Use delivery history to inspect receiver outcomes and retry state:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin activity deliveries \
+npm exec -w @linkedin-buddy/cli -- linkedin activity deliveries \
   --profile default \
   --subscription <subscription-id> \
   --status retrying \
@@ -282,19 +282,19 @@ History ordering is newest first by `created_at`.
 Start the detached daemon:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin activity start --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin activity start --profile default
 ```
 
 Inspect daemon health, queue counts, config, and file paths:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin activity status --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin activity status --profile default
 ```
 
 Stop the daemon:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin activity stop --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin activity stop --profile default
 ```
 
 Status and stop behavior:
@@ -343,15 +343,15 @@ single successful tick resets the loop-failure counter back to zero.
 ## Webhook delivery contract
 
 Each webhook is sent as an `HTTP POST` with `content-type: application/json`
-and `user-agent: linkedin-assistant-webhooks/1`.
+and `user-agent: linkedin-buddy-webhooks/1`.
 
 Headers:
 
-- `x-linkedin-assistant-event`
-- `x-linkedin-assistant-delivery`
-- `x-linkedin-assistant-retry-count`
-- `x-linkedin-assistant-timestamp`
-- `x-linkedin-assistant-signature-256`
+- `x-linkedin-buddy-event`
+- `x-linkedin-buddy-delivery`
+- `x-linkedin-buddy-retry-count`
+- `x-linkedin-buddy-timestamp`
+- `x-linkedin-buddy-signature-256`
 
 Signature format:
 
@@ -412,20 +412,20 @@ Activity config is resolved in `packages/core/src/config.ts`.
 
 | Environment variable | Default | Purpose |
 | --- | --- | --- |
-| `LINKEDIN_ASSISTANT_ACTIVITY_ENABLED` | `true` | Master on/off switch for activity polling and delivery |
-| `LINKEDIN_ASSISTANT_ACTIVITY_DAEMON_POLL_INTERVAL_SECONDS` | `60` | Background daemon wake-up interval |
-| `LINKEDIN_ASSISTANT_ACTIVITY_MAX_WATCHES_PER_TICK` | `4` | Maximum due watches claimed in one tick |
-| `LINKEDIN_ASSISTANT_ACTIVITY_MAX_CONCURRENT_WATCHES` | `20` | Maximum active watches per profile |
-| `LINKEDIN_ASSISTANT_ACTIVITY_WATCH_LEASE_SECONDS` | `120` | Lease TTL for claimed watches |
-| `LINKEDIN_ASSISTANT_ACTIVITY_MIN_POLL_INTERVAL_SECONDS` | `60` | Global lower bound for watch interval schedules |
-| `LINKEDIN_ASSISTANT_ACTIVITY_MAX_DELIVERIES_PER_TICK` | `12` | Maximum pending deliveries claimed in one tick |
-| `LINKEDIN_ASSISTANT_ACTIVITY_MAX_EVENT_QUEUE_DEPTH` | `250` | Cap on queued `pending` + `leased` deliveries before watch polling backs off |
-| `LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_LEASE_SECONDS` | `60` | Lease TTL for claimed delivery attempts |
-| `LINKEDIN_ASSISTANT_ACTIVITY_DELIVERY_TIMEOUT_SECONDS` | `10` | Timeout for one outbound webhook POST |
-| `LINKEDIN_ASSISTANT_ACTIVITY_CLOCK_SKEW_SECONDS` | `5` | Clock-skew allowance when reclaiming expired leases |
-| `LINKEDIN_ASSISTANT_ACTIVITY_MAX_DELIVERY_ATTEMPTS` | `6` | Default retry ceiling for newly created webhook subscriptions |
-| `LINKEDIN_ASSISTANT_ACTIVITY_INITIAL_BACKOFF_SECONDS` | `60` | Initial exponential backoff for retryable deliveries and watch poll failures |
-| `LINKEDIN_ASSISTANT_ACTIVITY_MAX_BACKOFF_SECONDS` | `86400` | Maximum backoff cap for retryable deliveries and watch poll failures |
+| `LINKEDIN_BUDDY_ACTIVITY_ENABLED` | `true` | Master on/off switch for activity polling and delivery |
+| `LINKEDIN_BUDDY_ACTIVITY_DAEMON_POLL_INTERVAL_SECONDS` | `60` | Background daemon wake-up interval |
+| `LINKEDIN_BUDDY_ACTIVITY_MAX_WATCHES_PER_TICK` | `4` | Maximum due watches claimed in one tick |
+| `LINKEDIN_BUDDY_ACTIVITY_MAX_CONCURRENT_WATCHES` | `20` | Maximum active watches per profile |
+| `LINKEDIN_BUDDY_ACTIVITY_WATCH_LEASE_SECONDS` | `120` | Lease TTL for claimed watches |
+| `LINKEDIN_BUDDY_ACTIVITY_MIN_POLL_INTERVAL_SECONDS` | `60` | Global lower bound for watch interval schedules |
+| `LINKEDIN_BUDDY_ACTIVITY_MAX_DELIVERIES_PER_TICK` | `12` | Maximum pending deliveries claimed in one tick |
+| `LINKEDIN_BUDDY_ACTIVITY_MAX_EVENT_QUEUE_DEPTH` | `250` | Cap on queued `pending` + `leased` deliveries before watch polling backs off |
+| `LINKEDIN_BUDDY_ACTIVITY_DELIVERY_LEASE_SECONDS` | `60` | Lease TTL for claimed delivery attempts |
+| `LINKEDIN_BUDDY_ACTIVITY_DELIVERY_TIMEOUT_SECONDS` | `10` | Timeout for one outbound webhook POST |
+| `LINKEDIN_BUDDY_ACTIVITY_CLOCK_SKEW_SECONDS` | `5` | Clock-skew allowance when reclaiming expired leases |
+| `LINKEDIN_BUDDY_ACTIVITY_MAX_DELIVERY_ATTEMPTS` | `6` | Default retry ceiling for newly created webhook subscriptions |
+| `LINKEDIN_BUDDY_ACTIVITY_INITIAL_BACKOFF_SECONDS` | `60` | Initial exponential backoff for retryable deliveries and watch poll failures |
+| `LINKEDIN_BUDDY_ACTIVITY_MAX_BACKOFF_SECONDS` | `86400` | Maximum backoff cap for retryable deliveries and watch poll failures |
 
 Validation rules worth knowing:
 
@@ -438,26 +438,26 @@ Validation rules worth knowing:
 Conservative shell example:
 
 ```bash
-export LINKEDIN_ASSISTANT_ACTIVITY_DAEMON_POLL_INTERVAL_SECONDS=120
-export LINKEDIN_ASSISTANT_ACTIVITY_MAX_WATCHES_PER_TICK=2
-export LINKEDIN_ASSISTANT_ACTIVITY_MAX_DELIVERIES_PER_TICK=6
-export LINKEDIN_ASSISTANT_ACTIVITY_INITIAL_BACKOFF_SECONDS=120
+export LINKEDIN_BUDDY_ACTIVITY_DAEMON_POLL_INTERVAL_SECONDS=120
+export LINKEDIN_BUDDY_ACTIVITY_MAX_WATCHES_PER_TICK=2
+export LINKEDIN_BUDDY_ACTIVITY_MAX_DELIVERIES_PER_TICK=6
+export LINKEDIN_BUDDY_ACTIVITY_INITIAL_BACKOFF_SECONDS=120
 
-npm exec -w @linkedin-assistant/cli -- linkedin activity start --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin activity start --profile default
 ```
 
 ## Files and storage
 
 By default, activity daemon files live under:
 
-- `~/.linkedin-assistant/linkedin-owa-agentools/activity/*.pid`
-- `~/.linkedin-assistant/linkedin-owa-agentools/activity/*.state.json`
-- `~/.linkedin-assistant/linkedin-owa-agentools/activity/*.events.jsonl`
+- `~/.linkedin-buddy/linkedin-buddy/activity/*.pid`
+- `~/.linkedin-buddy/linkedin-buddy/activity/*.state.json`
+- `~/.linkedin-buddy/linkedin-buddy/activity/*.events.jsonl`
 
 Durable watch, entity-state, event, subscription, and delivery records live in
 the shared SQLite database at:
 
-- `~/.linkedin-assistant/linkedin-owa-agentools/state.sqlite`
+- `~/.linkedin-buddy/linkedin-buddy/state.sqlite`
 
 See `docs/activity-webhooks-architecture.md` for the actual schema, table
 relationships, and polling-engine architecture.
@@ -467,17 +467,17 @@ relationships, and polling-engine architecture.
 ### Validate a new receiver before starting the daemon
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin activity watch add \
+npm exec -w @linkedin-buddy/cli -- linkedin activity watch add \
   --profile default \
   --kind notifications \
   --interval-seconds 900
 
-npm exec -w @linkedin-assistant/cli -- linkedin activity webhook add \
+npm exec -w @linkedin-buddy/cli -- linkedin activity webhook add \
   --watch <watch-id> \
   --url http://127.0.0.1:8787/hooks/linkedin
 
-npm exec -w @linkedin-assistant/cli -- linkedin activity run-once --profile default
-npm exec -w @linkedin-assistant/cli -- linkedin activity deliveries --profile default --limit 10
+npm exec -w @linkedin-buddy/cli -- linkedin activity run-once --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin activity deliveries --profile default --limit 10
 ```
 
 This is the safest way to verify endpoint reachability, signatures, and payload
@@ -486,19 +486,19 @@ shape before background polling is left running.
 ### Pause delivery during receiver maintenance
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin activity webhook pause <subscription-id>
-npm exec -w @linkedin-assistant/cli -- linkedin activity webhook list --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin activity webhook pause <subscription-id>
+npm exec -w @linkedin-buddy/cli -- linkedin activity webhook list --profile default
 
 # ...fix the receiver...
 
-npm exec -w @linkedin-assistant/cli -- linkedin activity webhook resume <subscription-id>
-npm exec -w @linkedin-assistant/cli -- linkedin activity tick --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin activity webhook resume <subscription-id>
+npm exec -w @linkedin-buddy/cli -- linkedin activity tick --profile default
 ```
 
 ### Track a specific profile daily
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin activity watch add \
+npm exec -w @linkedin-buddy/cli -- linkedin activity watch add \
   --profile default \
   --kind profile_watch \
   --cron '0 8 * * *' \
@@ -508,11 +508,11 @@ npm exec -w @linkedin-assistant/cli -- linkedin activity watch add \
 ### Use one watch with multiple consumers
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin activity webhook add \
+npm exec -w @linkedin-buddy/cli -- linkedin activity webhook add \
   --watch <watch-id> \
   --url https://example.com/hooks/ops
 
-npm exec -w @linkedin-assistant/cli -- linkedin activity webhook add \
+npm exec -w @linkedin-buddy/cli -- linkedin activity webhook add \
   --watch <watch-id> \
   --url https://example.com/hooks/analytics \
   --event linkedin.notifications.item.created
