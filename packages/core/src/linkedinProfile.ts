@@ -512,8 +512,12 @@ export const PROFILE_GLOBAL_ADD_SECTION_CONTROL = {
 export const PROFILE_TOP_CARD_HEADING_SELECTORS = [
   "h1.text-heading-xlarge",
   "h1[class*='text-heading']",
+  "h2.text-heading-xlarge",
+  "h2[class*='text-heading']",
   "h2",
-  "h1"
+  "h1",
+  "[role='heading'][aria-level='1']",
+  "[role='heading'][aria-level='2']"
 ] as const;
 
 export const PROFILE_TOP_CARD_STRUCTURAL_SELECTORS = [
@@ -664,6 +668,20 @@ export const PROFILE_MEDIA_STRUCTURAL_SELECTORS = {
     ".profile-topcard-background-image-edit__icon button",
     ".profile-topcard-background-image-edit__button button",
     "[id^='cover-photo-dropdown-button-trigger-']"
+  ]
+} as const;
+
+const PROFILE_DIALOG_ROOT_SELECTOR = "dialog[data-testid='dialog'], [role='dialog'], dialog";
+
+export const PROFILE_INTRO_EDITOR_SURFACE_SELECTORS = {
+  topCardHeadings: PROFILE_TOP_CARD_HEADING_SELECTORS,
+  dialogRootSelector: PROFILE_DIALOG_ROOT_SELECTOR,
+  pageRootSelectors: [
+    "dialog[data-testid='dialog'], dialog",
+    "[data-testid='lazy-column']",
+    "form",
+    "main",
+    "body"
   ]
 } as const;
 
@@ -3178,13 +3196,13 @@ async function canRecoverOwnProfileNavigationTimeout(page: Page): Promise<boolea
 }
 
 async function waitForVisibleDialog(page: Page): Promise<Locator> {
-  const dialog = page.locator("[role='dialog']").last();
+  const dialog = page.locator(PROFILE_DIALOG_ROOT_SELECTOR).last();
   await dialog.waitFor({ state: "visible", timeout: 10_000 });
   return dialog;
 }
 
 async function resolveLatestVisibleDialog(page: Page): Promise<Locator | null> {
-  const dialogs = page.locator("[role='dialog']");
+  const dialogs = page.locator(PROFILE_DIALOG_ROOT_SELECTOR);
   const dialogCount = await dialogs.count().catch(() => 0);
 
   for (let index = dialogCount - 1; index >= 0; index -= 1) {
@@ -3211,32 +3229,13 @@ async function resolveVisibleProfileIntroEditPage(page: Page): Promise<Locator |
     "[role='textbox']",
     "[contenteditable='true']"
   ].join(", ");
-  const readyCandidates: LocatorCandidate[] = [
-    {
-      key: "intro-edit-page-lazy-column",
-      locator: page.locator("[data-testid='lazy-column']").filter({
+  const readyCandidates: LocatorCandidate[] =
+    PROFILE_INTRO_EDITOR_SURFACE_SELECTORS.pageRootSelectors.map((selector, index) => ({
+      key: `intro-edit-page-root-${index + 1}`,
+      locator: page.locator(selector).filter({
         has: page.locator(fieldSelector)
       })
-    },
-    {
-      key: "intro-edit-page-form",
-      locator: page.locator("form").filter({
-        has: page.locator(fieldSelector)
-      })
-    },
-    {
-      key: "intro-edit-page-main",
-      locator: page.locator("main").filter({
-        has: page.locator(fieldSelector)
-      })
-    },
-    {
-      key: "intro-edit-page-body",
-      locator: page.locator("body").filter({
-        has: page.locator(fieldSelector)
-      })
-    }
-  ];
+    }));
   const ready = await findFirstVisibleLocator(readyCandidates);
 
   return ready?.locator ?? null;
@@ -3343,7 +3342,16 @@ async function getTopCardRoot(page: Page): Promise<Locator> {
   const headingLocator = page.locator(
     PROFILE_TOP_CARD_HEADING_SELECTORS.join(", ")
   );
+  const introEditLocator = page.locator(buildProfileIntroEditHrefSelector());
   const candidateRoots: LocatorCandidate[] = [
+    {
+      key: "top-card-current-intro-edit-with-heading",
+      locator: page.locator("main section, main div").filter({
+        has: introEditLocator
+      }).filter({
+        has: headingLocator
+      })
+    },
     {
       key: "top-card-artdeco-card-with-heading",
       locator: page
