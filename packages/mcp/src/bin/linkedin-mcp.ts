@@ -131,7 +131,13 @@ import {
   LINKEDIN_EVENTS_PREPARE_RSVP_TOOL,
   LINKEDIN_EVENTS_SEARCH_TOOL,
   LINKEDIN_EVENTS_VIEW_TOOL,
+  LINKEDIN_JOBS_ALERTS_CREATE_TOOL,
+  LINKEDIN_JOBS_ALERTS_LIST_TOOL,
+  LINKEDIN_JOBS_ALERTS_REMOVE_TOOL,
+  LINKEDIN_JOBS_PREPARE_EASY_APPLY_TOOL,
   LINKEDIN_JOBS_SEARCH_TOOL,
+  LINKEDIN_JOBS_SAVE_TOOL,
+  LINKEDIN_JOBS_UNSAVE_TOOL,
   LINKEDIN_JOBS_VIEW_TOOL,
   LINKEDIN_NOTIFICATIONS_LIST_TOOL,
   LINKEDIN_ARTICLE_PREPARE_CREATE_TOOL,
@@ -2490,6 +2496,233 @@ async function handleJobsView(args: ToolArgs): Promise<ToolResult> {
       run_id: runtime.runId,
       profile_name: profileName,
       job
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleJobsSave(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const jobId = readRequiredString(args, "jobId");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.jobs.save.start", {
+      profileName,
+      jobId
+    });
+
+    const prepared = runtime.jobs.prepareSaveJob({
+      profileName,
+      jobId,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.jobs.save.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleJobsUnsave(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const jobId = readRequiredString(args, "jobId");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.jobs.unsave.start", {
+      profileName,
+      jobId
+    });
+
+    const prepared = runtime.jobs.prepareUnsaveJob({
+      profileName,
+      jobId,
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.jobs.unsave.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleJobsAlertsList(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const limit = readPositiveNumber(args, "limit", 20);
+
+    runtime.logger.log("info", "mcp.jobs.alerts.list.start", {
+      profileName,
+      limit
+    });
+
+    const result = await runtime.jobs.listJobAlerts({
+      profileName,
+      limit
+    });
+
+    runtime.logger.log("info", "mcp.jobs.alerts.list.done", {
+      profileName,
+      count: result.count
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...result
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleJobsAlertsCreate(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const query = readRequiredString(args, "query");
+    const location = readString(args, "location", "");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.jobs.alerts.create.start", {
+      profileName,
+      query,
+      location
+    });
+
+    const prepared = runtime.jobs.prepareCreateJobAlert({
+      profileName,
+      query,
+      ...(location ? { location } : {}),
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.jobs.alerts.create.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleJobsAlertsRemove(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const alertId = readString(args, "alertId", "");
+    const searchUrl = readString(args, "searchUrl", "");
+    const query = readString(args, "query", "");
+    const location = readString(args, "location", "");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.jobs.alerts.remove.start", {
+      profileName,
+      hasAlertId: alertId.length > 0,
+      hasSearchUrl: searchUrl.length > 0,
+      hasQuery: query.length > 0
+    });
+
+    const prepared = await runtime.jobs.prepareRemoveJobAlert({
+      profileName,
+      ...(alertId ? { alertId } : {}),
+      ...(searchUrl ? { searchUrl } : {}),
+      ...(query ? { query } : {}),
+      ...(location ? { location } : {}),
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.jobs.alerts.remove.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleJobsPrepareEasyApply(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const jobId = readRequiredString(args, "jobId");
+    const phoneNumber = readString(args, "phoneNumber", "");
+    const email = readString(args, "email", "");
+    const city = readString(args, "city", "");
+    const resumePath = readString(args, "resumePath", "");
+    const coverLetter = readString(args, "coverLetter", "");
+    const answers = readObject(args, "answers");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.jobs.easy_apply.start", {
+      profileName,
+      jobId,
+      hasResumePath: resumePath.length > 0,
+      hasAnswers: Boolean(answers)
+    });
+
+    const prepared = runtime.jobs.prepareEasyApply({
+      profileName,
+      jobId,
+      ...(phoneNumber ? { phoneNumber } : {}),
+      ...(email ? { email } : {}),
+      ...(city ? { city } : {}),
+      ...(resumePath ? { resumePath } : {}),
+      ...(coverLetter ? { coverLetter } : {}),
+      ...(answers ? { answers } : {}),
+      ...(operatorNote ? { operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "mcp.jobs.easy_apply.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared
     });
   } finally {
     runtime.close();
@@ -6728,6 +6961,191 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
         }
       },
       {
+        name: LINKEDIN_JOBS_SAVE_TOOL,
+        description:
+          "Prepare to save a LinkedIn job for later (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["jobId"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            jobId: {
+              type: "string",
+              description: "LinkedIn job ID."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_JOBS_UNSAVE_TOOL,
+        description:
+          "Prepare to unsave a LinkedIn job (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["jobId"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            jobId: {
+              type: "string",
+              description: "LinkedIn job ID."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_JOBS_ALERTS_LIST_TOOL,
+        description:
+          withSelectorAuditHint("List LinkedIn job alerts for the current account."),
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            limit: {
+              type: "number",
+              description: "Maximum number of alerts to return. Defaults to 20."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_JOBS_ALERTS_CREATE_TOOL,
+        description:
+          "Prepare to create a LinkedIn job alert from a search query (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["query"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            query: {
+              type: "string",
+              description: "Search keywords for the alert."
+            },
+            location: {
+              type: "string",
+              description: "Optional location filter for the alert."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_JOBS_ALERTS_REMOVE_TOOL,
+        description:
+          "Prepare to remove a LinkedIn job alert (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            alertId: {
+              type: "string",
+              description: "Alert id previously returned by linkedin.jobs.alerts.list."
+            },
+            searchUrl: {
+              type: "string",
+              description: "LinkedIn jobs search URL for the alert."
+            },
+            query: {
+              type: "string",
+              description: "Alert query if alertId or searchUrl are not available."
+            },
+            location: {
+              type: "string",
+              description: "Alert location if query is provided."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
+        name: LINKEDIN_JOBS_PREPARE_EASY_APPLY_TOOL,
+        description:
+          "Prepare a LinkedIn Easy Apply submission (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["jobId"],
+          properties: withCdpSchemaProperties({
+            profileName: {
+              type: "string",
+              description:
+                "Persistent Playwright profile name. Defaults to default."
+            },
+            jobId: {
+              type: "string",
+              description: "LinkedIn job ID."
+            },
+            phoneNumber: {
+              type: "string",
+              description: "Phone number value for Easy Apply forms."
+            },
+            email: {
+              type: "string",
+              description: "Email value for Easy Apply forms."
+            },
+            city: {
+              type: "string",
+              description: "City value for Easy Apply forms."
+            },
+            resumePath: {
+              type: "string",
+              description: "Absolute or relative path to the resume file to upload."
+            },
+            coverLetter: {
+              type: "string",
+              description: "Cover letter text for Easy Apply forms."
+            },
+            answers: {
+              type: "object",
+              description:
+                "Additional Easy Apply answers keyed by field label. Values may be strings, booleans, numbers, or string arrays."
+            },
+            operatorNote: {
+              type: "string",
+              description: "Internal note for audit."
+            }
+          })
+        }
+      },
+      {
         name: LINKEDIN_GROUPS_SEARCH_TOOL,
         description:
           withSelectorAuditHint(
@@ -7345,6 +7763,12 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
     handleNotificationPreferencesPrepareUpdate,
   [LINKEDIN_JOBS_SEARCH_TOOL]: handleJobsSearch,
   [LINKEDIN_JOBS_VIEW_TOOL]: handleJobsView,
+  [LINKEDIN_JOBS_SAVE_TOOL]: handleJobsSave,
+  [LINKEDIN_JOBS_UNSAVE_TOOL]: handleJobsUnsave,
+  [LINKEDIN_JOBS_ALERTS_LIST_TOOL]: handleJobsAlertsList,
+  [LINKEDIN_JOBS_ALERTS_CREATE_TOOL]: handleJobsAlertsCreate,
+  [LINKEDIN_JOBS_ALERTS_REMOVE_TOOL]: handleJobsAlertsRemove,
+  [LINKEDIN_JOBS_PREPARE_EASY_APPLY_TOOL]: handleJobsPrepareEasyApply,
   [LINKEDIN_GROUPS_SEARCH_TOOL]: handleGroupsSearch,
   [LINKEDIN_GROUPS_VIEW_TOOL]: handleGroupsView,
   [LINKEDIN_GROUPS_PREPARE_JOIN_TOOL]: handleGroupsPrepareJoin,

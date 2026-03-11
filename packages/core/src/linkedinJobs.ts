@@ -1,5 +1,10 @@
-import { type BrowserContext, type Page } from "playwright-core";
+import { existsSync, mkdirSync, statSync } from "node:fs";
+import path from "node:path";
+import { type BrowserContext, type Locator, type Page } from "playwright-core";
+import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
+import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
+import type { ConfirmFailureArtifactConfig } from "./config.js";
 import {
   LinkedInBuddyError,
   asLinkedInBuddyError
@@ -7,6 +12,13 @@ import {
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
+import type { RateLimiter, RateLimiterState } from "./rateLimiter.js";
+import type {
+  ActionExecutor,
+  ActionExecutorInput,
+  ActionExecutorResult,
+  TwoPhaseCommitService
+} from "./twoPhaseCommit.js";
 
 export interface LinkedInJobSearchResult {
   job_id: string;
@@ -35,6 +47,17 @@ export interface LinkedInJobPosting {
   is_remote: boolean;
 }
 
+export interface LinkedInJobAlert {
+  alert_id: string;
+  query: string;
+  location: string;
+  frequency: string;
+  search_url: string;
+  enabled: boolean;
+}
+
+export type LinkedInEasyApplyAnswerValue = string | boolean | number | string[];
+
 export interface SearchJobsInput {
   profileName?: string;
   query: string;
@@ -47,6 +70,51 @@ export interface ViewJobInput {
   jobId: string;
 }
 
+export interface PrepareSaveJobInput {
+  profileName?: string;
+  jobId: string;
+  operatorNote?: string;
+}
+
+export interface PrepareUnsaveJobInput {
+  profileName?: string;
+  jobId: string;
+  operatorNote?: string;
+}
+
+export interface ListJobAlertsInput {
+  profileName?: string;
+  limit?: number;
+}
+
+export interface PrepareCreateJobAlertInput {
+  profileName?: string;
+  query: string;
+  location?: string;
+  operatorNote?: string;
+}
+
+export interface PrepareRemoveJobAlertInput {
+  profileName?: string;
+  alertId?: string;
+  searchUrl?: string;
+  query?: string;
+  location?: string;
+  operatorNote?: string;
+}
+
+export interface PrepareEasyApplyInput {
+  profileName?: string;
+  jobId: string;
+  phoneNumber?: string;
+  email?: string;
+  city?: string;
+  resumePath?: string;
+  coverLetter?: string;
+  answers?: Record<string, unknown>;
+  operatorNote?: string;
+}
+
 export interface SearchJobsOutput {
   query: string;
   location: string;
@@ -54,22 +122,491 @@ export interface SearchJobsOutput {
   count: number;
 }
 
-export interface LinkedInJobsRuntime {
+export interface ListJobAlertsOutput {
+  alerts: LinkedInJobAlert[];
+  count: number;
+}
+
+export interface LinkedInJobsExecutorRuntime {
   auth: LinkedInAuthService;
   cdpUrl?: string | undefined;
   profileManager: ProfileManager;
   logger: JsonEventLogger;
+  rateLimiter: RateLimiter;
+  artifacts: ArtifactHelpers;
+  confirmFailureArtifacts: ConfirmFailureArtifactConfig;
+}
+
+export interface LinkedInJobsRuntime extends LinkedInJobsExecutorRuntime {
+  twoPhaseCommit: Pick<TwoPhaseCommitService<LinkedInJobsExecutorRuntime>, "prepare">;
+}
+
+export const SAVE_JOB_ACTION_TYPE = "jobs.save";
+export const UNSAVE_JOB_ACTION_TYPE = "jobs.unsave";
+export const CREATE_JOB_ALERT_ACTION_TYPE = "jobs.alerts.create";
+export const REMOVE_JOB_ALERT_ACTION_TYPE = "jobs.alerts.remove";
+export const EASY_APPLY_JOB_ACTION_TYPE = "jobs.easy_apply";
+
+const SAVE_JOB_RATE_LIMIT_CONFIG = {
+  counterKey: "linkedin.jobs.save",
+  windowSizeMs: 60 * 60 * 1000,
+  limit: 40
+} as const;
+
+const UNSAVE_JOB_RATE_LIMIT_CONFIG = {
+  counterKey: "linkedin.jobs.unsave",
+  windowSizeMs: 60 * 60 * 1000,
+  limit: 40
+} as const;
+
+const CREATE_JOB_ALERT_RATE_LIMIT_CONFIG = {
+  counterKey: "linkedin.jobs.alerts.create",
+  windowSizeMs: 60 * 60 * 1000,
+  limit: 30
+} as const;
+
+const REMOVE_JOB_ALERT_RATE_LIMIT_CONFIG = {
+  counterKey: "linkedin.jobs.alerts.remove",
+  windowSizeMs: 60 * 60 * 1000,
+  limit: 30
+} as const;
+
+const EASY_APPLY_RATE_LIMIT_CONFIG = {
+  counterKey: "linkedin.jobs.easy_apply",
+  windowSizeMs: 60 * 60 * 1000,
+  limit: 6
+} as const;
+
+const JOB_ALERTS_URL = "https://www.linkedin.com/jobs/job-alerts/";
+export const LINKEDIN_JOB_ALERTS_URL = JOB_ALERTS_URL;
+const EASY_APPLY_DIALOG_SELECTOR =
+  "[role='dialog'], .jobs-easy-apply-modal, .jobs-apply-modal";
+const EASY_APPLY_FIELD_ATTR = "data-linkedin-assistant-easy-apply-field";
+const EASY_APPLY_GROUP_ATTR = "data-linkedin-assistant-easy-apply-group";
+const EASY_APPLY_OPTION_ATTR = "data-linkedin-assistant-easy-apply-option";
+
+interface JobSearchSnapshot {
+  job_id: string;
+  title: string;
+  company: string;
+  location: string;
+  posted_at: string;
+  job_url: string;
+  salary_range: string;
+  employment_type: string;
+}
+
+interface JobDetailSnapshot {
+  job_id: string;
+  title: string;
+  company: string;
+  company_url: string;
+  location: string;
+  posted_at: string;
+  description: string;
+  salary_range: string;
+  employment_type: string;
+  job_url: string;
+  applicant_count: string;
+  seniority_level: string;
+  is_remote: boolean;
+}
+
+interface JobAlertSnapshot {
+  alert_id: string;
+  query: string;
+  location: string;
+  frequency: string;
+  search_url: string;
+  enabled: boolean;
+}
+
+type EasyApplyFieldKind =
+  | "text"
+  | "textarea"
+  | "select"
+  | "radio"
+  | "checkbox"
+  | "file";
+
+interface EasyApplyFieldSnapshot {
+  fieldId: string;
+  label: string;
+  labelKey: string;
+  kind: EasyApplyFieldKind;
+  required: boolean;
+  filled: boolean;
+  options: string[];
+  multiple: boolean;
+  accept: string;
+}
+
+interface EasyApplyDialogSnapshot {
+  visible: boolean;
+  title: string;
+  primaryActionLabel: string;
+  success: boolean;
+  fields: EasyApplyFieldSnapshot[];
+}
+
+interface ValidatedEasyApplyInput {
+  profileName: string;
+  jobId: string;
+  jobUrl: string;
+  phoneNumber?: string;
+  email?: string;
+  city?: string;
+  resumePath?: string;
+  coverLetter?: string;
+  answers: Record<string, LinkedInEasyApplyAnswerValue>;
 }
 
 function normalizeText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
 }
 
+function normalizeLabelKey(value: string): string {
+  return normalizeText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function formatRateLimitState(
+  state: RateLimiterState
+): Record<string, number | boolean | string> {
+  return {
+    counter_key: state.counterKey,
+    window_start_ms: state.windowStartMs,
+    window_size_ms: state.windowSizeMs,
+    count: state.count,
+    limit: state.limit,
+    remaining: state.remaining,
+    allowed: state.allowed
+  };
+}
+
 function readJobsLimit(value: number | undefined): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return 10;
   }
+
   return Math.max(1, Math.floor(value));
+}
+
+function readJobAlertsLimit(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 20;
+  }
+
+  return Math.max(1, Math.floor(value));
+}
+
+function getProfileName(target: Record<string, unknown>): string {
+  const value = target.profile_name;
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value.trim();
+  }
+
+  return "default";
+}
+
+function getRequiredStringField(
+  source: Record<string, unknown>,
+  key: string,
+  actionId: string,
+  location: "target" | "payload"
+): string {
+  const value = source[key];
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value.trim();
+  }
+
+  throw new LinkedInBuddyError(
+    "ACTION_PRECONDITION_FAILED",
+    `Prepared action ${actionId} is missing ${location}.${key}.`,
+    {
+      action_id: actionId,
+      location,
+      key
+    }
+  );
+}
+
+function getOptionalStringField(
+  source: Record<string, unknown>,
+  key: string
+): string | undefined {
+  const value = source[key];
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : undefined;
+}
+
+function getOptionalAnswersField(
+  source: Record<string, unknown>,
+  key: string,
+  actionId: string,
+  location: "target" | "payload"
+): Record<string, LinkedInEasyApplyAnswerValue> {
+  const value = source[key];
+  if (value === undefined) {
+    return {};
+  }
+
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new LinkedInBuddyError(
+      "ACTION_PRECONDITION_FAILED",
+      `Prepared action ${actionId} is missing a valid ${location}.${key} object.`,
+      {
+        action_id: actionId,
+        location,
+        key
+      }
+    );
+  }
+
+  const normalized: Record<string, LinkedInEasyApplyAnswerValue> = {};
+  for (const [answerKey, answerValue] of Object.entries(value)) {
+    if (typeof answerValue === "string") {
+      normalized[answerKey] = answerValue;
+      continue;
+    }
+
+    if (typeof answerValue === "boolean" || typeof answerValue === "number") {
+      normalized[answerKey] = answerValue;
+      continue;
+    }
+
+    if (
+      Array.isArray(answerValue) &&
+      answerValue.every((item) => typeof item === "string")
+    ) {
+      normalized[answerKey] = answerValue;
+      continue;
+    }
+
+    throw new LinkedInBuddyError(
+      "ACTION_PRECONDITION_FAILED",
+      `Prepared action ${actionId} contains an unsupported value at ${location}.${key}.${answerKey}.`,
+      {
+        action_id: actionId,
+        location,
+        key,
+        answer_key: answerKey
+      }
+    );
+  }
+
+  return normalized;
+}
+
+function buildJobAlertIdentifier(
+  searchUrl: string,
+  query: string,
+  location: string
+): string {
+  return (
+    normalizeText(searchUrl) ||
+    [normalizeText(query), normalizeText(location)].filter(Boolean).join("::") ||
+    "job-alert"
+  );
+}
+
+function normalizeAbsoluteLinkedInUrl(value: string): string {
+  const trimmed = normalizeText(value);
+  if (!trimmed) {
+    return "";
+  }
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+
+  return trimmed.startsWith("/")
+    ? `https://www.linkedin.com${trimmed}`
+    : trimmed;
+}
+
+function parseJobSearchUrl(value: string): {
+  normalizedUrl: string;
+  query: string;
+  location: string;
+} {
+  const normalizedUrl = normalizeAbsoluteLinkedInUrl(value);
+  if (!normalizedUrl) {
+    return {
+      normalizedUrl: "",
+      query: "",
+      location: ""
+    };
+  }
+
+  try {
+    const parsed = new URL(normalizedUrl);
+    return {
+      normalizedUrl: parsed.toString(),
+      query: normalizeText(parsed.searchParams.get("keywords")),
+      location: normalizeText(parsed.searchParams.get("location"))
+    };
+  } catch {
+    return {
+      normalizedUrl,
+      query: "",
+      location: ""
+    };
+  }
+}
+
+function normalizeEasyApplyAnswerValue(
+  value: unknown,
+  key: string
+): LinkedInEasyApplyAnswerValue {
+  if (typeof value === "string") {
+    const normalized = normalizeText(value);
+    if (!normalized) {
+      throw new LinkedInBuddyError(
+        "ACTION_PRECONDITION_FAILED",
+        `answers.${key} must not be empty when provided.`
+      );
+    }
+    return normalized;
+  }
+
+  if (typeof value === "boolean" || typeof value === "number") {
+    if (typeof value === "number" && !Number.isFinite(value)) {
+      throw new LinkedInBuddyError(
+        "ACTION_PRECONDITION_FAILED",
+        `answers.${key} must be a finite number.`
+      );
+    }
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    const normalizedValues = value
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => normalizeText(item))
+      .filter((item) => item.length > 0);
+
+    if (normalizedValues.length === 0 || normalizedValues.length !== value.length) {
+      throw new LinkedInBuddyError(
+        "ACTION_PRECONDITION_FAILED",
+        `answers.${key} must be a non-empty array of strings.`
+      );
+    }
+
+    return normalizedValues;
+  }
+
+  throw new LinkedInBuddyError(
+    "ACTION_PRECONDITION_FAILED",
+    `answers.${key} must be a string, boolean, number, or string array.`
+  );
+}
+
+function normalizeEasyApplyAnswers(
+  input: Record<string, unknown> | undefined
+): Record<string, LinkedInEasyApplyAnswerValue> {
+  if (!input) {
+    return {};
+  }
+
+  const normalized: Record<string, LinkedInEasyApplyAnswerValue> = {};
+  for (const [key, value] of Object.entries(input)) {
+    const normalizedKey = normalizeText(key);
+    if (!normalizedKey) {
+      throw new LinkedInBuddyError(
+        "ACTION_PRECONDITION_FAILED",
+        "answers contains an empty field name."
+      );
+    }
+
+    normalized[normalizedKey] = normalizeEasyApplyAnswerValue(value, normalizedKey);
+  }
+
+  return normalized;
+}
+
+function validateEmail(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return undefined;
+  }
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(normalized)) {
+    throw new LinkedInBuddyError(
+      "ACTION_PRECONDITION_FAILED",
+      "email must look like a valid email address."
+    );
+  }
+
+  return normalized;
+}
+
+function validateResumePath(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return undefined;
+  }
+
+  const resolvedPath = path.resolve(normalized);
+  if (!existsSync(resolvedPath)) {
+    throw new LinkedInBuddyError(
+      "ACTION_PRECONDITION_FAILED",
+      `resumePath does not exist: ${resolvedPath}`
+    );
+  }
+
+  const stats = statSync(resolvedPath);
+  if (!stats.isFile()) {
+    throw new LinkedInBuddyError(
+      "ACTION_PRECONDITION_FAILED",
+      `resumePath must point to a file: ${resolvedPath}`
+    );
+  }
+
+  return resolvedPath;
+}
+
+function validateEasyApplyInput(
+  input: PrepareEasyApplyInput
+): ValidatedEasyApplyInput {
+  const profileName = input.profileName ?? "default";
+  const jobId = normalizeText(input.jobId);
+
+  if (!jobId) {
+    throw new LinkedInBuddyError(
+      "ACTION_PRECONDITION_FAILED",
+      "jobId is required."
+    );
+  }
+
+  const phoneNumber = normalizeText(input.phoneNumber);
+  const city = normalizeText(input.city);
+  const coverLetter = normalizeText(input.coverLetter);
+  const email = validateEmail(input.email);
+  const resumePath = validateResumePath(input.resumePath);
+
+  return {
+    profileName,
+    jobId,
+    jobUrl: buildJobViewUrl(jobId),
+    ...(phoneNumber ? { phoneNumber } : {}),
+    ...(email ? { email } : {}),
+    ...(city ? { city } : {}),
+    ...(resumePath ? { resumePath } : {}),
+    ...(coverLetter ? { coverLetter } : {}),
+    answers: normalizeEasyApplyAnswers(input.answers)
+  };
 }
 
 async function getOrCreatePage(context: BrowserContext): Promise<Page> {
@@ -77,6 +614,7 @@ async function getOrCreatePage(context: BrowserContext): Promise<Page> {
   if (existing) {
     return existing;
   }
+
   return context.newPage();
 }
 
@@ -94,6 +632,42 @@ export function buildJobSearchUrl(
 
 export function buildJobViewUrl(jobId: string): string {
   return `https://www.linkedin.com/jobs/view/${encodeURIComponent(jobId)}/`;
+}
+
+export function buildJobAlertsUrl(): string {
+  return JOB_ALERTS_URL;
+}
+
+async function captureScreenshotArtifact(
+  runtime: LinkedInJobsExecutorRuntime,
+  page: Page,
+  relativePath: string,
+  metadata: Record<string, unknown> = {}
+): Promise<string> {
+  const absolutePath = runtime.artifacts.resolve(relativePath);
+  mkdirSync(path.dirname(absolutePath), { recursive: true });
+  await page.screenshot({ path: absolutePath, fullPage: true });
+  runtime.artifacts.registerArtifact(relativePath, "image/png", metadata);
+  return relativePath;
+}
+
+async function waitForCondition(
+  condition: () => Promise<boolean>,
+  timeoutMs: number,
+  intervalMs = 250
+): Promise<boolean> {
+  const deadline = Date.now() + Math.max(0, timeoutMs);
+  while (Date.now() < deadline) {
+    if (await condition()) {
+      return true;
+    }
+
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, intervalMs);
+    });
+  }
+
+  return condition();
 }
 
 async function waitForJobSearchSurface(page: Page): Promise<void> {
@@ -157,31 +731,36 @@ async function waitForJobDetailSurface(page: Page): Promise<void> {
   );
 }
 
-interface JobSearchSnapshot {
-  job_id: string;
-  title: string;
-  company: string;
-  location: string;
-  posted_at: string;
-  job_url: string;
-  salary_range: string;
-  employment_type: string;
-}
+async function waitForJobAlertsSurface(page: Page): Promise<void> {
+  const selectors = [
+    "[data-job-alert-id]",
+    "[data-alert-id]",
+    ".jobs-alert-card",
+    ".job-alert-card",
+    "a[href*='/jobs/search/']",
+    "main"
+  ];
 
-interface JobDetailSnapshot {
-  job_id: string;
-  title: string;
-  company: string;
-  company_url: string;
-  location: string;
-  posted_at: string;
-  description: string;
-  salary_range: string;
-  employment_type: string;
-  job_url: string;
-  applicant_count: string;
-  seniority_level: string;
-  is_remote: boolean;
+  for (const selector of selectors) {
+    try {
+      await page.locator(selector).first().waitFor({
+        state: "visible",
+        timeout: 5_000
+      });
+      return;
+    } catch {
+      // Try next selector.
+    }
+  }
+
+  throw new LinkedInBuddyError(
+    "UI_CHANGED_SELECTOR_FAILED",
+    "Could not locate LinkedIn job alerts content.",
+    {
+      current_url: page.url(),
+      attempted_selectors: selectors
+    }
+  );
 }
 
 /* eslint-disable no-undef -- DOM types are valid inside page.evaluate() */
@@ -429,7 +1008,8 @@ async function extractJobDetail(
         ".salary-main-rail__compensation-text",
         ".job-details-jobs-unified-top-card__salary-info",
         ".compensation__salary"
-      ]) || (() => {
+      ]) ||
+      (() => {
         const salaryMatch =
           /(\$[\d,]+\s*[-–]\s*\$[\d,]+|€[\d,]+\s*[-–]\s*€[\d,]+|£[\d,]+\s*[-–]\s*£[\d,]+|[\d,]+\s*[-–]\s*[\d,]+\s*(?:kr|DKK|USD|EUR|GBP))/i.exec(
             allInsights
@@ -453,9 +1033,7 @@ async function extractJobDetail(
       ".num-applicants__caption"
     ]);
 
-    const isRemote =
-      /\bremote\b/i.test(location) ||
-      /\bremote\b/i.test(allInsights);
+    const isRemote = /\bremote\b/i.test(location) || /\bremote\b/i.test(allInsights);
 
     const jobUrl = globalThis.window.location.href;
 
@@ -495,13 +1073,155 @@ async function extractJobDetail(
   };
 }
 
+async function extractJobAlerts(
+  page: Page,
+  limit: number
+): Promise<LinkedInJobAlert[]> {
+  const snapshots = await page.evaluate((maxAlerts: number) => {
+    const normalize = (value: string | null | undefined): string =>
+      (value ?? "").replace(/\s+/g, " ").trim();
+
+    const origin = globalThis.window.location.origin;
+
+    const isVisible = (element: Element): boolean => {
+      const htmlElement = element as HTMLElement;
+      const style = globalThis.window.getComputedStyle(htmlElement);
+      const rect = htmlElement.getBoundingClientRect();
+      return (
+        style.visibility !== "hidden" &&
+        style.display !== "none" &&
+        rect.width > 0 &&
+        rect.height > 0
+      );
+    };
+
+    const toAbsoluteHref = (value: string): string => {
+      if (!value) {
+        return "";
+      }
+      if (/^https?:\/\//i.test(value)) {
+        return value;
+      }
+      return value.startsWith("/") ? `${origin}${value}` : `${origin}/${value}`;
+    };
+
+    const parseSearchUrl = (
+      value: string
+    ): { normalizedUrl: string; query: string; location: string } => {
+      const absolute = toAbsoluteHref(value);
+      if (!absolute) {
+        return { normalizedUrl: "", query: "", location: "" };
+      }
+
+      try {
+        const parsed = new URL(absolute);
+        return {
+          normalizedUrl: parsed.toString(),
+          query: normalize(parsed.searchParams.get("keywords")),
+          location: normalize(parsed.searchParams.get("location"))
+        };
+      } catch {
+        return { normalizedUrl: absolute, query: "", location: "" };
+      }
+    };
+
+    const pickText = (root: ParentNode, selectors: string[]): string => {
+      for (const selector of selectors) {
+        const text = normalize(root.querySelector(selector)?.textContent);
+        if (text) {
+          return text;
+        }
+      }
+
+      return "";
+    };
+
+    const cards = Array.from(
+      globalThis.document.querySelectorAll(
+        "[data-job-alert-id], [data-alert-id], .jobs-alert-card, .job-alert-card, article, li"
+      )
+    ).filter((element) => isVisible(element));
+
+    const results: JobAlertSnapshot[] = [];
+    const seen = new Set<string>();
+    for (const card of cards) {
+      const text = normalize(card.textContent);
+      const searchAnchor = card.querySelector(
+        "a[href*='/jobs/search/']"
+      ) as HTMLAnchorElement | null;
+
+      if (!searchAnchor && !/alert/i.test(text)) {
+        continue;
+      }
+
+      const parsedSearch = parseSearchUrl(
+        normalize(searchAnchor?.getAttribute("href")) || normalize(searchAnchor?.href)
+      );
+      const query =
+        pickText(card, [
+          "h1",
+          "h2",
+          "h3",
+          "h4",
+          ".job-alert-card__title",
+          ".jobs-alert-card__title",
+          "a[href*='/jobs/search/']"
+        ]) || parsedSearch.query;
+      const location =
+        pickText(card, [
+          ".job-alert-card__location",
+          ".jobs-alert-card__location",
+          ".t-14",
+          ".t-12"
+        ]) || parsedSearch.location;
+      const frequencyMatch = /(Daily|Weekly|Instant|Immediate)/i.exec(text);
+      const frequency = normalize(frequencyMatch?.[1] ?? "");
+      const alertId =
+        normalize(card.getAttribute("data-job-alert-id")) ||
+        normalize(card.getAttribute("data-alert-id")) ||
+        normalize(card.getAttribute("id")) ||
+        parsedSearch.normalizedUrl ||
+        `${query}::${location}`;
+
+      if (!alertId || seen.has(alertId)) {
+        continue;
+      }
+
+      seen.add(alertId);
+      results.push({
+        alert_id: alertId,
+        query,
+        location,
+        frequency,
+        search_url: parsedSearch.normalizedUrl,
+        enabled: !/\b(paused|off|disabled|muted)\b/i.test(text)
+      });
+
+      if (results.length >= maxAlerts) {
+        break;
+      }
+    }
+
+    return results;
+  }, Math.max(1, limit));
+
+  return snapshots.map((snapshot) => ({
+    alert_id: normalizeText(snapshot.alert_id),
+    query: normalizeText(snapshot.query),
+    location: normalizeText(snapshot.location),
+    frequency: normalizeText(snapshot.frequency),
+    search_url: normalizeText(snapshot.search_url),
+    enabled: Boolean(snapshot.enabled)
+  }));
+}
+
 async function loadJobSearchResults(
   page: Page,
   limit: number
 ): Promise<LinkedInJobSearchResult[]> {
   let results = await extractJobSearchResults(page, limit);
 
-  for (let i = 0; i < 6 && results.length < limit; i++) {
+  for (let index = 0; index < 6 && results.length < limit; index += 1) {
     await page.evaluate(() => {
       globalThis.window.scrollTo(0, globalThis.document.body.scrollHeight);
     });
@@ -511,10 +1231,1513 @@ async function loadJobSearchResults(
 
   return results.slice(0, Math.max(1, limit));
 }
+
+async function markJobsButton(
+  page: Page,
+  kind: "save" | "easy-apply" | "alert-toggle"
+): Promise<Locator> {
+  const attributeName = `data-linkedin-assistant-jobs-${kind}`;
+  const markerValue = `marked-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+  const marked = await page.evaluate(
+    ({
+      attributeName: buttonAttributeName,
+      markerValue: buttonMarkerValue,
+      kind: buttonKind
+    }) => {
+      const normalize = (value: string | null | undefined): string =>
+        (value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+
+      const isVisible = (element: Element): boolean => {
+        const htmlElement = element as HTMLElement;
+        const style = globalThis.window.getComputedStyle(htmlElement);
+        const rect = htmlElement.getBoundingClientRect();
+        return (
+          style.visibility !== "hidden" &&
+          style.display !== "none" &&
+          rect.width > 0 &&
+          rect.height > 0
+        );
+      };
+
+      const buttons = Array.from(
+        (
+          globalThis.document.querySelector("main") ?? globalThis.document.body
+        ).querySelectorAll("button, a[role='button']")
+      ).filter((element) => isVisible(element));
+
+      const getScore = (element: Element): number => {
+        const htmlElement = element as HTMLElement;
+        const rect = htmlElement.getBoundingClientRect();
+        const text = normalize(htmlElement.textContent);
+        const ariaLabel = normalize(htmlElement.getAttribute("aria-label"));
+        const title = normalize(htmlElement.getAttribute("title"));
+        const className = normalize(htmlElement.getAttribute("class"));
+        const controlName = normalize(htmlElement.getAttribute("data-control-name"));
+        const haystack = [text, ariaLabel, title, className, controlName]
+          .filter(Boolean)
+          .join(" ");
+
+        let score = 0;
+        if (buttonKind === "save") {
+          if (!/\bsave(?:d)?\b/.test(haystack)) {
+            return 0;
+          }
+          if (/search|alert/.test(haystack)) {
+            score -= 50;
+          }
+          if (/job|top card|jobs-unified-top-card|job-details/.test(haystack)) {
+            score += 20;
+          }
+        }
+
+        if (buttonKind === "easy-apply") {
+          if (!/easy apply/.test(haystack)) {
+            return 0;
+          }
+          score += 50;
+        }
+
+        if (buttonKind === "alert-toggle") {
+          if (!/alert/.test(haystack)) {
+            return 0;
+          }
+          if (/security|privacy|saved searches/.test(haystack)) {
+            score -= 50;
+          }
+        }
+
+        if (rect.top >= 0 && rect.top < 420) {
+          score += 25;
+        }
+        if (rect.left >= 0) {
+          score += Math.max(0, 20 - Math.floor(rect.left / 150));
+        }
+        if (
+          buttonKind !== "alert-toggle" &&
+          htmlElement.closest(
+            ".jobs-unified-top-card, .job-details-jobs-unified-top-card, .top-card-layout"
+          )
+        ) {
+          score += 40;
+        }
+        if (
+          buttonKind === "alert-toggle" &&
+          htmlElement.closest(".jobs-search-two-pane, .jobs-search-results-list")
+        ) {
+          score += 20;
+        }
+
+        return score;
+      };
+
+      const sorted = buttons
+        .map((element) => ({
+          element,
+          score: getScore(element)
+        }))
+        .filter((candidate) => candidate.score > 0)
+        .sort((left, right) => right.score - left.score);
+
+      const best = sorted[0]?.element;
+      if (!best) {
+        return false;
+      }
+
+      best.setAttribute(buttonAttributeName, buttonMarkerValue);
+      return true;
+    },
+    {
+      attributeName,
+      markerValue,
+      kind
+    }
+  );
+
+  if (!marked) {
+    const message =
+      kind === "easy-apply"
+        ? "Could not locate an Easy Apply button on the LinkedIn job page."
+        : kind === "alert-toggle"
+          ? "Could not locate a LinkedIn job alert toggle on the search page."
+          : "Could not locate a LinkedIn job save toggle on the job page.";
+
+    throw new LinkedInBuddyError("UI_CHANGED_SELECTOR_FAILED", message, {
+      current_url: page.url(),
+      button_kind: kind
+    });
+  }
+
+  return page.locator(`[${attributeName}="${markerValue}"]`).first();
+}
+
+async function readJobsToggleState(
+  page: Page,
+  kind: "save" | "alert-toggle"
+): Promise<boolean | null> {
+  const button = await markJobsButton(page, kind);
+  const state = await button.evaluate((element, buttonKind) => {
+    const normalize = (value: string | null | undefined): string =>
+      (value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+
+    const htmlElement = element as HTMLElement;
+    const text = normalize(htmlElement.textContent);
+    const ariaLabel = normalize(htmlElement.getAttribute("aria-label"));
+    const title = normalize(htmlElement.getAttribute("title"));
+    const ariaPressed = normalize(htmlElement.getAttribute("aria-pressed"));
+    const ariaChecked = normalize(htmlElement.getAttribute("aria-checked"));
+    const combined = [text, ariaLabel, title].filter(Boolean).join(" ");
+
+    if (ariaPressed === "true" || ariaChecked === "true") {
+      return true;
+    }
+    if (ariaPressed === "false" || ariaChecked === "false") {
+      return false;
+    }
+
+    if (buttonKind === "save") {
+      if (/\b(saved|unsave)\b/.test(combined)) {
+        return true;
+      }
+      if (/\bsave\b/.test(combined)) {
+        return false;
+      }
+      return null;
+    }
+
+    if (/\b(job alert set|remove alert|manage alert|alert on)\b/.test(combined)) {
+      return true;
+    }
+    if (/\b(set alert|create alert|alert off)\b/.test(combined)) {
+      return false;
+    }
+
+    return null;
+  }, kind);
+
+  return typeof state === "boolean" ? state : null;
+}
+
+function classifyEasyApplyActionLabel(
+  value: string
+): "submit" | "review" | "next" | "unknown" {
+  const normalized = normalizeLabelKey(value);
+  if (!normalized) {
+    return "unknown";
+  }
+
+  if (
+    normalized.includes("submit application") ||
+    normalized.includes("send application") ||
+    normalized === "submit"
+  ) {
+    return "submit";
+  }
+
+  if (normalized.includes("review")) {
+    return "review";
+  }
+
+  if (
+    normalized.includes("next") ||
+    normalized.includes("continue") ||
+    normalized.includes("continue to next")
+  ) {
+    return "next";
+  }
+
+  return "unknown";
+}
+
+async function readEasyApplyDialogSnapshot(
+  page: Page
+): Promise<EasyApplyDialogSnapshot> {
+  const snapshot = await page.evaluate(
+    ({
+      dialogSelector,
+      fieldAttribute,
+      groupAttribute,
+      optionAttribute
+    }) => {
+      const normalize = (value: string | null | undefined): string =>
+        (value ?? "").replace(/\s+/g, " ").trim();
+      const normalizeKey = (value: string): string =>
+        normalize(value)
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, " ")
+          .trim();
+      const isVisible = (element: Element | null): element is HTMLElement => {
+        if (!(element instanceof HTMLElement)) {
+          return false;
+        }
+        const style = globalThis.window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return (
+          style.visibility !== "hidden" &&
+          style.display !== "none" &&
+          rect.width > 0 &&
+          rect.height > 0
+        );
+      };
+
+      const dialog = Array.from(
+        globalThis.document.querySelectorAll(dialogSelector)
+      ).find((element) => isVisible(element));
+
+      if (!dialog || !isVisible(dialog)) {
+        return {
+          visible: false,
+          title: "",
+          primaryActionLabel: "",
+          success: false,
+          fields: []
+        };
+      }
+
+      const readAssociatedLabel = (element: HTMLElement): string => {
+        const htmlInput = element as HTMLInputElement;
+        if (htmlInput.id) {
+          const explicitLabel = dialog.querySelector(`label[for="${htmlInput.id}"]`);
+          const explicitLabelText = normalize(explicitLabel?.textContent);
+          if (explicitLabelText) {
+            return explicitLabelText;
+          }
+        }
+
+        const wrappedLabelText = normalize(element.closest("label")?.textContent);
+        if (wrappedLabelText) {
+          return wrappedLabelText;
+        }
+
+        const fieldsetText = normalize(
+          element.closest("fieldset")?.querySelector("legend")?.textContent
+        );
+        if (fieldsetText) {
+          return fieldsetText;
+        }
+
+        const formElement = element.closest(
+          ".fb-dash-form-element, .jobs-easy-apply-form-element"
+        );
+        const formElementLabel = normalize(formElement?.querySelector("label")?.textContent);
+        if (formElementLabel) {
+          return formElementLabel;
+        }
+
+        return (
+          normalize(element.getAttribute("aria-label")) ||
+          normalize(element.getAttribute("placeholder")) ||
+          normalize(htmlInput.name)
+        );
+      };
+
+      const isRequiredElement = (element: HTMLElement): boolean => {
+        const htmlInput = element as HTMLInputElement;
+        const labelText = readAssociatedLabel(element);
+        const ariaRequired = normalize(element.getAttribute("aria-required"));
+        return Boolean(
+          htmlInput.required ||
+            ariaRequired === "true" ||
+            labelText.includes("*")
+        );
+      };
+
+      const fields: EasyApplyFieldSnapshot[] = [];
+      const handledGroups = new Set<string>();
+      let counter = 0;
+
+      const createFieldId = (): string => `field-${counter++}`;
+
+      const inputs = Array.from(
+        dialog.querySelectorAll("input, textarea, select")
+      ).filter((element) => isVisible(element));
+
+      for (const element of inputs) {
+        const htmlElement = element as HTMLElement;
+        const inputElement = element as HTMLInputElement;
+        const tagName = element.tagName.toLowerCase();
+        const inputType = normalize(inputElement.type || tagName);
+
+        if (
+          inputType === "hidden" ||
+          inputType === "submit" ||
+          inputType === "button" ||
+          inputType === "reset"
+        ) {
+          continue;
+        }
+
+        if ((inputType === "radio" || inputType === "checkbox") && inputElement.name) {
+          const groupKey = `${inputType}:${inputElement.name}`;
+          if (handledGroups.has(groupKey)) {
+            continue;
+          }
+          handledGroups.add(groupKey);
+
+          const groupInputs = inputs.filter((candidate) => {
+            const candidateInput = candidate as HTMLInputElement;
+            return (
+              normalize(candidateInput.type) === inputType &&
+              candidateInput.name === inputElement.name
+            );
+          }) as HTMLInputElement[];
+
+          const fieldId = createFieldId();
+          const options = groupInputs
+            .map((candidate) => {
+              const optionLabel = readAssociatedLabel(candidate);
+              candidate.setAttribute(groupAttribute, fieldId);
+              candidate.setAttribute(optionAttribute, normalizeKey(optionLabel));
+              return optionLabel;
+            })
+            .map((candidate) => normalize(candidate))
+            .filter((candidate) => candidate.length > 0);
+
+          const label = readAssociatedLabel(inputElement);
+          fields.push({
+            fieldId,
+            label,
+            labelKey: normalizeKey(label),
+            kind: inputType as "radio" | "checkbox",
+            required: groupInputs.some((candidate) => isRequiredElement(candidate)),
+            filled: groupInputs.some((candidate) => candidate.checked),
+            options,
+            multiple: inputType === "checkbox" && groupInputs.length > 1,
+            accept: ""
+          });
+          continue;
+        }
+
+        const fieldId = createFieldId();
+        htmlElement.setAttribute(fieldAttribute, fieldId);
+        const label = readAssociatedLabel(htmlElement);
+        const kind =
+          tagName === "textarea"
+            ? "textarea"
+            : tagName === "select"
+              ? "select"
+              : inputType === "file"
+                ? "file"
+                : "text";
+
+        const filled =
+          kind === "file"
+            ? Array.from(inputElement.files ?? []).length > 0
+            : tagName === "select"
+              ? normalize((element as HTMLSelectElement).value).length > 0
+              : normalize(inputElement.value).length > 0;
+
+        const options =
+          tagName === "select"
+            ? Array.from((element as HTMLSelectElement).options)
+                .map((option) => normalize(option.textContent))
+                .filter((option) => option.length > 0)
+            : [];
+
+        fields.push({
+          fieldId,
+          label,
+          labelKey: normalizeKey(label),
+          kind,
+          required: isRequiredElement(htmlElement),
+          filled,
+          options,
+          multiple:
+            kind === "file"
+              ? inputElement.multiple
+              : tagName === "select"
+                ? (element as HTMLSelectElement).multiple
+                : false,
+          accept: normalize(inputElement.accept)
+        });
+      }
+
+      const buttons = Array.from(dialog.querySelectorAll("button")).filter((element) =>
+        isVisible(element)
+      );
+      const primaryButton = buttons
+        .map((button) => {
+          const label = normalize(
+            button.getAttribute("aria-label") || button.textContent
+          );
+          const key = normalizeKey(label);
+          let score = 0;
+          if (key.includes("submit application") || key === "submit") {
+            score += 300;
+          }
+          if (key.includes("review")) {
+            score += 200;
+          }
+          if (key.includes("next") || key.includes("continue")) {
+            score += 100;
+          }
+          if (
+            button.classList.contains("artdeco-button--primary") ||
+            button.getAttribute("data-easy-apply-next-button")
+          ) {
+            score += 50;
+          }
+          return {
+            label,
+            score
+          };
+        })
+        .sort((left, right) => right.score - left.score)[0];
+
+      return {
+        visible: true,
+        title: normalize(dialog.querySelector("h1, h2, h3")?.textContent),
+        primaryActionLabel: primaryButton?.label ?? "",
+        success: /application (submitted|sent)|your application was sent/i.test(
+          normalize(dialog.textContent)
+        ),
+        fields
+      };
+    },
+    {
+      dialogSelector: EASY_APPLY_DIALOG_SELECTOR,
+      fieldAttribute: EASY_APPLY_FIELD_ATTR,
+      groupAttribute: EASY_APPLY_GROUP_ATTR,
+      optionAttribute: EASY_APPLY_OPTION_ATTR
+    }
+  );
+
+  return snapshot;
+}
+
+function resolveEasyApplyFieldValue(
+  field: EasyApplyFieldSnapshot,
+  input: ValidatedEasyApplyInput
+): LinkedInEasyApplyAnswerValue | string | undefined {
+  const labelKey = field.labelKey;
+  const answerEntries = Object.entries(input.answers);
+  const matchedAnswer = answerEntries.find(([key]) => {
+    const normalizedKey = normalizeLabelKey(key);
+    return normalizedKey === labelKey || labelKey.includes(normalizedKey);
+  });
+
+  if (matchedAnswer) {
+    return matchedAnswer[1];
+  }
+
+  if (field.kind === "file") {
+    return input.resumePath;
+  }
+  if (labelKey.includes("resume")) {
+    return input.resumePath;
+  }
+  if (labelKey.includes("phone")) {
+    return input.phoneNumber;
+  }
+  if (labelKey.includes("email")) {
+    return input.email;
+  }
+  if (labelKey.includes("city")) {
+    return input.city;
+  }
+  if (labelKey.includes("cover letter")) {
+    return input.coverLetter;
+  }
+
+  return undefined;
+}
+
+async function applyEasyApplyFieldValue(
+  page: Page,
+  field: EasyApplyFieldSnapshot,
+  value: LinkedInEasyApplyAnswerValue | string
+): Promise<void> {
+  if (field.kind === "text" || field.kind === "textarea") {
+    await page
+      .locator(`[${EASY_APPLY_FIELD_ATTR}="${field.fieldId}"]`)
+      .first()
+      .fill(String(value));
+    return;
+  }
+
+  if (field.kind === "select") {
+    const locator = page
+      .locator(`[${EASY_APPLY_FIELD_ATTR}="${field.fieldId}"]`)
+      .first();
+    const optionValue = String(Array.isArray(value) ? value[0] : value);
+    await locator.selectOption({ label: optionValue }).catch(async () => {
+      await locator.selectOption({ value: optionValue });
+    });
+    return;
+  }
+
+  if (field.kind === "file") {
+    await page
+      .locator(`[${EASY_APPLY_FIELD_ATTR}="${field.fieldId}"]`)
+      .first()
+      .setInputFiles(String(value));
+    return;
+  }
+
+  if (field.kind === "radio") {
+    const optionKey = normalizeLabelKey(String(value));
+    const clicked = await page.evaluate(
+      ({ groupAttribute, groupId, desiredOption, optionAttribute }) => {
+        const normalizeKey = (candidate: string): string =>
+          candidate
+            .replace(/\s+/g, " ")
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, " ")
+            .trim();
+        const inputs = Array.from(
+          globalThis.document.querySelectorAll(
+            `[${groupAttribute}="${groupId}"]`
+          )
+        ) as HTMLInputElement[];
+
+        const match = inputs.find(
+          (input) => normalizeKey(input.getAttribute(optionAttribute) ?? "") === desiredOption
+        );
+
+        if (!match) {
+          return false;
+        }
+
+        match.click();
+        return true;
+    },
+      {
+        groupId: field.fieldId,
+        desiredOption: optionKey,
+        groupAttribute: EASY_APPLY_GROUP_ATTR,
+        optionAttribute: EASY_APPLY_OPTION_ATTR
+      }
+    );
+
+    if (!clicked) {
+      throw new LinkedInBuddyError(
+        "ACTION_PRECONDITION_FAILED",
+        `No Easy Apply radio option matched "${String(value)}" for "${field.label}".`,
+        {
+          field_label: field.label,
+          provided_value: String(value),
+          options: field.options
+        }
+      );
+    }
+    return;
+  }
+
+  const values = Array.isArray(value) ? value.map(String) : [String(value)];
+  const selectionKeys = values.map((candidate) => normalizeLabelKey(candidate));
+
+  const selectionResult = await page.evaluate(
+    ({ groupAttribute, groupId, desiredOptions, optionAttribute }) => {
+      const normalizeKey = (candidate: string): string =>
+        candidate
+          .replace(/\s+/g, " ")
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, " ")
+          .trim();
+      const inputs = Array.from(
+        globalThis.document.querySelectorAll(
+          `[${groupAttribute}="${groupId}"]`
+        )
+      ) as HTMLInputElement[];
+
+      const matchedOptions: string[] = [];
+      for (const input of inputs) {
+        const optionKey = normalizeKey(input.getAttribute(optionAttribute) ?? "");
+        const shouldCheck = desiredOptions.includes(optionKey);
+        if (shouldCheck !== input.checked) {
+          input.click();
+        }
+        if (shouldCheck) {
+          matchedOptions.push(optionKey);
+        }
+      }
+
+      return matchedOptions;
+    },
+    {
+      groupId: field.fieldId,
+      desiredOptions: selectionKeys,
+      groupAttribute: EASY_APPLY_GROUP_ATTR,
+      optionAttribute: EASY_APPLY_OPTION_ATTR
+    }
+  );
+
+  if (selectionResult.length === 0 && values.length > 0) {
+    throw new LinkedInBuddyError(
+      "ACTION_PRECONDITION_FAILED",
+      `No Easy Apply checkbox option matched "${values.join(", ")}" for "${field.label}".`,
+      {
+        field_label: field.label,
+        provided_value: values,
+        options: field.options
+      }
+    );
+  }
+}
+
+async function fillEasyApplyStep(
+  page: Page,
+  snapshot: EasyApplyDialogSnapshot,
+  input: ValidatedEasyApplyInput
+): Promise<void> {
+  const missingRequiredFields: string[] = [];
+
+  for (const field of snapshot.fields) {
+    const resolvedValue = resolveEasyApplyFieldValue(field, input);
+    if (resolvedValue === undefined) {
+      if (field.required && !field.filled) {
+        missingRequiredFields.push(field.label || field.fieldId);
+      }
+      continue;
+    }
+
+    await applyEasyApplyFieldValue(page, field, resolvedValue);
+  }
+
+  if (missingRequiredFields.length > 0) {
+    throw new LinkedInBuddyError(
+      "ACTION_PRECONDITION_FAILED",
+      "Easy Apply requires additional answers before confirmation.",
+      {
+        missing_fields: missingRequiredFields
+      }
+    );
+  }
+}
+
+async function clickEasyApplyPrimaryAction(page: Page): Promise<string> {
+  const dialog = page.locator(EASY_APPLY_DIALOG_SELECTOR).filter({
+    has: page.locator("button")
+  });
+
+  const buttons = dialog.locator("button");
+  const buttonCount = await buttons.count();
+  let bestIndex = -1;
+  let bestLabel = "";
+  let bestScore = -1;
+
+  for (let index = 0; index < buttonCount; index += 1) {
+    const button = buttons.nth(index);
+    if (!(await button.isVisible().catch(() => false))) {
+      continue;
+    }
+
+    const label = normalizeText(
+      (await button.getAttribute("aria-label").catch(() => "")) ??
+        (await button.textContent().catch(() => ""))
+    );
+    const actionKind = classifyEasyApplyActionLabel(label);
+    const score =
+      actionKind === "submit" ? 300 : actionKind === "review" ? 200 : actionKind === "next" ? 100 : 0;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = index;
+      bestLabel = label;
+    }
+  }
+
+  if (bestIndex < 0 || bestScore <= 0) {
+    throw new LinkedInBuddyError(
+      "UI_CHANGED_SELECTOR_FAILED",
+      "Could not determine the primary Easy Apply action button.",
+      {
+        current_url: page.url()
+      }
+    );
+  }
+
+  await buttons.nth(bestIndex).click();
+  return bestLabel;
+}
+
+async function waitForEasyApplySuccess(page: Page): Promise<boolean> {
+  return waitForCondition(async () => {
+    const dialogSnapshot = await readEasyApplyDialogSnapshot(page);
+    if (dialogSnapshot.success) {
+      return true;
+    }
+
+    const pageText = await page
+      .locator("body")
+      .textContent()
+      .catch(() => "");
+    return /application (submitted|sent)|your application was sent/i.test(
+      normalizeText(pageText)
+    );
+  }, 12_000);
+}
 /* eslint-enable no-undef */
+
+export class SaveJobActionExecutor
+  implements ActionExecutor<LinkedInJobsExecutorRuntime>
+{
+  async execute(
+    input: ActionExecutorInput<LinkedInJobsExecutorRuntime>
+  ): Promise<ActionExecutorResult> {
+    const runtime = input.runtime;
+    const action = input.action;
+    const profileName = getProfileName(action.target);
+    const jobId = getRequiredStringField(action.target, "job_id", action.id, "target");
+    const jobUrl = getRequiredStringField(action.target, "job_url", action.id, "target");
+
+    await runtime.auth.ensureAuthenticated({
+      profileName,
+      cdpUrl: runtime.cdpUrl
+    });
+
+    return runtime.profileManager.runWithContext(
+      {
+        cdpUrl: runtime.cdpUrl,
+        profileName,
+        headless: true
+      },
+      async (context) => {
+        const page = await getOrCreatePage(context);
+
+        return executeConfirmActionWithArtifacts({
+          runtime,
+          context,
+          page,
+          actionId: action.id,
+          actionType: SAVE_JOB_ACTION_TYPE,
+          profileName,
+          targetUrl: jobUrl,
+          metadata: {
+            job_id: jobId,
+            job_url: jobUrl
+          },
+          errorDetails: {
+            job_id: jobId,
+            job_url: jobUrl
+          },
+          mapError: (error) =>
+            asLinkedInBuddyError(
+              error,
+              "UNKNOWN",
+              "Failed to execute LinkedIn save job action."
+            ),
+          execute: async () => {
+            const rateLimitState = runtime.rateLimiter.consume(
+              SAVE_JOB_RATE_LIMIT_CONFIG
+            );
+            if (!rateLimitState.allowed) {
+              throw new LinkedInBuddyError(
+                "RATE_LIMITED",
+                "LinkedIn save job confirm is rate limited for the current window.",
+                {
+                  action_id: action.id,
+                  profile_name: profileName,
+                  job_id: jobId,
+                  rate_limit: formatRateLimitState(rateLimitState)
+                }
+              );
+            }
+
+            await page.goto(jobUrl, { waitUntil: "domcontentloaded" });
+            await waitForNetworkIdleBestEffort(page);
+            await waitForJobDetailSurface(page);
+
+            const initialSavedState = await readJobsToggleState(page, "save");
+            if (initialSavedState !== true) {
+              const button = await markJobsButton(page, "save");
+              await button.click();
+            }
+
+            const verified = await waitForCondition(async () => {
+              return (await readJobsToggleState(page, "save")) === true;
+            }, 8_000);
+
+            if (!verified) {
+              throw new LinkedInBuddyError(
+                "UNKNOWN",
+                "Save job action could not be verified on the LinkedIn job page.",
+                {
+                  action_id: action.id,
+                  profile_name: profileName,
+                  job_id: jobId,
+                  job_url: jobUrl
+                }
+              );
+            }
+
+            const screenshotPath = `linkedin/screenshot-job-save-${Date.now()}.png`;
+            await captureScreenshotArtifact(runtime, page, screenshotPath, {
+              action: SAVE_JOB_ACTION_TYPE,
+              action_id: action.id,
+              profile_name: profileName,
+              job_id: jobId,
+              job_url: jobUrl
+            });
+
+            return {
+              ok: true,
+              result: {
+                saved: true,
+                already_saved: initialSavedState === true,
+                job_id: jobId,
+                job_url: jobUrl,
+                rate_limit: formatRateLimitState(rateLimitState)
+              },
+              artifacts: [screenshotPath]
+            };
+          }
+        });
+      }
+    );
+  }
+}
+
+export class UnsaveJobActionExecutor
+  implements ActionExecutor<LinkedInJobsExecutorRuntime>
+{
+  async execute(
+    input: ActionExecutorInput<LinkedInJobsExecutorRuntime>
+  ): Promise<ActionExecutorResult> {
+    const runtime = input.runtime;
+    const action = input.action;
+    const profileName = getProfileName(action.target);
+    const jobId = getRequiredStringField(action.target, "job_id", action.id, "target");
+    const jobUrl = getRequiredStringField(action.target, "job_url", action.id, "target");
+
+    await runtime.auth.ensureAuthenticated({
+      profileName,
+      cdpUrl: runtime.cdpUrl
+    });
+
+    return runtime.profileManager.runWithContext(
+      {
+        cdpUrl: runtime.cdpUrl,
+        profileName,
+        headless: true
+      },
+      async (context) => {
+        const page = await getOrCreatePage(context);
+
+        return executeConfirmActionWithArtifacts({
+          runtime,
+          context,
+          page,
+          actionId: action.id,
+          actionType: UNSAVE_JOB_ACTION_TYPE,
+          profileName,
+          targetUrl: jobUrl,
+          metadata: {
+            job_id: jobId,
+            job_url: jobUrl
+          },
+          errorDetails: {
+            job_id: jobId,
+            job_url: jobUrl
+          },
+          mapError: (error) =>
+            asLinkedInBuddyError(
+              error,
+              "UNKNOWN",
+              "Failed to execute LinkedIn unsave job action."
+            ),
+          execute: async () => {
+            const rateLimitState = runtime.rateLimiter.consume(
+              UNSAVE_JOB_RATE_LIMIT_CONFIG
+            );
+            if (!rateLimitState.allowed) {
+              throw new LinkedInBuddyError(
+                "RATE_LIMITED",
+                "LinkedIn unsave job confirm is rate limited for the current window.",
+                {
+                  action_id: action.id,
+                  profile_name: profileName,
+                  job_id: jobId,
+                  rate_limit: formatRateLimitState(rateLimitState)
+                }
+              );
+            }
+
+            await page.goto(jobUrl, { waitUntil: "domcontentloaded" });
+            await waitForNetworkIdleBestEffort(page);
+            await waitForJobDetailSurface(page);
+
+            const initialSavedState = await readJobsToggleState(page, "save");
+            if (initialSavedState !== false) {
+              const button = await markJobsButton(page, "save");
+              await button.click();
+            }
+
+            const verified = await waitForCondition(async () => {
+              return (await readJobsToggleState(page, "save")) === false;
+            }, 8_000);
+
+            if (!verified) {
+              throw new LinkedInBuddyError(
+                "UNKNOWN",
+                "Unsave job action could not be verified on the LinkedIn job page.",
+                {
+                  action_id: action.id,
+                  profile_name: profileName,
+                  job_id: jobId,
+                  job_url: jobUrl
+                }
+              );
+            }
+
+            const screenshotPath = `linkedin/screenshot-job-unsave-${Date.now()}.png`;
+            await captureScreenshotArtifact(runtime, page, screenshotPath, {
+              action: UNSAVE_JOB_ACTION_TYPE,
+              action_id: action.id,
+              profile_name: profileName,
+              job_id: jobId,
+              job_url: jobUrl
+            });
+
+            return {
+              ok: true,
+              result: {
+                saved: false,
+                already_unsaved: initialSavedState === false,
+                job_id: jobId,
+                job_url: jobUrl,
+                rate_limit: formatRateLimitState(rateLimitState)
+              },
+              artifacts: [screenshotPath]
+            };
+          }
+        });
+      }
+    );
+  }
+}
+
+export class CreateJobAlertActionExecutor
+  implements ActionExecutor<LinkedInJobsExecutorRuntime>
+{
+  async execute(
+    input: ActionExecutorInput<LinkedInJobsExecutorRuntime>
+  ): Promise<ActionExecutorResult> {
+    const runtime = input.runtime;
+    const action = input.action;
+    const profileName = getProfileName(action.target);
+    const query = getRequiredStringField(action.target, "query", action.id, "target");
+    const searchUrl = getRequiredStringField(
+      action.target,
+      "search_url",
+      action.id,
+      "target"
+    );
+    const location = getOptionalStringField(action.target, "location") ?? "";
+
+    await runtime.auth.ensureAuthenticated({
+      profileName,
+      cdpUrl: runtime.cdpUrl
+    });
+
+    return runtime.profileManager.runWithContext(
+      {
+        cdpUrl: runtime.cdpUrl,
+        profileName,
+        headless: true
+      },
+      async (context) => {
+        const page = await getOrCreatePage(context);
+
+        return executeConfirmActionWithArtifacts({
+          runtime,
+          context,
+          page,
+          actionId: action.id,
+          actionType: CREATE_JOB_ALERT_ACTION_TYPE,
+          profileName,
+          targetUrl: searchUrl,
+          metadata: {
+            query,
+            location,
+            search_url: searchUrl
+          },
+          errorDetails: {
+            query,
+            location,
+            search_url: searchUrl
+          },
+          mapError: (error) =>
+            asLinkedInBuddyError(
+              error,
+              "UNKNOWN",
+              "Failed to create a LinkedIn job alert."
+            ),
+          execute: async () => {
+            const rateLimitState = runtime.rateLimiter.consume(
+              CREATE_JOB_ALERT_RATE_LIMIT_CONFIG
+            );
+            if (!rateLimitState.allowed) {
+              throw new LinkedInBuddyError(
+                "RATE_LIMITED",
+                "LinkedIn job-alert creation is rate limited for the current window.",
+                {
+                  action_id: action.id,
+                  profile_name: profileName,
+                  search_url: searchUrl,
+                  rate_limit: formatRateLimitState(rateLimitState)
+                }
+              );
+            }
+
+            await page.goto(searchUrl, { waitUntil: "domcontentloaded" });
+            await waitForNetworkIdleBestEffort(page);
+            await waitForJobSearchSurface(page);
+
+            const initialAlertState = await readJobsToggleState(page, "alert-toggle");
+            if (initialAlertState !== true) {
+              const button = await markJobsButton(page, "alert-toggle");
+              await button.click();
+            }
+
+            const verified = await waitForCondition(async () => {
+              return (await readJobsToggleState(page, "alert-toggle")) === true;
+            }, 8_000);
+
+            if (!verified) {
+              throw new LinkedInBuddyError(
+                "UNKNOWN",
+                "Job alert creation could not be verified on the search page.",
+                {
+                  action_id: action.id,
+                  profile_name: profileName,
+                  query,
+                  location,
+                  search_url: searchUrl
+                }
+              );
+            }
+
+            const screenshotPath = `linkedin/screenshot-job-alert-create-${Date.now()}.png`;
+            await captureScreenshotArtifact(runtime, page, screenshotPath, {
+              action: CREATE_JOB_ALERT_ACTION_TYPE,
+              action_id: action.id,
+              profile_name: profileName,
+              query,
+              location,
+              search_url: searchUrl
+            });
+
+            return {
+              ok: true,
+              result: {
+                alert_enabled: true,
+                already_enabled: initialAlertState === true,
+                query,
+                location,
+                search_url: searchUrl,
+                rate_limit: formatRateLimitState(rateLimitState)
+              },
+              artifacts: [screenshotPath]
+            };
+          }
+        });
+      }
+    );
+  }
+}
+
+export class RemoveJobAlertActionExecutor
+  implements ActionExecutor<LinkedInJobsExecutorRuntime>
+{
+  async execute(
+    input: ActionExecutorInput<LinkedInJobsExecutorRuntime>
+  ): Promise<ActionExecutorResult> {
+    const runtime = input.runtime;
+    const action = input.action;
+    const profileName = getProfileName(action.target);
+    const query = getRequiredStringField(action.target, "query", action.id, "target");
+    const searchUrl = getRequiredStringField(
+      action.target,
+      "search_url",
+      action.id,
+      "target"
+    );
+    const location = getOptionalStringField(action.target, "location") ?? "";
+    const alertId =
+      getOptionalStringField(action.target, "alert_id") ??
+      buildJobAlertIdentifier(searchUrl, query, location);
+
+    await runtime.auth.ensureAuthenticated({
+      profileName,
+      cdpUrl: runtime.cdpUrl
+    });
+
+    return runtime.profileManager.runWithContext(
+      {
+        cdpUrl: runtime.cdpUrl,
+        profileName,
+        headless: true
+      },
+      async (context) => {
+        const page = await getOrCreatePage(context);
+
+        return executeConfirmActionWithArtifacts({
+          runtime,
+          context,
+          page,
+          actionId: action.id,
+          actionType: REMOVE_JOB_ALERT_ACTION_TYPE,
+          profileName,
+          targetUrl: searchUrl,
+          metadata: {
+            alert_id: alertId,
+            query,
+            location,
+            search_url: searchUrl
+          },
+          errorDetails: {
+            alert_id: alertId,
+            query,
+            location,
+            search_url: searchUrl
+          },
+          mapError: (error) =>
+            asLinkedInBuddyError(
+              error,
+              "UNKNOWN",
+              "Failed to remove a LinkedIn job alert."
+            ),
+          execute: async () => {
+            const rateLimitState = runtime.rateLimiter.consume(
+              REMOVE_JOB_ALERT_RATE_LIMIT_CONFIG
+            );
+            if (!rateLimitState.allowed) {
+              throw new LinkedInBuddyError(
+                "RATE_LIMITED",
+                "LinkedIn job-alert removal is rate limited for the current window.",
+                {
+                  action_id: action.id,
+                  profile_name: profileName,
+                  search_url: searchUrl,
+                  rate_limit: formatRateLimitState(rateLimitState)
+                }
+              );
+            }
+
+            await page.goto(searchUrl, { waitUntil: "domcontentloaded" });
+            await waitForNetworkIdleBestEffort(page);
+            await waitForJobSearchSurface(page);
+
+            const initialAlertState = await readJobsToggleState(page, "alert-toggle");
+            if (initialAlertState !== false) {
+              const button = await markJobsButton(page, "alert-toggle");
+              await button.click();
+            }
+
+            const verified = await waitForCondition(async () => {
+              return (await readJobsToggleState(page, "alert-toggle")) === false;
+            }, 8_000);
+
+            if (!verified) {
+              throw new LinkedInBuddyError(
+                "UNKNOWN",
+                "Job alert removal could not be verified on the search page.",
+                {
+                  action_id: action.id,
+                  profile_name: profileName,
+                  alert_id: alertId,
+                  query,
+                  location,
+                  search_url: searchUrl
+                }
+              );
+            }
+
+            const screenshotPath = `linkedin/screenshot-job-alert-remove-${Date.now()}.png`;
+            await captureScreenshotArtifact(runtime, page, screenshotPath, {
+              action: REMOVE_JOB_ALERT_ACTION_TYPE,
+              action_id: action.id,
+              profile_name: profileName,
+              alert_id: alertId,
+              query,
+              location,
+              search_url: searchUrl
+            });
+
+            return {
+              ok: true,
+              result: {
+                alert_enabled: false,
+                already_disabled: initialAlertState === false,
+                alert_id: alertId,
+                query,
+                location,
+                search_url: searchUrl,
+                rate_limit: formatRateLimitState(rateLimitState)
+              },
+              artifacts: [screenshotPath]
+            };
+          }
+        });
+      }
+    );
+  }
+}
+
+export class EasyApplyJobActionExecutor
+  implements ActionExecutor<LinkedInJobsExecutorRuntime>
+{
+  async execute(
+    input: ActionExecutorInput<LinkedInJobsExecutorRuntime>
+  ): Promise<ActionExecutorResult> {
+    const runtime = input.runtime;
+    const action = input.action;
+    const profileName = getProfileName(action.target);
+    const jobId = getRequiredStringField(action.target, "job_id", action.id, "target");
+    const jobUrl = getRequiredStringField(action.target, "job_url", action.id, "target");
+    const phoneNumber = getOptionalStringField(action.payload, "phone_number");
+    const email = getOptionalStringField(action.payload, "email");
+    const city = getOptionalStringField(action.payload, "city");
+    const resumePath = getOptionalStringField(action.payload, "resume_path");
+    const coverLetter = getOptionalStringField(action.payload, "cover_letter");
+    const answers = getOptionalAnswersField(action.payload, "answers", action.id, "payload");
+
+    const validatedInput: ValidatedEasyApplyInput = {
+      profileName,
+      jobId,
+      jobUrl,
+      ...(phoneNumber ? { phoneNumber } : {}),
+      ...(email ? { email } : {}),
+      ...(city ? { city } : {}),
+      ...(resumePath ? { resumePath } : {}),
+      ...(coverLetter ? { coverLetter } : {}),
+      answers
+    };
+
+    await runtime.auth.ensureAuthenticated({
+      profileName,
+      cdpUrl: runtime.cdpUrl
+    });
+
+    return runtime.profileManager.runWithContext(
+      {
+        cdpUrl: runtime.cdpUrl,
+        profileName,
+        headless: true
+      },
+      async (context) => {
+        const page = await getOrCreatePage(context);
+
+        return executeConfirmActionWithArtifacts({
+          runtime,
+          context,
+          page,
+          actionId: action.id,
+          actionType: EASY_APPLY_JOB_ACTION_TYPE,
+          profileName,
+          targetUrl: jobUrl,
+          metadata: {
+            job_id: jobId,
+            job_url: jobUrl
+          },
+          errorDetails: {
+            job_id: jobId,
+            job_url: jobUrl
+          },
+          mapError: (error) =>
+            asLinkedInBuddyError(
+              error,
+              "UNKNOWN",
+              "Failed to submit a LinkedIn Easy Apply application."
+            ),
+          execute: async () => {
+            const rateLimitState = runtime.rateLimiter.consume(EASY_APPLY_RATE_LIMIT_CONFIG);
+            if (!rateLimitState.allowed) {
+              throw new LinkedInBuddyError(
+                "RATE_LIMITED",
+                "LinkedIn Easy Apply confirm is rate limited for the current window.",
+                {
+                  action_id: action.id,
+                  profile_name: profileName,
+                  job_id: jobId,
+                  rate_limit: formatRateLimitState(rateLimitState)
+                }
+              );
+            }
+
+            await page.goto(jobUrl, { waitUntil: "domcontentloaded" });
+            await waitForNetworkIdleBestEffort(page);
+            await waitForJobDetailSurface(page);
+
+            const easyApplyButton = await markJobsButton(page, "easy-apply");
+            await easyApplyButton.click();
+
+            const dialogVisible = await waitForCondition(async () => {
+              const dialogSnapshot = await readEasyApplyDialogSnapshot(page);
+              return dialogSnapshot.visible;
+            }, 8_000);
+
+            if (!dialogVisible) {
+              throw new LinkedInBuddyError(
+                "UI_CHANGED_SELECTOR_FAILED",
+                "Easy Apply modal did not appear after clicking the Easy Apply button.",
+                {
+                  action_id: action.id,
+                  profile_name: profileName,
+                  job_id: jobId,
+                  job_url: jobUrl
+                }
+              );
+            }
+
+            const encounteredFields = new Set<string>();
+            let currentActionLabel = "";
+
+            for (let stepIndex = 0; stepIndex < 6; stepIndex += 1) {
+              const snapshot = await readEasyApplyDialogSnapshot(page);
+              if (!snapshot.visible) {
+                break;
+              }
+
+              for (const field of snapshot.fields) {
+                if (field.label) {
+                  encounteredFields.add(field.label);
+                }
+              }
+
+              if (snapshot.success) {
+                break;
+              }
+
+              await fillEasyApplyStep(page, snapshot, validatedInput);
+
+              currentActionLabel = snapshot.primaryActionLabel;
+              const actionKind = classifyEasyApplyActionLabel(currentActionLabel);
+              if (actionKind === "unknown") {
+                throw new LinkedInBuddyError(
+                  "UI_CHANGED_SELECTOR_FAILED",
+                  "Easy Apply surfaced an unsupported primary action button.",
+                  {
+                    action_id: action.id,
+                    profile_name: profileName,
+                    job_id: jobId,
+                    primary_action_label: currentActionLabel
+                  }
+                );
+              }
+
+              await clickEasyApplyPrimaryAction(page);
+              await page.waitForTimeout(500);
+              await waitForNetworkIdleBestEffort(page, 4_000);
+
+              if (actionKind === "submit") {
+                break;
+              }
+            }
+
+            const success = await waitForEasyApplySuccess(page);
+            if (!success) {
+              throw new LinkedInBuddyError(
+                "UNKNOWN",
+                "Easy Apply submission could not be verified.",
+                {
+                  action_id: action.id,
+                  profile_name: profileName,
+                  job_id: jobId,
+                  last_primary_action_label: currentActionLabel,
+                  encountered_fields: [...encounteredFields]
+                }
+              );
+            }
+
+            const screenshotPath = `linkedin/screenshot-job-easy-apply-${Date.now()}.png`;
+            await captureScreenshotArtifact(runtime, page, screenshotPath, {
+              action: EASY_APPLY_JOB_ACTION_TYPE,
+              action_id: action.id,
+              profile_name: profileName,
+              job_id: jobId,
+              job_url: jobUrl
+            });
+
+            return {
+              ok: true,
+              result: {
+                submitted: true,
+                job_id: jobId,
+                job_url: jobUrl,
+                answered_fields: [...encounteredFields],
+                rate_limit: formatRateLimitState(rateLimitState)
+              },
+              artifacts: [screenshotPath]
+            };
+          }
+        });
+      }
+    );
+  }
+}
+
+export function createJobActionExecutors(): Record<
+  string,
+  ActionExecutor<LinkedInJobsExecutorRuntime>
+> {
+  return {
+    [SAVE_JOB_ACTION_TYPE]: new SaveJobActionExecutor(),
+    [UNSAVE_JOB_ACTION_TYPE]: new UnsaveJobActionExecutor(),
+    [CREATE_JOB_ALERT_ACTION_TYPE]: new CreateJobAlertActionExecutor(),
+    [REMOVE_JOB_ALERT_ACTION_TYPE]: new RemoveJobAlertActionExecutor(),
+    [EASY_APPLY_JOB_ACTION_TYPE]: new EasyApplyJobActionExecutor()
+  };
+}
 
 export class LinkedInJobsService {
   constructor(private readonly runtime: LinkedInJobsRuntime) {}
+
+  private prepareJobToggleAction(input: {
+    actionType: string;
+    profileName?: string | undefined;
+    jobId: string;
+    summary: string;
+    rateLimitConfig: {
+      counterKey: string;
+      windowSizeMs: number;
+      limit: number;
+    };
+    operatorNote?: string | undefined;
+    outboundAction: "save" | "unsave";
+  }): {
+    preparedActionId: string;
+    confirmToken: string;
+    expiresAtMs: number;
+    preview: Record<string, unknown>;
+  } {
+    const profileName = input.profileName ?? "default";
+    const jobId = normalizeText(input.jobId);
+
+    if (!jobId) {
+      throw new LinkedInBuddyError(
+        "ACTION_PRECONDITION_FAILED",
+        "jobId is required."
+      );
+    }
+
+    const jobUrl = buildJobViewUrl(jobId);
+    const rateLimitState = this.runtime.rateLimiter.peek(input.rateLimitConfig);
+    const target = {
+      profile_name: profileName,
+      job_id: jobId,
+      job_url: jobUrl
+    };
+
+    return this.runtime.twoPhaseCommit.prepare({
+      actionType: input.actionType,
+      target,
+      payload: {},
+      preview: {
+        summary: input.summary,
+        target,
+        outbound: {
+          action: input.outboundAction
+        },
+        risk_level: "low",
+        rate_limit: formatRateLimitState(rateLimitState)
+      },
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+  }
 
   async searchJobs(input: SearchJobsInput): Promise<SearchJobsOutput> {
     const profileName = input.profileName ?? "default";
@@ -530,13 +2753,17 @@ export class LinkedInJobsService {
     }
 
     await this.runtime.auth.ensureAuthenticated({
-      profileName
+      profileName,
+      cdpUrl: this.runtime.cdpUrl
     });
 
     try {
-      const results = await this.runtime.profileManager.runWithPersistentContext(
-        profileName,
-        { headless: true },
+      const results = await this.runtime.profileManager.runWithContext(
+        {
+          cdpUrl: this.runtime.cdpUrl,
+          profileName,
+          headless: true
+        },
         async (context) => {
           const page = await getOrCreatePage(context);
           await page.goto(buildJobSearchUrl(query, location || undefined), {
@@ -578,13 +2805,17 @@ export class LinkedInJobsService {
     }
 
     await this.runtime.auth.ensureAuthenticated({
-      profileName
+      profileName,
+      cdpUrl: this.runtime.cdpUrl
     });
 
     try {
-      return await this.runtime.profileManager.runWithPersistentContext(
-        profileName,
-        { headless: true },
+      return await this.runtime.profileManager.runWithContext(
+        {
+          cdpUrl: this.runtime.cdpUrl,
+          profileName,
+          headless: true
+        },
         async (context) => {
           const page = await getOrCreatePage(context);
           await page.goto(buildJobViewUrl(jobId), {
@@ -605,5 +2836,268 @@ export class LinkedInJobsService {
         "Failed to view LinkedIn job posting."
       );
     }
+  }
+
+  prepareSaveJob(input: PrepareSaveJobInput): {
+    preparedActionId: string;
+    confirmToken: string;
+    expiresAtMs: number;
+    preview: Record<string, unknown>;
+  } {
+    const jobId = normalizeText(input.jobId);
+    return this.prepareJobToggleAction({
+      actionType: SAVE_JOB_ACTION_TYPE,
+      profileName: input.profileName,
+      jobId,
+      summary: `Save LinkedIn job ${buildJobViewUrl(jobId)} for later`,
+      rateLimitConfig: SAVE_JOB_RATE_LIMIT_CONFIG,
+      operatorNote: input.operatorNote,
+      outboundAction: "save"
+    });
+  }
+
+  prepareUnsaveJob(input: PrepareUnsaveJobInput): {
+    preparedActionId: string;
+    confirmToken: string;
+    expiresAtMs: number;
+    preview: Record<string, unknown>;
+  } {
+    const jobId = normalizeText(input.jobId);
+    return this.prepareJobToggleAction({
+      actionType: UNSAVE_JOB_ACTION_TYPE,
+      profileName: input.profileName,
+      jobId,
+      summary: `Unsave LinkedIn job ${buildJobViewUrl(jobId)}`,
+      rateLimitConfig: UNSAVE_JOB_RATE_LIMIT_CONFIG,
+      operatorNote: input.operatorNote,
+      outboundAction: "unsave"
+    });
+  }
+
+  async listJobAlerts(
+    input: ListJobAlertsInput = {}
+  ): Promise<ListJobAlertsOutput> {
+    const profileName = input.profileName ?? "default";
+    const limit = readJobAlertsLimit(input.limit);
+
+    await this.runtime.auth.ensureAuthenticated({
+      profileName,
+      cdpUrl: this.runtime.cdpUrl
+    });
+
+    try {
+      const alerts = await this.runtime.profileManager.runWithContext(
+        {
+          cdpUrl: this.runtime.cdpUrl,
+          profileName,
+          headless: true
+        },
+        async (context) => {
+          const page = await getOrCreatePage(context);
+          await page.goto(buildJobAlertsUrl(), {
+            waitUntil: "domcontentloaded"
+          });
+          await waitForNetworkIdleBestEffort(page);
+          await waitForJobAlertsSurface(page);
+          return extractJobAlerts(page, limit);
+        }
+      );
+
+      return {
+        alerts,
+        count: alerts.length
+      };
+    } catch (error) {
+      if (error instanceof LinkedInBuddyError) {
+        throw error;
+      }
+      throw asLinkedInBuddyError(
+        error,
+        "UNKNOWN",
+        "Failed to list LinkedIn job alerts."
+      );
+    }
+  }
+
+  prepareCreateJobAlert(input: PrepareCreateJobAlertInput): {
+    preparedActionId: string;
+    confirmToken: string;
+    expiresAtMs: number;
+    preview: Record<string, unknown>;
+  } {
+    const profileName = input.profileName ?? "default";
+    const query = normalizeText(input.query);
+    const location = normalizeText(input.location);
+
+    if (!query) {
+      throw new LinkedInBuddyError(
+        "ACTION_PRECONDITION_FAILED",
+        "query is required."
+      );
+    }
+
+    const searchUrl = buildJobSearchUrl(query, location || undefined);
+    const rateLimitState = this.runtime.rateLimiter.peek(
+      CREATE_JOB_ALERT_RATE_LIMIT_CONFIG
+    );
+    const target = {
+      profile_name: profileName,
+      query,
+      location,
+      search_url: searchUrl
+    };
+
+    return this.runtime.twoPhaseCommit.prepare({
+      actionType: CREATE_JOB_ALERT_ACTION_TYPE,
+      target,
+      payload: {},
+      preview: {
+        summary: `Create a LinkedIn job alert for "${query}"${location ? ` in ${location}` : ""}`,
+        target,
+        outbound: {
+          action: "create_alert"
+        },
+        risk_level: "low",
+        rate_limit: formatRateLimitState(rateLimitState)
+      },
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+  }
+
+  async prepareRemoveJobAlert(
+    input: PrepareRemoveJobAlertInput
+  ): Promise<{
+    preparedActionId: string;
+    confirmToken: string;
+    expiresAtMs: number;
+    preview: Record<string, unknown>;
+  }> {
+    const profileName = input.profileName ?? "default";
+    const providedAlertId = normalizeText(input.alertId);
+    const providedSearch = parseJobSearchUrl(input.searchUrl ?? "");
+    const query = normalizeText(input.query) || providedSearch.query;
+    const location = normalizeText(input.location) || providedSearch.location;
+    let searchUrl = providedSearch.normalizedUrl;
+    let alertId = providedAlertId;
+
+    if (!searchUrl && query) {
+      searchUrl = buildJobSearchUrl(query, location || undefined);
+    }
+
+    if (!searchUrl && providedAlertId) {
+      const alerts = await this.listJobAlerts({
+        profileName,
+        limit: 100
+      });
+      const matchedAlert = alerts.alerts.find(
+        (alert) => normalizeText(alert.alert_id) === providedAlertId
+      );
+      if (!matchedAlert) {
+        throw new LinkedInBuddyError(
+          "TARGET_NOT_FOUND",
+          `Could not find a LinkedIn job alert with id "${providedAlertId}".`,
+          {
+            alert_id: providedAlertId
+          }
+        );
+      }
+
+      searchUrl = matchedAlert.search_url;
+      alertId = matchedAlert.alert_id;
+    }
+
+    if (!searchUrl) {
+      throw new LinkedInBuddyError(
+        "ACTION_PRECONDITION_FAILED",
+        "Provide alertId, searchUrl, or query to remove a job alert."
+      );
+    }
+
+    const resolvedSearch = parseJobSearchUrl(searchUrl);
+    const resolvedQuery = query || resolvedSearch.query;
+    const resolvedLocation = location || resolvedSearch.location;
+    const resolvedAlertId =
+      alertId || buildJobAlertIdentifier(searchUrl, resolvedQuery, resolvedLocation);
+    const rateLimitState = this.runtime.rateLimiter.peek(
+      REMOVE_JOB_ALERT_RATE_LIMIT_CONFIG
+    );
+    const target = {
+      profile_name: profileName,
+      alert_id: resolvedAlertId,
+      query: resolvedQuery,
+      location: resolvedLocation,
+      search_url: resolvedSearch.normalizedUrl || searchUrl
+    };
+
+    return this.runtime.twoPhaseCommit.prepare({
+      actionType: REMOVE_JOB_ALERT_ACTION_TYPE,
+      target,
+      payload: {},
+      preview: {
+        summary: `Remove LinkedIn job alert for "${resolvedQuery}"${resolvedLocation ? ` in ${resolvedLocation}` : ""}`,
+        target,
+        outbound: {
+          action: "remove_alert"
+        },
+        risk_level: "low",
+        rate_limit: formatRateLimitState(rateLimitState)
+      },
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+  }
+
+  prepareEasyApply(input: PrepareEasyApplyInput): {
+    preparedActionId: string;
+    confirmToken: string;
+    expiresAtMs: number;
+    preview: Record<string, unknown>;
+  } {
+    const validatedInput = validateEasyApplyInput(input);
+    const rateLimitState = this.runtime.rateLimiter.peek(EASY_APPLY_RATE_LIMIT_CONFIG);
+
+    const target = {
+      profile_name: validatedInput.profileName,
+      job_id: validatedInput.jobId,
+      job_url: validatedInput.jobUrl
+    };
+
+    return this.runtime.twoPhaseCommit.prepare({
+      actionType: EASY_APPLY_JOB_ACTION_TYPE,
+      target,
+      payload: {
+        ...(validatedInput.phoneNumber
+          ? { phone_number: validatedInput.phoneNumber }
+          : {}),
+        ...(validatedInput.email ? { email: validatedInput.email } : {}),
+        ...(validatedInput.city ? { city: validatedInput.city } : {}),
+        ...(validatedInput.resumePath
+          ? { resume_path: validatedInput.resumePath }
+          : {}),
+        ...(validatedInput.coverLetter
+          ? { cover_letter: validatedInput.coverLetter }
+          : {}),
+        ...(Object.keys(validatedInput.answers).length > 0
+          ? { answers: validatedInput.answers }
+          : {})
+      },
+      preview: {
+        summary: `Submit LinkedIn Easy Apply application for ${validatedInput.jobUrl}`,
+        target,
+        outbound: {
+          action: "easy_apply",
+          phone_number_supplied: Boolean(validatedInput.phoneNumber),
+          email_supplied: Boolean(validatedInput.email),
+          city_supplied: Boolean(validatedInput.city),
+          resume_filename: validatedInput.resumePath
+            ? path.basename(validatedInput.resumePath)
+            : "",
+          cover_letter_supplied: Boolean(validatedInput.coverLetter),
+          answer_keys: Object.keys(validatedInput.answers)
+        },
+        risk_level: "high",
+        rate_limit: formatRateLimitState(rateLimitState)
+      },
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
   }
 }

@@ -6937,6 +6937,252 @@ async function runJobsView(input: {
   }
 }
 
+async function readEasyApplyAnswersFile(
+  filePath: string | undefined
+): Promise<Record<string, unknown> | undefined> {
+  if (!filePath) {
+    return undefined;
+  }
+
+  const raw = await readJsonInputFile(filePath, "Easy Apply answers");
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new LinkedInBuddyError(
+      "ACTION_PRECONDITION_FAILED",
+      "Easy Apply answers file must contain a JSON object."
+    );
+  }
+
+  return raw as Record<string, unknown>;
+}
+
+async function runJobsSave(input: {
+  profileName: string;
+  jobId: string;
+  operatorNote?: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.jobs.save.start", {
+      profileName: input.profileName,
+      jobId: input.jobId
+    });
+
+    const prepared = runtime.jobs.prepareSaveJob({
+      profileName: input.profileName,
+      jobId: input.jobId,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "cli.jobs.save.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runJobsUnsave(input: {
+  profileName: string;
+  jobId: string;
+  operatorNote?: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.jobs.unsave.start", {
+      profileName: input.profileName,
+      jobId: input.jobId
+    });
+
+    const prepared = runtime.jobs.prepareUnsaveJob({
+      profileName: input.profileName,
+      jobId: input.jobId,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "cli.jobs.unsave.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runJobAlertsList(input: {
+  profileName: string;
+  limit: number;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.jobs.alerts.list.start", {
+      profileName: input.profileName,
+      limit: input.limit
+    });
+
+    const result = await runtime.jobs.listJobAlerts({
+      profileName: input.profileName,
+      limit: input.limit
+    });
+
+    runtime.logger.log("info", "cli.jobs.alerts.list.done", {
+      profileName: input.profileName,
+      count: result.count
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...result
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runJobAlertsCreate(input: {
+  profileName: string;
+  query: string;
+  location?: string;
+  operatorNote?: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.jobs.alerts.create.start", {
+      profileName: input.profileName,
+      query: input.query,
+      location: input.location ?? ""
+    });
+
+    const prepared = runtime.jobs.prepareCreateJobAlert({
+      profileName: input.profileName,
+      query: input.query,
+      ...(input.location ? { location: input.location } : {}),
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "cli.jobs.alerts.create.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runJobAlertsRemove(input: {
+  profileName: string;
+  alertId?: string;
+  searchUrl?: string;
+  query?: string;
+  location?: string;
+  operatorNote?: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.jobs.alerts.remove.start", {
+      profileName: input.profileName,
+      hasAlertId: Boolean(input.alertId),
+      hasSearchUrl: Boolean(input.searchUrl),
+      hasQuery: Boolean(input.query)
+    });
+
+    const prepared = await runtime.jobs.prepareRemoveJobAlert({
+      profileName: input.profileName,
+      ...(input.alertId ? { alertId: input.alertId } : {}),
+      ...(input.searchUrl ? { searchUrl: input.searchUrl } : {}),
+      ...(input.query ? { query: input.query } : {}),
+      ...(input.location ? { location: input.location } : {}),
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "cli.jobs.alerts.remove.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runJobsEasyApplyPrepare(input: {
+  profileName: string;
+  jobId: string;
+  phone?: string;
+  email?: string;
+  city?: string;
+  resume?: string;
+  coverLetter?: string;
+  answersFile?: string;
+  operatorNote?: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.jobs.easy_apply.start", {
+      profileName: input.profileName,
+      jobId: input.jobId,
+      hasResumePath: Boolean(input.resume),
+      hasAnswersFile: Boolean(input.answersFile)
+    });
+
+    const answers = await readEasyApplyAnswersFile(input.answersFile);
+    const prepared = runtime.jobs.prepareEasyApply({
+      profileName: input.profileName,
+      jobId: input.jobId,
+      ...(input.phone ? { phoneNumber: input.phone } : {}),
+      ...(input.email ? { email: input.email } : {}),
+      ...(input.city ? { city: input.city } : {}),
+      ...(input.resume ? { resumePath: input.resume } : {}),
+      ...(input.coverLetter ? { coverLetter: input.coverLetter } : {}),
+      ...(answers ? { answers } : {}),
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "cli.jobs.easy_apply.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 async function runSelectorAudit(input: {
   profileName: string;
   json: boolean;
@@ -9202,6 +9448,156 @@ export function createCliProgram(): Command {
         jobId
       }, readCdpUrl());
     });
+
+  jobsCommand
+    .command("save")
+    .description("Prepare to save a LinkedIn job for later (two-phase)")
+    .argument("<jobId>", "LinkedIn job ID")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("--operator-note <note>", "Optional note attached to the prepared action")
+    .action(
+      async (
+        jobId: string,
+        options: { operatorNote?: string; profile: string }
+      ) => {
+        await runJobsSave({
+          profileName: options.profile,
+          jobId,
+          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
+        }, readCdpUrl());
+      }
+    );
+
+  jobsCommand
+    .command("unsave")
+    .description("Prepare to unsave a LinkedIn job (two-phase)")
+    .argument("<jobId>", "LinkedIn job ID")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("--operator-note <note>", "Optional note attached to the prepared action")
+    .action(
+      async (
+        jobId: string,
+        options: { operatorNote?: string; profile: string }
+      ) => {
+        await runJobsUnsave({
+          profileName: options.profile,
+          jobId,
+          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
+        }, readCdpUrl());
+      }
+    );
+
+  const jobsAlertsCommand = jobsCommand
+    .command("alerts")
+    .description("List and prepare LinkedIn job alert changes");
+
+  jobsAlertsCommand
+    .command("list")
+    .description("List your LinkedIn job alerts")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-l, --limit <limit>", "Max alerts to return", "20")
+    .action(
+      async (options: { profile: string; limit: string }) => {
+        await runJobAlertsList({
+          profileName: options.profile,
+          limit: coercePositiveInt(options.limit, "limit")
+        }, readCdpUrl());
+      }
+    );
+
+  jobsAlertsCommand
+    .command("create")
+    .description("Prepare to create a LinkedIn job alert (two-phase)")
+    .argument("<query>", "Search keywords")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("--location <location>", "Location filter")
+    .option("--operator-note <note>", "Optional note attached to the prepared action")
+    .action(
+      async (
+        query: string,
+        options: {
+          location?: string;
+          operatorNote?: string;
+          profile: string;
+        }
+      ) => {
+        await runJobAlertsCreate({
+          profileName: options.profile,
+          query,
+          ...(options.location ? { location: options.location } : {}),
+          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
+        }, readCdpUrl());
+      }
+    );
+
+  jobsAlertsCommand
+    .command("remove")
+    .description("Prepare to remove a LinkedIn job alert (two-phase)")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("--alert-id <alertId>", "Alert id returned by jobs alerts list")
+    .option("--search-url <searchUrl>", "LinkedIn jobs search URL for the alert")
+    .option("--query <query>", "Alert query if no alert id or search URL is available")
+    .option("--location <location>", "Alert location filter")
+    .option("--operator-note <note>", "Optional note attached to the prepared action")
+    .action(
+      async (options: {
+        alertId?: string;
+        location?: string;
+        operatorNote?: string;
+        profile: string;
+        query?: string;
+        searchUrl?: string;
+      }) => {
+        await runJobAlertsRemove({
+          profileName: options.profile,
+          ...(options.alertId ? { alertId: options.alertId } : {}),
+          ...(options.searchUrl ? { searchUrl: options.searchUrl } : {}),
+          ...(options.query ? { query: options.query } : {}),
+          ...(options.location ? { location: options.location } : {}),
+          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
+        }, readCdpUrl());
+      }
+    );
+
+  jobsCommand
+    .command("easy-apply")
+    .description("Prepare a LinkedIn Easy Apply submission (two-phase)")
+    .argument("<jobId>", "LinkedIn job ID")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("--phone <phoneNumber>", "Phone number to use in the application")
+    .option("--email <email>", "Email address to use in the application")
+    .option("--city <city>", "City field value for the application")
+    .option("--resume <resumePath>", "Resume file to upload")
+    .option("--cover-letter <coverLetter>", "Cover letter text")
+    .option("--answers-file <path>", "JSON object file with extra Easy Apply answers")
+    .option("--operator-note <note>", "Optional note attached to the prepared action")
+    .action(
+      async (
+        jobId: string,
+        options: {
+          answersFile?: string;
+          city?: string;
+          coverLetter?: string;
+          email?: string;
+          operatorNote?: string;
+          phone?: string;
+          profile: string;
+          resume?: string;
+        }
+      ) => {
+        await runJobsEasyApplyPrepare({
+          profileName: options.profile,
+          jobId,
+          ...(options.phone ? { phone: options.phone } : {}),
+          ...(options.email ? { email: options.email } : {}),
+          ...(options.city ? { city: options.city } : {}),
+          ...(options.resume ? { resume: options.resume } : {}),
+          ...(options.coverLetter ? { coverLetter: options.coverLetter } : {}),
+          ...(options.answersFile ? { answersFile: options.answersFile } : {}),
+          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
+        }, readCdpUrl());
+      }
+    );
 
   const profileCommand = program
     .command("profile")
