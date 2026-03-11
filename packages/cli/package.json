@@ -1,6 +1,7 @@
 {
   "name": "@linkedin-buddy/cli",
   "version": "0.1.0",
+  "description": "LinkedIn CLI for search, inbox, feed, jobs, profile, notifications, and safe prepare-and-confirm LinkedIn actions.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -25,9 +26,18 @@
   "homepage": "https://github.com/sigvardt/linkedin-buddy/tree/main/packages/cli",
   "keywords": [
     "linkedin",
-    "automation",
+    "linkedin-cli",
+    "linkedin-automation",
+    "linkedin-search",
+    "linkedin-jobs",
+    "linkedin-inbox",
+    "linkedin-feed",
+    "linkedin-notifications",
+    "browser-automation",
     "cli",
-    "playwright"
+    "playwright",
+    "typescript",
+    "nodejs"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",

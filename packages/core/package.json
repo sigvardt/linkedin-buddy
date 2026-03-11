@@ -1,6 +1,7 @@
 {
   "name": "@linkedin-buddy/core",
   "version": "0.1.0",
+  "description": "TypeScript LinkedIn automation library and shared local runtime for Playwright-backed LinkedIn workflows.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -27,9 +28,16 @@
   "homepage": "https://github.com/sigvardt/linkedin-buddy/tree/main/packages/core",
   "keywords": [
     "linkedin",
-    "automation",
+    "linkedin-api",
+    "linkedin-automation",
+    "linkedin-toolkit",
+    "linkedin-typescript",
     "playwright",
-    "library"
+    "browser-automation",
+    "library",
+    "typescript",
+    "nodejs",
+    "sdk"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
