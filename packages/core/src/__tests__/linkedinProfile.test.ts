@@ -25,8 +25,10 @@ import {
   WRITE_PROFILE_RECOMMENDATION_ACTION_TYPE,
   LinkedInProfileService,
   createProfileActionExecutors,
+  extractVisibleTopCardSummaryFromRoot,
   isProfileIntroEditHref,
   navigateToOwnProfile,
+  readEditableFieldValue,
   resolveFirstVisibleLocator,
   resolveProfileUrl,
   type LinkedInProfileRuntime
@@ -120,6 +122,97 @@ class MockLocator {
   }
 }
 
+interface MockTextLocatorItem {
+  text: string;
+  visible: boolean;
+}
+
+class MockTextLocator {
+  constructor(
+    private readonly selectorMap: Record<string, readonly MockTextLocatorItem[]> = {},
+    private readonly items: readonly MockTextLocatorItem[] = []
+  ) {}
+
+  locator(selector: string): MockTextLocator {
+    return new MockTextLocator({}, this.selectorMap[selector] ?? []);
+  }
+
+  async count(): Promise<number> {
+    return this.items.length;
+  }
+
+  nth(index: number): MockTextLocator {
+    return new MockTextLocator({}, this.items[index] ? [this.items[index]!] : []);
+  }
+
+  async isVisible(): Promise<boolean> {
+    return this.items[0]?.visible ?? false;
+  }
+
+  async textContent(): Promise<string> {
+    return this.items[0]?.text ?? "";
+  }
+}
+
+interface MockFieldOption {
+  label?: unknown;
+  textContent?: string | null;
+}
+
+class MockFieldElement {
+  readonly tagName: string;
+  readonly textContent: string | null;
+  readonly value?: string;
+  readonly selectedOptions?: {
+    length?: number;
+    [index: number]: MockFieldOption;
+  };
+  private readonly attributes: Record<string, string>;
+  private readonly nestedControl: MockFieldElement | null;
+
+  constructor(input: {
+    tagName: string;
+    textContent?: string | null;
+    value?: string;
+    attributes?: Record<string, string>;
+    nestedControl?: MockFieldElement | null;
+    selectedOptions?: readonly MockFieldOption[];
+  }) {
+    this.tagName = input.tagName;
+    this.textContent = input.textContent ?? null;
+    this.value = input.value;
+    this.attributes = input.attributes ?? {};
+    this.nestedControl = input.nestedControl ?? null;
+    if (input.selectedOptions) {
+      this.selectedOptions = Object.assign([...input.selectedOptions], {
+        length: input.selectedOptions.length
+      }) as {
+        length?: number;
+        [index: number]: MockFieldOption;
+      };
+    }
+  }
+
+  getAttribute(name: string): string | null {
+    return this.attributes[name] ?? null;
+  }
+
+  querySelector(selector: string): MockFieldElement | null {
+    void selector;
+    return this.nestedControl;
+  }
+}
+
+class MockEditableFieldLocator {
+  constructor(private readonly element: MockFieldElement) {}
+
+  async evaluate<TResult>(
+    pageFunction: (element: MockFieldElement) => TResult | Promise<TResult>
+  ): Promise<TResult> {
+    return await pageFunction(this.element);
+  }
+}
+
 function createNavigationMockPage(options: {
   canonicalUrl?: string | null;
   gotoError?: Error;
@@ -145,12 +238,14 @@ function createNavigationMockPage(options: {
     locator: vi.fn((selector: string) => {
       const isIntroEditSelector =
         selector.includes("/edit/intro/") || selector.includes("/edit/forms/intro/");
+      const isHeadingSelector = selector.includes("h1") || selector.includes("h2");
       const introEditCount =
         isIntroEditSelector && (options.introEditVisible || options.introEditPresent)
           ? 1
           : 0;
+      const headingCount = isHeadingSelector && (options.headingVisible ?? false) ? 1 : 0;
       const visible =
-        selector === "h1"
+        isHeadingSelector
           ? (options.headingVisible ?? false)
           : isIntroEditSelector
             ? (options.introEditVisible ?? false)
@@ -164,7 +259,7 @@ function createNavigationMockPage(options: {
               ? options.ogProfileUrl
               : null;
 
-      const count = vi.fn(async () => introEditCount);
+      const count = vi.fn(async () => (isHeadingSelector ? headingCount : introEditCount));
       const isVisible = vi.fn(async () => visible);
       const getAttribute = vi.fn(async () => attributeValue ?? null);
       const nth = vi.fn();
@@ -319,11 +414,76 @@ describe("resolveFirstVisibleLocator", () => {
   });
 });
 
+describe("extractVisibleTopCardSummaryFromRoot", () => {
+  it("falls back to visible paragraph text on the current self-profile layout", async () => {
+    const root = new MockTextLocator({
+      "h1.text-heading-xlarge, h1[class*='text-heading'], h2, h1": [
+        { text: "Joi Ascend", visible: true }
+      ],
+      ".text-body-medium[data-anonymize='headline'], .text-body-medium": [],
+      "span.text-body-small[data-anonymize='location'], .text-body-small.inline": [],
+      ".dist-value, .distance-badge, [class*='distance']": [],
+      p: [
+        { text: "Personal Assistant to Director at Signikant", visible: true },
+        { text: "Signikant", visible: false },
+        { text: "Copenhagen, Capital Region of Denmark, Denmark", visible: true },
+        { text: "Contact info", visible: true },
+        { text: "Get started", visible: true }
+      ]
+    });
+
+    await expect(
+      extractVisibleTopCardSummaryFromRoot(root as unknown as Locator)
+    ).resolves.toEqual({
+      full_name: "Joi Ascend",
+      headline: "Personal Assistant to Director at Signikant",
+      location: "Copenhagen, Capital Region of Denmark, Denmark",
+      connection_degree: ""
+    });
+  });
+});
+
+describe("readEditableFieldValue", () => {
+  it("prefers selected option text for select controls", async () => {
+    const locator = new MockEditableFieldLocator(
+      new MockFieldElement({
+        tagName: "SELECT",
+        value: "2863822437",
+        selectedOptions: [{ textContent: "Software Development" }]
+      })
+    );
+
+    await expect(readEditableFieldValue(locator as unknown as Locator)).resolves.toBe(
+      "Software Development"
+    );
+  });
+
+  it("falls back to nested combobox value metadata", async () => {
+    const locator = new MockEditableFieldLocator(
+      new MockFieldElement({
+        tagName: "DIV",
+        nestedControl: new MockFieldElement({
+          tagName: "DIV",
+          attributes: {
+            "aria-valuetext": "Software Development",
+            role: "combobox"
+          }
+        })
+      })
+    );
+
+    await expect(readEditableFieldValue(locator as unknown as Locator)).resolves.toBe(
+      "Software Development"
+    );
+  });
+});
+
 describe("navigateToOwnProfile", () => {
   it("recovers from /in/me/ navigation timeouts once self-only edit controls are present", async () => {
     const timeoutError = new playwrightErrors.TimeoutError("Navigation timeout");
     const page = createNavigationMockPage({
       gotoError: timeoutError,
+      headingVisible: true,
       introEditPresent: true,
       urlAfterGoto: "https://www.linkedin.com/in/me/"
     });
@@ -342,6 +502,7 @@ describe("navigateToOwnProfile", () => {
     const page = createNavigationMockPage({
       canonicalUrl: "https://www.linkedin.com/in/joi-ascend/",
       gotoError: timeoutError,
+      headingVisible: true,
       menuProfileUrl: "https://www.linkedin.com/in/joi-ascend/",
       urlAfterGoto: "https://www.linkedin.com/in/joi-ascend/"
     });
