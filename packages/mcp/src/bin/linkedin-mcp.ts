@@ -240,7 +240,7 @@ function readRequiredBoolean(args: ToolArgs, key: string): boolean {
     return value;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `${key} is required.`
   );

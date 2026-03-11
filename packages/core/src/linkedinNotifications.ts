@@ -348,7 +348,7 @@ export function normalizeLinkedInNotificationPreferenceChannel(
     return inferred;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `channel must be one of: ${LINKEDIN_NOTIFICATION_PREFERENCE_CHANNELS.join(", ")}.`
   );
@@ -871,7 +871,7 @@ async function clickNotificationPrimaryAction(
 
   const match = await findVisibleLocator(card, candidates);
   if (!match) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UI_CHANGED_SELECTOR_FAILED",
       "Could not find a clickable LinkedIn notification target to mark as read.",
       {
@@ -920,7 +920,7 @@ async function openNotificationSettingsMenu(
 
   const match = await findVisibleLocator(card, candidates);
   if (!match) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UI_CHANGED_SELECTOR_FAILED",
       "Could not find the LinkedIn notification settings menu trigger.",
       {
@@ -972,7 +972,7 @@ async function clickNotificationDismissAction(
 
   const match = await findVisibleLocator(page, candidates);
   if (!match) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UI_CHANGED_SELECTOR_FAILED",
       "Could not find the dismiss action for the LinkedIn notification.",
       {
@@ -1199,13 +1199,13 @@ async function findPreferenceSwitchLocator(
   }
 
   if (channel) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
       `Could not find the ${channel} notification preference switch on the page.`
     );
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "TARGET_NOT_FOUND",
     "Could not find a notification preference switch on the page."
   );
@@ -1242,7 +1242,7 @@ async function executeDismissNotification(
           notification_id: notificationId
         },
         mapError: (error) =>
-          asLinkedInAssistantError(
+          asLinkedInBuddyError(
             error,
             "UNKNOWN",
             "Failed to execute LinkedIn notification dismiss action."
@@ -1251,7 +1251,7 @@ async function executeDismissNotification(
           await openNotificationsPage(page);
           const match = await findNotificationCard(page, notificationId, 75);
           if (!match) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "TARGET_NOT_FOUND",
               `Could not find LinkedIn notification ${notificationId}.`,
               {
@@ -1276,7 +1276,7 @@ async function executeDismissNotification(
             75
           );
           if (!removed) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "UNKNOWN",
               "LinkedIn notification dismiss action could not be verified after clicking the control.",
               {
@@ -1346,7 +1346,7 @@ async function executeUpdateNotificationPreference(
           enabled
         },
         mapError: (error) =>
-          asLinkedInAssistantError(
+          asLinkedInBuddyError(
             error,
             "UNKNOWN",
             "Failed to execute LinkedIn notification preference update."
@@ -1356,14 +1356,14 @@ async function executeUpdateNotificationPreference(
           const initialState = await readNotificationPreferencePageState(page);
 
           if (initialState.page.view_type === "overview") {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "ACTION_PRECONDITION_FAILED",
               "Notification preference updates require a category or subcategory page, not the overview."
             );
           }
 
           if (initialState.page.view_type === "subcategory" && !channel) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "ACTION_PRECONDITION_FAILED",
               "channel is required when updating a notification preference subcategory."
             );
@@ -1371,7 +1371,7 @@ async function executeUpdateNotificationPreference(
 
           const targetSwitch = await findPreferenceSwitchLocator(page, channel);
           if (targetSwitch.enabled === enabled) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "ACTION_PRECONDITION_FAILED",
               `${targetSwitch.label || "The selected notification preference"} is already ${enabled ? "enabled" : "disabled"}.`,
               {
@@ -1389,7 +1389,7 @@ async function executeUpdateNotificationPreference(
 
           const refreshedSwitch = await findPreferenceSwitchLocator(page, channel);
           if (refreshedSwitch.enabled !== enabled) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "UNKNOWN",
               "LinkedIn notification preference update could not be verified after toggling the switch.",
               {
@@ -1525,7 +1525,7 @@ export class LinkedInNotificationsService {
     const profileName = input.profileName ?? "default";
     const notificationId = normalizeText(input.notificationId);
     if (!notificationId) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "notificationId is required."
       );
@@ -1548,7 +1548,7 @@ export class LinkedInNotificationsService {
           await openNotificationsPage(page);
           const match = await findNotificationCard(page, notificationId, 75);
           if (!match) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "TARGET_NOT_FOUND",
               `Could not find LinkedIn notification ${notificationId}.`,
               {
@@ -1575,7 +1575,7 @@ export class LinkedInNotificationsService {
             75
           );
           if (!verified) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "UNKNOWN",
               "LinkedIn notification mark_read action could not be verified after opening the notification.",
               {
@@ -1595,10 +1595,10 @@ export class LinkedInNotificationsService {
         }
       );
     } catch (error) {
-      if (error instanceof LinkedInAssistantError) {
+      if (error instanceof LinkedInBuddyError) {
         throw error;
       }
-      throw asLinkedInAssistantError(
+      throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
         "Failed to mark the LinkedIn notification as read."
@@ -1612,7 +1612,7 @@ export class LinkedInNotificationsService {
     const profileName = input.profileName ?? "default";
     const notificationId = normalizeText(input.notificationId);
     if (!notificationId) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "notificationId is required."
       );
@@ -1626,7 +1626,7 @@ export class LinkedInNotificationsService {
     );
 
     if (!notification) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "TARGET_NOT_FOUND",
         `Could not find LinkedIn notification ${notificationId}.`,
         {
@@ -1722,10 +1722,10 @@ export class LinkedInNotificationsService {
         }
       );
     } catch (error) {
-      if (error instanceof LinkedInAssistantError) {
+      if (error instanceof LinkedInBuddyError) {
         throw error;
       }
-      throw asLinkedInAssistantError(
+      throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
         "Failed to read LinkedIn notification preferences."
@@ -1747,7 +1747,7 @@ export class LinkedInNotificationsService {
     });
 
     if (page.view_type === "overview") {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "Notification preference updates require a category or subcategory page, not the overview."
       );
@@ -1760,7 +1760,7 @@ export class LinkedInNotificationsService {
       label = page.master_toggle?.label ?? page.title;
     } else {
       if (!channel) {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
           "channel is required when updating a notification preference subcategory."
         );
@@ -1770,7 +1770,7 @@ export class LinkedInNotificationsService {
         (candidate) => candidate.channel_key === channel
       );
       if (!targetChannel) {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "TARGET_NOT_FOUND",
           `Could not find the ${channel} notification preference switch on ${page.title}.`,
           {
@@ -1784,7 +1784,7 @@ export class LinkedInNotificationsService {
     }
 
     if (currentEnabled === input.enabled) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `${label} is already ${input.enabled ? "enabled" : "disabled"}.`,
         {
