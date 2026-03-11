@@ -2,6 +2,8 @@
 
 Operator CLI for LinkedIn Buddy.
 
+Installed command names: `linkedin`, `linkedin-buddy`, and `lbud`.
+
 ## Activity webhooks
 
 The CLI owns the poll-based LinkedIn activity daemon, human-readable activity

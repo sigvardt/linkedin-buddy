@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import type { Dirent } from "node:fs";
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import {
   access,
   appendFile,
@@ -15,7 +15,7 @@ import {
 import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import packageJson from "../../package.json" with { type: "json" };
 import {
@@ -10413,13 +10413,27 @@ export async function runCli(argv: string[] = process.argv): Promise<void> {
   }
 }
 
-function isDirectExecution(moduleUrl: string): boolean {
-  const entrypoint = process.argv[1];
+export function isDirectExecution(
+  moduleUrl: string,
+  entrypoint: string | undefined = process.argv[1]
+): boolean {
   if (!entrypoint) {
     return false;
   }
 
-  return pathToFileURL(entrypoint).href === moduleUrl;
+  return resolveCliEntrypointPath(entrypoint) === resolveCliEntrypointPath(
+    fileURLToPath(moduleUrl)
+  );
+}
+
+function resolveCliEntrypointPath(entrypoint: string): string {
+  const resolvedEntrypoint = path.resolve(entrypoint);
+
+  try {
+    return realpathSync(resolvedEntrypoint);
+  } catch {
+    return resolvedEntrypoint;
+  }
 }
 
 if (isDirectExecution(import.meta.url)) {

@@ -8,6 +8,7 @@
     "dist"
   ],
   "bin": {
+    "lbud": "dist/bin/linkedin.js",
     "linkedin": "dist/bin/linkedin.js",
     "linkedin-buddy": "dist/bin/linkedin.js"
   },
@@ -30,7 +31,8 @@
     "playwright"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -b tsconfig.json",
+    "prepare": "npm run build",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
