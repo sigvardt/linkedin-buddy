@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   LINKEDIN_ANALYTICS_POST_METRICS_TOOL,
   LINKEDIN_ANALYTICS_PROFILE_VIEWS_TOOL,
+  LINKEDIN_ARTICLE_PREPARE_CREATE_TOOL,
+  LINKEDIN_ARTICLE_PREPARE_PUBLISH_TOOL,
   LINKEDIN_EVENTS_SEARCH_TOOL,
   LINKEDIN_EVENTS_VIEW_TOOL,
   LINKEDIN_EVENTS_PREPARE_RSVP_TOOL,
@@ -11,6 +13,9 @@ import {
   LINKEDIN_GROUPS_SEARCH_TOOL,
   LINKEDIN_GROUPS_VIEW_TOOL,
   LINKEDIN_MEMBERS_PREPARE_REPORT_TOOL,
+  LINKEDIN_NEWSLETTER_LIST_TOOL,
+  LINKEDIN_NEWSLETTER_PREPARE_CREATE_TOOL,
+  LINKEDIN_NEWSLETTER_PREPARE_PUBLISH_ISSUE_TOOL,
   LINKEDIN_PRIVACY_GET_SETTINGS_TOOL
 } from "../index.js";
 
@@ -51,6 +56,15 @@ interface FakeRuntime {
     prepareLeaveGroup: ReturnType<typeof vi.fn>;
     preparePostToGroup: ReturnType<typeof vi.fn>;
   };
+  articles: {
+    prepareCreate: ReturnType<typeof vi.fn>;
+    preparePublish: ReturnType<typeof vi.fn>;
+  };
+  newsletters: {
+    prepareCreate: ReturnType<typeof vi.fn>;
+    preparePublishIssue: ReturnType<typeof vi.fn>;
+    list: ReturnType<typeof vi.fn>;
+  };
   events: {
     searchEvents: ReturnType<typeof vi.fn>;
     viewEvent: ReturnType<typeof vi.fn>;
@@ -86,6 +100,15 @@ function createFakeRuntime(): FakeRuntime {
       prepareJoinGroup: vi.fn(),
       prepareLeaveGroup: vi.fn(),
       preparePostToGroup: vi.fn()
+    },
+    articles: {
+      prepareCreate: vi.fn(),
+      preparePublish: vi.fn()
+    },
+    newsletters: {
+      prepareCreate: vi.fn(),
+      preparePublishIssue: vi.fn(),
+      list: vi.fn()
     },
     events: {
       searchEvents: vi.fn(),
@@ -413,6 +436,167 @@ describe("handleToolCall", () => {
       profileName: "default",
       group: "9806731",
       text: "Thanks for sharing this perspective."
+    });
+    expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("prepares article draft actions through the MCP contract", async () => {
+    fakeRuntime.articles.prepareCreate.mockResolvedValue({
+      preparedActionId: "pa_article_create",
+      confirmToken: "ct_article_create",
+      expiresAtMs: 123,
+      preview: {
+        summary: 'Create LinkedIn article draft "Launch notes"'
+      }
+    });
+
+    const result = await handleToolCall(LINKEDIN_ARTICLE_PREPARE_CREATE_TOOL, {
+      profileName: "default",
+      title: "Launch notes",
+      body: "A longer article body."
+    });
+
+    expect("isError" in result && result.isError).toBe(false);
+    expect(parseToolPayload(result)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      preparedActionId: "pa_article_create",
+      confirmToken: "ct_article_create"
+    });
+    expect(fakeRuntime.articles.prepareCreate).toHaveBeenCalledWith({
+      profileName: "default",
+      title: "Launch notes",
+      body: "A longer article body."
+    });
+    expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("prepares article publish actions through the MCP contract", async () => {
+    fakeRuntime.articles.preparePublish.mockResolvedValue({
+      preparedActionId: "pa_article_publish",
+      confirmToken: "ct_article_publish",
+      expiresAtMs: 123,
+      preview: {
+        summary: 'Publish LinkedIn article draft "Launch notes"'
+      }
+    });
+
+    const result = await handleToolCall(LINKEDIN_ARTICLE_PREPARE_PUBLISH_TOOL, {
+      profileName: "default",
+      draftUrl: "https://www.linkedin.com/pulse/article/123/edit/"
+    });
+
+    expect("isError" in result && result.isError).toBe(false);
+    expect(parseToolPayload(result)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      preparedActionId: "pa_article_publish",
+      confirmToken: "ct_article_publish"
+    });
+    expect(fakeRuntime.articles.preparePublish).toHaveBeenCalledWith({
+      profileName: "default",
+      draftUrl: "https://www.linkedin.com/pulse/article/123/edit/"
+    });
+    expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("prepares newsletter creation actions through the MCP contract", async () => {
+    fakeRuntime.newsletters.prepareCreate.mockResolvedValue({
+      preparedActionId: "pa_newsletter_create",
+      confirmToken: "ct_newsletter_create",
+      expiresAtMs: 123,
+      preview: {
+        summary: 'Create LinkedIn newsletter "Builder Brief"'
+      }
+    });
+
+    const result = await handleToolCall(LINKEDIN_NEWSLETTER_PREPARE_CREATE_TOOL, {
+      profileName: "default",
+      title: "Builder Brief",
+      description: "Weekly notes from the product team.",
+      cadence: "weekly"
+    });
+
+    expect("isError" in result && result.isError).toBe(false);
+    expect(parseToolPayload(result)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      preparedActionId: "pa_newsletter_create",
+      confirmToken: "ct_newsletter_create"
+    });
+    expect(fakeRuntime.newsletters.prepareCreate).toHaveBeenCalledWith({
+      profileName: "default",
+      title: "Builder Brief",
+      description: "Weekly notes from the product team.",
+      cadence: "weekly"
+    });
+    expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("prepares newsletter issue publish actions through the MCP contract", async () => {
+    fakeRuntime.newsletters.preparePublishIssue.mockResolvedValue({
+      preparedActionId: "pa_newsletter_issue",
+      confirmToken: "ct_newsletter_issue",
+      expiresAtMs: 123,
+      preview: {
+        summary: 'Publish LinkedIn newsletter issue "March update" in Builder Brief'
+      }
+    });
+
+    const result = await handleToolCall(
+      LINKEDIN_NEWSLETTER_PREPARE_PUBLISH_ISSUE_TOOL,
+      {
+        profileName: "default",
+        newsletter: "Builder Brief",
+        title: "March update",
+        body: "Long-form issue body."
+      }
+    );
+
+    expect("isError" in result && result.isError).toBe(false);
+    expect(parseToolPayload(result)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      preparedActionId: "pa_newsletter_issue",
+      confirmToken: "ct_newsletter_issue"
+    });
+    expect(fakeRuntime.newsletters.preparePublishIssue).toHaveBeenCalledWith({
+      profileName: "default",
+      newsletter: "Builder Brief",
+      title: "March update",
+      body: "Long-form issue body."
+    });
+    expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns newsletter list payloads through the MCP contract", async () => {
+    fakeRuntime.newsletters.list.mockResolvedValue({
+      count: 1,
+      newsletters: [
+        {
+          title: "Builder Brief",
+          selected: false
+        }
+      ]
+    });
+
+    const result = await handleToolCall(LINKEDIN_NEWSLETTER_LIST_TOOL, {
+      profileName: "default"
+    });
+
+    expect("isError" in result && result.isError).toBe(false);
+    expect(parseToolPayload(result)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      count: 1,
+      newsletters: [
+        expect.objectContaining({
+          title: "Builder Brief"
+        })
+      ]
+    });
+    expect(fakeRuntime.newsletters.list).toHaveBeenCalledWith({
+      profileName: "default"
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });
