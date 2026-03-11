@@ -18,6 +18,7 @@ import {
   normalizeLinkedInProfileUrl,
   resolveProfileUrl
 } from "./linkedinProfile.js";
+import { scrollLinkedInPageToBottom } from "./linkedinPage.js";
 import type {
   LinkedInSelectorLocale,
   LinkedInSelectorPhraseKey
@@ -553,7 +554,7 @@ async function scrapeConnections(
     const currentHeight = await page.evaluate(() => document.body.scrollHeight);
     if (currentHeight === lastHeight) break;
     lastHeight = currentHeight;
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await scrollLinkedInPageToBottom(page);
     await page.waitForTimeout(1000);
     const count = await page.evaluate(
       () =>

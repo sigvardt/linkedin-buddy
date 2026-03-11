@@ -199,6 +199,19 @@ describe("resolveEvasionConfig", () => {
     });
   });
 
+  it("defaults fixture replay runs to the minimal evasion profile", () => {
+    process.env.LINKEDIN_E2E_REPLAY = "1";
+
+    try {
+      expect(resolveEvasionConfig()).toMatchObject({
+        level: "minimal",
+        source: "default"
+      });
+    } finally {
+      delete process.env.LINKEDIN_E2E_REPLAY;
+    }
+  });
+
   it("rejects invalid env evasion levels with a concrete example", () => {
     process.env[LINKEDIN_BUDDY_EVASION_LEVEL_ENV] = "aggressive";
 

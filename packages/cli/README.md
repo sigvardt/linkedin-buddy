@@ -45,9 +45,12 @@ Important details:
 
 - `linkedin status` returns a top-level `evasion` block
 - `linkedin health` returns `session.evasion`
-- there are no CLI flags for evasion level or evasion diagnostics today
+- `--evasion-level minimal|moderate|paranoid` overrides the resolved profile for one command
+- `--no-evasion` forces the `minimal` profile for one command
+- there is still no dedicated CLI flag for evasion diagnostics
 - use `LINKEDIN_BUDDY_EVASION_LEVEL` and
   `LINKEDIN_BUDDY_EVASION_DIAGNOSTICS` to change the default behavior
+- fixture replay runs resolve to `minimal` by default for faster, deterministic tests
 - enabling diagnostics writes `evasion.*` events to the run log
 
 See `../../docs/evasion.md` for the profile matrix, exact JSON paths, and the

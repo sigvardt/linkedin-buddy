@@ -31,6 +31,7 @@ export * from "./linkedinImageAssets.js";
 export * from "./linkedinInbox.js";
 export * from "./linkedinAnalytics.js";
 export * from "./linkedinMembers.js";
+export * from "./linkedinPage.js";
 export * from "./linkedinProfile.js";
 export * from "./linkedinPrivacySettings.js";
 export * from "./linkedinJobs.js";

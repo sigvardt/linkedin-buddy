@@ -14,6 +14,7 @@ import {
 } from "playwright-core";
 import { ensureConfigPaths, resolveConfigPaths } from "../config.js";
 import { LinkedInBuddyError, asLinkedInBuddyError } from "../errors.js";
+import { wrapLinkedInBrowserContext } from "../linkedinPage.js";
 import {
   inspectLinkedInSession,
   type LinkedInSessionInspection
@@ -987,7 +988,11 @@ export async function captureLinkedInSession(
       ...(executablePath ? { executablePath } : {})
     });
     context = await browser.newContext();
-    const status = await waitForManualLogin(context, timeoutMs, pollIntervalMs);
+    const status = await waitForManualLogin(
+      wrapLinkedInBrowserContext(context),
+      timeoutMs,
+      pollIntervalMs
+    );
     const storageState = await context.storageState();
     const store = new LinkedInSessionStore(options.baseDir);
     const metadata = await store.save(sessionName, storageState);

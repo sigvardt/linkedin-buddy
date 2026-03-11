@@ -81,10 +81,11 @@ describe("ProfileManager.runWithContext", () => {
 describe("ProfileManager.runWithCDP", () => {
   it("connects over CDP and uses the first browser context", async () => {
     const profileManager = new ProfileManager(TEST_PATHS);
-    const context = {} as BrowserContext;
+    const context = { sentinel: true } as unknown as BrowserContext;
     const close = vi.fn(async () => undefined);
     const callback = vi.fn(async (receivedContext: BrowserContext) => {
-      expect(receivedContext).toBe(context);
+      expect(receivedContext).not.toBe(context);
+      expect((receivedContext as unknown as { sentinel?: boolean }).sentinel).toBe(true);
       return "done";
     });
 
@@ -99,7 +100,7 @@ describe("ProfileManager.runWithCDP", () => {
     expect(playwrightMocks.connectOverCDP).toHaveBeenCalledWith(
       "http://127.0.0.1:18800"
     );
-    expect(callback).toHaveBeenCalledWith(context);
+    expect(callback).toHaveBeenCalledTimes(1);
     expect(close).toHaveBeenCalledTimes(1);
   });
 });

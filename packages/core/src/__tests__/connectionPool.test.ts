@@ -52,7 +52,8 @@ describe("CDPConnectionPool", () => {
 
     const lease = await pool.acquire("http://127.0.0.1:18800");
 
-    expect(lease.context).toBe(mockContext);
+    expect(lease.context).not.toBe(mockContext);
+    expect(lease.context.browser()).toBe(mockBrowser);
     expect(playwrightMocks.connectOverCDP).toHaveBeenCalledWith(
       "http://127.0.0.1:18800"
     );
@@ -69,8 +70,10 @@ describe("CDPConnectionPool", () => {
     const leaseA = await pool.acquire("http://127.0.0.1:18800");
     const leaseB = await pool.acquire("http://127.0.0.1:18800");
 
-    expect(leaseA.context).toBe(mockContext);
-    expect(leaseB.context).toBe(mockContext);
+    expect(leaseA.context).not.toBe(mockContext);
+    expect(leaseB.context).not.toBe(mockContext);
+    expect(leaseA.context.browser()).toBe(mockBrowser);
+    expect(leaseB.context.browser()).toBe(mockBrowser);
     expect(playwrightMocks.connectOverCDP).toHaveBeenCalledTimes(1);
 
     leaseA.release();
@@ -93,7 +96,8 @@ describe("CDPConnectionPool", () => {
 
     const leaseB = await pool.acquire("http://127.0.0.1:18800");
 
-    expect(leaseB.context).toBe(second.mockContext);
+    expect(leaseB.context).not.toBe(second.mockContext);
+    expect(leaseB.context.browser()).toBe(second.mockBrowser);
     expect(playwrightMocks.connectOverCDP).toHaveBeenCalledTimes(2);
     expect(first.close).toHaveBeenCalledTimes(1);
 
@@ -144,7 +148,8 @@ describe("CDPConnectionPool", () => {
 
     expect(playwrightMocks.connectOverCDP).toHaveBeenCalledTimes(2);
     expect(first.close).toHaveBeenCalledTimes(1);
-    expect(secondLease.context).toBe(second.mockContext);
+    expect(secondLease.context).not.toBe(second.mockContext);
+    expect(secondLease.context.browser()).toBe(second.mockBrowser);
 
     secondLease.release();
     await pool.dispose();

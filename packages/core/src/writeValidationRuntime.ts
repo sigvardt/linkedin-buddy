@@ -17,6 +17,7 @@ import {
   ProfileManager,
   type PersistentContextOptions
 } from "./profileManager.js";
+import { wrapLinkedInBrowserContext } from "./linkedinPage.js";
 import { createCoreRuntime, type CoreRuntime } from "./runtime.js";
 import type { WriteValidationAccount } from "./writeValidationAccounts.js";
 import {
@@ -83,9 +84,13 @@ class StoredSessionProfileManager extends ProfileManager {
 
     context.setDefaultNavigationTimeout(this.timeoutMs);
     context.setDefaultTimeout(this.timeoutMs);
+    const wrappedContext = wrapLinkedInBrowserContext(context, {
+      evasion: this.runtime.evasion,
+      logger: this.runtime.logger
+    });
 
     try {
-      return await callback(context);
+      return await callback(wrappedContext);
     } finally {
       await context.close().catch(() => undefined);
     }

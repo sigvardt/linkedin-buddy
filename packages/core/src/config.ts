@@ -18,6 +18,7 @@ import {
   type EvasionStatus
 } from "./evasion.js";
 import { LinkedInBuddyError } from "./errors.js";
+import { isFixtureReplayEnabled } from "./fixtureReplay.js";
 
 /**
  * Default directory used for tool-owned state when no custom home is configured.
@@ -810,6 +811,7 @@ export function resolveEvasionConfig(options: {
   diagnosticsEnabled?: boolean;
   level?: string | EvasionLevel;
 } = {}): EvasionConfig {
+  const defaultLevel = isFixtureReplayEnabled() ? "minimal" : DEFAULT_EVASION_LEVEL;
   const rawLevel =
     typeof options.level === "string"
       ? options.level
@@ -837,7 +839,7 @@ export function resolveEvasionConfig(options: {
       source === "option"
         ? "evasionLevel"
         : LINKEDIN_BUDDY_EVASION_LEVEL_ENV,
-      DEFAULT_EVASION_LEVEL
+      defaultLevel
     );
   } catch (error) {
     if (source === "env" && error instanceof LinkedInBuddyError) {

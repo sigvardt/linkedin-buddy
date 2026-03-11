@@ -9,6 +9,7 @@ import {
   LinkedInBuddyError,
   asLinkedInBuddyError
 } from "./errors.js";
+import { scrollLinkedInPageToBottom } from "./linkedinPage.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
@@ -1222,9 +1223,7 @@ async function loadJobSearchResults(
   let results = await extractJobSearchResults(page, limit);
 
   for (let index = 0; index < 6 && results.length < limit; index += 1) {
-    await page.evaluate(() => {
-      globalThis.window.scrollTo(0, globalThis.document.body.scrollHeight);
-    });
+    await scrollLinkedInPageToBottom(page);
     await page.waitForTimeout(800);
     results = await extractJobSearchResults(page, limit);
   }

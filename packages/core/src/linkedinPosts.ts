@@ -13,6 +13,7 @@ import {
   LinkedInBuddyError,
   asLinkedInBuddyError
 } from "./errors.js";
+import { scrollLinkedInPageToTop } from "./linkedinPage.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
@@ -2559,7 +2560,7 @@ async function setComposerText(
     await composerInput.locator.press("Control+A").catch(() => undefined);
     await composerInput.locator.press("Meta+A").catch(() => undefined);
     await composerInput.locator.press("Backspace").catch(() => undefined);
-    await page.keyboard.insertText(text);
+    await composerInput.locator.type(text);
   }
 
   return composerInput.key;
@@ -2663,7 +2664,7 @@ async function setTextInputValue(
     await locator.press("Control+A").catch(() => undefined);
     await locator.press("Meta+A").catch(() => undefined);
     await locator.press("Backspace").catch(() => undefined);
-    await page.keyboard.insertText(value);
+    await locator.type(value);
   }
 }
 
@@ -3149,9 +3150,7 @@ async function locatePublishedPostOnSurface(
       await page.goto(LINKEDIN_FEED_URL, { waitUntil: "domcontentloaded" });
       await waitForNetworkIdleBestEffort(page);
     }
-    await page.evaluate(() => {
-      globalThis.scrollTo({ top: 0, behavior: "auto" });
-    });
+    await scrollLinkedInPageToTop(page);
     await waitForFeedSurface(page);
     return findVisiblePostBySnippet(page, snippet);
   }
@@ -3160,9 +3159,7 @@ async function locatePublishedPostOnSurface(
     waitUntil: "domcontentloaded"
   });
   await waitForNetworkIdleBestEffort(page);
-  await page.evaluate(() => {
-    globalThis.scrollTo({ top: 0, behavior: "auto" });
-  });
+  await scrollLinkedInPageToTop(page);
   await waitForProfileActivitySurface(page);
   return findVisiblePostBySnippet(page, snippet);
 }
