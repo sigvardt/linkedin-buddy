@@ -159,6 +159,8 @@ export interface HumanizedTypingOptions {
   profileOverrides?: Partial<TypingProfile>;
   /** Optional field label used in diagnostics and progress output. */
   fieldLabel?: string;
+  /** Optional per-call timeout applied to element targeting and direct input fallbacks. */
+  timeoutMs?: number;
 }
 
 /**
@@ -357,7 +359,8 @@ const HUMANIZE_OPTION_KEYS = [
 const HUMANIZED_TYPING_OPTION_KEYS = [
   "fieldLabel",
   "profile",
-  "profileOverrides"
+  "profileOverrides",
+  "timeoutMs"
 ] as const;
 const TYPING_PROFILE_OVERRIDE_KEYS = [
   "baseCharDelayMs",
@@ -846,6 +849,12 @@ function validateHumanizedTypingOptionsValue(
   }
 
   validateTypingProfileOverrides(options.profileOverrides, "typing options.profileOverrides");
+
+  if (options.timeoutMs !== undefined) {
+    assertNonNegativeFiniteNumber(options.timeoutMs, "typing options.timeoutMs", {
+      max: MAX_TYPING_TIMEOUT_MS
+    });
+  }
 }
 
 function assertPageLike(page: unknown): asserts page is Page {
@@ -879,6 +888,20 @@ function assertPageLike(page: unknown): asserts page is Page {
 
   if (typeof page.mouse.move !== "function") {
     throw new TypeError("page.mouse.move must be a function.");
+  }
+}
+
+function assertLocatorLike(locator: unknown): asserts locator is Locator {
+  if (!isRecord(locator)) {
+    throw new TypeError("locator must be a Playwright Locator instance.");
+  }
+
+  const requiredFunctions = ["click", "scrollIntoViewIfNeeded"] as const;
+
+  for (const key of requiredFunctions) {
+    if (typeof locator[key] !== "function") {
+      throw new TypeError("locator must be a Playwright Locator instance.");
+    }
   }
 }
 
@@ -1267,6 +1290,46 @@ export class HumanizedPage {
     assertString(text, "text", { allowEmpty: true });
     validateHumanizedTypingOptionsValue(options);
 
+    await this.typeInto(this.page.locator(selector).first(), text, options);
+  }
+
+  /**
+   * Type `text` into `locator` with the same simulation used by `type()`.
+   */
+  async typeInto(
+    locator: Locator,
+    text: string,
+    options?: HumanizedTypingOptions
+  ): Promise<void> {
+    assertLocatorLike(locator);
+    assertString(text, "text", { allowEmpty: true });
+    validateHumanizedTypingOptionsValue(options);
+
+    await this.typeIntoLocator(locator, text, options, false);
+  }
+
+  /**
+   * Replace the current value of `locator` with `text` using simulated typing.
+   */
+  async fillInto(
+    locator: Locator,
+    text: string,
+    options?: HumanizedTypingOptions
+  ): Promise<void> {
+    assertLocatorLike(locator);
+    assertString(text, "text", { allowEmpty: true });
+    validateHumanizedTypingOptionsValue(options);
+
+    await this.typeIntoLocator(locator, text, options, true);
+  }
+
+  private async typeIntoLocator(
+    element: Locator,
+    text: string,
+    options: HumanizedTypingOptions | undefined,
+    replaceExisting: boolean
+  ): Promise<void> {
+    const timeoutMs = options?.timeoutMs;
     const characters = splitTypingCharacters(text);
     if (characters.length > MAX_TEXT_GRAPHEMES) {
       throw new RangeError(
@@ -1274,7 +1337,6 @@ export class HumanizedPage {
       );
     }
 
-    const element = this.page.locator(selector).first();
     const fieldLabel = normalizeFieldLabel(options?.fieldLabel);
     const profileName = options?.profile ?? this.options.typingProfile;
     const profile = this.resolveTypingProfile(options);
@@ -1291,10 +1353,17 @@ export class HumanizedPage {
     );
 
     try {
-      await element.scrollIntoViewIfNeeded();
+      await element.scrollIntoViewIfNeeded(
+        timeoutMs === undefined ? undefined : { timeout: timeoutMs }
+      );
       await this.delay(200);
-      await element.click();
+      await element.click(timeoutMs === undefined ? undefined : { timeout: timeoutMs });
       await this.delay(150);
+
+      if (replaceExisting) {
+        await this.clearFocusedInput();
+        await this.delay(80);
+      }
 
       if (characters.length === 0) {
         logHumanizeEvent(
@@ -1320,7 +1389,9 @@ export class HumanizedPage {
           characters,
           "text_too_long",
           fieldLabel,
-          profileName
+          profileName,
+          undefined,
+          timeoutMs
         );
         if (fallbackMethod === null) {
           throw new HumanizeTypingTimeoutError(
@@ -1414,7 +1485,8 @@ export class HumanizedPage {
         error instanceof HumanizeTypingTimeoutError ? "timeout" : "simulation_failed",
         fieldLabel,
         profileName,
-        error
+        error,
+        timeoutMs
       );
       if (fallbackMethod !== null) {
         logHumanizeEvent(
@@ -1485,6 +1557,20 @@ export class HumanizedPage {
     const boundedDelayMs = this.clampDelay(delayMs, event);
     if (boundedDelayMs > 0) {
       await this.page.waitForTimeout(boundedDelayMs);
+    }
+  }
+
+  private async clearFocusedInput(): Promise<void> {
+    try {
+      await this.page.keyboard.press("ControlOrMeta+A");
+    } catch {
+      // Best-effort selection for fields that support text replacement.
+    }
+
+    try {
+      await this.page.keyboard.press("Backspace");
+    } catch {
+      // Keep going; direct-input fallbacks will still attempt to overwrite.
     }
   }
 
@@ -1566,9 +1652,13 @@ export class HumanizedPage {
     this.assertTypingWithinBounds(state);
   }
 
-  private async applyDirectInput(element: Locator, text: string): Promise<string> {
+  private async applyDirectInput(
+    element: Locator,
+    text: string,
+    timeoutMs?: number
+  ): Promise<string> {
     if (typeof element.fill === "function") {
-      await element.fill(text, { timeout: DIRECT_INPUT_TIMEOUT_MS });
+      await element.fill(text, { timeout: timeoutMs ?? DIRECT_INPUT_TIMEOUT_MS });
       return "fill";
     }
 
@@ -1594,7 +1684,8 @@ export class HumanizedPage {
     reason: string,
     fieldLabel?: string | null,
     profileName?: TypingProfileName,
-    error?: unknown
+    error?: unknown,
+    timeoutMs?: number
   ): Promise<string | null> {
     const payload = buildTypingEventPayload({
       text,
@@ -1610,7 +1701,7 @@ export class HumanizedPage {
     });
 
     try {
-      const method = await this.applyDirectInput(element, text);
+      const method = await this.applyDirectInput(element, text, timeoutMs);
       logHumanizeEvent(this.page, "warn", "humanize.typing.degraded", {
         ...payload,
         method

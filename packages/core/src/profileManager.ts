@@ -5,12 +5,18 @@ import {
   chromium,
   type BrowserContext
 } from "playwright-core";
-import type { ConfigPaths } from "./config.js";
+import {
+  resolveEvasionConfig,
+  type ConfigPaths,
+  type EvasionConfig
+} from "./config.js";
 import { LinkedInBuddyError } from "./errors.js";
 import {
   attachFixtureReplayToContext,
   isFixtureReplayEnabled
 } from "./fixtureReplay.js";
+import { wrapLinkedInBrowserContext } from "./linkedinPage.js";
+import type { JsonEventLogger } from "./logging.js";
 
 type PersistentLaunchOptions = NonNullable<
   Parameters<typeof chromium.launchPersistentContext>[1]
@@ -36,7 +42,19 @@ function withPlaywrightInstallHint(error: unknown): Error {
 }
 
 export class ProfileManager {
-  constructor(private readonly paths: ConfigPaths) {}
+  private readonly evasion: EvasionConfig;
+  private readonly logger: Pick<JsonEventLogger, "log"> | undefined;
+
+  constructor(
+    private readonly paths: ConfigPaths,
+    options: {
+      evasion?: EvasionConfig;
+      logger?: Pick<JsonEventLogger, "log">;
+    } = {}
+  ) {
+    this.evasion = options.evasion ?? resolveEvasionConfig();
+    this.logger = options.logger;
+  }
 
   getProfileUserDataDir(profileName: string = "default"): string {
     return path.join(this.paths.profilesDir, profileName);
@@ -109,7 +127,7 @@ export class ProfileManager {
       try {
         context = await chromium.launchPersistentContext(userDataDir, launchOptions);
         await attachFixtureReplayToContext(context);
-        return await callback(context);
+        return await callback(this.wrapContext(context));
       } catch (error) {
         throw withPlaywrightInstallHint(error);
       } finally {
@@ -133,7 +151,7 @@ export class ProfileManager {
       if (!context) {
         throw new Error("No browser context found on CDP connection");
       }
-      return await callback(context);
+      return await callback(this.wrapContext(context));
     } catch (error) {
       throw withPlaywrightInstallHint(error);
     } finally {
@@ -193,5 +211,12 @@ export class ProfileManager {
       { headless: options.headless ?? true },
       callback
     );
+  }
+
+  private wrapContext(context: BrowserContext): BrowserContext {
+    return wrapLinkedInBrowserContext(context, {
+      evasion: this.evasion,
+      ...(this.logger ? { logger: this.logger } : {})
+    });
   }
 }

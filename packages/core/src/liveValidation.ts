@@ -21,6 +21,7 @@ import {
   type LinkedInBuddyErrorCode
 } from "./errors.js";
 import { JsonEventLogger, type JsonLogEntry } from "./logging.js";
+import { wrapLinkedInBrowserContext } from "./linkedinPage.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import { createRunId } from "./run.js";
 import {
@@ -1580,7 +1581,7 @@ async function createBrowserContext(
     context.setDefaultTimeout(timeoutMs);
     await installReadOnlyNetworkGuard(context, blockedRequests);
 
-    return { browser, context };
+    return { browser, context: wrapLinkedInBrowserContext(context) };
   } catch (error) {
     await browser.close().catch(() => undefined);
     throw error;

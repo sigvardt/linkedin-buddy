@@ -203,11 +203,14 @@ Instead, the CLI exposes evasion through the session diagnostics commands:
 
 Important CLI behavior:
 
-- there are **no** `--evasion-level` or `--evasion-diagnostics` flags today
+- `--evasion-level minimal|moderate|paranoid` overrides the resolved profile for one command
+- `--no-evasion` forces the `minimal` profile for one command
+- there is still **no** `--evasion-diagnostics` flag today
 - the CLI inherits evasion defaults from environment variables or built-in
   defaults
 - the command `--help` text for `status` and `health` points operators to the
   evasion env vars
+- fixture replay runs resolve to `minimal` unless a stronger profile is set explicitly
 - enabling diagnostics affects the run log, not the JSON schema
 
 Example:

@@ -8,6 +8,7 @@ import {
   LinkedInBuddyError,
   asLinkedInBuddyError
 } from "./errors.js";
+import { scrollLinkedInPageToBottom } from "./linkedinPage.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
@@ -791,9 +792,7 @@ async function loadNotificationSnapshots(
   let notifications = await extractNotificationSnapshots(page, limit);
 
   for (let i = 0; i < 6 && notifications.length < limit; i += 1) {
-    await page.evaluate(() => {
-      globalThis.window.scrollTo(0, globalThis.document.body.scrollHeight);
-    });
+    await scrollLinkedInPageToBottom(page);
     await page.waitForTimeout(800);
     notifications = await extractNotificationSnapshots(page, limit);
   }

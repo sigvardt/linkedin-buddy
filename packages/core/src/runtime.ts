@@ -254,7 +254,10 @@ export function createCoreRuntime(
   const logger = new JsonEventLogger(paths, runId, db, privacy);
   const artifacts = new ArtifactHelpers(paths, runId, db, privacy);
   const confirmFailureArtifacts = resolveConfirmFailureArtifactConfig();
-  const profileManager = new ProfileManager(paths);
+  const profileManager = new ProfileManager(paths, {
+    evasion,
+    logger
+  });
   let closed = false;
   let runtime: CoreRuntime;
 

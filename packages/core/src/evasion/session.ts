@@ -161,6 +161,24 @@ export class EvasionSession {
   }
 
   /**
+   * Move the mouse from the session's current pointer position to `to`.
+   *
+   * This is the ergonomic wrapper used by higher-level browser interaction
+   * layers that do not track their own pointer coordinates.
+   *
+   * @param to - Destination coordinate.
+   */
+  async moveMouseTo(to: Readonly<Point2D>): Promise<void> {
+    await this.moveMouse(
+      {
+        x: this.mouseX,
+        y: this.mouseY
+      },
+      to
+    );
+  }
+
+  /**
    * Scroll by `pixels` using momentum simulation when the profile enables it.
    *
    * Distances are clamped into the supported range to avoid unrealistic jumps

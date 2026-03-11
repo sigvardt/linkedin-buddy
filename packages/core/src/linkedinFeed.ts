@@ -6,6 +6,10 @@ import type { LinkedInAuthService } from "./auth/session.js";
 import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
 import type { ConfirmFailureArtifactConfig } from "./config.js";
 import { LinkedInBuddyError, asLinkedInBuddyError } from "./errors.js";
+import {
+  scrollLinkedInPageToBottom,
+  scrollLinkedInPageToTop
+} from "./linkedinPage.js";
 import type { JsonEventLogger } from "./logging.js";
 import { validateLinkedInPostText } from "./linkedinPosts.js";
 import type { ProfileManager } from "./profileManager.js";
@@ -793,9 +797,7 @@ async function loadFeedPosts(page: Page, limit: number): Promise<LinkedInFeedPos
   let posts = await extractFeedPosts(page, limit);
 
   for (let i = 0; i < 6 && posts.length < limit; i++) {
-    await page.evaluate(() => {
-      globalThis.window.scrollTo(0, globalThis.document.body.scrollHeight);
-    });
+    await scrollLinkedInPageToBottom(page);
     await page.waitForTimeout(800);
     posts = await extractFeedPosts(page, limit);
   }
@@ -1639,7 +1641,7 @@ async function setComposerText(
     await composerInput.locator.press("Control+A").catch(() => undefined);
     await composerInput.locator.press("Meta+A").catch(() => undefined);
     await composerInput.locator.press("Backspace").catch(() => undefined);
-    await page.keyboard.insertText(text);
+    await composerInput.locator.type(text);
   }
 
   return composerInput.key;
@@ -1707,9 +1709,7 @@ async function verifySharedPost(
   }
 
   const locatePost = async (): Promise<Locator | null> => {
-    await page.evaluate(() => {
-      globalThis.scrollTo({ top: 0, behavior: "auto" });
-    });
+    await scrollLinkedInPageToTop(page);
     await waitForFeedSurface(page);
     return findVisiblePostBySnippet(page, snippet);
   };

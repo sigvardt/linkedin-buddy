@@ -178,4 +178,24 @@ describe("CLI evasion diagnostics output", () => {
       source: "default"
     });
   });
+
+  it("passes minimal evasion to the runtime when --no-evasion is used", async () => {
+    await runCli(["node", "linkedin", "status", "--no-evasion"]);
+
+    expect(evasionCliMocks.createCoreRuntime).toHaveBeenCalledWith(
+      expect.objectContaining({
+        evasionLevel: "minimal"
+      })
+    );
+  });
+
+  it("passes the requested evasion override to the runtime", async () => {
+    await runCli(["node", "linkedin", "status", "--evasion-level", "paranoid"]);
+
+    expect(evasionCliMocks.createCoreRuntime).toHaveBeenCalledWith(
+      expect.objectContaining({
+        evasionLevel: "paranoid"
+      })
+    );
+  });
 });

@@ -3,6 +3,9 @@ import {
   type Browser,
   type BrowserContext
 } from "playwright-core";
+import { resolveEvasionConfig, type EvasionConfig } from "./config.js";
+import { wrapLinkedInBrowserContext } from "./linkedinPage.js";
+import type { JsonEventLogger } from "./logging.js";
 
 interface PooledConnection {
   browser: Browser;
@@ -47,10 +50,19 @@ export class CDPConnectionPool {
   private readonly idleTimeoutMs: number;
   private readonly lock = new AsyncLock();
   private readonly maxConnectionAgeMs: number;
+  private readonly evasion: EvasionConfig;
+  private readonly logger: Pick<JsonEventLogger, "log"> | undefined;
 
-  constructor(options?: { idleTimeoutMs?: number; maxConnectionAgeMs?: number }) {
+  constructor(options?: {
+    idleTimeoutMs?: number;
+    maxConnectionAgeMs?: number;
+    evasion?: EvasionConfig;
+    logger?: Pick<JsonEventLogger, "log">;
+  }) {
     this.idleTimeoutMs = options?.idleTimeoutMs ?? 300_000;
     this.maxConnectionAgeMs = options?.maxConnectionAgeMs ?? 30 * 60_000;
+    this.evasion = options?.evasion ?? resolveEvasionConfig();
+    this.logger = options?.logger;
   }
 
   async acquire(cdpUrl: string): Promise<ConnectionLease> {
@@ -138,7 +150,10 @@ export class CDPConnectionPool {
       };
 
       return {
-        context,
+        context: wrapLinkedInBrowserContext(context, {
+          evasion: this.evasion,
+          ...(this.logger ? { logger: this.logger } : {})
+        }),
         release
       };
     });

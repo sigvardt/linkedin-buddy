@@ -77,6 +77,7 @@ import {
   resolveActivityWebhookConfig,
   resolveConfigPaths,
   resolveFollowupSinceWindow,
+  resolveEvasionConfig,
   resolveLinkedInSelectorLocaleConfigResolution,
   redactStructuredValue,
   recordFeedbackInvocation,
@@ -236,6 +237,8 @@ const LIVE_VALIDATION_ERROR_EXIT_CODE = 2;
 const WRITE_VALIDATION_DOC_PATH = "docs/write-validation.md";
 const WRITE_VALIDATION_WARNING = "This will perform REAL actions on LinkedIn";
 const TOTAL_WRITE_VALIDATION_ACTIONS = LINKEDIN_WRITE_VALIDATION_ACTIONS.length;
+let cliEvasionEnabled = true;
+let cliEvasionLevel: string | undefined;
 let cliSelectorLocale: string | undefined;
 let activeCliInvocation:
   | {
@@ -350,6 +353,7 @@ function printJson(value: unknown): void {
 
 function createRuntime(cdpUrl?: string) {
   maybeWarnAboutSelectorLocaleConfig(cliSelectorLocale);
+  const evasionLevel = resolveCliEvasionLevelOverride();
 
   if (cdpUrl) {
     process.stderr.write(
@@ -365,13 +369,34 @@ function createRuntime(cdpUrl?: string) {
     cdpUrl
       ? {
           cdpUrl,
+          ...(evasionLevel ? { evasionLevel } : {}),
           privacy: cliPrivacyConfig,
           ...(cliSelectorLocale ? { selectorLocale: cliSelectorLocale } : {})
         }
       : {
+          ...(evasionLevel ? { evasionLevel } : {}),
           privacy: cliPrivacyConfig,
           ...(cliSelectorLocale ? { selectorLocale: cliSelectorLocale } : {})
         }
+  );
+}
+
+function resolveCliEvasionLevelOverride(): string | undefined {
+  if (cliEvasionEnabled === false) {
+    return "minimal";
+  }
+
+  return cliEvasionLevel;
+}
+
+function resolveCliEvasionRuntimeConfig() {
+  const evasionLevel = resolveCliEvasionLevelOverride();
+  return resolveEvasionConfig(
+    evasionLevel
+      ? {
+          level: evasionLevel
+        }
+      : {}
   );
 }
 
@@ -687,7 +712,9 @@ async function runFixturesRecord(input: FixtureRecordInput): Promise<void> {
   await mkdir(setRootDir, { recursive: true });
   await mkdir(pagesDir, { recursive: true });
 
-  const profileManager = new ProfileManager(resolveConfigPaths());
+  const profileManager = new ProfileManager(resolveConfigPaths(), {
+    evasion: resolveCliEvasionRuntimeConfig()
+  });
   let captureLocale = previousSetSummary?.locale ?? "en-US";
   let captureViewport: { width: number; height: number } = {
     width: input.width,
@@ -7766,6 +7793,11 @@ export function createCliProgram(): Command {
         ", "
       )}; region tags like da-DK normalize to da)`
     )
+    .option(
+      "--evasion-level <level>",
+      "Override anti-bot evasion level for this command (minimal, moderate, paranoid)"
+    )
+    .option("--no-evasion", "Disable anti-bot evasion for this command")
     .addHelpText(
       "after",
       [
@@ -7797,7 +7829,22 @@ export function createCliProgram(): Command {
       : undefined;
   };
 
+  const readEvasionEnabled = (): boolean => {
+    const options = program.opts<{ evasion?: boolean }>();
+    return options.evasion !== false;
+  };
+
+  const readEvasionLevel = (): string | undefined => {
+    const options = program.opts<{ evasionLevel?: string }>();
+    return typeof options.evasionLevel === "string" &&
+      options.evasionLevel.trim().length > 0
+      ? options.evasionLevel.trim()
+      : undefined;
+  };
+
   program.hook("preAction", (_command, actionCommand) => {
+    cliEvasionEnabled = readEvasionEnabled();
+    cliEvasionLevel = readEvasionLevel();
     cliSelectorLocale = readSelectorLocale();
     const profileName = readCommandProfileName(actionCommand);
     activeCliInvocation = {
@@ -10409,6 +10456,9 @@ export async function runCli(argv: string[] = process.argv): Promise<void> {
     throw error;
   } finally {
     activeCliInvocation = undefined;
+    cliEvasionEnabled = true;
+    cliEvasionLevel = undefined;
+    cliSelectorLocale = undefined;
     process.argv = originalArgv;
   }
 }
