@@ -1237,19 +1237,7 @@ async function extractEditableSettings(
 
     return {
       industry: industryField
-        ? normalizeText(
-            await industryField.evaluate((element) => {
-              if (
-                element instanceof globalThis.HTMLInputElement ||
-                element instanceof globalThis.HTMLTextAreaElement ||
-                element instanceof globalThis.HTMLSelectElement
-              ) {
-                return element.value;
-              }
-
-              return element.getAttribute("value") ?? element.textContent ?? "";
-            })
-          )
+        ? await readEditableFieldValue(industryField)
         : "",
       supported_fields: ["industry"]
     };
@@ -1267,6 +1255,79 @@ async function extractEditableSettings(
 
 function normalizeText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
+}
+
+export async function readEditableFieldValue(locator: Locator): Promise<string> {
+  try {
+    return normalizeText(
+      await locator.evaluate((element) => {
+        type EvaluatedFieldOption = {
+          label?: unknown;
+          textContent?: string | null;
+        };
+        type EvaluatedFieldElement = {
+          tagName: string;
+          textContent: string | null;
+          getAttribute(name: string): string | null;
+          querySelector(selector: string): EvaluatedFieldElement | null;
+          value?: unknown;
+          selectedOptions?: {
+            length?: number;
+            [index: number]: EvaluatedFieldOption;
+          };
+        };
+        const normalize = (value: string | null | undefined): string =>
+          (value ?? "").replace(/\s+/g, " ").trim();
+        const readString = (value: unknown): string =>
+          typeof value === "string" ? value : "";
+        const readSelectedOptionText = (
+          target: EvaluatedFieldElement
+        ): string => {
+          const firstOption = target.selectedOptions?.[0];
+          if (!firstOption) {
+            return "";
+          }
+
+          return normalize(
+            readString(firstOption.label) ||
+              readString(firstOption.textContent)
+          );
+        };
+        const readElementValue = (
+          target: EvaluatedFieldElement
+        ): string => {
+          const tagName = target.tagName.toLowerCase();
+          const directValue = normalize(readString(target.value));
+          const valueAttribute = normalize(target.getAttribute("value"));
+          const ariaValueText = normalize(target.getAttribute("aria-valuetext"));
+          const ariaLabel = normalize(target.getAttribute("aria-label"));
+          const textContent = normalize(target.textContent);
+
+          if (tagName === "select") {
+            return (
+              readSelectedOptionText(target) ||
+              directValue ||
+              valueAttribute ||
+              textContent ||
+              ariaLabel
+            );
+          }
+
+          return ariaValueText || directValue || valueAttribute || textContent || ariaLabel;
+        };
+
+        const nestedControl = element.querySelector(
+          "input, textarea, select, [role='combobox']"
+        );
+
+        return readElementValue(
+          (nestedControl ?? element) as EvaluatedFieldElement
+        );
+      })
+    );
+  } catch {
+    return "";
+  }
 }
 
 function getProfileRateLimitConfig(actionType: string): ConsumeRateLimitInput {
@@ -1932,6 +1993,7 @@ async function extractProfileData(
   page: Page,
   selectorLocale: LinkedInSelectorLocale
 ): Promise<LinkedInProfile> {
+  const visibleTopCardSummary = await extractVisibleTopCardSummary(page);
   const extracted = await page.evaluate((sectionLabels) => {
     const normalize = (value: string | null | undefined): string =>
       (value ?? "").replace(/\s+/g, " ").trim();
@@ -2312,11 +2374,19 @@ async function extractProfileData(
     vanity_name: extracted.vanity_name
       ? normalizeText(extracted.vanity_name)
       : null,
-    full_name: normalizeText(extracted.full_name),
-    headline: normalizeText(extracted.headline),
-    location: normalizeText(extracted.location),
+    full_name:
+      normalizeText(visibleTopCardSummary.full_name) ||
+      normalizeText(extracted.full_name),
+    headline:
+      normalizeText(visibleTopCardSummary.headline) ||
+      normalizeText(extracted.headline),
+    location:
+      normalizeText(visibleTopCardSummary.location) ||
+      normalizeText(extracted.location),
     about: normalizeText(extracted.about),
-    connection_degree: normalizeText(extracted.connection_degree),
+    connection_degree:
+      normalizeText(visibleTopCardSummary.connection_degree) ||
+      normalizeText(extracted.connection_degree),
     experience: extracted.experience.map((item) => ({
       title: normalizeText(item.title),
       company: normalizeText(item.company),
@@ -2334,12 +2404,136 @@ async function extractProfileData(
 }
 /* eslint-enable no-undef */
 
+interface LinkedInProfileTopCardSummary {
+  full_name: string;
+  headline: string;
+  location: string;
+  connection_degree: string;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function dedupeStrings(values: readonly string[]): string[] {
   return [...new Set(values.map((value) => normalizeText(value)).filter(Boolean))];
+}
+
+async function readFirstVisibleLocatorText(locator: Locator): Promise<string> {
+  const visibleLocator = await resolveFirstVisibleLocator(locator);
+  if (!visibleLocator) {
+    return "";
+  }
+
+  return normalizeText(await visibleLocator.textContent().catch(() => ""));
+}
+
+async function readVisibleLocatorTexts(locator: Locator): Promise<string[]> {
+  const count = await locator.count().catch(() => 0);
+  const texts: string[] = [];
+
+  for (let index = 0; index < count; index += 1) {
+    const candidate = locator.nth(index);
+    if (!(await candidate.isVisible().catch(() => false))) {
+      continue;
+    }
+
+    const text = normalizeText(await candidate.textContent().catch(() => ""));
+    if (text) {
+      texts.push(text);
+    }
+  }
+
+  return texts;
+}
+
+function looksLikeLocationText(value: string): boolean {
+  return /,/.test(value) || /\b(?:region|area|district|county|province)\b/i.test(value);
+}
+
+function looksLikeProfileActionText(value: string): boolean {
+  return /^(?:add|contact|edit|enhance|get started|learn more|open to|save|share|show|tell|try premium)\b/i.test(
+    value
+  );
+}
+
+export async function extractVisibleTopCardSummaryFromRoot(
+  root: Locator
+): Promise<LinkedInProfileTopCardSummary> {
+  const fullName = await readFirstVisibleLocatorText(
+    root.locator("h1.text-heading-xlarge, h1[class*='text-heading'], h2, h1")
+  );
+  let headline = await readFirstVisibleLocatorText(
+    root.locator(".text-body-medium[data-anonymize='headline'], .text-body-medium")
+  );
+  let location = await readFirstVisibleLocatorText(
+    root.locator("span.text-body-small[data-anonymize='location'], .text-body-small.inline")
+  );
+  const connectionDegree = await readFirstVisibleLocatorText(
+    root.locator(".dist-value, .distance-badge, [class*='distance']")
+  );
+
+  if (!headline) {
+    headline = await readFirstVisibleLocatorText(
+      root.locator(
+        "xpath=(.//*[self::h1 or self::h2]/ancestor::div[following-sibling::p][1]/following-sibling::p[normalize-space()][1])[1]"
+      )
+    );
+  }
+
+  if (!location) {
+    location = await readFirstVisibleLocatorText(
+      root.locator(
+        "xpath=(.//*[self::h1 or self::h2]/ancestor::div[following-sibling::p][1]/following-sibling::div[1]//*[self::p or self::span][normalize-space()][1])[1]"
+      )
+    );
+  }
+
+  if (!headline || !location) {
+    const paragraphTexts = dedupeStrings(await readVisibleLocatorTexts(root.locator("p")));
+
+    if (!headline) {
+      headline =
+        paragraphTexts.find(
+          (text) =>
+            !looksLikeLocationText(text) &&
+            !looksLikeProfileActionText(text)
+        ) ?? "";
+    }
+
+    if (!location) {
+      location =
+        paragraphTexts.find(
+          (text) =>
+            text !== headline &&
+            looksLikeLocationText(text) &&
+            !looksLikeProfileActionText(text)
+        ) ?? "";
+    }
+  }
+
+  return {
+    full_name: fullName,
+    headline,
+    location,
+    connection_degree: connectionDegree
+  };
+}
+
+async function extractVisibleTopCardSummary(
+  page: Page
+): Promise<LinkedInProfileTopCardSummary> {
+  try {
+    const topCardRoot = await getTopCardRoot(page);
+    return extractVisibleTopCardSummaryFromRoot(topCardRoot);
+  } catch {
+    return {
+      full_name: "",
+      headline: "",
+      location: "",
+      connection_degree: ""
+    };
+  }
 }
 
 function normalizeFieldKey(value: string): string {
