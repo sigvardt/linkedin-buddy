@@ -7,7 +7,12 @@ import {
   statSync
 } from "node:fs";
 import path from "node:path";
-import { type BrowserContext, type Locator, type Page } from "playwright-core";
+import {
+  errors as playwrightErrors,
+  type BrowserContext,
+  type Locator,
+  type Page
+} from "playwright-core";
 import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
 import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
@@ -468,6 +473,9 @@ type NormalizedEditableValue = string | boolean;
 const PROFILE_SECTION_ITEM_ID_PREFIX = "psi_";
 const PROFILE_FEATURED_ITEM_ID_PREFIX = "pfi_";
 const MAX_PROFILE_UPLOAD_BYTES = 100 * 1024 * 1024;
+const LINKEDIN_SELF_PROFILE_URL = "https://www.linkedin.com/in/me/";
+const AUTH_PROFILE_MENU_LINK_SELECTOR =
+  "a[data-control-name='nav.settings_view_profile']";
 const PROFILE_IMAGE_UPLOAD_EXTENSIONS = [".jpg", ".jpeg", ".png"] as const;
 const FEATURED_MEDIA_UPLOAD_EXTENSIONS = [
   ".jpg",
@@ -2950,6 +2958,118 @@ async function waitForProfilePageReady(page: Page): Promise<void> {
     .catch(() => undefined);
 }
 
+function tryNormalizeLinkedInProfileUrl(
+  value: string | null | undefined
+): string | null {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return null;
+  }
+
+  try {
+    return normalizeLinkedInProfileUrl(value);
+  } catch {
+    return null;
+  }
+}
+
+async function readPageAttributeWithTimeout(
+  page: Page,
+  selector: string,
+  attribute: string,
+  timeoutMs: number
+): Promise<string | null> {
+  try {
+    return await page
+      .locator(selector)
+      .first()
+      .getAttribute(attribute, { timeout: timeoutMs });
+  } catch {
+    return null;
+  }
+}
+
+async function hasOwnProfileEditControl(
+  page: Page,
+  options: { requireVisible: boolean }
+): Promise<boolean> {
+  const selectors = [
+    buildProfileIntroEditHrefSelector(),
+    ...PROFILE_MEDIA_STRUCTURAL_SELECTORS.photo,
+    ...PROFILE_MEDIA_STRUCTURAL_SELECTORS.banner
+  ];
+
+  for (const selector of selectors) {
+    const locator = page.locator(selector);
+    if (await isLocatorVisible(locator)) {
+      return true;
+    }
+
+    if (!options.requireVisible) {
+      try {
+        if ((await locator.count()) > 0) {
+          return true;
+        }
+      } catch {
+        // Best effort — some page states do not expose countable edit controls yet.
+      }
+    }
+  }
+
+  return false;
+}
+
+async function canRecoverOwnProfileNavigationTimeout(page: Page): Promise<boolean> {
+  const SHORT_TIMEOUT_MS = 1_000;
+  const currentProfileUrl = tryNormalizeLinkedInProfileUrl(page.url());
+  if (!currentProfileUrl) {
+    return false;
+  }
+
+  const canonicalProfileUrl = tryNormalizeLinkedInProfileUrl(
+    await readPageAttributeWithTimeout(
+      page,
+      "link[rel='canonical']",
+      "href",
+      SHORT_TIMEOUT_MS
+    )
+  );
+  const ogProfileUrl = tryNormalizeLinkedInProfileUrl(
+    await readPageAttributeWithTimeout(
+      page,
+      "meta[property='og:url']",
+      "content",
+      SHORT_TIMEOUT_MS
+    )
+  );
+  const menuProfileUrl = tryNormalizeLinkedInProfileUrl(
+    await readPageAttributeWithTimeout(
+      page,
+      AUTH_PROFILE_MENU_LINK_SELECTOR,
+      "href",
+      SHORT_TIMEOUT_MS
+    )
+  );
+  if (menuProfileUrl) {
+    if (menuProfileUrl === currentProfileUrl) {
+      return true;
+    }
+
+    if (canonicalProfileUrl === menuProfileUrl) {
+      return true;
+    }
+
+    if (ogProfileUrl === menuProfileUrl) {
+      return true;
+    }
+  }
+
+  if (currentProfileUrl === LINKEDIN_SELF_PROFILE_URL) {
+    return hasOwnProfileEditControl(page, { requireVisible: false });
+  }
+
+  return hasOwnProfileEditControl(page, { requireVisible: true });
+}
+
 async function waitForVisibleDialog(page: Page): Promise<Locator> {
   const dialog = page.locator("[role='dialog']").last();
   await dialog.waitFor({ state: "visible", timeout: 10_000 });
@@ -3014,8 +3134,18 @@ async function clickLocatorAndWaitForOverlay(
   return waitForVisibleOverlay(page);
 }
 
-async function navigateToOwnProfile(page: Page): Promise<void> {
-  await page.goto(resolveProfileUrl("me"), { waitUntil: "domcontentloaded" });
+export async function navigateToOwnProfile(page: Page): Promise<void> {
+  try {
+    await page.goto(resolveProfileUrl("me"), { waitUntil: "domcontentloaded" });
+  } catch (error) {
+    if (
+      !(error instanceof playwrightErrors.TimeoutError) ||
+      !(await canRecoverOwnProfileNavigationTimeout(page))
+    ) {
+      throw error;
+    }
+  }
+
   await waitForNetworkIdleBestEffort(page);
   await waitForProfilePageReady(page);
 }
