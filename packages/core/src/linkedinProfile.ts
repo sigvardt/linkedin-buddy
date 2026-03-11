@@ -782,7 +782,7 @@ const PROFILE_INTRO_FIELD_DEFINITIONS: readonly EditableFieldDefinition[] = [
   },
   {
     key: "location",
-    aliases: ["location", "Location", "Lokation", "By"],
+    aliases: ["location", "Location", "City", "Lokation", "By"],
     control: "text"
   }
 ] as const;
@@ -1186,9 +1186,10 @@ async function extractEditableSettings(
 
   try {
     surface = await openIntroEditSurface(page, selectorLocale);
-    const industryField = await findDialogFieldLocator(
+    const industryField = await waitForDialogFieldLocator(
       surface.root,
-      PROFILE_SETTINGS_FIELD_DEFINITIONS[0]
+      PROFILE_SETTINGS_FIELD_DEFINITIONS[0],
+      10_000
     );
 
     return {
@@ -2855,6 +2856,29 @@ interface ProfileEditorSurface {
   root: Locator;
 }
 
+const EDITABLE_FIELD_CONTROL_SELECTOR = [
+  "input",
+  "textarea",
+  "select",
+  "[role='combobox']",
+  "[role='textbox']",
+  "[contenteditable='true']"
+].join(", ");
+
+const EDITABLE_FIELD_CONTROL_XPATH = [
+  "self::input",
+  "self::textarea",
+  "self::select",
+  "@role='combobox'",
+  "@role='textbox'",
+  "@contenteditable='true'"
+].join(" or ");
+
+const MAIN_EDITABLE_FIELD_CONTROL_SELECTOR = EDITABLE_FIELD_CONTROL_SELECTOR
+  .split(", ")
+  .map((selector) => `main ${selector}`)
+  .join(", ");
+
 export async function resolveFirstVisibleLocator(
   locator: Locator
 ): Promise<Locator | null> {
@@ -2953,6 +2977,33 @@ function createCssLocatorCandidates(
       locator: root.locator(selector)
     })
   );
+}
+
+function buildEditableFieldTextRegex(labels: readonly string[]): RegExp {
+  const normalizedLabels = dedupeStrings(labels);
+  const pattern = normalizedLabels.map((label) => escapeRegExp(label)).join("|");
+  return new RegExp(`^(?:${pattern})\\s*[*:]?$`, "i");
+}
+
+function buildEditableFieldAttributeSelectors(labels: readonly string[]): string[] {
+  const selectors: string[] = [];
+
+  for (const label of dedupeStrings(labels)) {
+    const escapedLabel = escapeCssAttributeValue(label);
+    selectors.push(
+      `input[aria-label*="${escapedLabel}" i]`,
+      `textarea[aria-label*="${escapedLabel}" i]`,
+      `select[aria-label*="${escapedLabel}" i]`,
+      `[role='combobox'][aria-label*="${escapedLabel}" i]`,
+      `[role='textbox'][aria-label*="${escapedLabel}" i]`,
+      `[contenteditable='true'][aria-label*="${escapedLabel}" i]`,
+      `input[placeholder*="${escapedLabel}" i]`,
+      `textarea[placeholder*="${escapedLabel}" i]`,
+      `[contenteditable='true'][data-placeholder*="${escapedLabel}" i]`
+    );
+  }
+
+  return selectors;
 }
 
 async function waitForProfilePageReady(page: Page): Promise<void> {
@@ -3089,9 +3140,7 @@ async function waitForVisibleProfileIntroEditPage(page: Page): Promise<Locator> 
   const readyCandidates: LocatorCandidate[] = [
     {
       key: "intro-edit-page-field",
-      locator: page.locator(
-        "main input, main textarea, main select, main [role='combobox']"
-      )
+      locator: page.locator(MAIN_EDITABLE_FIELD_CONTROL_SELECTOR)
     },
     {
       key: "intro-edit-page-submit",
@@ -3739,24 +3788,82 @@ async function findDialogFieldLocator(
   definition: EditableFieldDefinition
 ): Promise<Locator | null> {
   const labelRegex = buildTextRegex(definition.aliases);
-  const byLabel = dialog.getByLabel(labelRegex).first();
-  if (await isLocatorVisible(byLabel)) {
-    return byLabel;
+  const fieldTextRegex = buildEditableFieldTextRegex(definition.aliases);
+  const roleCandidates: Locator[] = [
+    dialog.getByLabel(labelRegex),
+    dialog.getByRole("textbox", { name: labelRegex }),
+    dialog.getByRole("combobox", { name: labelRegex }),
+    dialog.getByRole("checkbox", { name: labelRegex })
+  ];
+
+  for (const candidate of roleCandidates) {
+    const resolved = await resolveFirstVisibleLocator(candidate);
+    if (resolved) {
+      return resolved;
+    }
+  }
+
+  const attributeCandidates = createCssLocatorCandidates(
+    dialog,
+    buildEditableFieldAttributeSelectors(definition.aliases),
+    `editable-field-${definition.key}`
+  );
+  const resolvedAttribute = await findFirstVisibleLocator(attributeCandidates);
+  if (resolvedAttribute) {
+    return resolvedAttribute.locator;
+  }
+
+  const textCandidates = dialog.getByText(fieldTextRegex);
+  const textCandidateCount = await textCandidates.count().catch(() => 0);
+  for (let index = 0; index < textCandidateCount; index += 1) {
+    const textCandidate = textCandidates.nth(index);
+    if (!(await textCandidate.isVisible().catch(() => false))) {
+      continue;
+    }
+
+    const followingControl = await resolveFirstVisibleLocator(
+      textCandidate.locator(`xpath=following::*[(${EDITABLE_FIELD_CONTROL_XPATH})][1]`)
+    );
+    if (followingControl) {
+      return followingControl;
+    }
   }
 
   for (const alias of definition.aliases) {
     const normalizedAlias = normalizeText(alias).toLowerCase();
     const xpath = dialog
       .locator(
-        `xpath=.//label[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZÆØÅ', 'abcdefghijklmnopqrstuvwxyzæøå'), "${normalizedAlias}")]/following::*[(self::input or self::textarea or self::select or @role='combobox')][1]`
+        `xpath=.//*[self::label or self::p or self::div or self::span][contains(translate(normalize-space(string(.)), 'ABCDEFGHIJKLMNOPQRSTUVWXYZÆØÅ', 'abcdefghijklmnopqrstuvwxyzæøå'), "${normalizedAlias}")]/following::*[(${EDITABLE_FIELD_CONTROL_XPATH})][1]`
       )
       .first();
-    if (await isLocatorVisible(xpath)) {
-      return xpath;
+    const resolvedXpath = await resolveFirstVisibleLocator(xpath);
+    if (resolvedXpath) {
+      return resolvedXpath;
     }
   }
 
   return null;
+}
+
+async function waitForDialogFieldLocator(
+  dialog: Locator,
+  definition: EditableFieldDefinition,
+  timeoutMs: number
+): Promise<Locator | null> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const locator = await findDialogFieldLocator(dialog, definition);
+    if (locator) {
+      return locator;
+    }
+
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 200);
+    });
+  }
+
+  return findDialogFieldLocator(dialog, definition);
 }
 
 async function fillDialogField(
@@ -3765,7 +3872,7 @@ async function fillDialogField(
   definition: EditableFieldDefinition,
   value: NormalizedEditableValue
 ): Promise<void> {
-  const locator = await findDialogFieldLocator(dialog, definition);
+  const locator = await waitForDialogFieldLocator(dialog, definition, 10_000);
   if (!locator) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
@@ -3789,6 +3896,9 @@ async function fillDialogField(
 
   const stringValue = String(value);
   const tagName = await locator.evaluate((element) => element.tagName.toLowerCase());
+  const ariaAutocomplete = await locator.getAttribute("aria-autocomplete").catch(() => null);
+  const dataTestId = await locator.getAttribute("data-testid").catch(() => null);
+  const isTypeaheadField = ariaAutocomplete === "list" || dataTestId === "typeahead-input";
 
   if (definition.control === "select" && tagName === "select") {
     await locator.selectOption({ label: stringValue }).catch(async () => {
@@ -3808,7 +3918,7 @@ async function fillDialogField(
     await locator.type(stringValue);
   });
 
-  if (definition.control === "select") {
+  if (definition.control === "select" || isTypeaheadField) {
     await page.waitForTimeout(250);
     await page.keyboard.press("ArrowDown").catch(() => undefined);
     await page.keyboard.press("Enter").catch(() => undefined);
