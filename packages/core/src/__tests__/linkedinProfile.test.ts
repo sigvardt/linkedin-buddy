@@ -167,6 +167,7 @@ function createNavigationMockPage(options: {
       const count = vi.fn(async () => introEditCount);
       const isVisible = vi.fn(async () => visible);
       const getAttribute = vi.fn(async () => attributeValue ?? null);
+      const nth = vi.fn();
       const waitFor = vi.fn(async () => undefined);
       const first = vi.fn();
       const mockLocator = {
@@ -174,9 +175,11 @@ function createNavigationMockPage(options: {
         first,
         getAttribute,
         isVisible,
+        nth,
         waitFor
       } as unknown as Locator;
       first.mockReturnValue(mockLocator);
+      nth.mockReturnValue(mockLocator);
       return mockLocator;
     }),
     title: vi.fn(async () => options.title ?? "LinkedIn"),
