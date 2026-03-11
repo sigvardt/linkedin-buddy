@@ -20,7 +20,7 @@
 </p>
 
 <p align="center">
-  <code>git clone git@github.com:sigvardt/linkedin-buddy.git && cd linkedin-buddy && npm install && npx playwright install chromium && npm run build</code>
+  <code>git clone https://github.com/sigvardt/linkedin-buddy.git && cd linkedin-buddy && npm install && npx playwright install chromium && npm run build</code>
 </p>
 
 <p align="center">
@@ -61,7 +61,7 @@ This project is **not** LinkedIn's official partner API. It is a local, Playwrig
 ### 1. Install dependencies and browsers
 
 ```bash
-git clone git@github.com:sigvardt/linkedin-buddy.git
+git clone https://github.com/sigvardt/linkedin-buddy.git
 cd linkedin-buddy
 npm install
 npx playwright install chromium
