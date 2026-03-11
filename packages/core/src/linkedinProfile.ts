@@ -782,6 +782,32 @@ const PROFILE_INTRO_FIELD_DEFINITIONS: readonly EditableFieldDefinition[] = [
   }
 ] as const;
 
+const PROFILE_INTRO_LOCATION_FIELD_DEFINITION =
+  PROFILE_INTRO_FIELD_DEFINITIONS.find(
+    (definition) => definition.key === "location"
+  )!;
+
+const PROFILE_INTRO_LOCATION_COUNTRY_FIELD_DEFINITION = {
+  key: "countryOrRegion",
+  aliases: [
+    "countryOrRegion",
+    "countryRegion",
+    "Country/Region",
+    "Country or Region",
+    "Country",
+    "Land/område",
+    "Land/region",
+    "Land"
+  ],
+  control: "text"
+} as const satisfies EditableFieldDefinition;
+
+const PROFILE_INTRO_LOCATION_CITY_FIELD_DEFINITION = {
+  key: "city",
+  aliases: ["city", "City", "City/District", "Town/City", "By"],
+  control: "text"
+} as const satisfies EditableFieldDefinition;
+
 const PROFILE_SETTINGS_FIELD_DEFINITIONS = [
   {
     key: "industry",
@@ -3081,16 +3107,32 @@ async function waitForVisibleProfileIntroEditPage(page: Page): Promise<Locator> 
     timeout: 10_000
   });
 
+  const fieldSelector =
+    "input[aria-autocomplete='list'], input, textarea, select, [role='textbox'], [contenteditable='true']";
   const readyCandidates: LocatorCandidate[] = [
     {
-      key: "intro-edit-page-field",
-      locator: page.locator(
-        "main input, main textarea, main select, main [role='combobox']"
-      )
+      key: "intro-edit-page-lazy-column",
+      locator: page.locator("[data-testid='lazy-column']").filter({
+        has: page.locator(fieldSelector)
+      })
     },
     {
-      key: "intro-edit-page-submit",
-      locator: page.locator("main button[type='submit']")
+      key: "intro-edit-page-form",
+      locator: page.locator("form").filter({
+        has: page.locator(fieldSelector)
+      })
+    },
+    {
+      key: "intro-edit-page-main",
+      locator: page.locator("main").filter({
+        has: page.locator(fieldSelector)
+      })
+    },
+    {
+      key: "intro-edit-page-body",
+      locator: page.locator("body").filter({
+        has: page.locator(fieldSelector)
+      })
     }
   ];
 
@@ -3102,14 +3144,7 @@ async function waitForVisibleProfileIntroEditPage(page: Page): Promise<Locator> 
     );
   }
 
-  const form = await resolveFirstVisibleLocator(page.locator("main form"));
-  if (form) {
-    return form;
-  }
-
-  const main = page.locator("main").first();
-  await main.waitFor({ state: "visible", timeout: 10_000 });
-  return main;
+  return ready.locator;
 }
 
 async function waitForVisibleOverlay(page: Page): Promise<Locator> {
@@ -3717,7 +3752,7 @@ async function openExistingSectionItemDialog(
   return clickLocatorAndWaitForDialog(page, resolvedMenuEdit.locator);
 }
 
-async function findDialogFieldLocator(
+async function findDialogFieldLocatorByDefinition(
   dialog: Locator,
   definition: EditableFieldDefinition
 ): Promise<Locator | null> {
@@ -3729,9 +3764,18 @@ async function findDialogFieldLocator(
 
   for (const alias of definition.aliases) {
     const normalizedAlias = normalizeText(alias).toLowerCase();
+    const typeaheadInput = dialog
+      .locator(
+        `xpath=.//label[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZÆØÅ', 'abcdefghijklmnopqrstuvwxyzæøå'), "${normalizedAlias}")]/following::input[@aria-autocomplete='list' or @role='combobox' or @data-testid='typeahead-input'][1]`
+      )
+      .first();
+    if (await isLocatorVisible(typeaheadInput)) {
+      return typeaheadInput;
+    }
+
     const xpath = dialog
       .locator(
-        `xpath=.//label[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZÆØÅ', 'abcdefghijklmnopqrstuvwxyzæøå'), "${normalizedAlias}")]/following::*[(self::input or self::textarea or self::select or @role='combobox')][1]`
+        `xpath=.//label[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZÆØÅ', 'abcdefghijklmnopqrstuvwxyzæøå'), "${normalizedAlias}")]/following::*[(self::input or self::textarea or self::select or @role='textbox' or @contenteditable='true')][1]`
       )
       .first();
     if (await isLocatorVisible(xpath)) {
@@ -3740,6 +3784,137 @@ async function findDialogFieldLocator(
   }
 
   return null;
+}
+
+export async function findIntroLocationFieldLocator(
+  dialog: Locator
+): Promise<Locator | null> {
+  const cityField = await findDialogFieldLocatorByDefinition(
+    dialog,
+    PROFILE_INTRO_LOCATION_CITY_FIELD_DEFINITION
+  );
+  if (cityField) {
+    return cityField;
+  }
+
+  return findDialogFieldLocatorByDefinition(dialog, PROFILE_INTRO_LOCATION_FIELD_DEFINITION);
+}
+
+async function findDialogFieldLocator(
+  dialog: Locator,
+  definition: EditableFieldDefinition
+): Promise<Locator | null> {
+  if (definition.key === "location") {
+    return findIntroLocationFieldLocator(dialog);
+  }
+
+  return findDialogFieldLocatorByDefinition(dialog, definition);
+}
+
+export function splitProfileIntroLocationValue(value: string): {
+  city: string;
+  countryOrRegion: string | null;
+} {
+  const normalizedValue = normalizeText(value);
+  const segments = normalizedValue
+    .split(",")
+    .map((segment) => normalizeText(segment))
+    .filter((segment) => segment.length > 0);
+
+  if (segments.length < 2) {
+    return {
+      city: normalizedValue,
+      countryOrRegion: null
+    };
+  }
+
+  return {
+    city: segments.slice(0, -1).join(", "),
+    countryOrRegion: segments.at(-1) ?? null
+  };
+}
+
+async function isAutocompleteField(locator: Locator): Promise<boolean> {
+  return locator.evaluate((element) => {
+    const role = (element.getAttribute("role") ?? "").toLowerCase();
+    const autocomplete = (element.getAttribute("aria-autocomplete") ?? "").toLowerCase();
+    const testId = (element.getAttribute("data-testid") ?? "").toLowerCase();
+
+    return (
+      role === "combobox" ||
+      autocomplete === "list" ||
+      testId === "typeahead-input"
+    );
+  });
+}
+
+async function replaceDialogFieldValue(
+  locator: Locator,
+  value: string
+): Promise<void> {
+  await locator.click();
+  await locator.fill(value).catch(async () => {
+    await locator.press(`${process.platform === "darwin" ? "Meta" : "Control"}+A`).catch(
+      () => undefined
+    );
+    await locator.press("Backspace").catch(() => undefined);
+    await locator.type(value);
+  });
+}
+
+async function commitAutocompleteFieldIfNeeded(
+  page: Page,
+  locator: Locator,
+  value: string
+): Promise<void> {
+  if (!(await isAutocompleteField(locator))) {
+    return;
+  }
+
+  await page.waitForTimeout(500);
+  await selectAutocompleteOption(page, value);
+}
+
+async function fillSplitProfileIntroLocationField(
+  page: Page,
+  dialog: Locator,
+  value: string
+): Promise<boolean> {
+  const { city, countryOrRegion } = splitProfileIntroLocationValue(value);
+  let updatedField = false;
+
+  const countryField =
+    countryOrRegion !== null
+      ? await findDialogFieldLocatorByDefinition(
+          dialog,
+          PROFILE_INTRO_LOCATION_COUNTRY_FIELD_DEFINITION
+        )
+      : null;
+  if (countryField && countryOrRegion) {
+    await replaceDialogFieldValue(countryField, countryOrRegion);
+    await commitAutocompleteFieldIfNeeded(page, countryField, countryOrRegion);
+    updatedField = true;
+  }
+
+  let cityField = await findDialogFieldLocatorByDefinition(
+    dialog,
+    PROFILE_INTRO_LOCATION_CITY_FIELD_DEFINITION
+  );
+  if (!cityField && updatedField) {
+    await page.waitForTimeout(250);
+    cityField = await findDialogFieldLocatorByDefinition(
+      dialog,
+      PROFILE_INTRO_LOCATION_CITY_FIELD_DEFINITION
+    );
+  }
+
+  if (cityField && city.length > 0) {
+    await replaceDialogFieldValue(cityField, city);
+    await commitAutocompleteFieldIfNeeded(page, cityField, city);
+    updatedField = true;
+  }
+
+  return updatedField;
 }
 
 async function fillDialogField(
@@ -3771,6 +3946,18 @@ async function fillDialogField(
   }
 
   const stringValue = String(value);
+
+  if (definition.key === "location") {
+    const filledSplitLocation = await fillSplitProfileIntroLocationField(
+      page,
+      dialog,
+      stringValue
+    );
+    if (filledSplitLocation) {
+      return;
+    }
+  }
+
   const tagName = await locator.evaluate((element) => element.tagName.toLowerCase());
 
   if (definition.control === "select" && tagName === "select") {
@@ -3782,20 +3969,16 @@ async function fillDialogField(
     return;
   }
 
-  await locator.click();
-  await locator.fill(stringValue).catch(async () => {
-    await locator.press(`${process.platform === "darwin" ? "Meta" : "Control"}+A`).catch(
-      () => undefined
-    );
-    await locator.press("Backspace").catch(() => undefined);
-    await locator.type(stringValue);
-  });
+  await replaceDialogFieldValue(locator, stringValue);
 
   if (definition.control === "select") {
     await page.waitForTimeout(250);
     await page.keyboard.press("ArrowDown").catch(() => undefined);
     await page.keyboard.press("Enter").catch(() => undefined);
+    return;
   }
+
+  await commitAutocompleteFieldIfNeeded(page, locator, stringValue);
 }
 
 async function clickSaveInProfileEditorSurface(
