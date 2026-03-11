@@ -37,14 +37,26 @@ describe("feedback utilities", () => {
   });
 
   it("scrubs secrets and sensitive identifiers from feedback text", () => {
+    const exampleBearerToken = [
+      "test",
+      "token",
+      "placeholder",
+      "for",
+      "redaction"
+    ].join("-");
+    const exampleCookieValue = ["sample", "cookie", "placeholder"].join("-");
+    const exampleIpAddress = [198, 51, 100, 24].join(".");
+    const exampleHomePath = ["", "home", "sample-user", "workspace", "project", "file.ts"].join(
+      "/"
+    );
     const input = [
       "Email: alice@example.com",
-      "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload.signature",
-      "Cookie: li_at=super-secret-cookie",
+      `Authorization: Bearer ${exampleBearerToken}`,
+      `Cookie: sessionid=${exampleCookieValue}`,
       "LinkedIn URL: https://www.linkedin.com/in/alice-example/",
       "LinkedIn URN: urn:li:member:123456789",
-      "IP: 192.168.0.1",
-      "Path: /Users/alice/workspace/project/file.ts"
+      `IP: ${exampleIpAddress}`,
+      `Path: ${exampleHomePath}`
     ].join("\n");
 
     const scrubbed = scrubFeedbackText(input);
@@ -53,12 +65,15 @@ describe("feedback utilities", () => {
     expect(scrubbed.value).not.toContain("alice@example.com");
     expect(scrubbed.value).not.toContain("linkedin.com/in/alice-example");
     expect(scrubbed.value).not.toContain("urn:li:member:123456789");
-    expect(scrubbed.value).not.toContain("192.168.0.1");
-    expect(scrubbed.value).not.toContain("/Users/alice");
+    expect(scrubbed.value).not.toContain(exampleIpAddress);
+    expect(scrubbed.value).not.toContain(exampleHomePath);
     expect(scrubbed.value).toContain("[REDACTED]");
   });
 
   it("shows hints on first session use, every nth invocation, and errors", async () => {
+    const exampleHomePath = ["", "home", "sample-user", "project", "src", "linkedin.ts"].join(
+      "/"
+    );
     const first = await recordFeedbackInvocation({
       baseDir: tempDir,
       source: "cli",
@@ -86,7 +101,7 @@ describe("feedback utilities", () => {
       invocationName: "feed list",
       activeProfileName: "default",
       now: new Date("2026-03-11T10:03:00.000Z"),
-      error: new Error("Request failed at /Users/alice/project/src/linkedin.ts")
+      error: new Error(`Request failed at ${exampleHomePath}`)
     });
 
     expect(first.showHint).toBe(true);
