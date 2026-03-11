@@ -117,6 +117,13 @@ export const LINKEDIN_NEWSLETTER_PREPARE_PUBLISH_ISSUE_TOOL =
   "linkedin.newsletter.prepare_publish_issue";
 export const LINKEDIN_NEWSLETTER_LIST_TOOL = "linkedin.newsletter.list";
 export const LINKEDIN_NOTIFICATIONS_LIST_TOOL = "linkedin.notifications.list";
+export const LINKEDIN_NOTIFICATIONS_MARK_READ_TOOL =
+  "linkedin.notifications.mark_read";
+export const LINKEDIN_NOTIFICATIONS_DISMISS_TOOL = "linkedin.notifications.dismiss";
+export const LINKEDIN_NOTIFICATIONS_PREFERENCES_GET_TOOL =
+  "linkedin.notifications.preferences.get";
+export const LINKEDIN_NOTIFICATIONS_PREFERENCES_PREPARE_UPDATE_TOOL =
+  "linkedin.notifications.preferences.prepare_update";
 export const LINKEDIN_JOBS_SEARCH_TOOL = "linkedin.jobs.search";
 export const LINKEDIN_JOBS_VIEW_TOOL = "linkedin.jobs.view";
 export const LINKEDIN_GROUPS_SEARCH_TOOL = "linkedin.groups.search";
