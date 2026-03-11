@@ -177,6 +177,14 @@ describe("isProfileIntroEditHref", () => {
     ).toBe(true);
   });
 
+  it("accepts the live self-profile intro editor page URL", () => {
+    expect(
+      isProfileIntroEditHref(
+        "https://www.linkedin.com/in/joi-ascend-a534b73b6/edit/intro/"
+      )
+    ).toBe(true);
+  });
+
   it("accepts the current intro form URL", () => {
     expect(
       isProfileIntroEditHref(

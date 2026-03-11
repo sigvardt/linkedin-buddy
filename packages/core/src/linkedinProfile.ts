@@ -1169,12 +1169,12 @@ async function extractEditableSettings(
   page: Page,
   selectorLocale: LinkedInSelectorLocale
 ): Promise<LinkedInProfileEditableSettings> {
-  let dialog: Locator | null = null;
+  let surface: ProfileEditorSurface | null = null;
 
   try {
-    dialog = await openIntroEditDialog(page, selectorLocale);
+    surface = await openIntroEditSurface(page, selectorLocale);
     const industryField = await findDialogFieldLocator(
-      dialog,
+      surface.root,
       PROFILE_SETTINGS_FIELD_DEFINITIONS[0]
     );
 
@@ -1202,23 +1202,8 @@ async function extractEditableSettings(
       supported_fields: ["industry"]
     };
   } finally {
-    if (dialog) {
-      const closeCandidates: LocatorCandidate[] = [
-        ...createActionCandidates(dialog, getUiActionLabels("close", selectorLocale), "dialog-close"),
-        {
-          key: "dialog-close-button",
-          locator: dialog.locator("button[aria-label*='close' i], button[aria-label*='dismiss' i]")
-        }
-      ];
-      const resolvedClose = await findFirstVisibleLocator(closeCandidates);
-
-      if (resolvedClose) {
-        await resolvedClose.locator.first().click().catch(() => undefined);
-      } else {
-        await page.keyboard.press("Escape").catch(() => undefined);
-      }
-
-      await dialog.waitFor({ state: "hidden", timeout: 5_000 }).catch(() => undefined);
+    if (surface) {
+      await closeProfileEditorSurface(page, surface, selectorLocale);
     }
   }
 }
@@ -2852,6 +2837,11 @@ interface LocatorCandidate {
   locator: Locator;
 }
 
+interface ProfileEditorSurface {
+  kind: "dialog" | "page";
+  root: Locator;
+}
+
 export async function resolveFirstVisibleLocator(
   locator: Locator
 ): Promise<Locator | null> {
@@ -2964,6 +2954,42 @@ async function waitForVisibleDialog(page: Page): Promise<Locator> {
   const dialog = page.locator("[role='dialog']").last();
   await dialog.waitFor({ state: "visible", timeout: 10_000 });
   return dialog;
+}
+
+async function waitForVisibleProfileIntroEditPage(page: Page): Promise<Locator> {
+  await page.waitForURL((url) => isProfileIntroEditHref(url.toString()), {
+    timeout: 10_000
+  });
+
+  const readyCandidates: LocatorCandidate[] = [
+    {
+      key: "intro-edit-page-field",
+      locator: page.locator(
+        "main input, main textarea, main select, main [role='combobox']"
+      )
+    },
+    {
+      key: "intro-edit-page-submit",
+      locator: page.locator("main button[type='submit']")
+    }
+  ];
+
+  const ready = await waitForFirstVisibleLocator(readyCandidates, 10_000);
+  if (!ready) {
+    throw new LinkedInBuddyError(
+      "TARGET_NOT_FOUND",
+      "Could not find the intro editor after navigating to the edit page."
+    );
+  }
+
+  const form = await resolveFirstVisibleLocator(page.locator("main form"));
+  if (form) {
+    return form;
+  }
+
+  const main = page.locator("main").first();
+  await main.waitFor({ state: "visible", timeout: 10_000 });
+  return main;
 }
 
 async function waitForVisibleOverlay(page: Page): Promise<Locator> {
@@ -3352,10 +3378,10 @@ async function findMatchingFeaturedItemLocator(
   return null;
 }
 
-async function openIntroEditDialog(
+async function openIntroEditSurface(
   page: Page,
   selectorLocale: LinkedInSelectorLocale
-): Promise<Locator> {
+): Promise<ProfileEditorSurface> {
   const topCardRoot = await getTopCardRoot(page);
   const introEditLabels = getIntroActionLabels("edit", selectorLocale);
   const editCandidates: LocatorCandidate[] = [
@@ -3396,7 +3422,25 @@ async function openIntroEditDialog(
     );
   }
 
-  return clickLocatorAndWaitForDialog(page, resolved.locator);
+  const dialogPromise = waitForVisibleDialog(page).then((dialog) => ({
+    kind: "dialog" as const,
+    root: dialog
+  }));
+  const pagePromise = waitForVisibleProfileIntroEditPage(page).then((root) => ({
+    kind: "page" as const,
+    root
+  }));
+
+  await resolved.locator.first().click();
+
+  try {
+    return await Promise.any([dialogPromise, pagePromise]);
+  } catch {
+    throw new LinkedInBuddyError(
+      "TARGET_NOT_FOUND",
+      "Could not open the intro editor after clicking the edit control."
+    );
+  }
 }
 
 async function openGlobalAddSectionDialog(
@@ -3622,6 +3666,84 @@ async function fillDialogField(
     await page.keyboard.press("ArrowDown").catch(() => undefined);
     await page.keyboard.press("Enter").catch(() => undefined);
   }
+}
+
+async function clickSaveInProfileEditorSurface(
+  page: Page,
+  surface: ProfileEditorSurface,
+  selectorLocale: LinkedInSelectorLocale
+): Promise<void> {
+  const saveCandidates: LocatorCandidate[] = [
+    ...createActionCandidates(
+      surface.root,
+      getUiActionLabels("save", selectorLocale),
+      "profile-editor-save"
+    ),
+    {
+      key: "profile-editor-save-submit",
+      locator: surface.root.locator("button[type='submit']")
+    }
+  ];
+  const resolved = await waitForFirstVisibleLocator(saveCandidates, 10_000);
+  if (!resolved) {
+    throw new LinkedInBuddyError(
+      "TARGET_NOT_FOUND",
+      "Could not find the save button in the profile editor."
+    );
+  }
+
+  await resolved.locator.first().click();
+
+  if (surface.kind === "dialog") {
+    await surface.root.waitFor({ state: "hidden", timeout: 10_000 }).catch(() => undefined);
+    await waitForNetworkIdleBestEffort(page);
+    return;
+  }
+
+  const exitEditPage = page
+    .waitForURL((url) => !isProfileIntroEditHref(url.toString()), {
+      timeout: 10_000
+    })
+    .catch(() => undefined);
+
+  await waitForNetworkIdleBestEffort(page, 10_000);
+  await exitEditPage;
+}
+
+async function closeProfileEditorSurface(
+  page: Page,
+  surface: ProfileEditorSurface,
+  selectorLocale: LinkedInSelectorLocale
+): Promise<void> {
+  if (surface.kind === "page") {
+    if (isProfileIntroEditHref(page.url())) {
+      await navigateToOwnProfile(page);
+    }
+    return;
+  }
+
+  const closeCandidates: LocatorCandidate[] = [
+    ...createActionCandidates(
+      surface.root,
+      getUiActionLabels("close", selectorLocale),
+      "dialog-close"
+    ),
+    {
+      key: "dialog-close-button",
+      locator: surface.root.locator(
+        "button[aria-label*='close' i], button[aria-label*='dismiss' i]"
+      )
+    }
+  ];
+  const resolvedClose = await findFirstVisibleLocator(closeCandidates);
+
+  if (resolvedClose) {
+    await resolvedClose.locator.first().click().catch(() => undefined);
+  } else {
+    await page.keyboard.press("Escape").catch(() => undefined);
+  }
+
+  await surface.root.waitFor({ state: "hidden", timeout: 5_000 }).catch(() => undefined);
 }
 
 async function clickSaveInDialog(
@@ -6210,16 +6332,16 @@ async function executeUpdateProfileIntro(
           ),
         execute: async () => {
           await navigateToOwnProfile(page);
-          const dialog = await openIntroEditDialog(page, runtime.selectorLocale);
+          const surface = await openIntroEditSurface(page, runtime.selectorLocale);
 
           for (const definition of PROFILE_INTRO_FIELD_DEFINITIONS) {
             if (!(definition.key in updates)) {
               continue;
             }
-            await fillDialogField(page, dialog, definition, updates[definition.key]!);
+            await fillDialogField(page, surface.root, definition, updates[definition.key]!);
           }
 
-          await clickSaveInDialog(page, dialog, runtime.selectorLocale);
+          await clickSaveInProfileEditorSurface(page, surface, runtime.selectorLocale);
 
           return {
             ok: true,
@@ -6289,16 +6411,16 @@ async function executeUpdateProfileSettings(
           ),
         execute: async () => {
           await navigateToOwnProfile(page);
-          const dialog = await openIntroEditDialog(page, runtime.selectorLocale);
+          const surface = await openIntroEditSurface(page, runtime.selectorLocale);
 
           for (const definition of PROFILE_SETTINGS_FIELD_DEFINITIONS) {
             if (!(definition.key in updates)) {
               continue;
             }
-            await fillDialogField(page, dialog, definition, updates[definition.key]!);
+            await fillDialogField(page, surface.root, definition, updates[definition.key]!);
           }
 
-          await clickSaveInDialog(page, dialog, runtime.selectorLocale);
+          await clickSaveInProfileEditorSurface(page, surface, runtime.selectorLocale);
 
           return {
             ok: true,
