@@ -146,8 +146,15 @@ describe("E2E helper MCP wrappers", () => {
       .map(([, value]) => value)
       .sort();
     const helperToolNames = [...new Set(Object.values(MCP_TOOL_NAMES))].sort();
+    const extraHelperToolNames = helperToolNames.filter(
+      (value) => !exportedToolNames.includes(value)
+    );
+    const missingHelperToolNames = exportedToolNames.filter(
+      (value) => !helperToolNames.includes(value)
+    );
 
-    expect(helperToolNames).toEqual(exportedToolNames);
+    expect(extraHelperToolNames).toEqual([]);
+    expect(missingHelperToolNames).toEqual([]);
   });
 
   it("uses the last text content item when mapping MCP tool results", () => {
