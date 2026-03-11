@@ -1,6 +1,7 @@
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { Locator } from "playwright-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AssistantDatabase } from "../db/database.js";
 import {
@@ -25,6 +26,7 @@ import {
   LinkedInProfileService,
   createProfileActionExecutors,
   isProfileIntroEditHref,
+  resolveFirstVisibleLocator,
   resolveProfileUrl,
   type LinkedInProfileRuntime
 } from "../linkedinProfile.js";
@@ -91,6 +93,30 @@ function createTestRuntime(
     },
     twoPhaseCommit: new TwoPhaseCommitService(db)
   } as unknown as LinkedInProfileRuntime;
+}
+
+class MockLocator {
+  constructor(
+    private readonly visibility: readonly boolean[],
+    readonly resolvedIndex: number | null = null
+  ) {}
+
+  async count(): Promise<number> {
+    return this.resolvedIndex === null ? this.visibility.length : 1;
+  }
+
+  nth(index: number): MockLocator {
+    if (this.resolvedIndex !== null) {
+      return this;
+    }
+
+    return new MockLocator(this.visibility, index);
+  }
+
+  async isVisible(): Promise<boolean> {
+    const index = this.resolvedIndex ?? 0;
+    return this.visibility[index] ?? false;
+  }
 }
 
 afterEach(() => {
@@ -171,6 +197,44 @@ describe("isProfileIntroEditHref", () => {
     expect(isProfileIntroEditHref("")).toBe(false);
     expect(isProfileIntroEditHref("/in/me/overlay/contact-info/")).toBe(false);
     expect(isProfileIntroEditHref(undefined)).toBe(false);
+  });
+});
+
+describe("resolveFirstVisibleLocator", () => {
+  it("returns the first visible match even when the first locator match is hidden", async () => {
+    const locator = new MockLocator([false, true, true]);
+
+    const resolved = await resolveFirstVisibleLocator(locator as unknown as Locator);
+
+    expect(resolved).not.toBeNull();
+    expect((resolved as unknown as MockLocator).resolvedIndex).toBe(1);
+  });
+
+  it("scans beyond an initial batch of hidden matches", async () => {
+    const locator = new MockLocator([
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true
+    ]);
+
+    const resolved = await resolveFirstVisibleLocator(locator as unknown as Locator);
+
+    expect(resolved).not.toBeNull();
+    expect((resolved as unknown as MockLocator).resolvedIndex).toBe(8);
+  });
+
+  it("returns null when no locator match is visible", async () => {
+    const locator = new MockLocator([false, false]);
+
+    await expect(
+      resolveFirstVisibleLocator(locator as unknown as Locator)
+    ).resolves.toBeNull();
   });
 });
 
