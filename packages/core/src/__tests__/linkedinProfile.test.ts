@@ -12,6 +12,8 @@ import {
   LINKEDIN_PROFILE_FEATURED_ITEM_KINDS,
   PROFILE_GLOBAL_ADD_SECTION_CONTROL,
   PROFILE_MEDIA_STRUCTURAL_SELECTORS,
+  PROFILE_TOP_CARD_HEADING_SELECTORS,
+  PROFILE_TOP_CARD_STRUCTURAL_SELECTORS,
   REMOVE_PROFILE_SECTION_ITEM_ACTION_TYPE,
   REMOVE_PROFILE_FEATURED_ACTION_TYPE,
   REORDER_PROFILE_FEATURED_ACTION_TYPE,
@@ -146,12 +148,14 @@ function createNavigationMockPage(options: {
     locator: vi.fn((selector: string) => {
       const isIntroEditSelector =
         selector.includes("/edit/intro/") || selector.includes("/edit/forms/intro/");
+      const isHeadingSelector = selector.includes("h1") || selector.includes("h2");
       const introEditCount =
         isIntroEditSelector && (options.introEditVisible || options.introEditPresent)
           ? 1
           : 0;
+      const headingCount = isHeadingSelector && (options.headingVisible ?? false) ? 1 : 0;
       const visible =
-        selector === "h1"
+        isHeadingSelector
           ? (options.headingVisible ?? false)
           : isIntroEditSelector
             ? (options.introEditVisible ?? false)
@@ -165,7 +169,7 @@ function createNavigationMockPage(options: {
               ? options.ogProfileUrl
               : null;
 
-      const count = vi.fn(async () => introEditCount);
+      const count = vi.fn(async () => (isHeadingSelector ? headingCount : introEditCount));
       const isVisible = vi.fn(async () => visible);
       const getAttribute = vi.fn(async () => attributeValue ?? null);
       const nth = vi.fn();
@@ -325,6 +329,7 @@ describe("navigateToOwnProfile", () => {
     const timeoutError = new playwrightErrors.TimeoutError("Navigation timeout");
     const page = createNavigationMockPage({
       gotoError: timeoutError,
+      headingVisible: true,
       introEditPresent: true,
       urlAfterGoto: "https://www.linkedin.com/in/me/"
     });
@@ -343,6 +348,7 @@ describe("navigateToOwnProfile", () => {
     const page = createNavigationMockPage({
       canonicalUrl: "https://www.linkedin.com/in/joi-ascend/",
       gotoError: timeoutError,
+      headingVisible: true,
       menuProfileUrl: "https://www.linkedin.com/in/joi-ascend/",
       urlAfterGoto: "https://www.linkedin.com/in/joi-ascend/"
     });
@@ -489,6 +495,16 @@ describe("createProfileActionExecutors", () => {
     expect(PROFILE_MEDIA_STRUCTURAL_SELECTORS.photo).toContain(".profile-photo-edit button");
     expect(PROFILE_MEDIA_STRUCTURAL_SELECTORS.banner).toContain(
       "[id^='cover-photo-dropdown-button-trigger-']"
+    );
+  });
+
+  it("keeps selector fallbacks for the current self-profile top card", () => {
+    expect(PROFILE_TOP_CARD_HEADING_SELECTORS).toContain("h2");
+    expect(PROFILE_TOP_CARD_STRUCTURAL_SELECTORS).toContain(
+      "section[componentkey*='topcard' i]"
+    );
+    expect(PROFILE_TOP_CARD_STRUCTURAL_SELECTORS).toContain(
+      "div[componentkey*='topcard' i]"
     );
   });
 

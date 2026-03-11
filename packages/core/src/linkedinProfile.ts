@@ -509,6 +509,18 @@ export const PROFILE_GLOBAL_ADD_SECTION_CONTROL = {
   roles: ["button", "link"]
 } as const;
 
+export const PROFILE_TOP_CARD_HEADING_SELECTORS = [
+  "h1.text-heading-xlarge",
+  "h1[class*='text-heading']",
+  "h2",
+  "h1"
+] as const;
+
+export const PROFILE_TOP_CARD_STRUCTURAL_SELECTORS = [
+  "section[componentkey*='topcard' i]",
+  "div[componentkey*='topcard' i]"
+] as const;
+
 const PROFILE_ACTION_LABELS = {
   add: {
     en: ["Add"],
@@ -3007,11 +3019,33 @@ function buildEditableFieldAttributeSelectors(labels: readonly string[]): string
 }
 
 async function waitForProfilePageReady(page: Page): Promise<void> {
-  await page
-    .locator("h1")
-    .first()
-    .waitFor({ state: "visible", timeout: 10_000 })
-    .catch(() => undefined);
+  const readyCandidates: LocatorCandidate[] = [
+    {
+      key: "profile-heading",
+      locator: page.locator(
+        PROFILE_TOP_CARD_HEADING_SELECTORS.map((selector) => `main ${selector}`).join(", ")
+      )
+    },
+    {
+      key: "profile-intro-edit",
+      locator: page.locator(buildProfileIntroEditHrefSelector())
+    },
+    {
+      key: "profile-top-card-current-self",
+      locator: page.locator(
+        PROFILE_TOP_CARD_STRUCTURAL_SELECTORS.map(
+          (selector) => `main ${selector}`
+        ).join(", ")
+      )
+    },
+    ...createCssLocatorCandidates(
+      page,
+      [...PROFILE_MEDIA_STRUCTURAL_SELECTORS.photo, ...PROFILE_MEDIA_STRUCTURAL_SELECTORS.banner],
+      "profile-ready-media"
+    )
+  ];
+
+  await waitForFirstVisibleLocator(readyCandidates, 10_000);
 }
 
 function tryNormalizeLinkedInProfileUrl(
@@ -3206,7 +3240,7 @@ export async function navigateToOwnProfile(page: Page): Promise<void> {
 
 async function getTopCardRoot(page: Page): Promise<Locator> {
   const headingLocator = page.locator(
-    "h1.text-heading-xlarge, h1[class*='text-heading'], h1"
+    PROFILE_TOP_CARD_HEADING_SELECTORS.join(", ")
   );
   const candidateRoots: LocatorCandidate[] = [
     {
@@ -3221,6 +3255,18 @@ async function getTopCardRoot(page: Page): Promise<Locator> {
       key: "top-card-legacy-with-heading",
       locator: page
         .locator("main .pv-top-card, main .top-card-layout")
+        .filter({
+          has: headingLocator
+        })
+    },
+    {
+      key: "top-card-current-self-with-heading",
+      locator: page
+        .locator(
+          PROFILE_TOP_CARD_STRUCTURAL_SELECTORS.map(
+            (selector) => `main ${selector}`
+          ).join(", ")
+        )
         .filter({
           has: headingLocator
         })
