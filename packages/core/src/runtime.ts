@@ -63,6 +63,10 @@ import {
 } from "./linkedinProfile.js";
 import { LinkedInImageAssetsService } from "./linkedinImageAssets.js";
 import {
+  LinkedInAnalyticsService,
+  type LinkedInAnalyticsRuntime
+} from "./linkedinAnalytics.js";
+import {
   LinkedInJobsService,
   type LinkedInJobsRuntime
 } from "./linkedinJobs.js";
@@ -178,6 +182,7 @@ export interface CoreRuntime {
   profile: LinkedInProfileService;
   companyPages: LinkedInCompanyPagesService;
   imageAssets: LinkedInImageAssetsService;
+  analytics: LinkedInAnalyticsService;
   search: LinkedInSearchService;
   groups: LinkedInGroupsService;
   events: LinkedInEventsService;
@@ -361,6 +366,7 @@ export function createCoreRuntime(
     profile: undefined as unknown as LinkedInProfileService,
     companyPages: undefined as unknown as LinkedInCompanyPagesService,
     imageAssets: undefined as unknown as LinkedInImageAssetsService,
+    analytics: undefined as unknown as LinkedInAnalyticsService,
     search: undefined as unknown as LinkedInSearchService,
     groups: undefined as unknown as LinkedInGroupsService,
     events: undefined as unknown as LinkedInEventsService,
@@ -447,6 +453,8 @@ export function createCoreRuntime(
   runtime.followups = new LinkedInFollowupsService(followupsRuntime);
   const feedRuntime: LinkedInFeedRuntime = runtime;
   runtime.feed = new LinkedInFeedService(feedRuntime);
+  const analyticsRuntime: LinkedInAnalyticsRuntime = runtime;
+  runtime.analytics = new LinkedInAnalyticsService(analyticsRuntime);
   const postsRuntime: LinkedInPostsRuntime = runtime;
   runtime.posts = new LinkedInPostsService(postsRuntime);
   runtime.inbox = new LinkedInInboxService(runtime);
