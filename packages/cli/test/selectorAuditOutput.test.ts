@@ -126,15 +126,16 @@ function createSelectorAuditReportFixture(): SelectorAuditReport {
           secondary: {
             strategy: "secondary",
             status: "fail",
-            selector_key: "css-start-post",
-            selector_hint: ".share-box-feed-entry__trigger",
+            selector_key: "sharebox-entry-link-or-share-box-trigger",
+            selector_hint:
+              "a[href$='/preload/sharebox/'], a[href$='/preload/sharebox'], .share-box-feed-entry__trigger, .share-box__open",
             error: "Selector not visible"
           },
           tertiary: {
             strategy: "tertiary",
             status: "fail",
             selector_key: "text-start-post",
-            selector_hint: "text=Start a post",
+            selector_hint: "button, [role='button'], a hasText /start a post/i",
             error: "Selector not visible"
           }
         },

@@ -26,6 +26,7 @@ import {
   buildLinkedInSelectorPhraseRegex,
   formatLinkedInSelectorRegexHint
 } from "./selectorLocale.js";
+import { createFeedPostComposerTriggerCandidates } from "./feedPostComposerTriggerSelectors.js";
 import type {
   ActionExecutor,
   ActionExecutorInput,
@@ -1767,62 +1768,6 @@ function formatPollDurationLabels(
   return Array.from(new Set([...(localized ?? []), ...englishLabels[durationDays]]));
 }
 
-function createComposeTriggerCandidates(
-  selectorLocale: LinkedInSelectorLocale
-): SelectorCandidate[] {
-  const startPostExactRegex = buildLinkedInSelectorPhraseRegex(
-    "start_post",
-    selectorLocale,
-    { exact: true }
-  );
-  const startPostExactRegexHint = formatLinkedInSelectorRegexHint(
-    "start_post",
-    selectorLocale,
-    { exact: true }
-  );
-  const startPostTextRegex = buildLinkedInSelectorPhraseRegex(
-    "start_post",
-    selectorLocale
-  );
-  const startPostTextRegexHint = formatLinkedInSelectorRegexHint(
-    "start_post",
-    selectorLocale
-  );
-  const startPostAriaSelector = buildLinkedInAriaLabelContainsSelector(
-    ["button", "[role='button']"],
-    "start_post",
-    selectorLocale
-  );
-
-  return [
-    {
-      key: "role-button-start-post",
-      selectorHint: `getByRole(button, ${startPostExactRegexHint})`,
-      locatorFactory: (page) =>
-        page.getByRole("button", { name: startPostExactRegex })
-    },
-    {
-      key: "aria-start-post",
-      selectorHint: startPostAriaSelector,
-      locatorFactory: (page) => page.locator(startPostAriaSelector)
-    },
-    {
-      key: "share-box-trigger",
-      selectorHint: ".share-box-feed-entry__trigger, .share-box__open",
-      locatorFactory: (page) =>
-        page.locator(".share-box-feed-entry__trigger, .share-box__open")
-    },
-    {
-      key: "text-start-post",
-      selectorHint: `button, [role='button'] hasText ${startPostTextRegexHint}`,
-      locatorFactory: (page) =>
-        page
-          .locator("button, [role='button']")
-          .filter({ hasText: startPostTextRegex })
-    }
-  ];
-}
-
 function createComposerRootCandidates(
   selectorLocale: LinkedInSelectorLocale
 ): SelectorCandidate[] {
@@ -2530,7 +2475,7 @@ async function openPostComposer(
 ): Promise<{ composerRoot: Locator; triggerKey: string; rootKey: string }> {
   await page.goto(LINKEDIN_FEED_URL, { waitUntil: "domcontentloaded" });
   await waitForNetworkIdleBestEffort(page);
-  const triggerCandidates = createComposeTriggerCandidates(selectorLocale);
+  const triggerCandidates = createFeedPostComposerTriggerCandidates(selectorLocale);
   const visibleTrigger = await findOptionalVisibleLocator(page, triggerCandidates);
   if (!visibleTrigger) {
     await waitForFeedSurface(page);

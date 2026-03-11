@@ -96,9 +96,14 @@ describe("createLinkedInSelectorAuditRegistry", () => {
     const registry = createLinkedInSelectorAuditRegistry("da");
     const feedDefinition = registry.find((pageDefinition) => pageDefinition.page === "feed");
     const primaryCandidate = feedDefinition?.selectors[0]?.candidates[0];
+    const secondaryCandidate = feedDefinition?.selectors[0]?.candidates[1];
+    const tertiaryCandidate = feedDefinition?.selectors[0]?.candidates[2];
 
     expect(primaryCandidate?.selectorHint).toContain("Start et opslag");
     expect(primaryCandidate?.selectorHint).toContain("Start a post");
+    expect(secondaryCandidate?.selectorHint).toContain("a[href$='/preload/sharebox/']");
+    expect(secondaryCandidate?.selectorHint).toContain(".share-box-feed-entry__trigger");
+    expect(tertiaryCandidate?.selectorHint).toContain("button, [role='button'], a");
   });
 
   it("preserves selector keys and candidate ordering across locales", () => {
