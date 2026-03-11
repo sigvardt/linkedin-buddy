@@ -103,6 +103,15 @@ export const LINKEDIN_POST_PREPARE_CREATE_POLL_TOOL =
   "linkedin.post.prepare_create_poll";
 export const LINKEDIN_POST_PREPARE_EDIT_TOOL = "linkedin.post.prepare_edit";
 export const LINKEDIN_POST_PREPARE_DELETE_TOOL = "linkedin.post.prepare_delete";
+export const LINKEDIN_ARTICLE_PREPARE_CREATE_TOOL =
+  "linkedin.article.prepare_create";
+export const LINKEDIN_ARTICLE_PREPARE_PUBLISH_TOOL =
+  "linkedin.article.prepare_publish";
+export const LINKEDIN_NEWSLETTER_PREPARE_CREATE_TOOL =
+  "linkedin.newsletter.prepare_create";
+export const LINKEDIN_NEWSLETTER_PREPARE_PUBLISH_ISSUE_TOOL =
+  "linkedin.newsletter.prepare_publish_issue";
+export const LINKEDIN_NEWSLETTER_LIST_TOOL = "linkedin.newsletter.list";
 export const LINKEDIN_NOTIFICATIONS_LIST_TOOL = "linkedin.notifications.list";
 export const LINKEDIN_JOBS_SEARCH_TOOL = "linkedin.jobs.search";
 export const LINKEDIN_JOBS_VIEW_TOOL = "linkedin.jobs.view";

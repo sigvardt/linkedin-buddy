@@ -90,6 +90,12 @@ import {
   type LinkedInPostSafetyLintConfig,
   type LinkedInPostsRuntime
 } from "./linkedinPosts.js";
+import {
+  LinkedInArticlesService,
+  LinkedInNewslettersService,
+  createPublishingActionExecutors,
+  type LinkedInPublishingRuntime
+} from "./linkedinPublishing.js";
 import { JsonEventLogger } from "./logging.js";
 import { ProfileManager } from "./profileManager.js";
 import { RateLimiter } from "./rateLimiter.js";
@@ -194,6 +200,8 @@ export interface CoreRuntime {
   followups: LinkedInFollowupsService;
   feed: LinkedInFeedService;
   posts: LinkedInPostsService;
+  articles: LinkedInArticlesService;
+  newsletters: LinkedInNewslettersService;
   inbox: LinkedInInboxService;
   activityWatches: ActivityWatchesService;
   activityPoller: ActivityPollerService;
@@ -311,6 +319,10 @@ export function createCoreRuntime(
     string,
     import("./twoPhaseCommit.js").ActionExecutor<LinkedInMessagingRuntime>
   >;
+  const publishingExecutors = createPublishingActionExecutors() as unknown as Record<
+    string,
+    import("./twoPhaseCommit.js").ActionExecutor<LinkedInMessagingRuntime>
+  >;
   const privacySettingExecutors =
     createPrivacySettingActionExecutors() as unknown as Record<
       string,
@@ -333,6 +345,7 @@ export function createCoreRuntime(
       ...feedExecutors,
       ...groupExecutors,
       ...postExecutors,
+      ...publishingExecutors,
       ...privacySettingExecutors,
       ...eventExecutors,
       [TEST_ECHO_ACTION_TYPE]: testEchoExecutor
@@ -378,6 +391,8 @@ export function createCoreRuntime(
     followups: undefined as unknown as LinkedInFollowupsService,
     feed: undefined as unknown as LinkedInFeedService,
     posts: undefined as unknown as LinkedInPostsService,
+    articles: undefined as unknown as LinkedInArticlesService,
+    newsletters: undefined as unknown as LinkedInNewslettersService,
     inbox: undefined as unknown as LinkedInInboxService,
     activityWatches: undefined as unknown as ActivityWatchesService,
     activityPoller: undefined as unknown as ActivityPollerService,
@@ -457,6 +472,9 @@ export function createCoreRuntime(
   runtime.analytics = new LinkedInAnalyticsService(analyticsRuntime);
   const postsRuntime: LinkedInPostsRuntime = runtime;
   runtime.posts = new LinkedInPostsService(postsRuntime);
+  const publishingRuntime: LinkedInPublishingRuntime = runtime;
+  runtime.articles = new LinkedInArticlesService(publishingRuntime);
+  runtime.newsletters = new LinkedInNewslettersService(publishingRuntime);
   runtime.inbox = new LinkedInInboxService(runtime);
   runtime.activityWatches = new ActivityWatchesService(runtime);
   runtime.activityPoller = new ActivityPollerService(runtime);
