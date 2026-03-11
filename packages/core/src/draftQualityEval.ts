@@ -1,4 +1,4 @@
-import { LinkedInAssistantError } from "./errors.js";
+import { LinkedInBuddyError } from "./errors.js";
 import { createRunId } from "./run.js";
 import {
   DRAFT_QUALITY_DRAFT_SOURCES,
@@ -224,8 +224,8 @@ interface EvaluateJudgeResult {
 function createInputError(
   message: string,
   details: Record<string, unknown> = {}
-): LinkedInAssistantError {
-  return new LinkedInAssistantError(
+): LinkedInBuddyError {
+  return new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     message,
     details
@@ -1862,7 +1862,7 @@ function parseJudgeResult(value: unknown, location: string): DraftQualityJudgeRe
 function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
-  onTimeout: () => LinkedInAssistantError
+  onTimeout: () => LinkedInBuddyError
 ): Promise<T> {
   if (timeoutMs <= 0) {
     return promise;
@@ -1982,7 +1982,7 @@ async function evaluateDraftCaseResult(input: {
     try {
       const judgeResult = parseJudgeResult(
         await withTimeout(judgePromise, input.judgeTimeoutMs, () =>
-          new LinkedInAssistantError(
+          new LinkedInBuddyError(
             "TIMEOUT",
             `Draft-quality judge timed out after ${input.judgeTimeoutMs}ms.`,
             {
@@ -2010,9 +2010,9 @@ async function evaluateDraftCaseResult(input: {
     } catch (error) {
       judgeFailed = true;
       const normalizedError =
-        error instanceof LinkedInAssistantError
+        error instanceof LinkedInBuddyError
           ? error
-          : new LinkedInAssistantError(
+          : new LinkedInBuddyError(
               "UNKNOWN",
               `Draft-quality judge failed for ${input.draftCase.id}/${input.draft.id}.`,
               {
@@ -2299,9 +2299,9 @@ export async function evaluateDraftQuality(
     return report;
   } catch (error) {
     const normalizedError =
-      error instanceof LinkedInAssistantError
+      error instanceof LinkedInBuddyError
         ? error
-        : new LinkedInAssistantError(
+        : new LinkedInBuddyError(
             "UNKNOWN",
             "Draft-quality evaluation failed.",
             {

@@ -21,10 +21,10 @@ import {
 
 const runtimeFactory = vi.fn();
 
-vi.mock("@linkedin-assistant/core", async () => {
+vi.mock("@linkedin-buddy/core", async () => {
   const actual =
-    await vi.importActual<typeof import("@linkedin-assistant/core")>(
-      "@linkedin-assistant/core"
+    await vi.importActual<typeof import("@linkedin-buddy/core")>(
+      "@linkedin-buddy/core"
     );
 
   return {

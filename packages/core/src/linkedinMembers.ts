@@ -4,8 +4,8 @@ import type { LinkedInAuthService } from "./auth/session.js";
 import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
 import type { ConfirmFailureArtifactConfig } from "./config.js";
 import {
-  LinkedInAssistantError,
-  asLinkedInAssistantError
+  LinkedInBuddyError,
+  asLinkedInBuddyError
 } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
@@ -414,7 +414,7 @@ async function openProfileActionsMenu(
   );
   const moreButton = await findVisibleLocator(page, moreCandidates);
   if (!moreButton) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UI_CHANGED_SELECTOR_FAILED",
       "Could not find the LinkedIn profile actions menu.",
       {
@@ -447,7 +447,7 @@ async function clickMemberSafetyEntry(
   );
   const entry = await findVisibleLocator(page, entryCandidates);
   if (!entry) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UI_CHANGED_SELECTOR_FAILED",
       "Could not find LinkedIn member safety actions in the profile menu.",
       {
@@ -565,7 +565,7 @@ async function selectReportReason(
     return reasonKey;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "UI_CHANGED_SELECTOR_FAILED",
     `Could not find the LinkedIn report reason for ${reason}.`,
     {
@@ -639,7 +639,7 @@ async function withBlockedMembersPage<T>(
     }
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "UI_CHANGED_SELECTOR_FAILED",
     "Could not open the LinkedIn blocked members settings page.",
     {
@@ -700,7 +700,7 @@ export function normalizeLinkedInMemberReportReason(
     return matchedReason;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `reason must be one of: ${LINKEDIN_MEMBER_REPORT_REASONS.join(", ")}.`
   );
@@ -740,7 +740,7 @@ async function executeBlockMember(
           profile_url: profileUrl
         },
         mapError: (error) =>
-          asLinkedInAssistantError(
+          asLinkedInBuddyError(
             error,
             "UNKNOWN",
             "Failed to execute LinkedIn block_member action."
@@ -778,7 +778,7 @@ async function executeBlockMember(
             5_000
           );
           if (!closed) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "UNKNOWN",
               "LinkedIn block flow did not finish after confirmation.",
               {
@@ -838,7 +838,7 @@ async function executeUnblockMember(
           target_profile: targetProfile
         },
         mapError: (error) =>
-          asLinkedInAssistantError(
+          asLinkedInBuddyError(
             error,
             "UNKNOWN",
             "Failed to execute LinkedIn unblock_member action."
@@ -847,7 +847,7 @@ async function executeUnblockMember(
           const result = await withBlockedMembersPage(page, async (currentPage, sourceUrl) => {
             const card = await findBlockedMemberCard(currentPage, targetProfile);
             if (!card) {
-              throw new LinkedInAssistantError(
+              throw new LinkedInBuddyError(
                 "TARGET_NOT_FOUND",
                 `Could not find a blocked LinkedIn member matching "${targetProfile}".`,
                 {
@@ -888,7 +888,7 @@ async function executeUnblockMember(
               unblockButtonCandidates
             );
             if (!unblockButton) {
-              throw new LinkedInAssistantError(
+              throw new LinkedInBuddyError(
                 "UI_CHANGED_SELECTOR_FAILED",
                 "Could not find the Unblock button for the blocked LinkedIn member.",
                 {
@@ -922,7 +922,7 @@ async function executeUnblockMember(
             }, 5_000);
 
             if (!removed) {
-              throw new LinkedInAssistantError(
+              throw new LinkedInBuddyError(
                 "UNKNOWN",
                 "LinkedIn unblock flow could not be verified after confirmation.",
                 {
@@ -996,7 +996,7 @@ async function executeReportMember(
           profile_url: profileUrl
         },
         mapError: (error) =>
-          asLinkedInAssistantError(
+          asLinkedInBuddyError(
             error,
             "UNKNOWN",
             "Failed to execute LinkedIn report_member action."
@@ -1039,7 +1039,7 @@ async function executeReportMember(
             8_000
           );
           if (!closed) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "UNKNOWN",
               "LinkedIn report flow did not finish after the selected reason was submitted.",
               {
@@ -1161,7 +1161,7 @@ export class LinkedInMembersService {
     const profileName = input.profileName ?? "default";
     const targetProfile = normalizeText(input.targetProfile);
     if (!targetProfile) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "targetProfile is required."
       );

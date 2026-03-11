@@ -7,8 +7,8 @@ import {
 import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
 import {
-  LinkedInAssistantError,
-  asLinkedInAssistantError
+  LinkedInBuddyError,
+  asLinkedInBuddyError
 } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
@@ -192,21 +192,21 @@ function requireSingleLineText(
 ): string {
   const normalizedValue = normalizeText(value);
   if (!normalizedValue) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must not be empty.`
     );
   }
 
   if (!options.allowUrl && /^https?:\/\//iu.test(normalizedValue)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be descriptive text, not a URL.`
     );
   }
 
   if (containsUnsupportedControlCharacters(normalizedValue)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} contains unsupported control characters.`
     );
@@ -221,14 +221,14 @@ function requireLongFormText(value: string, label: string): string {
   );
 
   if (!normalizedValue) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must not be empty.`
     );
   }
 
   if (containsUnsupportedControlCharacters(normalizedValue)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} contains unsupported control characters.`
     );
@@ -254,7 +254,7 @@ function normalizeNewsletterCadence(
     }
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `cadence must be one of: ${LINKEDIN_NEWSLETTER_CADENCE_TYPES.join(", ")}.`
   );
@@ -269,7 +269,7 @@ function normalizeLinkedInUrl(value: string, label: string): string {
   try {
     parsedUrl = new URL(normalizedValue);
   } catch (error) {
-    throw asLinkedInAssistantError(
+    throw asLinkedInBuddyError(
       error,
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a valid absolute URL.`
@@ -277,7 +277,7 @@ function normalizeLinkedInUrl(value: string, label: string): string {
   }
 
   if (!LINKEDIN_HOST_PATTERN.test(parsedUrl.hostname)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must point to linkedin.com.`
     );
@@ -339,7 +339,7 @@ function getRequiredStringField(
     return value.trim();
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `Prepared action ${actionId} is missing ${location}.${key}.`,
     {
@@ -354,25 +354,25 @@ function toAutomationError(
   error: unknown,
   message: string,
   details: Record<string, unknown>
-): LinkedInAssistantError {
-  if (error instanceof LinkedInAssistantError) {
+): LinkedInBuddyError {
+  if (error instanceof LinkedInBuddyError) {
     return error;
   }
 
   if (error instanceof playwrightErrors.TimeoutError) {
-    return new LinkedInAssistantError("TIMEOUT", message, details, { cause: error });
+    return new LinkedInBuddyError("TIMEOUT", message, details, { cause: error });
   }
 
   if (
     error instanceof Error &&
     /(net::|ERR_|ECONN|ENOTFOUND|EAI_AGAIN|socket hang up)/iu.test(error.message)
   ) {
-    return new LinkedInAssistantError("NETWORK_ERROR", message, details, {
+    return new LinkedInBuddyError("NETWORK_ERROR", message, details, {
       cause: error
     });
   }
 
-  return asLinkedInAssistantError(error, "UNKNOWN", message);
+  return asLinkedInBuddyError(error, "UNKNOWN", message);
 }
 
 async function getOrCreatePage(context: BrowserContext): Promise<Page> {
@@ -448,7 +448,7 @@ async function findVisibleLocatorOrThrow(
     }
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "UI_CHANGED_SELECTOR_FAILED",
     `Could not locate LinkedIn selector group "${selectorKey}".`,
     {
@@ -477,7 +477,7 @@ async function findVisibleScopedLocatorOrThrow(
     }
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "UI_CHANGED_SELECTOR_FAILED",
     `Could not locate LinkedIn selector group "${selectorKey}".`,
     {
@@ -1292,7 +1292,7 @@ async function publishCurrentLongFormDraft(
   }, 20_000);
 
   if (!published) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UNKNOWN",
       "LinkedIn did not navigate away from the draft editor after publish.",
       {

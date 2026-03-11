@@ -30,7 +30,7 @@ interface RedactionContext {
   parent?: Record<string, unknown>;
 }
 
-const DEFAULT_HASH_NAMESPACE = "linkedin-assistant-privacy-v1";
+const DEFAULT_HASH_NAMESPACE = "linkedin-buddy-privacy-v1";
 const DEFAULT_MESSAGE_EXCERPT_LENGTH = 80;
 const EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 const LIKELY_FULL_NAME_PATTERN = /\b[A-Z][A-Za-z'’-]+ [A-Z][A-Za-z'’-]+\b/g;
@@ -420,10 +420,10 @@ export function unsealJsonRecord(
 export function createDefaultPrivacyConfig(
   env: EnvironmentMap = process.env
 ): PrivacyConfig {
-  const redactionModeRaw = env.LINKEDIN_ASSISTANT_REDACTION_MODE?.trim().toLowerCase();
-  const storageModeRaw = env.LINKEDIN_ASSISTANT_STORAGE_MODE?.trim().toLowerCase();
+  const redactionModeRaw = env.LINKEDIN_BUDDY_REDACTION_MODE?.trim().toLowerCase();
+  const storageModeRaw = env.LINKEDIN_BUDDY_STORAGE_MODE?.trim().toLowerCase();
   const messageExcerptLengthRaw = Number.parseInt(
-    env.LINKEDIN_ASSISTANT_MESSAGE_EXCERPT_LENGTH ?? "",
+    env.LINKEDIN_BUDDY_MESSAGE_EXCERPT_LENGTH ?? "",
     10
   );
 
@@ -434,7 +434,7 @@ export function createDefaultPrivacyConfig(
     storageMode: storageModeRaw && isPrivacyStorageMode(storageModeRaw)
       ? storageModeRaw
       : "full",
-    hashSalt: env.LINKEDIN_ASSISTANT_REDACTION_HASH_SALT ?? "",
+    hashSalt: env.LINKEDIN_BUDDY_REDACTION_HASH_SALT ?? "",
     messageExcerptLength: clampExcerptLength(messageExcerptLengthRaw)
   };
 }

@@ -5,7 +5,7 @@ import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
 import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
 import type { ConfirmFailureArtifactConfig } from "./config.js";
-import { LinkedInAssistantError, asLinkedInAssistantError } from "./errors.js";
+import { LinkedInBuddyError, asLinkedInBuddyError } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { validateLinkedInPostText } from "./linkedinPosts.js";
 import type { ProfileManager } from "./profileManager.js";
@@ -301,7 +301,7 @@ export function normalizeLinkedInFeedReaction(
     return mapped;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `reaction must be one of: ${LINKEDIN_FEED_REACTION_TYPES.join(", ")}.`,
     {
@@ -318,7 +318,7 @@ function isAbsoluteUrl(value: string): boolean {
 function resolvePostUrl(postUrl: string): string {
   const trimmedPostUrl = normalizeText(postUrl);
   if (!trimmedPostUrl) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "postUrl is required."
     );
@@ -329,7 +329,7 @@ function resolvePostUrl(postUrl: string): string {
     try {
       parsedUrl = new URL(trimmedPostUrl);
     } catch (error) {
-      throw asLinkedInAssistantError(
+      throw asLinkedInBuddyError(
         error,
         "ACTION_PRECONDITION_FAILED",
         "Post URL must be a valid URL."
@@ -485,7 +485,7 @@ function getRequiredStringField(
     return value.trim();
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `Prepared action ${actionId} is missing ${location}.${key}.`,
     {
@@ -529,7 +529,7 @@ async function waitForFeedSurface(page: Page): Promise<void> {
     }
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "UI_CHANGED_SELECTOR_FAILED",
     "Could not locate LinkedIn feed content.",
     {
@@ -559,7 +559,7 @@ async function waitForPostSurface(page: Page): Promise<void> {
     }
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "UI_CHANGED_SELECTOR_FAILED",
     "Could not locate LinkedIn post content.",
     {
@@ -842,7 +842,7 @@ async function findVisibleLocatorOrThrow(
     }
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "UI_CHANGED_SELECTOR_FAILED",
     `Could not locate LinkedIn selector group "${selectorKey}".`,
     {
@@ -889,7 +889,7 @@ async function findVisibleScopedLocatorOrThrow(
     }
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "UI_CHANGED_SELECTOR_FAILED",
     `Could not locate LinkedIn selector group "${selectorKey}".`,
     {
@@ -1068,7 +1068,7 @@ async function selectReactionFromMenu(
   const menu = page.locator("span.reactions-menu--active").first();
   const menuVisible = await waitForCondition(async () => isLocatorVisible(menu), 3_500);
   if (!menuVisible) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UI_CHANGED_SELECTOR_FAILED",
       "Could not open LinkedIn reaction menu for the selected post."
     );
@@ -1700,7 +1700,7 @@ async function verifySharedPost(
 ): Promise<{ verified: true; postUrl: string | null }> {
   const snippet = createVerificationSnippet(text);
   if (!snippet) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "Cannot verify a shared post with empty text content."
     );
@@ -1729,7 +1729,7 @@ async function verifySharedPost(
     }, 12_000);
 
     if (!verified) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "UNKNOWN",
         "Shared LinkedIn post could not be verified on the feed.",
         {
@@ -1989,7 +1989,7 @@ export class LikePostActionExecutor
             requested_reaction: reaction
           },
           mapError: (error) =>
-            asLinkedInAssistantError(
+            asLinkedInBuddyError(
               error,
               "UNKNOWN",
               "Failed to execute LinkedIn like_post action."
@@ -1999,7 +1999,7 @@ export class LikePostActionExecutor
             LIKE_RATE_LIMIT_CONFIG
           );
           if (!rateLimitState.allowed) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "RATE_LIMITED",
               "LinkedIn like_post confirm is rate limited for the current window.",
               {
@@ -2143,7 +2143,7 @@ export class LikePostActionExecutor
               reactButton.locator,
               runtime.selectorLocale
             );
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "UNKNOWN",
               "Reaction action could not be verified on the target post.",
               {
@@ -2240,7 +2240,7 @@ export class CommentOnPostActionExecutor
             comment_text: text
           },
           mapError: (error) =>
-            asLinkedInAssistantError(
+            asLinkedInBuddyError(
               error,
               "UNKNOWN",
               "Failed to execute LinkedIn comment_on_post action."
@@ -2250,7 +2250,7 @@ export class CommentOnPostActionExecutor
             COMMENT_RATE_LIMIT_CONFIG
           );
           if (!rateLimitState.allowed) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "RATE_LIMITED",
               "LinkedIn comment_on_post confirm is rate limited for the current window.",
               {
@@ -2441,7 +2441,7 @@ export class CommentOnPostActionExecutor
           }, 4_000);
 
           if (!submitEnabled) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "UI_CHANGED_SELECTOR_FAILED",
               "Comment submit button was not enabled after entering comment text.",
               {
@@ -2471,7 +2471,7 @@ export class CommentOnPostActionExecutor
           );
 
           if (!commentVerified) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "UNKNOWN",
               "Comment action could not be verified on the target post.",
               {
@@ -2558,7 +2558,7 @@ export class RepostPostActionExecutor
             post_url: postUrl
           },
           mapError: (error) =>
-            asLinkedInAssistantError(
+            asLinkedInBuddyError(
               error,
               "UNKNOWN",
               "Failed to execute LinkedIn repost_post action."
@@ -2566,7 +2566,7 @@ export class RepostPostActionExecutor
           execute: async () => {
             const rateLimitState = runtime.rateLimiter.consume(REPOST_RATE_LIMIT_CONFIG);
             if (!rateLimitState.allowed) {
-              throw new LinkedInAssistantError(
+              throw new LinkedInBuddyError(
                 "RATE_LIMITED",
                 "LinkedIn repost_post confirm is rate limited for the current window.",
                 {
@@ -2626,7 +2626,7 @@ export class RepostPostActionExecutor
               }
 
               if (!verified) {
-                throw new LinkedInAssistantError(
+                throw new LinkedInBuddyError(
                   "UNKNOWN",
                   "Repost action could not be verified on the target post.",
                   {
@@ -2718,7 +2718,7 @@ export class SharePostActionExecutor
             text
           },
           mapError: (error) =>
-            asLinkedInAssistantError(
+            asLinkedInBuddyError(
               error,
               "UNKNOWN",
               "Failed to execute LinkedIn share_post action."
@@ -2726,7 +2726,7 @@ export class SharePostActionExecutor
           execute: async () => {
             const rateLimitState = runtime.rateLimiter.consume(SHARE_RATE_LIMIT_CONFIG);
             if (!rateLimitState.allowed) {
-              throw new LinkedInAssistantError(
+              throw new LinkedInBuddyError(
                 "RATE_LIMITED",
                 "LinkedIn share_post confirm is rate limited for the current window.",
                 {
@@ -2770,7 +2770,7 @@ export class SharePostActionExecutor
             }, 5_000);
 
             if (!publishEnabled) {
-              throw new LinkedInAssistantError(
+              throw new LinkedInBuddyError(
                 "UI_CHANGED_SELECTOR_FAILED",
                 "Share publish button was not enabled after entering share text.",
                 {
@@ -2876,7 +2876,7 @@ export class SavePostActionExecutor
             post_url: postUrl
           },
           mapError: (error) =>
-            asLinkedInAssistantError(
+            asLinkedInBuddyError(
               error,
               "UNKNOWN",
               "Failed to execute LinkedIn save_post action."
@@ -2884,7 +2884,7 @@ export class SavePostActionExecutor
           execute: async () => {
             const rateLimitState = runtime.rateLimiter.consume(SAVE_RATE_LIMIT_CONFIG);
             if (!rateLimitState.allowed) {
-              throw new LinkedInAssistantError(
+              throw new LinkedInBuddyError(
                 "RATE_LIMITED",
                 "LinkedIn save_post confirm is rate limited for the current window.",
                 {
@@ -2942,7 +2942,7 @@ export class SavePostActionExecutor
             }
 
             if (!verified) {
-              throw new LinkedInAssistantError(
+              throw new LinkedInBuddyError(
                 "UNKNOWN",
                 "Save post action could not be verified on the target post.",
                 {
@@ -3028,7 +3028,7 @@ export class UnsavePostActionExecutor
             post_url: postUrl
           },
           mapError: (error) =>
-            asLinkedInAssistantError(
+            asLinkedInBuddyError(
               error,
               "UNKNOWN",
               "Failed to execute LinkedIn unsave_post action."
@@ -3036,7 +3036,7 @@ export class UnsavePostActionExecutor
           execute: async () => {
             const rateLimitState = runtime.rateLimiter.consume(UNSAVE_RATE_LIMIT_CONFIG);
             if (!rateLimitState.allowed) {
-              throw new LinkedInAssistantError(
+              throw new LinkedInBuddyError(
                 "RATE_LIMITED",
                 "LinkedIn unsave_post confirm is rate limited for the current window.",
                 {
@@ -3094,7 +3094,7 @@ export class UnsavePostActionExecutor
             }
 
             if (!verified) {
-              throw new LinkedInAssistantError(
+              throw new LinkedInBuddyError(
                 "UNKNOWN",
                 "Unsave post action could not be verified on the target post.",
                 {
@@ -3180,7 +3180,7 @@ export class RemoveReactionActionExecutor
             post_url: postUrl
           },
           mapError: (error) =>
-            asLinkedInAssistantError(
+            asLinkedInBuddyError(
               error,
               "UNKNOWN",
               "Failed to execute LinkedIn remove_reaction action."
@@ -3190,7 +3190,7 @@ export class RemoveReactionActionExecutor
               REMOVE_REACTION_RATE_LIMIT_CONFIG
             );
             if (!rateLimitState.allowed) {
-              throw new LinkedInAssistantError(
+              throw new LinkedInBuddyError(
                 "RATE_LIMITED",
                 "LinkedIn remove_reaction confirm is rate limited for the current window.",
                 {
@@ -3249,7 +3249,7 @@ export class RemoveReactionActionExecutor
               }
 
               if (!verified) {
-                throw new LinkedInAssistantError(
+                throw new LinkedInBuddyError(
                   "UNKNOWN",
                   "Remove reaction action could not be verified on the target post.",
                   {
@@ -3343,10 +3343,10 @@ export class LinkedInFeedService {
         }
       );
     } catch (error) {
-      if (error instanceof LinkedInAssistantError) {
+      if (error instanceof LinkedInBuddyError) {
         throw error;
       }
-      throw asLinkedInAssistantError(
+      throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
         "Failed to view LinkedIn feed."
@@ -3378,7 +3378,7 @@ export class LinkedInFeedService {
           const posts = await extractFeedPosts(page, 8);
           const post = findMatchingPost(posts, postUrl);
           if (!post) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "TARGET_NOT_FOUND",
               "Could not extract post details from the requested LinkedIn post URL.",
               {
@@ -3392,10 +3392,10 @@ export class LinkedInFeedService {
         }
       );
     } catch (error) {
-      if (error instanceof LinkedInAssistantError) {
+      if (error instanceof LinkedInBuddyError) {
         throw error;
       }
-      throw asLinkedInAssistantError(
+      throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
         "Failed to view LinkedIn post."
@@ -3453,7 +3453,7 @@ export class LinkedInFeedService {
     const text = normalizeText(input.text);
 
     if (!text) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "Comment text must not be empty."
       );

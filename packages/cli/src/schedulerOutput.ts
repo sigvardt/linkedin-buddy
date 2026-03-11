@@ -1,10 +1,10 @@
 import type {
-  LinkedInAssistantErrorPayload,
+  LinkedInBuddyErrorPayload,
   SchedulerConfig,
   SchedulerLane,
   SchedulerTickJobResult,
   SchedulerTickResult
-} from "@linkedin-assistant/core";
+} from "@linkedin-buddy/core";
 
 export type SchedulerOutputMode = "human" | "json";
 
@@ -77,7 +77,7 @@ export interface SchedulerStatusReport {
   state_path: string;
   log_path: string;
   scheduler_config?: SchedulerConfig;
-  scheduler_config_error?: LinkedInAssistantErrorPayload;
+  scheduler_config_error?: LinkedInBuddyErrorPayload;
   job_counts: SchedulerJobCounts;
   next_jobs: SchedulerJobPreview[];
   recent_jobs: SchedulerJobPreview[];
@@ -92,7 +92,7 @@ export interface SchedulerStartReport {
   state_path: string;
   log_path: string;
   scheduler_config?: SchedulerConfig;
-  scheduler_config_error?: LinkedInAssistantErrorPayload;
+  scheduler_config_error?: LinkedInBuddyErrorPayload;
 }
 
 export interface SchedulerStopReport {
@@ -667,7 +667,7 @@ function readStringArray(
   return strings.length > 0 ? strings : null;
 }
 
-export function formatSchedulerError(error: LinkedInAssistantErrorPayload): string {
+export function formatSchedulerError(error: LinkedInBuddyErrorPayload): string {
   const lines = [`Scheduler command failed [${sanitizeConsoleText(error.code)}]`, sanitizeConsoleText(error.message)];
   const env = readString(error.details, "env");
   const value = readString(error.details, "value");
@@ -716,7 +716,7 @@ export function formatSchedulerError(error: LinkedInAssistantErrorPayload): stri
     lines.push(`Cause: ${sanitizeConsoleText(cause)}`);
   }
 
-  if (env?.startsWith("LINKEDIN_ASSISTANT_SCHEDULER_")) {
+  if (env?.startsWith("LINKEDIN_BUDDY_SCHEDULER_")) {
     lines.push(
       "Tip: fix the scheduler setting above, or unset it to use the default scheduler value."
     );

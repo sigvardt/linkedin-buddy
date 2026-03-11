@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { isFixtureReplayEnabled } from "../../fixtureReplay.js";
 import type { CoreRuntime } from "../../runtime.js";
-import { toLinkedInAssistantErrorPayload } from "../../errors.js";
+import { toLinkedInBuddyErrorPayload } from "../../errors.js";
 import { TEST_ECHO_ACTION_TYPE } from "../../twoPhaseCommit.js";
 import { runCli } from "../../../../cli/src/bin/linkedin.js";
 import { handleToolCall } from "../../../../mcp/src/bin/linkedin-mcp.js";
@@ -573,7 +573,7 @@ async function captureCommandExecution(
     }
 
     stderrChunks.push(
-      `${JSON.stringify(toLinkedInAssistantErrorPayload(caught), null, 2)}\n`
+      `${JSON.stringify(toLinkedInBuddyErrorPayload(caught), null, 2)}\n`
     );
   } finally {
     process.stdout.write = originalStdoutWrite;
@@ -686,7 +686,7 @@ export function getOptInCommentPostUrl(): string | undefined {
 }
 
 /**
- * Invokes the CLI entrypoint, applying optional retries, assistant-home
+ * Invokes the CLI entrypoint, applying optional retries, buddy-home
  * overrides, and timeout handling.
  */
 export async function runCliCommandWith(
@@ -739,7 +739,7 @@ export function getLastJsonObject(text: string): Record<string, unknown> {
 }
 
 /**
- * Invokes one MCP tool call with retries, optional assistant-home overrides,
+ * Invokes one MCP tool call with retries, optional buddy-home overrides,
  * and timeout handling.
  */
 export async function callMcpToolWith(

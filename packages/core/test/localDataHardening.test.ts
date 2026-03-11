@@ -85,11 +85,11 @@ describe("local data deletion hardening", () => {
   let previousAssistantHome: string | undefined;
 
   beforeEach(async () => {
-    previousAssistantHome = process.env.LINKEDIN_ASSISTANT_HOME;
-    delete process.env.LINKEDIN_ASSISTANT_HOME;
+    previousAssistantHome = process.env.LINKEDIN_BUDDY_HOME;
+    delete process.env.LINKEDIN_BUDDY_HOME;
 
     tempDir = await mkdtemp(path.join(os.tmpdir(), "linkedin-local-data-hardening-"));
-    baseDir = path.join(tempDir, "assistant-home");
+    baseDir = path.join(tempDir, "buddy-home");
     configFilePath = path.join(baseDir, "config.json");
     rateLimitStatePath = path.join(baseDir, "rate-limit-state.json");
   });
@@ -100,9 +100,9 @@ describe("local data deletion hardening", () => {
     vi.restoreAllMocks();
 
     if (typeof previousAssistantHome === "string") {
-      process.env.LINKEDIN_ASSISTANT_HOME = previousAssistantHome;
+      process.env.LINKEDIN_BUDDY_HOME = previousAssistantHome;
     } else {
-      delete process.env.LINKEDIN_ASSISTANT_HOME;
+      delete process.env.LINKEDIN_BUDDY_HOME;
     }
 
     await rm(tempDir, { recursive: true, force: true });
@@ -149,9 +149,9 @@ describe("local data deletion hardening", () => {
     ).toThrowError("must not be empty");
   });
 
-  it("canonicalizes targets through a symlinked assistant home", async () => {
+  it("canonicalizes targets through a symlinked buddy home", async () => {
     const realBaseDir = path.join(tempDir, "real-home");
-    const symlinkBaseDir = path.join(tempDir, "assistant-home-link");
+    const symlinkBaseDir = path.join(tempDir, "buddy-home-link");
 
     await mkdir(realBaseDir, { recursive: true });
     await symlink(realBaseDir, symlinkBaseDir);
@@ -174,7 +174,7 @@ describe("local data deletion hardening", () => {
     expect(plan.targets).not.toContain(path.resolve(symlinkBaseDir, "artifacts"));
   });
 
-  it("deletes symlinked target entries without touching data outside the assistant home", async () => {
+  it("deletes symlinked target entries without touching data outside the buddy home", async () => {
     const paths = resolveConfigPaths(baseDir);
     const externalArtifactsDir = path.join(tempDir, "external-artifacts");
     const externalArtifactFile = path.join(externalArtifactsDir, "outside.jsonl");

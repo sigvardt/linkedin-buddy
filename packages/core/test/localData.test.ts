@@ -65,20 +65,20 @@ describe("local data deletion", () => {
   let previousAssistantHome: string | undefined;
 
   beforeEach(async () => {
-    previousAssistantHome = process.env.LINKEDIN_ASSISTANT_HOME;
-    delete process.env.LINKEDIN_ASSISTANT_HOME;
+    previousAssistantHome = process.env.LINKEDIN_BUDDY_HOME;
+    delete process.env.LINKEDIN_BUDDY_HOME;
 
     tempDir = await mkdtemp(path.join(os.tmpdir(), "linkedin-local-data-"));
-    baseDir = path.join(tempDir, "assistant-home");
+    baseDir = path.join(tempDir, "buddy-home");
     configFilePath = path.join(baseDir, "config.json");
     rateLimitStatePath = path.join(baseDir, "rate-limit-state.json");
   });
 
   afterEach(async () => {
     if (typeof previousAssistantHome === "string") {
-      process.env.LINKEDIN_ASSISTANT_HOME = previousAssistantHome;
+      process.env.LINKEDIN_BUDDY_HOME = previousAssistantHome;
     } else {
-      delete process.env.LINKEDIN_ASSISTANT_HOME;
+      delete process.env.LINKEDIN_BUDDY_HOME;
     }
 
     await rm(tempDir, { recursive: true, force: true });
@@ -161,7 +161,7 @@ describe("local data deletion", () => {
   it("resolves the keepalive directory from the shared config path", () => {
     expect(resolveKeepAliveDir(baseDir)).toBe(path.join(baseDir, "keepalive"));
 
-    process.env.LINKEDIN_ASSISTANT_HOME = baseDir;
+    process.env.LINKEDIN_BUDDY_HOME = baseDir;
     expect(resolveKeepAliveDir()).toBe(path.join(baseDir, "keepalive"));
   });
 

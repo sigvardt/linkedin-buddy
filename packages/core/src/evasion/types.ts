@@ -94,7 +94,7 @@ export interface IntervalSampleOptions {
  *
  * @example
  * ```ts
- * import { EVASION_PROFILES } from "@linkedin-assistant/core";
+ * import { EVASION_PROFILES } from "@linkedin-buddy/core";
  *
  * const profile: EvasionProfile = EVASION_PROFILES.moderate;
  * ```
@@ -184,7 +184,7 @@ export interface EvasionDiagnosticsLogger {
  *
  * @example
  * ```ts
- * import { createEvasionStatus } from "@linkedin-assistant/core";
+ * import { createEvasionStatus } from "@linkedin-buddy/core";
  *
  * const status: EvasionStatus = createEvasionStatus({
  *   level: "paranoid",

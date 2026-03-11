@@ -5,7 +5,7 @@ reply drafts. It scores candidate drafts against case-specific expectations for
 relevance, tone, and length, keeps hard failures separate, and emits a
 structured JSON report for local review, CI, and agent workflows.
 
-The draft-quality evaluator is also exported from `@linkedin-assistant/core`
+The draft-quality evaluator is also exported from `@linkedin-buddy/core`
 via `packages/core/src/index.ts`.
 
 ## What it evaluates
@@ -24,25 +24,25 @@ via `packages/core/src/index.ts`.
 
 ```bash
 # Evaluate the repo smoke fixtures with a human-readable summary
-npm exec -w @linkedin-assistant/cli -- linkedin audit draft-quality \
+npm exec -w @linkedin-buddy/cli -- linkedin audit draft-quality \
   --dataset packages/core/test/fixtures/draft-quality/smoke-dataset.json \
   --candidates packages/core/test/fixtures/draft-quality/smoke-candidates.json
 
 # Add per-draft detail to the human-readable summary
-npm exec -w @linkedin-assistant/cli -- linkedin audit draft-quality \
+npm exec -w @linkedin-buddy/cli -- linkedin audit draft-quality \
   --dataset packages/core/test/fixtures/draft-quality/smoke-dataset.json \
   --candidates packages/core/test/fixtures/draft-quality/smoke-candidates.json \
   --verbose
 
 # Force JSON output and also persist the report to disk
-npm exec -w @linkedin-assistant/cli -- linkedin audit draft-quality \
+npm exec -w @linkedin-buddy/cli -- linkedin audit draft-quality \
   --dataset packages/core/test/fixtures/draft-quality/smoke-dataset.json \
   --candidates packages/core/test/fixtures/draft-quality/smoke-candidates.json \
   --json \
   --output reports/draft-quality.json
 
 # Show built-in help and usage examples
-npm exec -w @linkedin-assistant/cli -- linkedin audit draft-quality --help
+npm exec -w @linkedin-buddy/cli -- linkedin audit draft-quality --help
 ```
 
 ## CLI usage
@@ -329,7 +329,7 @@ Per-draft report details include:
 Embed a single `candidate_drafts` entry in the dataset and run the evaluator:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin audit draft-quality \
+npm exec -w @linkedin-buddy/cli -- linkedin audit draft-quality \
   --dataset eval/single-draft-dataset.json \
   --verbose
 ```
@@ -342,7 +342,7 @@ Keep the benchmark dataset stable and swap in a separate candidates file for a
 model run, a prompt variation, or imported reviewer drafts:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin audit draft-quality \
+npm exec -w @linkedin-buddy/cli -- linkedin audit draft-quality \
   --dataset eval/dataset.json \
   --candidates eval/model-run-2026-03-08.json \
   --json \
@@ -358,7 +358,7 @@ Use JSON mode plus `--output` so CI can archive the report while still relying
 on the command exit code:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin audit draft-quality \
+npm exec -w @linkedin-buddy/cli -- linkedin audit draft-quality \
   --dataset eval/dataset.json \
   --candidates eval/candidates.json \
   --json \
@@ -374,7 +374,7 @@ Recommended CI behavior:
 
 ## Core API
 
-Core entry points exported from `@linkedin-assistant/core`:
+Core entry points exported from `@linkedin-buddy/core`:
 
 - `parseDraftQualityDataset(value)` validates and normalizes dataset input
 - `parseDraftQualityCandidateSet(value)` validates and normalizes external
@@ -397,7 +397,7 @@ import {
   parseDraftQualityCandidateSet,
   parseDraftQualityDataset,
   type DraftQualityJudge
-} from "@linkedin-assistant/core";
+} from "@linkedin-buddy/core";
 
 const dataset = parseDraftQualityDataset(
   JSON.parse(await readFile("eval/dataset.json", "utf8"))

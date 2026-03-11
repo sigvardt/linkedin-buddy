@@ -6,7 +6,7 @@ import type {
   LinkedInReplayPageType,
   ReadOnlyValidationOperationResult,
   ReadOnlyValidationReport
-} from "@linkedin-assistant/core";
+} from "@linkedin-buddy/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 interface BrowserRequestDefinition {
@@ -328,11 +328,11 @@ vi.mock("playwright-core", () => {
   };
 });
 
-vi.mock("@linkedin-assistant/core", async () =>
+vi.mock("@linkedin-buddy/core", async () =>
   await import("../../core/src/index.js")
 );
 
-import * as core from "@linkedin-assistant/core";
+import * as core from "@linkedin-buddy/core";
 import { runCli } from "../src/bin/linkedin.js";
 
 const FEED_URL = "https://www.linkedin.com/feed/";
@@ -344,7 +344,7 @@ const CONNECTIONS_URL =
   "https://www.linkedin.com/mynetwork/invite-connect/connections/";
 const LOGIN_URL = "https://www.linkedin.com/login";
 
-const originalAssistantHome = process.env.LINKEDIN_ASSISTANT_HOME;
+const originalAssistantHome = process.env.LINKEDIN_BUDDY_HOME;
 const originalReplayEnabled = process.env.LINKEDIN_E2E_REPLAY;
 const originalFixtureManifest = process.env.LINKEDIN_E2E_FIXTURE_MANIFEST;
 const originalFixtureSet = process.env.LINKEDIN_E2E_FIXTURE_SET;
@@ -370,9 +370,9 @@ function visible(selector: string): string {
 
 function restoreFixtureReplayEnvironment(): void {
   if (originalAssistantHome === undefined) {
-    delete process.env.LINKEDIN_ASSISTANT_HOME;
+    delete process.env.LINKEDIN_BUDDY_HOME;
   } else {
-    process.env.LINKEDIN_ASSISTANT_HOME = originalAssistantHome;
+    process.env.LINKEDIN_BUDDY_HOME = originalAssistantHome;
   }
 
   if (originalReplayEnabled === undefined) {
@@ -472,7 +472,7 @@ async function createReplayFixtureSet(
 }
 
 function enableReplay(manifestPath: string, setName: string): void {
-  process.env.LINKEDIN_ASSISTANT_HOME = path.dirname(manifestPath);
+  process.env.LINKEDIN_BUDDY_HOME = path.dirname(manifestPath);
   process.env.LINKEDIN_E2E_REPLAY = "1";
   process.env.LINKEDIN_E2E_FIXTURE_MANIFEST = manifestPath;
   process.env.LINKEDIN_E2E_FIXTURE_SET = setName;
@@ -1070,7 +1070,7 @@ describe("linkedin live validation CLI integration", () => {
     tempDirs.push(assistantHome);
 
     await seedStoredSession(assistantHome, "smoke");
-    process.env.LINKEDIN_ASSISTANT_HOME = assistantHome;
+    process.env.LINKEDIN_BUDDY_HOME = assistantHome;
     browserMockState.failNewContext = true;
 
     await expect(

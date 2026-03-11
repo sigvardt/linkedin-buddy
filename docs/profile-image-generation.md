@@ -13,7 +13,7 @@ persona.
 ## CLI command
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin assets generate-profile-images \
+npm exec -w @linkedin-buddy/cli -- linkedin assets generate-profile-images \
   --profile <profile> \
   --spec docs/profile-seeds/issue-210-signikant-test-profile.json \
   --post-count 6 \

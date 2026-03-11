@@ -1,8 +1,8 @@
 import { type BrowserContext, type Page } from "playwright-core";
 import type { LinkedInAuthService } from "./auth/session.js";
 import {
-  LinkedInAssistantError,
-  asLinkedInAssistantError
+  LinkedInBuddyError,
+  asLinkedInBuddyError
 } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
@@ -116,7 +116,7 @@ async function waitForJobSearchSurface(page: Page): Promise<void> {
     }
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "UI_CHANGED_SELECTOR_FAILED",
     "Could not locate LinkedIn job search content.",
     {
@@ -147,7 +147,7 @@ async function waitForJobDetailSurface(page: Page): Promise<void> {
     }
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "UI_CHANGED_SELECTOR_FAILED",
     "Could not locate LinkedIn job detail content.",
     {
@@ -523,7 +523,7 @@ export class LinkedInJobsService {
     const limit = readJobsLimit(input.limit);
 
     if (!query) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "query is required."
       );
@@ -555,10 +555,10 @@ export class LinkedInJobsService {
         count: results.length
       };
     } catch (error) {
-      if (error instanceof LinkedInAssistantError) {
+      if (error instanceof LinkedInBuddyError) {
         throw error;
       }
-      throw asLinkedInAssistantError(
+      throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
         "Failed to search LinkedIn jobs."
@@ -571,7 +571,7 @@ export class LinkedInJobsService {
     const jobId = normalizeText(input.jobId);
 
     if (!jobId) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "jobId is required."
       );
@@ -596,10 +596,10 @@ export class LinkedInJobsService {
         }
       );
     } catch (error) {
-      if (error instanceof LinkedInAssistantError) {
+      if (error instanceof LinkedInBuddyError) {
         throw error;
       }
-      throw asLinkedInAssistantError(
+      throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
         "Failed to view LinkedIn job posting."

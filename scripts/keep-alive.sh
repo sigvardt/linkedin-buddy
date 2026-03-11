@@ -4,7 +4,7 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-LOG_FILE="$HOME/.linkedin-assistant/keep-alive.log"
+LOG_FILE="$HOME/.linkedin-buddy/keep-alive.log"
 COOKIES_TMP="/tmp/linkedin-cookies-refresh.json"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"; }
@@ -52,7 +52,7 @@ const { chromium } = require('playwright-core');
 const fs = require('fs');
 (async () => {
   const cookies = JSON.parse(fs.readFileSync('$COOKIES_TMP', 'utf8'));
-  const profileDir = process.env.HOME + '/.linkedin-assistant/profiles/default';
+  const profileDir = process.env.HOME + '/.linkedin-buddy/profiles/default';
   const context = await chromium.launchPersistentContext(profileDir, { headless: true });
   await context.addCookies(cookies);
   const page = context.pages()[0] || await context.newPage();

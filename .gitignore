@@ -11,7 +11,7 @@ dist
 *.tsbuildinfo
 reports/
 
-.linkedin-assistant
+.linkedin-buddy
 artifacts/
 profiles/
 keepalive/
@@ -33,3 +33,4 @@ test/fixtures/*
 test/fixtures/*/responses/
 test/fixtures/*/responses/**
 test/fixtures/*/session.har
+agent-orchestrator.yaml

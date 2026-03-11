@@ -1,7 +1,7 @@
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Browser, BrowserContext, Page } from "playwright-core";
-import { LinkedInAssistantError } from "../errors.js";
+import { LinkedInBuddyError } from "../errors.js";
 import type { CoreRuntime } from "../runtime.js";
 import { WRITE_VALIDATION_FEED_URL } from "../writeValidationShared.js";
 
@@ -275,7 +275,7 @@ describe("createWriteValidationRuntime", () => {
       caughtError = error;
     }
 
-    expect(caughtError).toBeInstanceOf(LinkedInAssistantError);
+    expect(caughtError).toBeInstanceOf(LinkedInBuddyError);
     expect(caughtError).toMatchObject({
       code: "CAPTCHA_OR_CHALLENGE",
       message: "LinkedIn requested a checkpoint challenge."

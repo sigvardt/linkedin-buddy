@@ -8,7 +8,7 @@ import {
 } from "playwright-core";
 import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
-import { LinkedInAssistantError } from "./errors.js";
+import { LinkedInBuddyError } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
@@ -567,7 +567,7 @@ function isNetworkError(error: unknown): boolean {
 function validateNonEmptyText(value: string, label: string): string {
   const normalized = sanitizeUserFacingText(value);
   if (normalized.length === 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must not be empty.`
     );
@@ -583,7 +583,7 @@ function validateProfileName(profileName?: string): string {
     normalizedProfileName === ".." ||
     /[\\/]/.test(normalizedProfileName)
   ) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "profile must not contain path separators or relative path segments.",
       {
@@ -602,7 +602,7 @@ function validateTimeoutOption(
 ): number {
   const normalized = value ?? fallback;
   if (!Number.isInteger(normalized) || normalized <= 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a positive integer number of milliseconds.`,
       {
@@ -617,7 +617,7 @@ function validateTimeoutOption(
 
 function validateSelectorAuditInput(input: SelectorAuditInput = {}): SelectorAuditInput {
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "selector audit input must be an object.",
       {
@@ -636,14 +636,14 @@ function validateAuditPageUrl(page: LinkedInSelectorAuditPage, value: string): v
   try {
     parsedUrl = new URL(normalizedUrl);
   } catch {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `Selector audit page ${page} has an invalid URL.`
     );
   }
 
   if (parsedUrl.protocol !== "https:" && parsedUrl.protocol !== "http:") {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `Selector audit page ${page} must use http or https.`
     );
@@ -877,7 +877,7 @@ function validateSelectorAuditRegistry(
   registry: SelectorAuditPageDefinition[]
 ): SelectorAuditPageDefinition[] {
   if (registry.length === 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "Selector audit registry must contain at least one page definition."
     );
@@ -889,7 +889,7 @@ function validateSelectorAuditRegistry(
     validateAuditPageUrl(pageDefinition.page, pageDefinition.url);
 
     if (pageKeys.has(pageDefinition.page)) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `Duplicate selector audit page definition: ${pageDefinition.page}`
       );
@@ -898,7 +898,7 @@ function validateSelectorAuditRegistry(
     pageKeys.add(pageDefinition.page);
 
     if (pageDefinition.selectors.length === 0) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `Selector audit page ${pageDefinition.page} has no selectors.`
       );
@@ -913,7 +913,7 @@ function validateSelectorAuditRegistry(
       );
 
       if (selectorKeys.has(selectorDefinition.key)) {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
           `Duplicate selector audit key ${selectorDefinition.key} on ${pageDefinition.page}.`
         );
@@ -922,7 +922,7 @@ function validateSelectorAuditRegistry(
       selectorKeys.add(selectorDefinition.key);
 
       if (selectorDefinition.candidates.length === 0) {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
           `Selector audit key ${selectorDefinition.key} on ${pageDefinition.page} has no candidates.`
         );
@@ -941,14 +941,14 @@ function validateSelectorAuditRegistry(
         );
 
         if (typeof candidate.locatorFactory !== "function") {
-          throw new LinkedInAssistantError(
+          throw new LinkedInBuddyError(
             "ACTION_PRECONDITION_FAILED",
             `Selector audit candidate ${candidate.key} on ${pageDefinition.page}:${selectorDefinition.key} is missing a locator factory.`
           );
         }
 
         if (candidateKeys.has(candidate.key)) {
-          throw new LinkedInAssistantError(
+          throw new LinkedInBuddyError(
             "ACTION_PRECONDITION_FAILED",
             `Duplicate selector audit candidate key ${candidate.key} on ${pageDefinition.page}:${selectorDefinition.key}.`
           );
@@ -956,7 +956,7 @@ function validateSelectorAuditRegistry(
         candidateKeys.add(candidate.key);
 
         if (strategies.has(candidate.strategy)) {
-          throw new LinkedInAssistantError(
+          throw new LinkedInBuddyError(
             "ACTION_PRECONDITION_FAILED",
             `Duplicate selector audit strategy ${candidate.strategy} on ${pageDefinition.page}:${selectorDefinition.key}.`
           );
@@ -967,7 +967,7 @@ function validateSelectorAuditRegistry(
 
     if (pageDefinition.readyCandidates !== undefined) {
       if (pageDefinition.readyCandidates.length === 0) {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
           `Selector audit page ${pageDefinition.page} has an empty readyCandidates list.`
         );
@@ -984,7 +984,7 @@ function validateSelectorAuditRegistry(
         );
 
         if (typeof readyCandidate.locatorFactory !== "function") {
-          throw new LinkedInAssistantError(
+          throw new LinkedInBuddyError(
             "ACTION_PRECONDITION_FAILED",
             `Selector audit ready candidate ${readyCandidate.key} on ${pageDefinition.page} is missing a locator factory.`
           );
@@ -1026,8 +1026,8 @@ function createStrategyResults(
   ) as Record<LinkedInSelectorAuditStrategy, SelectorAuditStrategyResult>;
 }
 
-function createPageOpenError(profileName: string, error: unknown): LinkedInAssistantError {
-  return new LinkedInAssistantError(
+function createPageOpenError(profileName: string, error: unknown): LinkedInBuddyError {
+  return new LinkedInBuddyError(
     isNetworkError(error) ? "NETWORK_ERROR" : "UNKNOWN",
     `Could not open a browser page for selector audit on profile ${profileName}: ${getErrorMessage(error)}. Make sure the profile is available and retry.`,
     {
@@ -1041,8 +1041,8 @@ function createPageLoadError(
   pageDefinition: SelectorAuditPageDefinition,
   navigationTimeoutMs: number,
   error: unknown
-): LinkedInAssistantError {
-  if (error instanceof LinkedInAssistantError) {
+): LinkedInBuddyError {
+  if (error instanceof LinkedInBuddyError) {
     return error;
   }
 
@@ -1052,7 +1052,7 @@ function createPageLoadError(
   };
 
   if (error instanceof playwrightErrors.TimeoutError) {
-    return new LinkedInAssistantError(
+    return new LinkedInBuddyError(
       "TIMEOUT",
       `Timed out after ${navigationTimeoutMs}ms loading the ${pageDefinition.page} page. Confirm the LinkedIn session can open ${pageDefinition.url} and rerun the selector audit.`,
       details,
@@ -1061,7 +1061,7 @@ function createPageLoadError(
   }
 
   if (isNetworkError(error)) {
-    return new LinkedInAssistantError(
+    return new LinkedInBuddyError(
       "NETWORK_ERROR",
       `Could not load the ${pageDefinition.page} page because the browser or network connection failed: ${getErrorMessage(error)}. Check connectivity or the attached browser session and rerun the selector audit.`,
       details,
@@ -1069,7 +1069,7 @@ function createPageLoadError(
     );
   }
 
-  return new LinkedInAssistantError(
+  return new LinkedInBuddyError(
     "UNKNOWN",
     `Could not load the ${pageDefinition.page} page: ${getErrorMessage(error)}. Refresh the LinkedIn session or attached browser and rerun the selector audit.`,
     details,
@@ -1103,8 +1103,8 @@ function createSelectorEvaluationError(
   pageDefinition: SelectorAuditPageDefinition,
   selectorDefinition: SelectorAuditSelectorDefinition,
   error: unknown
-): LinkedInAssistantError {
-  if (error instanceof LinkedInAssistantError) {
+): LinkedInBuddyError {
+  if (error instanceof LinkedInBuddyError) {
     return error;
   }
 
@@ -1115,7 +1115,7 @@ function createSelectorEvaluationError(
   };
 
   if (error instanceof playwrightErrors.TimeoutError) {
-    return new LinkedInAssistantError(
+    return new LinkedInBuddyError(
       "TIMEOUT",
       `Timed out while checking ${selectorDefinition.key} on ${pageDefinition.page}. Review the selector registry and rerun the selector audit after the page is stable.`,
       details,
@@ -1123,7 +1123,7 @@ function createSelectorEvaluationError(
     );
   }
 
-  return new LinkedInAssistantError(
+  return new LinkedInBuddyError(
     "UNKNOWN",
     `Selector audit failed while checking ${selectorDefinition.key} on ${pageDefinition.page}: ${getErrorMessage(error)}. Review the selector registry and rerun the selector audit.`,
     details,

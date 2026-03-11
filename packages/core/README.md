@@ -1,6 +1,6 @@
-# `@linkedin-assistant/core`
+# `@linkedin-buddy/core`
 
-Core runtime and automation library for LinkedIn Assistant.
+Core runtime and automation library for LinkedIn Buddy.
 
 ## Activity polling and webhooks
 
@@ -13,7 +13,7 @@ execution through:
 Minimal example:
 
 ```ts
-import { createCoreRuntime } from "@linkedin-assistant/core";
+import { createCoreRuntime } from "@linkedin-buddy/core";
 
 const runtime = createCoreRuntime();
 
@@ -78,7 +78,7 @@ Common configuration knobs:
 Balanced default for message composition:
 
 ```ts
-import { humanize } from "@linkedin-assistant/core";
+import { humanize } from "@linkedin-buddy/core";
 
 const hp = humanize(page, { typingProfile: "careful" });
 await hp.type('[role="textbox"]', "Thanks for sharing this update.", {
@@ -134,7 +134,7 @@ await hp.type('input[name="password"]', password, {
 
 ## Anti-bot evasion
 
-`@linkedin-assistant/core` exports an anti-bot evasion module that can be used
+`@linkedin-buddy/core` exports an anti-bot evasion module that can be used
 independently or alongside `createCoreRuntime()`.
 
 Key entry points:
@@ -147,7 +147,7 @@ Key entry points:
 Example:
 
 ```ts
-import { EvasionSession, createCoreRuntime } from "@linkedin-assistant/core";
+import { EvasionSession, createCoreRuntime } from "@linkedin-buddy/core";
 
 const runtime = createCoreRuntime({
   evasionLevel: "moderate",

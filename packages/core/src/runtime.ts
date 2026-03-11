@@ -133,7 +133,7 @@ function summarizeSelectorLocaleInput(
 }
 
 /**
- * Options for constructing a fully wired LinkedIn Assistant runtime.
+ * Options for constructing a fully wired LinkedIn Buddy runtime.
  *
  * @example
  * ```ts
@@ -212,7 +212,7 @@ export interface CoreRuntime {
 }
 
 /**
- * Creates the fully wired LinkedIn Assistant runtime and all supporting
+ * Creates the fully wired LinkedIn Buddy runtime and all supporting
  * services for one execution context.
  *
  * @example
@@ -441,8 +441,8 @@ export function createCoreRuntime(
       ...(process.env.OPENAI_BASE_URL
         ? { baseUrl: process.env.OPENAI_BASE_URL }
         : {}),
-      ...(process.env.LINKEDIN_ASSISTANT_OPENAI_IMAGE_MODEL
-        ? { defaultModel: process.env.LINKEDIN_ASSISTANT_OPENAI_IMAGE_MODEL }
+      ...(process.env.LINKEDIN_BUDDY_OPENAI_IMAGE_MODEL
+        ? { defaultModel: process.env.LINKEDIN_BUDDY_OPENAI_IMAGE_MODEL }
         : {})
     }
   );

@@ -1,7 +1,7 @@
 import { stdin, stdout } from "node:process";
 import { stripVTControlCharacters } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { LinkedInAssistantError } from "@linkedin-assistant/core";
+import { LinkedInBuddyError } from "@linkedin-buddy/core";
 
 const writeValidationCliMocks = vi.hoisted(() => ({
   answers: [] as string[],
@@ -26,7 +26,7 @@ vi.mock("node:readline/promises", async () => {
   };
 });
 
-vi.mock("@linkedin-assistant/core", async () => {
+vi.mock("@linkedin-buddy/core", async () => {
   const actual = await import("../../core/src/index.js");
 
   return {
@@ -605,7 +605,7 @@ describe("write validation CLI", () => {
 
   it("prints a human-readable validation error on harness failures", async () => {
     writeValidationCliMocks.runLinkedInWriteValidation.mockRejectedValue(
-      new LinkedInAssistantError(
+      new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "Write validation refused to send to an unapproved recipient.",
         {

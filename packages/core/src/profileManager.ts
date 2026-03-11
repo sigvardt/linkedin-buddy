@@ -6,7 +6,7 @@ import {
   type BrowserContext
 } from "playwright-core";
 import type { ConfigPaths } from "./config.js";
-import { LinkedInAssistantError } from "./errors.js";
+import { LinkedInBuddyError } from "./errors.js";
 import {
   attachFixtureReplayToContext,
   isFixtureReplayEnabled
@@ -66,7 +66,7 @@ export class ProfileManager {
         error instanceof Error &&
         /lock file is already being held/i.test(error.message)
       ) {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
           "Profile is busy with another LinkedIn CLI operation. Wait a few seconds and retry.",
           {

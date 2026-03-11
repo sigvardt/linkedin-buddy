@@ -1,6 +1,6 @@
 import { type BrowserContext, type Page } from "playwright-core";
 import type { LinkedInAuthService } from "./auth/session.js";
-import { LinkedInAssistantError, asLinkedInAssistantError } from "./errors.js";
+import { LinkedInBuddyError, asLinkedInBuddyError } from "./errors.js";
 import type { LinkedInFeedService } from "./linkedinFeed.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
@@ -576,7 +576,7 @@ function ensureMatchingCards(
     return cards;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "UI_CHANGED_SELECTOR_FAILED",
     `Could not locate LinkedIn analytics cards for ${surface}.`,
     {
@@ -624,11 +624,11 @@ export class LinkedInAnalyticsService {
 
       return buildSummary("profile_views", sourceUrl, observedAt, matchedCards);
     } catch (error) {
-      if (error instanceof LinkedInAssistantError) {
+      if (error instanceof LinkedInBuddyError) {
         throw error;
       }
 
-      throw asLinkedInAssistantError(
+      throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
         "Failed to read LinkedIn profile view analytics."
@@ -661,11 +661,11 @@ export class LinkedInAnalyticsService {
         matchedCards
       );
     } catch (error) {
-      if (error instanceof LinkedInAssistantError) {
+      if (error instanceof LinkedInBuddyError) {
         throw error;
       }
 
-      throw asLinkedInAssistantError(
+      throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
         "Failed to read LinkedIn search appearance analytics."
@@ -701,7 +701,7 @@ export class LinkedInAnalyticsService {
           ? directMatches.slice(0, limit)
           : fallbackMatches.slice(0, limit);
       if (cards.length === 0) {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "UI_CHANGED_SELECTOR_FAILED",
           "Could not locate LinkedIn analytics cards for content_metrics.",
           {
@@ -713,11 +713,11 @@ export class LinkedInAnalyticsService {
 
       return buildSummary("content_metrics", sourceUrl, observedAt, matchedCards);
     } catch (error) {
-      if (error instanceof LinkedInAssistantError) {
+      if (error instanceof LinkedInBuddyError) {
         throw error;
       }
 
-      throw asLinkedInAssistantError(
+      throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
         "Failed to read LinkedIn content analytics."
@@ -809,11 +809,11 @@ export class LinkedInAnalyticsService {
         }
       };
     } catch (error) {
-      if (error instanceof LinkedInAssistantError) {
+      if (error instanceof LinkedInBuddyError) {
         throw error;
       }
 
-      throw asLinkedInAssistantError(
+      throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
         "Failed to read LinkedIn post metrics."

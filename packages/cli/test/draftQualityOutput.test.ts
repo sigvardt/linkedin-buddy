@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { DraftQualityReport, LinkedInAssistantErrorPayload } from "@linkedin-assistant/core";
+import type { DraftQualityReport, LinkedInBuddyErrorPayload } from "@linkedin-buddy/core";
 import {
   DraftQualityProgressReporter,
   formatDraftQualityError,
@@ -246,7 +246,7 @@ describe("draft quality output helpers", () => {
   });
 
   it("formats friendly human-readable errors", () => {
-    const error: LinkedInAssistantErrorPayload = {
+    const error: LinkedInBuddyErrorPayload = {
       code: "ACTION_PRECONDITION_FAILED",
       message: "Draft-quality dataset must contain at least one case.",
       details: {

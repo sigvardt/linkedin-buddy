@@ -1,10 +1,10 @@
 import { createHmac } from "node:crypto";
 import type { ActivityEventType } from "./activityTypes.js";
 import type { ActivityWebhookConfig } from "./config.js";
-import { asLinkedInAssistantError, LinkedInAssistantError } from "./errors.js";
+import { asLinkedInBuddyError, LinkedInBuddyError } from "./errors.js";
 
 const MAX_RESPONSE_EXCERPT_LENGTH = 500;
-const WEBHOOK_USER_AGENT = "linkedin-assistant-webhooks/1";
+const WEBHOOK_USER_AGENT = "linkedin-buddy-webhooks/1";
 
 export interface DeliverWebhookInput {
   deliveryId: string;
@@ -66,8 +66,8 @@ export function calculateWebhookDeliveryBackoffMs(
   return Math.min(retry.maxBackoffMs, retry.initialBackoffMs * 2 ** exponent);
 }
 
-function normalizeDeliveryError(error: unknown): LinkedInAssistantError {
-  if (error instanceof LinkedInAssistantError) {
+function normalizeDeliveryError(error: unknown): LinkedInBuddyError {
+  if (error instanceof LinkedInBuddyError) {
     return error;
   }
 
@@ -75,7 +75,7 @@ function normalizeDeliveryError(error: unknown): LinkedInAssistantError {
     error instanceof Error &&
     /aborted|timeout/i.test(`${error.name} ${error.message}`)
   ) {
-    return new LinkedInAssistantError(
+    return new LinkedInBuddyError(
       "TIMEOUT",
       "Webhook delivery timed out.",
       { cause_name: error.name },
@@ -83,7 +83,7 @@ function normalizeDeliveryError(error: unknown): LinkedInAssistantError {
     );
   }
 
-  return asLinkedInAssistantError(
+  return asLinkedInBuddyError(
     error,
     "NETWORK_ERROR",
     "Webhook delivery failed."
@@ -106,11 +106,11 @@ export async function deliverWebhook(
       headers: {
         "content-type": "application/json",
         "user-agent": WEBHOOK_USER_AGENT,
-        "x-linkedin-assistant-event": input.eventType,
-        "x-linkedin-assistant-delivery": input.deliveryId,
-        "x-linkedin-assistant-retry-count": String(input.retryCount),
-        "x-linkedin-assistant-timestamp": timestampSeconds,
-        "x-linkedin-assistant-signature-256": `sha256=${signature}`
+        "x-linkedin-buddy-event": input.eventType,
+        "x-linkedin-buddy-delivery": input.deliveryId,
+        "x-linkedin-buddy-retry-count": String(input.retryCount),
+        "x-linkedin-buddy-timestamp": timestampSeconds,
+        "x-linkedin-buddy-signature-256": `sha256=${signature}`
       },
       body: input.payloadJson,
       signal: AbortSignal.timeout(input.timeoutMs)

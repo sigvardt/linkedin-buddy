@@ -1,8 +1,8 @@
-# PROJECT.md — LinkedIn Assistant
+# PROJECT.md — LinkedIn Buddy
 
 ## Vision
 
-A safety-first LinkedIn Assistant for a single personal account that automates repetitive LinkedIn tasks while keeping a human in the loop for every outbound action.
+A safety-first LinkedIn Buddy for a single personal account that automates repetitive LinkedIn tasks while keeping a human in the loop for every outbound action.
 
 ## Goals
 
@@ -48,7 +48,7 @@ A safety-first LinkedIn Assistant for a single personal account that automates r
 Every outbound action (send message, connect, like, comment, post) uses prepare → confirm with a `confirm_token`. Tokens expire after 30 minutes. This prevents accidental sends and gives the operator full review capability.
 
 ### Dedicated Browser Profile
-The project creates and owns its own Playwright persistent context. Never attaches to the user's existing Chrome profile. By default, profile data is stored at `~/.linkedin-assistant/linkedin-owa-agentools/profiles/default/`.
+The project creates and owns its own Playwright persistent context. Never attaches to the user's existing Chrome profile. By default, profile data is stored at `~/.linkedin-buddy/linkedin-buddy/profiles/default/`.
 
 ### Selector Resilience Strategy
 Multi-strategy selectors: primary (role-based), secondary (attribute-based), tertiary (text-based). On failure, captures screenshot + DOM snapshot + accessibility snapshot for debugging.

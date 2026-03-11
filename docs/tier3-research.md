@@ -256,7 +256,7 @@ Not all write paths are equally protected.
 
 - Connections do **not** currently use a dedicated confirm-time rate limiter.
 - Connection prepare previews do not expose the same rate-limit metadata that message/feed/post previews do.
-- Rate-limit counters are global per assistant home, not scoped per `profileName`, target, or logical account.
+- Rate-limit counters are global per buddy home, not scoped per `profileName`, target, or logical account.
 - Public actions are guarded mainly through docs and opt-in env flags, not a central runtime policy engine.
 - The `humanize()` helper is used in auth/keepalive flows, but not visibly shared by the write executors themselves.
 - Post creation has content linting; comments, messages, follow-up messages, and connection notes do not have a comparable central lint layer.
@@ -315,7 +315,7 @@ Examples:
 Tier 3 reports should distinguish:
 
 - remote side effect on LinkedIn
-- local side effect in assistant state
+- local side effect in buddy state
 - verification result for each
 
 ### 7) Verification quality is inconsistent across actions

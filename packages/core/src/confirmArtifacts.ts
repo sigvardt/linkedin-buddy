@@ -4,7 +4,7 @@ import { unzipSync, zipSync } from "fflate";
 import type { BrowserContext, Page } from "playwright-core";
 import type { ArtifactHelpers } from "./artifacts.js";
 import type { ConfirmFailureArtifactConfig } from "./config.js";
-import { LinkedInAssistantError } from "./errors.js";
+import { LinkedInBuddyError } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import type { ActionExecutorResult } from "./twoPhaseCommit.js";
 
@@ -36,7 +36,7 @@ export interface ExecuteConfirmActionWithArtifactsInput<
   persistTraceOnSuccess?: boolean;
   metadata?: Record<string, unknown> | undefined;
   errorDetails?: Record<string, unknown> | undefined;
-  mapError: (error: unknown) => LinkedInAssistantError;
+  mapError: (error: unknown) => LinkedInBuddyError;
   execute: () => Promise<ActionExecutorResult>;
 }
 
@@ -57,7 +57,7 @@ function getArtifactPathsFromUnknown(value: unknown): string[] {
 }
 
 function getArtifactPathsFromError(error: unknown): string[] {
-  if (!(error instanceof LinkedInAssistantError)) {
+  if (!(error instanceof LinkedInBuddyError)) {
     return [];
   }
 
@@ -72,10 +72,10 @@ function dedupeArtifactPaths(paths: string[]): string[] {
 }
 
 function attachArtifactPaths(
-  error: LinkedInAssistantError,
+  error: LinkedInBuddyError,
   artifactPaths: string[],
   extraDetails: Record<string, unknown>
-): LinkedInAssistantError {
+): LinkedInBuddyError {
   const mergedArtifactPaths = dedupeArtifactPaths([
     ...getArtifactPathsFromError(error),
     ...artifactPaths

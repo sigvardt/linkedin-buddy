@@ -1,9 +1,9 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { AssistantDatabase, PreparedActionRow } from "./db/database.js";
 import {
-  LinkedInAssistantError,
-  asLinkedInAssistantError,
-  toLinkedInAssistantErrorPayload
+  LinkedInBuddyError,
+  asLinkedInBuddyError,
+  toLinkedInBuddyErrorPayload
 } from "./errors.js";
 import {
   redactStructuredValue,
@@ -175,7 +175,7 @@ function parseJsonObject(
     }
     return parsed as Record<string, unknown>;
   } catch (error) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `Prepared action ${actionId} has invalid ${label}.`,
       {
@@ -197,7 +197,7 @@ function unsealPreparedJsonObject(
   try {
     return unsealJsonRecord(value, confirmToken, privacy);
   } catch (error) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `Prepared action ${actionId} has invalid ${label}.`,
       {
@@ -283,7 +283,7 @@ function assertPreparedActionByToken(
   confirmTokenHash: string
 ): PreparedActionRow {
   if (!row) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
       "Prepared action not found for the provided confirmation token.",
       {
@@ -297,7 +297,7 @@ function assertPreparedActionByToken(
 
 function assertPreparedActionIsReady(action: PreparedAction, nowMs: number): void {
   if (action.status !== "prepared") {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `Prepared action ${action.id} is not pending confirmation.`,
       {
@@ -308,7 +308,7 @@ function assertPreparedActionIsReady(action: PreparedAction, nowMs: number): voi
   }
 
   if (isTokenExpired(action.expiresAtMs, nowMs)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `Confirmation token expired for action ${action.id}.`,
       {
@@ -438,7 +438,7 @@ export class TwoPhaseCommitService<TRuntime = unknown> {
 
     const executor = this.executors[action.actionType];
     if (!executor) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `No executor registered for action type "${action.actionType}".`,
         {
@@ -449,7 +449,7 @@ export class TwoPhaseCommitService<TRuntime = unknown> {
     }
 
     if (!this.getRuntime) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "No runtime provider configured for action execution.",
         {
@@ -466,8 +466,8 @@ export class TwoPhaseCommitService<TRuntime = unknown> {
         action
       });
     } catch (error) {
-      const assistantError = asLinkedInAssistantError(error);
-      const errorPayload = toLinkedInAssistantErrorPayload(assistantError, this.privacy);
+      const assistantError = asLinkedInBuddyError(error);
+      const errorPayload = toLinkedInBuddyErrorPayload(assistantError, this.privacy);
       const updated = this.db.markPreparedActionFailed({
         id: action.id,
         confirmedAtMs: nowMs,
@@ -477,7 +477,7 @@ export class TwoPhaseCommitService<TRuntime = unknown> {
       });
 
       if (!updated) {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
           `Prepared action ${action.id} is no longer executable.`,
           {
@@ -505,7 +505,7 @@ export class TwoPhaseCommitService<TRuntime = unknown> {
     });
 
     if (!updated) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `Prepared action ${action.id} could not be marked as executed.`,
         {

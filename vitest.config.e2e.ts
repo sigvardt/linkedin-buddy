@@ -7,7 +7,7 @@ const rootDir = path.dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   resolve: {
     alias: {
-      "@linkedin-assistant/core": path.resolve(rootDir, "packages/core/src/index.ts")
+      "@linkedin-buddy/core": path.resolve(rootDir, "packages/core/src/index.ts")
     }
   },
   test: {

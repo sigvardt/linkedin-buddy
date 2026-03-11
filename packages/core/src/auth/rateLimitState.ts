@@ -11,7 +11,7 @@ export interface RateLimitState {
 
 const LEGACY_STATE_FILE_PATH = path.join(
   os.homedir(),
-  ".linkedin-assistant",
+  ".linkedin-buddy",
   "rate-limit-state.json"
 );
 
@@ -37,7 +37,7 @@ function shouldIncludeLegacyStateFilePath(
   return (
     !stateFilePath &&
     typeof baseDir !== "string" &&
-    typeof process.env.LINKEDIN_ASSISTANT_HOME !== "string"
+    typeof process.env.LINKEDIN_BUDDY_HOME !== "string"
   );
 }
 

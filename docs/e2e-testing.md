@@ -163,7 +163,7 @@ Record or refresh pages manually:
 
 ```bash
 linkedin fixtures record --page feed --page messaging
-owa fixtures:record --set da-dk --page profile,notifications --no-har
+linkedin-buddy fixtures record --set da-dk --page profile,notifications --no-har
 ```
 
 Supported page types:
@@ -210,7 +210,7 @@ Validate fixture freshness:
 
 ```bash
 linkedin fixtures check
-owa fixtures:check --set ci --max-age-days 14
+linkedin-buddy fixtures check --set ci --max-age-days 14
 ```
 
 Checker options and defaults:
@@ -606,7 +606,7 @@ The E2E suite now covers:
   mock server, route matching, and Playwright request interception used by the
   fixture-backed lane.
 - `packages/core/src/__tests__/e2e/setup.ts` owns the shared runtime,
-  temporary assistant home, stale-directory cleanup, and explicit skip helpers.
+  temporary buddy home, stale-directory cleanup, and explicit skip helpers.
   Use `setupE2ESuite()` plus `skipIfE2EUnavailable()` instead of re-implementing
   per-test probes.
 - `packages/core/src/__tests__/e2e/helpers.ts` wraps CLI and MCP execution,

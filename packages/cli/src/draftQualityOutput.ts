@@ -3,8 +3,8 @@ import type {
   DraftQualityHardFailure,
   DraftQualityReport,
   JsonLogEntry,
-  LinkedInAssistantErrorPayload
-} from "@linkedin-assistant/core";
+  LinkedInBuddyErrorPayload
+} from "@linkedin-buddy/core";
 
 export type DraftQualityOutputMode = "human" | "json";
 
@@ -398,7 +398,7 @@ function readNumber(payload: Record<string, unknown>, key: string): number | nul
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-export function formatDraftQualityError(error: LinkedInAssistantErrorPayload): string {
+export function formatDraftQualityError(error: LinkedInBuddyErrorPayload): string {
   const lines = [`Draft quality evaluation failed [${sanitizeConsoleText(error.code)}]`, sanitizeConsoleText(error.message)];
   const location = readString(error.details, "location");
   const filePath = readString(error.details, "path");

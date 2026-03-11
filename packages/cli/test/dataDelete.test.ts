@@ -10,7 +10,7 @@ const readlineMocks = vi.hoisted(() => ({
   question: vi.fn()
 }));
 
-vi.mock("@linkedin-assistant/core", async () =>
+vi.mock("@linkedin-buddy/core", async () =>
   await import("../../core/src/index.js")
 );
 
@@ -21,7 +21,7 @@ vi.mock("node:readline/promises", () => ({
   }))
 }));
 
-import * as core from "@linkedin-assistant/core";
+import * as core from "@linkedin-buddy/core";
 import { createCliProgram, runCli } from "../src/bin/linkedin.js";
 
 async function pathExists(targetPath: string): Promise<boolean> {
@@ -60,8 +60,8 @@ describe("linkedin data delete", () => {
 
   beforeEach(async () => {
     tempDir = await mkdtemp(path.join(os.tmpdir(), "linkedin-cli-data-delete-"));
-    assistantHome = path.join(tempDir, "assistant-home");
-    process.env.LINKEDIN_ASSISTANT_HOME = assistantHome;
+    assistantHome = path.join(tempDir, "buddy-home");
+    process.env.LINKEDIN_BUDDY_HOME = assistantHome;
     setInteractiveMode(true, true);
     vi.clearAllMocks();
     readlineMocks.createInterface.mockImplementation(() => ({
@@ -75,7 +75,7 @@ describe("linkedin data delete", () => {
   afterEach(async () => {
     consoleErrorSpy.mockRestore();
     consoleLogSpy.mockRestore();
-    delete process.env.LINKEDIN_ASSISTANT_HOME;
+    delete process.env.LINKEDIN_BUDDY_HOME;
     await rm(tempDir, { recursive: true, force: true });
   });
 
@@ -161,19 +161,19 @@ describe("linkedin data delete", () => {
     });
     expect(finalOutput.existing_paths).toEqual(
       expect.arrayContaining([
-        expect.stringContaining(path.join("assistant-home", "state.sqlite")),
-        expect.stringContaining(path.join("assistant-home", "state.sqlite-journal")),
-        expect.stringContaining(path.join("assistant-home", "state.sqlite-wal")),
-        expect.stringContaining(path.join("assistant-home", "state.sqlite-shm")),
-        expect.stringContaining(path.join("assistant-home", "artifacts")),
-        expect.stringContaining(path.join("assistant-home", "keepalive")),
-        expect.stringContaining(path.join("assistant-home", "rate-limit-state.json"))
+        expect.stringContaining(path.join("buddy-home", "state.sqlite")),
+        expect.stringContaining(path.join("buddy-home", "state.sqlite-journal")),
+        expect.stringContaining(path.join("buddy-home", "state.sqlite-wal")),
+        expect.stringContaining(path.join("buddy-home", "state.sqlite-shm")),
+        expect.stringContaining(path.join("buddy-home", "artifacts")),
+        expect.stringContaining(path.join("buddy-home", "keepalive")),
+        expect.stringContaining(path.join("buddy-home", "rate-limit-state.json"))
       ])
     );
     expect(finalOutput.preserved_paths).toEqual(
       expect.arrayContaining([
-        expect.stringContaining(path.join("assistant-home", "profiles")),
-        expect.stringContaining(path.join("assistant-home", "config.json"))
+        expect.stringContaining(path.join("buddy-home", "profiles")),
+        expect.stringContaining(path.join("buddy-home", "config.json"))
       ])
     );
     expect(
@@ -403,7 +403,7 @@ describe("linkedin data delete", () => {
     const fixture = await seedLocalDataFixture();
     readlineMocks.question.mockResolvedValueOnce("yes");
     const deleteSpy = vi.spyOn(core, "deleteLocalData").mockRejectedValueOnce(
-      new core.LinkedInAssistantError(
+      new core.LinkedInBuddyError(
         "UNKNOWN",
         "Local data deletion completed with some failures.",
         {

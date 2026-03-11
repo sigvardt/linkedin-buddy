@@ -1,6 +1,6 @@
-# `@linkedin-assistant/cli`
+# `@linkedin-buddy/cli`
 
-Operator CLI for LinkedIn Assistant.
+Operator CLI for LinkedIn Buddy.
 
 ## Activity webhooks
 
@@ -10,10 +10,10 @@ summaries, and watch / webhook management commands.
 Common commands:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin activity watch add --profile default --kind notifications --interval-seconds 600
-npm exec -w @linkedin-assistant/cli -- linkedin activity webhook add --watch <watch-id> --url https://example.com/hooks/linkedin
-npm exec -w @linkedin-assistant/cli -- linkedin activity run-once --profile default
-npm exec -w @linkedin-assistant/cli -- linkedin activity status --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin activity watch add --profile default --kind notifications --interval-seconds 600
+npm exec -w @linkedin-buddy/cli -- linkedin activity webhook add --watch <watch-id> --url https://example.com/hooks/linkedin
+npm exec -w @linkedin-buddy/cli -- linkedin activity run-once --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin activity status --profile default
 ```
 
 Useful reminders:
@@ -35,8 +35,8 @@ Instead, evasion is configured globally and surfaced through the session
 diagnostics commands:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin status --profile default
-npm exec -w @linkedin-assistant/cli -- linkedin health --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin status --profile default
+npm exec -w @linkedin-buddy/cli -- linkedin health --profile default
 ```
 
 Important details:
@@ -44,8 +44,8 @@ Important details:
 - `linkedin status` returns a top-level `evasion` block
 - `linkedin health` returns `session.evasion`
 - there are no CLI flags for evasion level or evasion diagnostics today
-- use `LINKEDIN_ASSISTANT_EVASION_LEVEL` and
-  `LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS` to change the default behavior
+- use `LINKEDIN_BUDDY_EVASION_LEVEL` and
+  `LINKEDIN_BUDDY_EVASION_DIAGNOSTICS` to change the default behavior
 - enabling diagnostics writes `evasion.*` events to the run log
 
 See `../../docs/evasion.md` for the profile matrix, exact JSON paths, and the
@@ -56,7 +56,7 @@ troubleshooting guide.
 Use the CLI for the Tier 3 live write-validation harness:
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin test live --write-validation --account secondary
+npm exec -w @linkedin-buddy/cli -- linkedin test live --write-validation --account secondary
 ```
 
 This workflow performs real LinkedIn writes against approved targets on a

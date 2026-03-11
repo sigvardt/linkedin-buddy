@@ -7,8 +7,8 @@ profile edit actions.
 ## Commands
 
 ```bash
-npm exec -w @linkedin-assistant/cli -- linkedin profile editable --profile <profile>
-npm exec -w @linkedin-assistant/cli -- linkedin profile apply-spec --profile <profile> --spec docs/profile-seeds/sample-automation-profile.json --allow-partial --yes --delay-ms 4000 --output reports/profile-seed.json
+npm exec -w @linkedin-buddy/cli -- linkedin profile editable --profile <profile>
+npm exec -w @linkedin-buddy/cli -- linkedin profile apply-spec --profile <profile> --spec docs/profile-seeds/sample-automation-profile.json --allow-partial --yes --delay-ms 4000 --output reports/profile-seed.json
 ```
 
 ## Intended issue-210 flow
@@ -16,15 +16,15 @@ npm exec -w @linkedin-assistant/cli -- linkedin profile apply-spec --profile <pr
 1. Authenticate a dedicated browser profile for the test account.
 2. Inspect the current editable profile surface:
    ```bash
-   npm exec -w @linkedin-assistant/cli -- linkedin profile editable --profile <profile>
+   npm exec -w @linkedin-buddy/cli -- linkedin profile editable --profile <profile>
    ```
 3. Apply the seeded profile spec:
    ```bash
-   npm exec -w @linkedin-assistant/cli -- linkedin profile apply-spec --profile <profile> --spec docs/profile-seeds/sample-automation-profile.json --allow-partial --yes --delay-ms 4000
+   npm exec -w @linkedin-buddy/cli -- linkedin profile apply-spec --profile <profile> --spec docs/profile-seeds/sample-automation-profile.json --allow-partial --yes --delay-ms 4000
    ```
 4. Verify the rendered profile:
    ```bash
-   npm exec -w @linkedin-assistant/cli -- linkedin profile view me --profile <profile>
+   npm exec -w @linkedin-buddy/cli -- linkedin profile view me --profile <profile>
    ```
 
 ## Current blockers

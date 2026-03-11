@@ -15,7 +15,7 @@ import {
 } from "./healthCheck.js";
 import type { ConnectionLease } from "./connectionPool.js";
 import { CDPConnectionPool } from "./connectionPool.js";
-import { LinkedInAssistantError } from "./errors.js";
+import { LinkedInBuddyError } from "./errors.js";
 import { humanize } from "./humanize.js";
 
 const DEFAULT_NETWORK_GRACE_PERIOD_MS = 5 * 60_000;
@@ -244,7 +244,7 @@ function isFiniteInteger(value: unknown): value is number {
 
 function resolveRequiredString(value: unknown, label: string): string {
   if (typeof value !== "string") {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a non-empty string.`,
       {
@@ -255,7 +255,7 @@ function resolveRequiredString(value: unknown, label: string): string {
 
   const normalized = value.trim();
   if (normalized.length === 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a non-empty string.`
     );
@@ -286,7 +286,7 @@ function resolvePositiveInteger(
   }
 
   if (!isFiniteInteger(value) || value <= 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a positive integer.`,
       {
@@ -308,7 +308,7 @@ function resolveNonNegativeInteger(
   }
 
   if (!isFiniteInteger(value) || value < 0) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a non-negative integer.`,
       {
@@ -330,7 +330,7 @@ function resolveBooleanOption(
   }
 
   if (typeof value !== "boolean") {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a boolean when provided.`,
       {
@@ -353,7 +353,7 @@ function normalizeAlertThresholds(
   }
 
   if (!isRecord(input)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "alertThresholds must be an object when provided.",
       {
@@ -367,7 +367,7 @@ function normalizeAlertThresholds(
     typeof reconnectsInWindowInput !== "undefined" &&
     !isRecord(reconnectsInWindowInput)
   ) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "alertThresholds.reconnectsInWindow must be an object when provided.",
       {
@@ -408,7 +408,7 @@ function normalizeNightHours(
   }
 
   if (!isRecord(input)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "nightHours must be an object when provided.",
       {
@@ -424,7 +424,7 @@ function normalizeNightHours(
   );
   const endHour = resolveNonNegativeInteger(input.endHour, 6, "nightHours.endHour");
   if (startHour > 23 || endHour > 23) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "nightHours.startHour and nightHours.endHour must be between 0 and 23.",
       {
@@ -448,7 +448,7 @@ function normalizeSessionStore(
   }
 
   if (!isRecord(sessionStore)) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "sessionStore must be an object when provided.",
       {
@@ -461,7 +461,7 @@ function normalizeSessionStore(
     typeof sessionStore.restoreToContext !== "undefined" &&
     typeof sessionStore.restoreToContext !== "function"
   ) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "sessionStore.restoreToContext must be a function when provided."
     );
@@ -471,7 +471,7 @@ function normalizeSessionStore(
     typeof sessionStore.saveWithBackups !== "undefined" &&
     typeof sessionStore.saveWithBackups !== "function"
   ) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "sessionStore.saveWithBackups must be a function when provided."
     );
@@ -491,7 +491,7 @@ function normalizeSessionStore(
       : undefined;
 
   if (!restoreToContext && !saveWithBackups) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "sessionStore must provide restoreToContext and/or saveWithBackups when provided."
     );
@@ -505,7 +505,7 @@ function normalizeSessionStore(
 
 function validateKeepAlivePool(pool: CDPConnectionPool): void {
   if (!isRecord(pool) || typeof pool.acquire !== "function") {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "keepalive pool must expose an acquire() function."
     );
@@ -516,7 +516,7 @@ function validateKeepAlivePool(pool: CDPConnectionPool): void {
     typeof pool.invalidate !== "undefined" &&
     typeof pool.invalidate !== "function"
   ) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "keepalive pool.invalidate must be a function when provided."
     );
@@ -559,7 +559,7 @@ function assertFullHealthStatus(value: unknown): asserts value is FullHealthStat
     return;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "UNKNOWN",
     "Keepalive health check returned an invalid status.",
     {
@@ -584,7 +584,7 @@ function assertConnectionLease(value: unknown): asserts value is ConnectionLease
     return;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "UNKNOWN",
     "Keepalive connection pool returned an invalid lease.",
     {
@@ -730,7 +730,7 @@ export class SessionKeepAliveService extends EventEmitter {
     super();
     validateKeepAlivePool(pool);
     if (!isRecord(options)) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "keepalive options must be an object.",
         {
@@ -1973,7 +1973,7 @@ export class SessionKeepAliveService extends EventEmitter {
       lease.release();
     } catch (error) {
       this.emitError(
-        new LinkedInAssistantError(
+        new LinkedInBuddyError(
           "UNKNOWN",
           "Failed to release keepalive browser lease.",
           {

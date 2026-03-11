@@ -1,4 +1,4 @@
-import type { LinkedInAssistantErrorPayload } from "@linkedin-assistant/core";
+import type { LinkedInBuddyErrorPayload } from "@linkedin-buddy/core";
 
 /**
  * Output mode used by the keepalive CLI formatters.
@@ -363,7 +363,7 @@ function formatStopNextSteps(report: KeepAliveStopReport, verbose: boolean): str
   ];
 }
 
-function formatErrorLines(error: LinkedInAssistantErrorPayload): string[] {
+function formatErrorLines(error: LinkedInBuddyErrorPayload): string[] {
   const lines = [
     `Keepalive command failed [${sanitizeConsoleText(error.code)}]`,
     sanitizeConsoleText(error.message)
@@ -390,7 +390,7 @@ function formatErrorLines(error: LinkedInAssistantErrorPayload): string[] {
   return lines;
 }
 
-function formatErrorNextSteps(error: LinkedInAssistantErrorPayload): string[] {
+function formatErrorNextSteps(error: LinkedInBuddyErrorPayload): string[] {
   switch (error.code) {
     case "AUTH_REQUIRED":
       return [
@@ -699,7 +699,7 @@ export function formatKeepAliveStopReport(
  * output.
  */
 export function formatKeepAliveError(
-  error: LinkedInAssistantErrorPayload,
+  error: LinkedInBuddyErrorPayload,
   options: Pick<KeepAliveFormatOptions, "quiet"> = {}
 ): string {
   const lines = formatErrorLines(error);

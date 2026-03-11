@@ -11,7 +11,7 @@ import {
 } from "../activityWatches.js";
 import type { ActivityWebhookConfig } from "../config.js";
 import { AssistantDatabase } from "../db/database.js";
-import { LinkedInAssistantError } from "../errors.js";
+import { LinkedInBuddyError } from "../errors.js";
 import type {
   LinkedInConnection,
   LinkedInPendingInvitation
@@ -932,20 +932,20 @@ describe("ActivityPollerService", () => {
       for (const request of server.requests) {
         const deliveryId = readHeader(
           request.headers,
-          "x-linkedin-assistant-delivery"
+          "x-linkedin-buddy-delivery"
         );
         const timestamp = readHeader(
           request.headers,
-          "x-linkedin-assistant-timestamp"
+          "x-linkedin-buddy-timestamp"
         );
         const signature = readHeader(
           request.headers,
-          "x-linkedin-assistant-signature-256"
+          "x-linkedin-buddy-signature-256"
         );
         const secret = deliverySecrets.get(deliveryId);
 
         expect(secret).toBeTruthy();
-        expect(readHeader(request.headers, "x-linkedin-assistant-retry-count")).toBe(
+        expect(readHeader(request.headers, "x-linkedin-buddy-retry-count")).toBe(
           "0"
         );
         expect(signature).toBe(
@@ -1038,7 +1038,7 @@ describe("ActivityPollerService", () => {
       expect(
         readHeader(
           server.requests[1]?.headers ?? {},
-          "x-linkedin-assistant-retry-count"
+          "x-linkedin-buddy-retry-count"
         )
       ).toBe("1");
       expect(
@@ -1209,7 +1209,7 @@ describe("ActivityPollerService", () => {
     });
 
     services.mocks.notifications.listNotifications.mockRejectedValueOnce(
-      new LinkedInAssistantError("RATE_LIMITED", "Too many requests")
+      new LinkedInBuddyError("RATE_LIMITED", "Too many requests")
     );
 
     const result = await services.poller.runTick({
@@ -1326,7 +1326,7 @@ describe("ActivityPollerService", () => {
     ];
     makeWatchesDue(services.watches, [watch.id]);
     services.mocks.inbox.getThread.mockRejectedValueOnce(
-      new LinkedInAssistantError("NETWORK_ERROR", "Thread detail fetch failed")
+      new LinkedInBuddyError("NETWORK_ERROR", "Thread detail fetch failed")
     );
 
     const beforeStates = services.db.listActivityEntityStates({

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
-  LinkedInAssistantError,
+  LinkedInBuddyError,
   evaluateDraftQuality,
   parseDraftQualityCandidateSet,
   parseDraftQualityDataset,
@@ -433,7 +433,7 @@ describe("draft quality evaluator", () => {
         now: FIXED_DATE,
         run_id: "run_malformed_direct"
       })
-    ).rejects.toThrowError(LinkedInAssistantError);
+    ).rejects.toThrowError(LinkedInBuddyError);
 
     const dataset = parseDraftQualityDataset(createInlineDataset());
     await expect(
@@ -445,7 +445,7 @@ describe("draft quality evaluator", () => {
         now: FIXED_DATE,
         run_id: "run_limit_direct"
       })
-    ).rejects.toThrowError(LinkedInAssistantError);
+    ).rejects.toThrowError(LinkedInBuddyError);
   });
 
   it("avoids false duplicate collisions when case and draft ids include double colons", async () => {
@@ -638,7 +638,7 @@ describe("draft quality evaluator", () => {
           }
         ]
       })
-    ).toThrowError(LinkedInAssistantError);
+    ).toThrowError(LinkedInBuddyError);
 
     expect(() =>
       parseDraftQualityCandidateSet({
@@ -658,7 +658,7 @@ describe("draft quality evaluator", () => {
           }
         ]
       })
-    ).toThrowError(LinkedInAssistantError);
+    ).toThrowError(LinkedInBuddyError);
   });
 
   it("rejects invalid external candidate merges during evaluation", async () => {
@@ -725,7 +725,7 @@ describe("draft quality evaluator", () => {
         now: FIXED_DATE,
         run_id: "run_unknown_case"
       })
-    ).rejects.toThrowError(LinkedInAssistantError);
+    ).rejects.toThrowError(LinkedInBuddyError);
 
     const duplicateMergeCandidates = parseDraftQualityCandidateSet({
       schemaVersion: 1,
@@ -746,6 +746,6 @@ describe("draft quality evaluator", () => {
         now: FIXED_DATE,
         run_id: "run_duplicate_merge"
       })
-    ).rejects.toThrowError(LinkedInAssistantError);
+    ).rejects.toThrowError(LinkedInBuddyError);
   });
 });

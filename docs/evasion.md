@@ -49,8 +49,8 @@ page session wrapper.
 Precedence is:
 
 1. `createCoreRuntime({ evasionLevel, evasionDiagnostics })`
-2. `LINKEDIN_ASSISTANT_EVASION_LEVEL` and
-   `LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS`
+2. `LINKEDIN_BUDDY_EVASION_LEVEL` and
+   `LINKEDIN_BUDDY_EVASION_DIAGNOSTICS`
 3. built-in defaults
 
 The resolved object includes:
@@ -84,7 +84,7 @@ want the behavior layer itself.
 Typical sequence:
 
 ```ts
-import { EvasionSession, createCoreRuntime } from "@linkedin-assistant/core";
+import { EvasionSession, createCoreRuntime } from "@linkedin-buddy/core";
 
 const runtime = createCoreRuntime({
   evasionLevel: "moderate",
@@ -155,14 +155,14 @@ The stable feature names surfaced in status output are:
 
 | Variable | Values | Default | Notes |
 | --- | --- | --- | --- |
-| `LINKEDIN_ASSISTANT_EVASION_LEVEL` | `minimal`, `moderate`, `paranoid` | `moderate` | Sets the default evasion profile for CLI, MCP, and any Core caller that does not override it |
-| `LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS` | strict boolean values such as `true`, `false`, `1`, `0`, `yes`, `no`, `on`, `off` | `false` | Enables `evasion.*` debug events in the run log |
+| `LINKEDIN_BUDDY_EVASION_LEVEL` | `minimal`, `moderate`, `paranoid` | `moderate` | Sets the default evasion profile for CLI, MCP, and any Core caller that does not override it |
+| `LINKEDIN_BUDDY_EVASION_DIAGNOSTICS` | strict boolean values such as `true`, `false`, `1`, `0`, `yes`, `no`, `on`, `off` | `false` | Enables `evasion.*` debug events in the run log |
 
 Example:
 
 ```bash
-export LINKEDIN_ASSISTANT_EVASION_LEVEL=paranoid
-export LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS=true
+export LINKEDIN_BUDDY_EVASION_LEVEL=paranoid
+export LINKEDIN_BUDDY_EVASION_DIAGNOSTICS=true
 ```
 
 ### Core runtime options
@@ -170,7 +170,7 @@ export LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS=true
 Direct Core callers can override env/default values per runtime:
 
 ```ts
-import { createCoreRuntime } from "@linkedin-assistant/core";
+import { createCoreRuntime } from "@linkedin-buddy/core";
 
 const runtime = createCoreRuntime({
   evasionLevel: "minimal",
@@ -213,9 +213,9 @@ Important CLI behavior:
 Example:
 
 ```bash
-LINKEDIN_ASSISTANT_EVASION_LEVEL=paranoid \
-LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS=true \
-npm exec -w @linkedin-assistant/cli -- linkedin status --profile default
+LINKEDIN_BUDDY_EVASION_LEVEL=paranoid \
+LINKEDIN_BUDDY_EVASION_DIAGNOSTICS=true \
+npm exec -w @linkedin-buddy/cli -- linkedin status --profile default
 ```
 
 Shape to inspect:
@@ -254,9 +254,9 @@ Important MCP behavior:
 Start the server with explicit evasion defaults:
 
 ```bash
-LINKEDIN_ASSISTANT_EVASION_LEVEL=moderate \
-LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS=true \
-npm exec -w @linkedin-assistant/mcp -- linkedin-mcp
+LINKEDIN_BUDDY_EVASION_LEVEL=moderate \
+LINKEDIN_BUDDY_EVASION_DIAGNOSTICS=true \
+npm exec -w @linkedin-buddy/mcp -- linkedin-mcp
 ```
 
 ### JSON path reference
@@ -270,7 +270,7 @@ npm exec -w @linkedin-assistant/mcp -- linkedin-mcp
 
 ## Core API notes
 
-The `@linkedin-assistant/core` package exports the evasion building blocks in
+The `@linkedin-buddy/core` package exports the evasion building blocks in
 three groups:
 
 - **profiles and status** — `DEFAULT_EVASION_LEVEL`, `EVASION_LEVELS`,
@@ -285,7 +285,7 @@ three groups:
 Example status-only usage without a full runtime:
 
 ```ts
-import { createEvasionStatus, resolveEvasionProfile } from "@linkedin-assistant/core";
+import { createEvasionStatus, resolveEvasionProfile } from "@linkedin-buddy/core";
 
 const evasion = createEvasionStatus({
   level: "moderate",
@@ -323,7 +323,7 @@ console.log(evasion.summary, profile.mouseOvershootFactor);
 - `status` and `health` only surface the resolved snapshot; they do not trigger
   mouse movement, scrolling, or fingerprint hardening
 - `evasion.*` log events appear when an `EvasionSession` is actively used
-- ensure diagnostics are enabled via `LINKEDIN_ASSISTANT_EVASION_DIAGNOSTICS`
+- ensure diagnostics are enabled via `LINKEDIN_BUDDY_EVASION_DIAGNOSTICS`
   or `createCoreRuntime({ evasionDiagnostics: true })`
 
 Typical events include:

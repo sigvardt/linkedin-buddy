@@ -1,7 +1,7 @@
 import type {
-  LinkedInAssistantErrorPayload,
+  LinkedInBuddyErrorPayload,
   WriteValidationReport
-} from "@linkedin-assistant/core";
+} from "@linkedin-buddy/core";
 import { describe, expect, it } from "vitest";
 import {
   WriteValidationProgressReporter,
@@ -176,7 +176,7 @@ describe("write validation output", () => {
   });
 
   it("formats validation errors with details, suggestions, and help guidance", () => {
-    const error: LinkedInAssistantErrorPayload = {
+    const error: LinkedInBuddyErrorPayload = {
       code: "ACTION_PRECONDITION_FAILED",
       details: {
         account: "secondary"
@@ -198,7 +198,7 @@ describe("write validation output", () => {
   });
 
   it("matches the human-readable error snapshot", () => {
-    const error: LinkedInAssistantErrorPayload = {
+    const error: LinkedInBuddyErrorPayload = {
       code: "ACTION_PRECONDITION_FAILED",
       details: {
         account: "secondary",

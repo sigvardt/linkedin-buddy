@@ -4,8 +4,8 @@ import type { LinkedInAuthService } from "./auth/session.js";
 import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
 import type { ConfirmFailureArtifactConfig } from "./config.js";
 import {
-  LinkedInAssistantError,
-  asLinkedInAssistantError
+  LinkedInBuddyError,
+  asLinkedInBuddyError
 } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
@@ -192,7 +192,7 @@ function normalizeLinkedInPrivacySettingDescriptorValue(
     return matchedValue;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `${settingKey} value must be one of: ${descriptor.allowedValues.join(", ")}.`
   );
@@ -457,7 +457,7 @@ async function readProfileViewingModeState(
     }
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "UI_CHANGED_SELECTOR_FAILED",
     "Could not determine the current LinkedIn profile viewing mode.",
     {
@@ -509,7 +509,7 @@ async function applyProfileViewingMode(
         "main label, [role='main'] label, form label"
       );
       if ((await fallbackLabels.count()) <= fallbackIndex) {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "UI_CHANGED_SELECTOR_FAILED",
           `Could not find the ${getProfileViewingModeDisplayLabel(targetValue)} profile viewing mode option.`,
           {
@@ -531,7 +531,7 @@ async function applyProfileViewingMode(
   }, 5_000);
 
   if (!updated) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UNKNOWN",
       `LinkedIn profile viewing mode could not be updated to ${targetValue}.`,
       {
@@ -559,7 +559,7 @@ async function readToggleSettingState(
 ): Promise<LinkedInPrivacySettingReadResult> {
   const toggle = await findVisibleToggleControl(page, createToggleControlCandidates());
   if (!toggle || typeof toggle.state !== "boolean") {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UI_CHANGED_SELECTOR_FAILED",
       `Could not find the ${settingKey} toggle on the LinkedIn settings page.`,
       {
@@ -598,7 +598,7 @@ async function applyToggleSetting(
 
   const toggle = await findVisibleToggleControl(page, createToggleControlCandidates());
   if (!toggle) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UI_CHANGED_SELECTOR_FAILED",
       `Could not find the ${settingKey} toggle on the LinkedIn settings page.`,
       {
@@ -617,7 +617,7 @@ async function applyToggleSetting(
   }, 5_000);
 
   if (!updated) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UNKNOWN",
       `LinkedIn ${settingKey} could not be updated to ${requestedValue}.`,
       {
@@ -731,7 +731,7 @@ async function withPrivacySettingsPage<T>(
     }
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "UI_CHANGED_SELECTOR_FAILED",
     `Could not open the LinkedIn ${descriptor.label.toLowerCase()} setting page.`,
     {
@@ -759,7 +759,7 @@ export function normalizeLinkedInPrivacySettingKey(
     return matchedKey;
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `settingKey must be one of: ${LINKEDIN_PRIVACY_SETTING_KEYS.join(", ")}.`
   );
@@ -813,7 +813,7 @@ async function executeUpdatePrivacySetting(
           requested_value: requestedValue
         },
         mapError: (error) =>
-          asLinkedInAssistantError(
+          asLinkedInBuddyError(
             error,
             "UNKNOWN",
             `Failed to execute LinkedIn privacy setting update for ${settingKey}.`

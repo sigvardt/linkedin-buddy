@@ -7,7 +7,7 @@ const repoRoot = path.dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   resolve: {
     alias: {
-      "@linkedin-assistant/core": path.join(
+      "@linkedin-buddy/core": path.join(
         repoRoot,
         "packages/core/src/index.js"
       )

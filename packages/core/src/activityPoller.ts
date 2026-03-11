@@ -17,9 +17,9 @@ import type {
   WebhookSubscriptionRow
 } from "./db/database.js";
 import {
-  LinkedInAssistantError,
-  asLinkedInAssistantError,
-  type LinkedInAssistantErrorCode
+  LinkedInBuddyError,
+  asLinkedInBuddyError,
+  type LinkedInBuddyErrorCode
 } from "./errors.js";
 import type { LinkedInConnectionsService } from "./linkedinConnections.js";
 import type { LinkedInFeedService } from "./linkedinFeed.js";
@@ -185,10 +185,10 @@ function readText(value: unknown): string {
 }
 
 function normalizeWatchError(error: unknown): {
-  code: LinkedInAssistantErrorCode | null;
+  code: LinkedInBuddyErrorCode | null;
   message: string;
 } {
-  const normalized = asLinkedInAssistantError(error);
+  const normalized = asLinkedInBuddyError(error);
   return {
     code: normalized.code,
     message: normalized.message
@@ -1211,7 +1211,7 @@ export class ActivityPollerService {
         )
       });
       if (!markedSucceeded) {
-        throw new LinkedInAssistantError(
+        throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
           "Activity watch poll result was superseded before commit."
         );
