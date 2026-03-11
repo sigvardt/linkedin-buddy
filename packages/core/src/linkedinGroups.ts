@@ -4,8 +4,8 @@ import type { LinkedInAuthService } from "./auth/session.js";
 import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
 import type { ConfirmFailureArtifactConfig } from "./config.js";
 import {
-  LinkedInAssistantError,
-  asLinkedInAssistantError
+  LinkedInBuddyError,
+  asLinkedInBuddyError
 } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
@@ -213,7 +213,7 @@ function resolveGroupReference(group: string): {
 } {
   const groupId = extractGroupId(group);
   if (!groupId) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "group must be a LinkedIn group URL or numeric ID."
     );
@@ -245,7 +245,7 @@ async function waitForGroupSearchSurface(page: Page): Promise<void> {
     }
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "UI_CHANGED_SELECTOR_FAILED",
     "Could not locate LinkedIn group search content.",
     {
@@ -276,7 +276,7 @@ async function waitForGroupDetailSurface(page: Page): Promise<void> {
     }
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "UI_CHANGED_SELECTOR_FAILED",
     "Could not locate LinkedIn group detail content.",
     {
@@ -496,7 +496,7 @@ async function executeJoinGroup(
           group_url: groupUrl
         },
         mapError: (error) =>
-          asLinkedInAssistantError(
+          asLinkedInBuddyError(
             error,
             "UNKNOWN",
             "Failed to execute LinkedIn group join action."
@@ -600,7 +600,7 @@ async function executeLeaveGroup(
           group_url: groupUrl
         },
         mapError: (error) =>
-          asLinkedInAssistantError(
+          asLinkedInBuddyError(
             error,
             "UNKNOWN",
             "Failed to execute LinkedIn group leave action."
@@ -649,7 +649,7 @@ async function executeLeaveGroup(
           );
 
           if (!finished) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "UNKNOWN",
               "LinkedIn leave group flow could not be verified after confirmation.",
               {
@@ -711,7 +711,7 @@ async function executePostToGroup(
           group_url: groupUrl
         },
         mapError: (error) =>
-          asLinkedInAssistantError(
+          asLinkedInBuddyError(
             error,
             "UNKNOWN",
             "Failed to execute LinkedIn group post action."
@@ -742,7 +742,7 @@ async function executePostToGroup(
             8_000
           );
           if (!closed) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "UNKNOWN",
               "LinkedIn group post composer stayed open after submitting the post.",
               {
@@ -844,7 +844,7 @@ export class LinkedInGroupsService {
     const query = normalizeText(input.query);
     const limit = readSearchLimit(input.limit);
     if (!query) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "query is required."
       );
@@ -895,7 +895,7 @@ export class LinkedInGroupsService {
         count: results.length
       };
     } catch (error) {
-      throw asLinkedInAssistantError(
+      throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
         "Failed to search LinkedIn groups."
@@ -936,7 +936,7 @@ export class LinkedInGroupsService {
         membership_state: snapshot.membership_state
       };
     } catch (error) {
-      throw asLinkedInAssistantError(
+      throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
         "Failed to view LinkedIn group details."
@@ -1024,7 +1024,7 @@ export class LinkedInGroupsService {
   } {
     const text = normalizeText(input.text);
     if (!text) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "text is required."
       );

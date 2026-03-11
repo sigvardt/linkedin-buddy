@@ -4,8 +4,8 @@ import type { LinkedInAuthService } from "./auth/session.js";
 import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
 import type { ConfirmFailureArtifactConfig } from "./config.js";
 import {
-  LinkedInAssistantError,
-  asLinkedInAssistantError
+  LinkedInBuddyError,
+  asLinkedInBuddyError
 } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
@@ -197,7 +197,7 @@ function resolveEventReference(event: string): {
 } {
   const eventId = extractEventId(event);
   if (!eventId) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "event must be a LinkedIn event URL or numeric ID."
     );
@@ -229,7 +229,7 @@ async function waitForEventSearchSurface(page: Page): Promise<void> {
     }
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "UI_CHANGED_SELECTOR_FAILED",
     "Could not locate LinkedIn event search content.",
     {
@@ -259,7 +259,7 @@ async function waitForEventDetailSurface(page: Page): Promise<void> {
     }
   }
 
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "UI_CHANGED_SELECTOR_FAILED",
     "Could not locate LinkedIn event detail content.",
     {
@@ -520,7 +520,7 @@ async function executeEventRsvp(
           response: "attend"
         },
         mapError: (error) =>
-          asLinkedInAssistantError(
+          asLinkedInBuddyError(
             error,
             "UNKNOWN",
             "Failed to execute LinkedIn event RSVP action."
@@ -552,7 +552,7 @@ async function executeEventRsvp(
           }, 8_000);
 
           if (!finished) {
-            throw new LinkedInAssistantError(
+            throw new LinkedInBuddyError(
               "UNKNOWN",
               "LinkedIn RSVP flow could not be verified after clicking Attend.",
               {
@@ -612,7 +612,7 @@ export class LinkedInEventsService {
     const query = normalizeText(input.query);
     const limit = readSearchLimit(input.limit);
     if (!query) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "query is required."
       );
@@ -665,7 +665,7 @@ export class LinkedInEventsService {
         count: results.length
       };
     } catch (error) {
-      throw asLinkedInAssistantError(
+      throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
         "Failed to search LinkedIn events."
@@ -707,7 +707,7 @@ export class LinkedInEventsService {
         rsvp_state: snapshot.rsvp_state
       };
     } catch (error) {
-      throw asLinkedInAssistantError(
+      throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
         "Failed to view LinkedIn event details."
