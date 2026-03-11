@@ -486,7 +486,7 @@ describe("LinkedInAuthService auth flow", () => {
     const auth = new LinkedInAuthService(profileManager as unknown as ProfileManager);
 
     const result = await auth.headlessLogin({
-      email: "linkedin-mcp@signikant.com",
+      email: "operator@example.com",
       password: "secret",
       pollIntervalMs: 1,
       timeoutMs: 100
@@ -526,7 +526,7 @@ describe("LinkedInAuthService auth flow", () => {
           selector.includes("remember-me-submit-button") &&
           currentUrl.includes("/login")
         ) {
-          return "Joi Ascend l*****@signikant.com";
+          return "Operator O o*****@example.com";
         }
 
         return null;
@@ -540,7 +540,7 @@ describe("LinkedInAuthService auth flow", () => {
     const auth = new LinkedInAuthService(profileManager as unknown as ProfileManager);
 
     const result = await auth.headlessLogin({
-      email: "linkedin-mcp@signikant.com",
+      email: "operator@example.com",
       password: "secret",
       pollIntervalMs: 1,
       timeoutMs: 100
