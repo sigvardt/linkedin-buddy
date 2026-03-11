@@ -247,14 +247,29 @@ export function getRunnerHelpText() {
  * Formats the guidance shown when CDP or LinkedIn authentication is
  * unavailable.
  */
-export function formatUnavailableGuidance(reason, options) {
-  return [
+export function formatUnavailableGuidance(reason, options, env = process.env) {
+  const profileName = readTrimmedEnv("LINKEDIN_E2E_PROFILE", env) ?? "default";
+  const cdpUrl = readTrimmedEnv("LINKEDIN_CDP_URL", env) ?? DEFAULT_CDP_URL;
+  const guidance = [
     `${options.requireSession ? "LinkedIn E2E prerequisites are required but unavailable" : "Skipping LinkedIn E2E suite"}: ${reason}`,
     options.requireSession
       ? "Fix the session prerequisites above and rerun the same command."
       : "Pass --require-session (or set LINKEDIN_E2E_REQUIRE_SESSION=1) to fail instead of skip.",
     "See docs/e2e-testing.md for setup, safe targets, and fixture replay guidance."
   ];
+
+  if (reason.includes("LinkedIn session is not authenticated")) {
+    guidance.splice(
+      2,
+      0,
+      [
+        `Verify the attached browser directly with: linkedin --cdp-url ${cdpUrl} status --profile ${profileName}`,
+        "Note: the live E2E runner checks the attached CDP browser session, which can differ from a local persistent profile."
+      ].join(" ")
+    );
+  }
+
+  return guidance;
 }
 
 function formatVitestFailure(exitCode) {
@@ -363,7 +378,10 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   const availability = await detectAuthenticatedSession(cdpUrl);
 
   if (!availability.ok) {
-    for (const line of formatUnavailableGuidance(availability.reason, options)) {
+    for (const line of formatUnavailableGuidance(availability.reason, options, {
+      ...env,
+      LINKEDIN_CDP_URL: cdpUrl
+    })) {
       if (options.requireSession) {
         logError(line);
       } else {

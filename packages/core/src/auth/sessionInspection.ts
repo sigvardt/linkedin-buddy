@@ -42,8 +42,13 @@ const LOGIN_WALL_SELECTOR = [
   "form[action*='login-submit']",
   "a[href*='/login'][data-tracking-control-name]"
 ].join(", ");
+const AUTH_PROFILE_MENU_LINK_SELECTOR =
+  "a[data-control-name='nav.settings_view_profile']";
 const LINKEDIN_PROFILE_SELF_URL = "https://www.linkedin.com/in/me/";
 const LINKEDIN_PROFILE_SELF_NAVIGATION_TIMEOUT_MS = 10_000;
+const LINKEDIN_PROFILE_SELF_RESOLUTION_TIMEOUT_MS = 5_000;
+const LINKEDIN_PUBLIC_PROFILE_URL_PATTERN =
+  /^https:\/\/www\.linkedin\.com\/in\/([^/?#]+)\/?$/u;
 
 async function isVisibleSafe(page: Page, selector: string): Promise<boolean> {
   try {
@@ -109,6 +114,20 @@ function normalizeLinkedInProfileUrl(value: string | null): string | null {
   }
 }
 
+function isSelfLinkedInProfileUrl(value: string | null): boolean {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return false;
+  }
+
+  const normalized = normalizeLinkedInProfileUrl(value);
+  return normalized === LINKEDIN_PROFILE_SELF_URL;
+}
+
+function normalizeResolvedLinkedInProfileUrl(value: string | null): string | null {
+  const normalized = normalizeLinkedInProfileUrl(value);
+  return normalized && !isSelfLinkedInProfileUrl(normalized) ? normalized : null;
+}
+
 function extractLinkedInVanityName(profileUrl: string | null): string | null {
   if (!profileUrl) {
     return null;
@@ -120,6 +139,25 @@ function extractLinkedInVanityName(profileUrl: string | null): string | null {
     return vanityMatch?.[1] ?? null;
   } catch {
     return null;
+  }
+}
+
+async function waitForResolvedSelfProfileUrl(page: Page): Promise<void> {
+  try {
+    await page.waitForURL(
+      (url) => {
+        const value = url.toString();
+        return (
+          LINKEDIN_PUBLIC_PROFILE_URL_PATTERN.test(value) &&
+          !isSelfLinkedInProfileUrl(value)
+        );
+      },
+      {
+        timeout: LINKEDIN_PROFILE_SELF_RESOLUTION_TIMEOUT_MS
+      }
+    );
+  } catch {
+    // Best effort — some sessions keep the /in/me/ URL stable.
   }
 }
 
@@ -186,13 +224,10 @@ export async function inspectLinkedInSession(
     options.selectorLocale ?? DEFAULT_LINKEDIN_SELECTOR_LOCALE;
   const checkedAt = new Date().toISOString();
   const currentUrl = page.url();
-
-  const checkpointVisible =
-    isCheckpointUrl(currentUrl) ||
-    (await isVisibleSafe(page, CHECKPOINT_FORM_SELECTOR));
   const sessionCookiePresent = await hasSessionCookie(page);
+  const checkpointUrlDetected = isCheckpointUrl(currentUrl);
 
-  if (checkpointVisible) {
+  if (checkpointUrlDetected) {
     const rateLimited = isRateLimitedChallengeUrl(currentUrl);
     const reason = rateLimited
       ? "LinkedIn rate-limit challenge detected."
@@ -221,6 +256,20 @@ export async function inspectLinkedInSession(
         : "Login form is visible.",
       checkpointDetected: false,
       loginWallDetected: loginWallVisible || isLoginUrl(currentUrl),
+      rateLimited: false,
+      sessionCookiePresent
+    };
+  }
+
+  const checkpointVisible = await isVisibleSafe(page, CHECKPOINT_FORM_SELECTOR);
+  if (checkpointVisible) {
+    return {
+      authenticated: false,
+      checkedAt,
+      currentUrl,
+      reason: "LinkedIn checkpoint detected. Manual verification is required.",
+      checkpointDetected: true,
+      loginWallDetected: false,
       rateLimited: false,
       sessionCookiePresent
     };
@@ -279,6 +328,7 @@ export async function inspectAuthenticatedLinkedInIdentity(
       waitUntil: "domcontentloaded",
       timeout: LINKEDIN_PROFILE_SELF_NAVIGATION_TIMEOUT_MS
     });
+    await waitForResolvedSelfProfileUrl(page);
   } catch {
     return undefined;
   }
@@ -297,15 +347,36 @@ export async function inspectAuthenticatedLinkedInIdentity(
     PROFILE_HEADING_SELECTORS,
     IDENTITY_LOCATOR_TIMEOUT_MS
   );
+  const canonicalProfileUrl = normalizeResolvedLinkedInProfileUrl(
+    await readFirstAttributeWithTimeout(
+      page,
+      "link[rel='canonical']",
+      "href",
+      IDENTITY_LOCATOR_TIMEOUT_MS
+    )
+  );
+  const ogProfileUrl = normalizeResolvedLinkedInProfileUrl(
+    await readFirstAttributeWithTimeout(
+      page,
+      "meta[property='og:url']",
+      "content",
+      IDENTITY_LOCATOR_TIMEOUT_MS
+    )
+  );
+  const menuProfileUrl = normalizeResolvedLinkedInProfileUrl(
+    await readFirstAttributeWithTimeout(
+      page,
+      AUTH_PROFILE_MENU_LINK_SELECTOR,
+      "href",
+      IDENTITY_LOCATOR_TIMEOUT_MS
+    )
+  );
+  const currentProfileUrl = normalizeResolvedLinkedInProfileUrl(currentUrl);
   const profileUrl =
-    normalizeLinkedInProfileUrl(
-      await readFirstAttributeWithTimeout(
-        page,
-        "link[rel='canonical']",
-        "href",
-        IDENTITY_LOCATOR_TIMEOUT_MS
-      )
-    ) ?? normalizeLinkedInProfileUrl(currentUrl);
+    canonicalProfileUrl ??
+    ogProfileUrl ??
+    menuProfileUrl ??
+    currentProfileUrl;
 
   if (!fullName && !profileUrl) {
     return undefined;

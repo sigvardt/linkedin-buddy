@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as mcpToolConstants from "../../../mcp/src/index.js";
 import {
   callMcpToolWith,
   getCliCoverageFixtures,
@@ -9,6 +10,7 @@ import {
   getDefaultProfileName,
   getLastJsonObject,
   mapMcpToolResult,
+  MCP_TOOL_NAMES,
   runCliCommandWith
 } from "./e2e/helpers.js";
 
@@ -135,6 +137,26 @@ describe("E2E helper command wrappers", () => {
 });
 
 describe("E2E helper MCP wrappers", () => {
+  it("keeps the MCP helper registry in sync with the exported tool constants", () => {
+    const exportedToolNames = Object.entries(mcpToolConstants)
+      .filter(
+        (entry): entry is [string, string] =>
+          entry[0].endsWith("_TOOL") && typeof entry[1] === "string"
+      )
+      .map(([, value]) => value)
+      .sort();
+    const helperToolNames = [...new Set(Object.values(MCP_TOOL_NAMES))].sort();
+    const extraHelperToolNames = helperToolNames.filter(
+      (value) => !exportedToolNames.includes(value)
+    );
+    const missingHelperToolNames = exportedToolNames.filter(
+      (value) => !helperToolNames.includes(value)
+    );
+
+    expect(extraHelperToolNames).toEqual([]);
+    expect(missingHelperToolNames).toEqual([]);
+  });
+
   it("uses the last text content item when mapping MCP tool results", () => {
     const result = mapMcpToolResult("linkedin.test", {
       isError: true,

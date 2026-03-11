@@ -42,7 +42,9 @@ function createMockPage(options: {
   ) => string | null;
   onWait?: () => void;
   isVisible: (selector: string, currentUrl: string) => boolean;
+  selfProfileGotoUrl?: string;
   textContent?: (selector: string, currentUrl: string) => string | null;
+  waitForUrlResult?: string;
 }): { page: Page; gotoCalls: string[]; setUrl: (url: string) => void } {
   let currentUrl = options.initialUrl;
   const gotoCalls: string[] = [];
@@ -52,9 +54,33 @@ function createMockPage(options: {
     goto: vi.fn(async (url: string) => {
       currentUrl =
         url === "https://www.linkedin.com/in/me/"
-          ? "https://www.linkedin.com/in/test-operator/"
+          ? (options.selfProfileGotoUrl ??
+            "https://www.linkedin.com/in/test-operator/")
           : url;
       gotoCalls.push(url);
+    }),
+    waitForURL: vi.fn(async (matcher: unknown) => {
+      if (options.waitForUrlResult) {
+        currentUrl = options.waitForUrlResult;
+      }
+
+      if (typeof matcher === "function") {
+        if (matcher(new URL(currentUrl)) !== true) {
+          throw new Error("Timed out waiting for URL");
+        }
+        return;
+      }
+
+      if (matcher instanceof RegExp) {
+        if (!matcher.test(currentUrl)) {
+          throw new Error("Timed out waiting for URL");
+        }
+        return;
+      }
+
+      if (typeof matcher === "string" && matcher !== currentUrl) {
+        throw new Error("Timed out waiting for URL");
+      }
     }),
     waitForTimeout: vi.fn(async () => {
       options.onWait?.();
@@ -228,6 +254,35 @@ describe("LinkedInAuthService auth flow", () => {
       fullName: "Test Operator",
       profileUrl: "https://www.linkedin.com/in/test-operator/",
       vanityName: "test-operator"
+    });
+  });
+
+  it("status does not treat /in/me/ as a resolved member slug", async () => {
+    const { page } = createMockPage({
+      initialUrl: "https://www.linkedin.com/feed/",
+      isVisible: (selector) => selector === "nav.global-nav",
+      selfProfileGotoUrl: "https://www.linkedin.com/in/me/",
+      textContent: (selector, currentUrl) => {
+        if (selector === "main h1" && currentUrl.includes("/in/me/")) {
+          return "Fallback Operator";
+        }
+
+        return null;
+      }
+    });
+
+    const context = createContextWithPage(page);
+    const profileManager = {
+      runWithContext: vi.fn(async (_options, callback) => callback(context))
+    } as const;
+    const auth = new LinkedInAuthService(profileManager as unknown as ProfileManager);
+
+    const status = await auth.status({ profileName: "default" });
+
+    expect(status.identity).toEqual({
+      fullName: "Fallback Operator",
+      profileUrl: null,
+      vanityName: null
     });
   });
 

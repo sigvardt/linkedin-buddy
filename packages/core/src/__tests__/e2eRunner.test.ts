@@ -123,6 +123,32 @@ describe("run-e2e runner messaging", () => {
     );
   });
 
+  it("explains how to verify the attached CDP browser when auth is missing", () => {
+    const guidance = formatUnavailableGuidance(
+      "LinkedIn session is not authenticated (landed on https://www.linkedin.com/login).",
+      {
+        showHelp: false,
+        requireSession: true,
+        refreshFixtures: false,
+        fixtureFile: undefined,
+        vitestArgs: []
+      },
+      {
+        LINKEDIN_CDP_URL: "http://127.0.0.1:18800",
+        LINKEDIN_E2E_PROFILE: "issue-214"
+      }
+    );
+
+    expect(guidance).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          "linkedin --cdp-url http://127.0.0.1:18800 status --profile issue-214"
+        ),
+        expect.stringContaining("attached CDP browser session")
+      ])
+    );
+  });
+
   it("documents discovery fixtures, replay lane, and strict mode in the help text", () => {
     const helpText = getRunnerHelpText();
 
