@@ -388,7 +388,7 @@ async function readJsonInputFile(
   label: string
 ): Promise<unknown> {
   const resolvedPath = path.resolve(filePath);
-  let rawValue = "";
+  let rawValue: string;
 
   try {
     rawValue = await readFile(resolvedPath, "utf8");

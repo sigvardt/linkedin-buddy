@@ -800,7 +800,12 @@ async function readJsonFile(
   try {
     return JSON.parse(raw) as unknown;
   } catch (error) {
-    throw new Error(`${fileLabel} ${filePath} contains invalid JSON. ${summarizeUnknownError(error)}`);
+    throw new Error(
+      `${fileLabel} ${filePath} contains invalid JSON. ${summarizeUnknownError(error)}`,
+      {
+        cause: error
+      }
+    );
   }
 }
 

@@ -53,7 +53,7 @@
     "release:prepare": "node ./scripts/prepare-release.mjs"
   },
   "devDependencies": {
-    "@eslint/js": "^9.21.0",
+    "@eslint/js": "^10.0.0",
     "@types/node": "^22.13.8",
     "@typescript-eslint/eslint-plugin": "^8.57.0",
     "@typescript-eslint/parser": "^8.24.1",

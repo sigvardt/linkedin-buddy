@@ -262,7 +262,9 @@ async function probeFixtureReplay(): Promise<{
         `(${replayServer.summary.locale}, ${replayServer.summary.viewport.width}x${replayServer.summary.viewport.height}).`
     };
   } catch (error) {
-    throw new Error(`Fixture replay could not start. ${summarizeUnknownError(error)}`);
+    throw new Error(`Fixture replay could not start. ${summarizeUnknownError(error)}`, {
+      cause: error
+    });
   }
 }
 

@@ -377,7 +377,8 @@ function readCliCoverageFixturesFromFile(filePath: string): CliCoverageFixtures 
     const reason = error instanceof Error ? error.message : String(error);
     throw new Error(
       `Could not load discovery fixtures from ${filePath}. ${reason} ` +
-        "Delete the file or rerun with --refresh-fixtures (LINKEDIN_E2E_REFRESH_FIXTURES=1)."
+        "Delete the file or rerun with --refresh-fixtures (LINKEDIN_E2E_REFRESH_FIXTURES=1).",
+      { cause: error }
     );
   }
 }
@@ -559,7 +560,7 @@ async function captureCommandExecution(
   const originalConsoleLog = console.log;
   const originalConsoleError = console.error;
   const originalExitCode = process.exitCode;
-  let exitCode = 0;
+  let exitCode: number;
 
   process.stdout.write = createWriteInterceptor(stdoutChunks);
   process.stderr.write = createWriteInterceptor(stderrChunks);

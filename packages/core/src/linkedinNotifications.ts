@@ -1753,40 +1753,44 @@ export class LinkedInNotificationsService {
       );
     }
 
-    let currentEnabled: boolean | null = null;
-    let label = page.title;
-    if (page.view_type === "category") {
-      currentEnabled = page.master_toggle?.enabled ?? null;
-      label = page.master_toggle?.label ?? page.title;
-    } else {
-      if (!channel) {
-        throw new LinkedInBuddyError(
-          "ACTION_PRECONDITION_FAILED",
-          "channel is required when updating a notification preference subcategory."
-        );
-      }
-
-      const targetChannel = page.channels.find(
-        (candidate) => candidate.channel_key === channel
-      );
-      if (!targetChannel) {
-        throw new LinkedInBuddyError(
-          "TARGET_NOT_FOUND",
-          `Could not find the ${channel} notification preference switch on ${page.title}.`,
-          {
-            preference_url: preferenceUrl,
-            channel
+    const targetState =
+      page.view_type === "category"
+        ? {
+            currentEnabled: page.master_toggle?.enabled ?? null,
+            label: page.master_toggle?.label ?? page.title
           }
-        );
-      }
-      currentEnabled = targetChannel.enabled;
-      label = targetChannel.label || page.title;
-    }
+        : (() => {
+            if (!channel) {
+              throw new LinkedInBuddyError(
+                "ACTION_PRECONDITION_FAILED",
+                "channel is required when updating a notification preference subcategory."
+              );
+            }
 
-    if (currentEnabled === input.enabled) {
+            const targetChannel = page.channels.find(
+              (candidate) => candidate.channel_key === channel
+            );
+            if (!targetChannel) {
+              throw new LinkedInBuddyError(
+                "TARGET_NOT_FOUND",
+                `Could not find the ${channel} notification preference switch on ${page.title}.`,
+                {
+                  preference_url: preferenceUrl,
+                  channel
+                }
+              );
+            }
+
+            return {
+              currentEnabled: targetChannel.enabled,
+              label: targetChannel.label || page.title
+            };
+          })();
+
+    if (targetState.currentEnabled === input.enabled) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        `${label} is already ${input.enabled ? "enabled" : "disabled"}.`,
+        `${targetState.label} is already ${input.enabled ? "enabled" : "disabled"}.`,
         {
           preference_url: preferenceUrl,
           channel: channel ?? null
@@ -1807,7 +1811,7 @@ export class LinkedInNotificationsService {
           ? `Set LinkedIn notification preference "${page.title}" to ${input.enabled ? "on" : "off"}`
           : `Set LinkedIn notification preference "${page.title}" (${channel}) to ${input.enabled ? "on" : "off"}`,
       target,
-      current_enabled: currentEnabled,
+      current_enabled: targetState.currentEnabled,
       enabled: input.enabled
     } satisfies Record<string, unknown>;
 
