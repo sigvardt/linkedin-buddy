@@ -206,6 +206,25 @@ describe("resolveFirstVisibleLocator", () => {
     expect((resolved as unknown as MockLocator).resolvedIndex).toBe(1);
   });
 
+  it("scans beyond an initial batch of hidden matches", async () => {
+    const locator = new MockLocator([
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true
+    ]);
+
+    const resolved = await resolveFirstVisibleLocator(locator as unknown as Locator);
+
+    expect(resolved).not.toBeNull();
+    expect((resolved as unknown as MockLocator).resolvedIndex).toBe(8);
+  });
+
   it("returns null when no locator match is visible", async () => {
     const locator = new MockLocator([false, false]);
 

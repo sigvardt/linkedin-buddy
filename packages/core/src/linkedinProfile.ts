@@ -2733,13 +2733,10 @@ interface LocatorCandidate {
   locator: Locator;
 }
 
-const MAX_VISIBLE_LOCATOR_MATCHES = 8;
-
 export async function resolveFirstVisibleLocator(
-  locator: Locator,
-  maxMatches: number = MAX_VISIBLE_LOCATOR_MATCHES
+  locator: Locator
 ): Promise<Locator | null> {
-  const count = Math.min(Math.max(0, maxMatches), await locator.count().catch(() => 0));
+  const count = await locator.count().catch(() => 0);
 
   for (let index = 0; index < count; index += 1) {
     const candidate = locator.nth(index);
