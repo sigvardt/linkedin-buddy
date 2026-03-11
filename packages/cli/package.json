@@ -35,6 +35,6 @@
   },
   "dependencies": {
     "@linkedin-assistant/core": "0.1.0",
-    "commander": "^13.1.0"
+    "commander": "^14.0.3"
   }
 }
