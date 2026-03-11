@@ -2733,20 +2733,38 @@ interface LocatorCandidate {
   locator: Locator;
 }
 
-async function isLocatorVisible(locator: Locator): Promise<boolean> {
-  try {
-    return await locator.first().isVisible();
-  } catch {
-    return false;
+const MAX_VISIBLE_LOCATOR_MATCHES = 8;
+
+export async function resolveFirstVisibleLocator(
+  locator: Locator,
+  maxMatches: number = MAX_VISIBLE_LOCATOR_MATCHES
+): Promise<Locator | null> {
+  const count = Math.min(Math.max(0, maxMatches), await locator.count().catch(() => 0));
+
+  for (let index = 0; index < count; index += 1) {
+    const candidate = locator.nth(index);
+    if (await candidate.isVisible().catch(() => false)) {
+      return candidate;
+    }
   }
+
+  return null;
+}
+
+async function isLocatorVisible(locator: Locator): Promise<boolean> {
+  return (await resolveFirstVisibleLocator(locator)) !== null;
 }
 
 async function findFirstVisibleLocator(
   candidates: readonly LocatorCandidate[]
 ): Promise<LocatorCandidate | null> {
   for (const candidate of candidates) {
-    if (await isLocatorVisible(candidate.locator)) {
-      return candidate;
+    const visibleLocator = await resolveFirstVisibleLocator(candidate.locator);
+    if (visibleLocator) {
+      return {
+        ...candidate,
+        locator: visibleLocator
+      };
     }
   }
 
@@ -2861,23 +2879,39 @@ async function navigateToOwnProfile(page: Page): Promise<void> {
 }
 
 async function getTopCardRoot(page: Page): Promise<Locator> {
+  const headingLocator = page.locator(
+    "h1.text-heading-xlarge, h1[class*='text-heading'], h1"
+  );
   const candidateRoots: LocatorCandidate[] = [
     {
-      key: "top-card-section-with-heading",
+      key: "top-card-artdeco-card-with-heading",
       locator: page
-        .locator("main section, main .pv-top-card, main .top-card-layout")
+        .locator("main section.artdeco-card, main div.artdeco-card")
         .filter({
-          has: page.locator("h1").first()
+          has: headingLocator
         })
-        .first()
+    },
+    {
+      key: "top-card-legacy-with-heading",
+      locator: page
+        .locator("main .pv-top-card, main .top-card-layout")
+        .filter({
+          has: headingLocator
+        })
+    },
+    {
+      key: "top-card-section-with-heading",
+      locator: page.locator("main section").filter({
+        has: headingLocator
+      })
     },
     {
       key: "top-card-pv",
-      locator: page.locator("main .pv-top-card").first()
+      locator: page.locator("main .pv-top-card")
     },
     {
       key: "top-card-layout",
-      locator: page.locator("main .top-card-layout").first()
+      locator: page.locator("main .top-card-layout")
     }
   ];
   const resolved = await findFirstVisibleLocator(candidateRoots);
