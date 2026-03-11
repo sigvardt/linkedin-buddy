@@ -42,10 +42,20 @@ import {
   type LinkedInFeedRuntime
 } from "./linkedinFeed.js";
 import {
+  createGroupActionExecutors,
+  LinkedInGroupsService,
+  type LinkedInGroupsRuntime
+} from "./linkedinGroups.js";
+import {
   createLinkedInActionExecutors,
   LinkedInInboxService,
   type LinkedInMessagingRuntime
 } from "./linkedinInbox.js";
+import {
+  createEventActionExecutors,
+  LinkedInEventsService,
+  type LinkedInEventsRuntime
+} from "./linkedinEvents.js";
 import {
   createProfileActionExecutors,
   LinkedInProfileService,
@@ -169,6 +179,8 @@ export interface CoreRuntime {
   companyPages: LinkedInCompanyPagesService;
   imageAssets: LinkedInImageAssetsService;
   search: LinkedInSearchService;
+  groups: LinkedInGroupsService;
+  events: LinkedInEventsService;
   jobs: LinkedInJobsService;
   notifications: LinkedInNotificationsService;
   connections: LinkedInConnectionsService;
@@ -282,6 +294,10 @@ export function createCoreRuntime(
     string,
     import("./twoPhaseCommit.js").ActionExecutor<LinkedInMessagingRuntime>
   >;
+  const groupExecutors = createGroupActionExecutors() as unknown as Record<
+    string,
+    import("./twoPhaseCommit.js").ActionExecutor<LinkedInMessagingRuntime>
+  >;
   const followupExecutors = createFollowupActionExecutors() as unknown as Record<
     string,
     import("./twoPhaseCommit.js").ActionExecutor<LinkedInMessagingRuntime>
@@ -295,6 +311,10 @@ export function createCoreRuntime(
       string,
       import("./twoPhaseCommit.js").ActionExecutor<LinkedInMessagingRuntime>
     >;
+  const eventExecutors = createEventActionExecutors() as unknown as Record<
+    string,
+    import("./twoPhaseCommit.js").ActionExecutor<LinkedInMessagingRuntime>
+  >;
   const testEchoExecutor = new TestEchoActionExecutor<LinkedInMessagingRuntime>();
   const twoPhaseCommit = new TwoPhaseCommitService<LinkedInMessagingRuntime>(db, {
     privacy,
@@ -306,8 +326,10 @@ export function createCoreRuntime(
       ...memberExecutors,
       ...followupExecutors,
       ...feedExecutors,
+      ...groupExecutors,
       ...postExecutors,
       ...privacySettingExecutors,
+      ...eventExecutors,
       [TEST_ECHO_ACTION_TYPE]: testEchoExecutor
     },
     getRuntime: () => runtime
@@ -340,6 +362,8 @@ export function createCoreRuntime(
     companyPages: undefined as unknown as LinkedInCompanyPagesService,
     imageAssets: undefined as unknown as LinkedInImageAssetsService,
     search: undefined as unknown as LinkedInSearchService,
+    groups: undefined as unknown as LinkedInGroupsService,
+    events: undefined as unknown as LinkedInEventsService,
     jobs: undefined as unknown as LinkedInJobsService,
     notifications: undefined as unknown as LinkedInNotificationsService,
     connections: undefined as unknown as LinkedInConnectionsService,
@@ -403,6 +427,10 @@ export function createCoreRuntime(
   );
   const searchRuntime: LinkedInSearchRuntime = runtime;
   runtime.search = new LinkedInSearchService(searchRuntime);
+  const groupsRuntime: LinkedInGroupsRuntime = runtime;
+  runtime.groups = new LinkedInGroupsService(groupsRuntime);
+  const eventsRuntime: LinkedInEventsRuntime = runtime;
+  runtime.events = new LinkedInEventsService(eventsRuntime);
   const jobsRuntime: LinkedInJobsRuntime = runtime;
   runtime.jobs = new LinkedInJobsService(jobsRuntime);
   const notificationsRuntime: LinkedInNotificationsRuntime = runtime;

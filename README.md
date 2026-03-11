@@ -671,6 +671,11 @@ Exposed tools:
 - `linkedin.profile.prepare_featured_reorder`
 - `linkedin.assets.generate_profile_images`
 - `linkedin.search`
+- `linkedin.groups.search`
+- `linkedin.groups.view`
+- `linkedin.groups.prepare_join`
+- `linkedin.groups.prepare_leave`
+- `linkedin.groups.prepare_post`
 - `linkedin.inbox.list_threads`
 - `linkedin.inbox.get_thread`
 - `linkedin.inbox.prepare_reply`
@@ -699,6 +704,9 @@ Exposed tools:
 - `linkedin.feed.prepare_remove_reaction`
 - `linkedin.post.prepare_create`
 - `linkedin.notifications.list`
+- `linkedin.events.search`
+- `linkedin.events.view`
+- `linkedin.events.prepare_rsvp`
 - `linkedin.jobs.search`
 - `linkedin.jobs.view`
 - `linkedin.network.prepare_followup_after_accept`
