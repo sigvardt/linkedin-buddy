@@ -201,6 +201,10 @@ describe("CLI selector locale messaging", () => {
   it("stays quiet for supported locales", async () => {
     await runCli(["node", "linkedin", "--selector-locale", "da-DK", "status"]);
 
-    expect(stderrChunks.join("")).toBe("");
+    expect(
+      stderrChunks
+        .filter((chunk) => !chunk.includes("linkedin-buddy feedback"))
+        .join("")
+    ).toBe("");
   });
 });

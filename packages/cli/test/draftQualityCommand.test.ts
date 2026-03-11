@@ -256,7 +256,11 @@ describe("linkedin audit draft-quality", () => {
     ]);
 
     expect(process.exitCode ?? 0).toBe(0);
-    expect(stderrChunks).toEqual([]);
+    expect(
+      stderrChunks.filter(
+        (chunk) => !chunk.includes("linkedin-buddy feedback")
+      )
+    ).toEqual([]);
   });
 
   it("prints friendly validation errors in human mode", async () => {

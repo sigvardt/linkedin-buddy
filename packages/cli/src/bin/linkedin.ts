@@ -23,18 +23,23 @@ import {
   ACTIVITY_WATCH_KINDS,
   ACTIVITY_WATCH_STATUSES,
   DEFAULT_FOLLOWUP_SINCE,
+  DEFAULT_FEEDBACK_HINT_EVERY_N,
   LINKEDIN_BUDDY_EVASION_DIAGNOSTICS_ENV,
   LINKEDIN_BUDDY_EVASION_LEVEL_ENV,
   LINKEDIN_BUDDY_SELECTOR_LOCALE_ENV,
   AssistantDatabase,
   alignToBusinessHours,
   asLinkedInBuddyError,
+  buildFeedbackHintMessage,
   clearRateLimitState,
   createLocalDataDeletionPlan,
   createEmptyFixtureManifest,
+  createFeedbackTechnicalContext,
   buildFixtureRouteKey,
   buildLinkedInImagePersonaFromProfileSeed,
   evaluateDraftQuality,
+  FEEDBACK_TYPES,
+  formatFeedbackDisplayPath,
   getLinkedInSelectorLocaleConfigWarning,
   isSearchCategory,
   isInRateLimitCooldown,
@@ -61,6 +66,7 @@ import {
   normalizeFixtureRouteHeaders,
   normalizeLinkedInPostVisibility,
   normalizeLinkedInMemberReportReason,
+  normalizeFeedbackInputType,
   normalizeLinkedInPrivacySettingKey,
   normalizeLinkedInPrivacySettingValue,
   parseDraftQualityCandidateSet,
@@ -73,12 +79,16 @@ import {
   resolveFollowupSinceWindow,
   resolveLinkedInSelectorLocaleConfigResolution,
   redactStructuredValue,
+  recordFeedbackInvocation,
+  readFeedbackStateSnapshot,
   resolveKeepAliveDir,
   resolveLegacyRateLimitStateFilePath,
   resolvePrivacyConfig,
   resolveSchedulerConfig,
   runLinkedInWriteValidation,
   runReadOnlyLinkedInLiveValidation,
+  submitFeedback,
+  submitPendingFeedback,
   upsertWriteValidationAccount,
   toLinkedInBuddyErrorPayload,
   WEBHOOK_DELIVERY_ATTEMPT_STATUSES,
@@ -106,6 +116,7 @@ import {
   type SelectorAuditReport,
   type WebhookDeliveryAttemptStatus,
   type WebhookSubscriptionStatus,
+  type FeedbackType,
   type WriteValidationAccountTargets,
   type WriteValidationActionPreview,
   type WriteValidationReport
@@ -226,6 +237,12 @@ const WRITE_VALIDATION_DOC_PATH = "docs/write-validation.md";
 const WRITE_VALIDATION_WARNING = "This will perform REAL actions on LinkedIn";
 const TOTAL_WRITE_VALIDATION_ACTIONS = LINKEDIN_WRITE_VALIDATION_ACTIONS.length;
 let cliSelectorLocale: string | undefined;
+let activeCliInvocation:
+  | {
+      commandName: string;
+      profileName?: string;
+    }
+  | undefined;
 
 function writeCliWarning(message: string): void {
   process.stderr.write(`[linkedin] Warning: ${message}\n`);
@@ -1308,6 +1325,50 @@ async function promptYesNo(
   }
 }
 
+async function promptTextInput(
+  question: string,
+  output: typeof stdout | typeof process.stderr = process.stderr
+): Promise<string> {
+  const readline = createInterface({
+    input: stdin,
+    output
+  });
+
+  try {
+    return (await readline.question(`${question}: `)).trim();
+  } finally {
+    readline.close();
+  }
+}
+
+async function promptMultilineInput(
+  question: string,
+  output: typeof stdout | typeof process.stderr = process.stderr
+): Promise<string> {
+  const readline = createInterface({
+    input: stdin,
+    output
+  });
+
+  try {
+    output.write(`${question} Finish with an empty line.\n`);
+    const lines: string[] = [];
+
+    while (true) {
+      const line = await readline.question(lines.length === 0 ? "> " : "... ");
+      if (line.trim().length === 0) {
+        break;
+      }
+
+      lines.push(line);
+    }
+
+    return lines.join("\n").trim();
+  } finally {
+    readline.close();
+  }
+}
+
 function shouldUseAnsiColor(
   stream: { isTTY?: boolean }
 ): boolean {
@@ -1324,6 +1385,71 @@ function assertInteractiveTerminal(operation: string): void {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `Refusing to ${operation} in non-interactive mode.`
+    );
+  }
+}
+
+function trimOptionalCliText(value: string | undefined): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function readCommandProfileName(command: Command): string | undefined {
+  const options = command.opts<Record<string, unknown>>();
+  const profileValue = typeof options.profile === "string"
+    ? options.profile
+    : typeof options.profileName === "string"
+      ? options.profileName
+      : undefined;
+
+  return trimOptionalCliText(profileValue);
+}
+
+function describeCliCommand(command: Command): string {
+  const commandNames: string[] = [];
+  let currentCommand: Command | undefined = command;
+
+  while (currentCommand) {
+    const commandName = currentCommand.name();
+    if (commandName && commandName !== "linkedin") {
+      commandNames.push(commandName);
+    }
+    currentCommand = currentCommand.parent ?? undefined;
+  }
+
+  return commandNames.reverse().join(" ").trim();
+}
+
+function shouldTrackCliFeedback(commandName: string): boolean {
+  return commandName !== "feedback";
+}
+
+async function maybeEmitCliFeedbackHint(error?: unknown): Promise<void> {
+  const invocation = activeCliInvocation;
+  activeCliInvocation = undefined;
+
+  if (!invocation || !shouldTrackCliFeedback(invocation.commandName)) {
+    return;
+  }
+
+  try {
+    const decision = await recordFeedbackInvocation({
+      source: "cli",
+      invocationName: invocation.commandName,
+      ...(invocation.profileName ? { activeProfileName: invocation.profileName } : {}),
+      ...(typeof error !== "undefined" ? { error } : {})
+    });
+
+    if (decision.showHint) {
+      writeCliNotice(buildFeedbackHintMessage());
+    }
+  } catch (trackingError) {
+    writeCliWarning(
+      `Could not update feedback hint state: ${asLinkedInBuddyError(trackingError).message}`
     );
   }
 }
@@ -1812,6 +1938,182 @@ async function runStatus(profileName: string, cdpUrl?: string): Promise<void> {
   } finally {
     runtime.close();
   }
+}
+
+function buildFeedbackJsonResult(
+  result:
+    | Awaited<ReturnType<typeof submitFeedback>>
+    | Awaited<ReturnType<typeof submitPendingFeedback>>
+): Record<string, unknown> {
+  if ("submittedCount" in result) {
+    return {
+      repository: result.repository,
+      submitted_count: result.submittedCount,
+      failure_count: result.failureCount,
+      submitted: result.submitted.map((item) => ({
+        file_path: formatFeedbackDisplayPath(item.filePath),
+        title: item.title,
+        type: item.type,
+        url: item.url
+      })),
+      failures: result.failures.map((item) => ({
+        file_path: formatFeedbackDisplayPath(item.filePath),
+        error: item.error
+      }))
+    };
+  }
+
+  return {
+    repository: result.repository,
+    status: result.status,
+    title: result.title,
+    type: result.type,
+    labels: result.labels,
+    redaction_applied: result.redactionApplied,
+    ...(result.url ? { url: result.url } : {}),
+    ...(result.pendingFilePath
+      ? {
+          pending_file_path: formatFeedbackDisplayPath(result.pendingFilePath)
+        }
+      : {})
+  };
+}
+
+function printFeedbackResult(
+  result:
+    | Awaited<ReturnType<typeof submitFeedback>>
+    | Awaited<ReturnType<typeof submitPendingFeedback>>,
+  json: boolean
+): void {
+  if (json) {
+    printJson(buildFeedbackJsonResult(result));
+    return;
+  }
+
+  if ("submittedCount" in result) {
+    if (result.submittedCount === 0 && result.failureCount === 0) {
+      console.log("No pending feedback files were found.");
+      return;
+    }
+
+    const lines = [
+      `Submitted ${result.submittedCount} pending feedback file(s) to ${result.repository}.`
+    ];
+
+    for (const item of result.submitted) {
+      lines.push(
+        `- ${formatFeedbackDisplayPath(item.filePath)} -> ${item.url}`
+      );
+    }
+
+    if (result.failureCount > 0) {
+      lines.push(
+        `${result.failureCount} pending feedback file(s) could not be submitted.`
+      );
+      for (const item of result.failures) {
+        lines.push(
+          `- ${formatFeedbackDisplayPath(item.filePath)}: ${item.error}`
+        );
+      }
+    }
+
+    console.log(lines.join("\n"));
+    return;
+  }
+
+  if (result.status === "submitted") {
+    console.log(`Feedback filed: ${result.url ?? result.repository}`);
+    return;
+  }
+
+  console.log(
+    [
+      `Feedback saved locally: ${formatFeedbackDisplayPath(result.pendingFilePath ?? "")}`,
+      "To submit: run `gh auth login` then `linkedin-buddy feedback --submit-pending`"
+    ].join("\n")
+  );
+}
+
+async function promptForFeedbackType(): Promise<FeedbackType> {
+  assertInteractiveTerminal("collect feedback interactively");
+
+  while (true) {
+    const value = await promptTextInput(
+      `Feedback type (${FEEDBACK_TYPES.join("/")})`,
+      process.stderr
+    );
+
+    try {
+      return normalizeFeedbackInputType(value);
+    } catch {
+      writeCliWarning(
+        `Please enter one of: ${FEEDBACK_TYPES.join(", ")}.`
+      );
+    }
+  }
+}
+
+async function promptForRequiredFeedbackText(
+  label: string,
+  question: string,
+  multiline: boolean = false
+): Promise<string> {
+  assertInteractiveTerminal("collect feedback interactively");
+
+  while (true) {
+    const value = multiline
+      ? await promptMultilineInput(question, process.stderr)
+      : await promptTextInput(question, process.stderr);
+    const normalized = trimOptionalCliText(value);
+
+    if (normalized) {
+      return normalized;
+    }
+
+    writeCliWarning(`${label} must not be empty.`);
+  }
+}
+
+async function runFeedbackCommand(input: {
+  description?: string;
+  json: boolean;
+  submitPending: boolean;
+  title?: string;
+  type?: string;
+}): Promise<void> {
+  if (input.submitPending) {
+    const result = await submitPendingFeedback();
+    printFeedbackResult(result, input.json);
+    return;
+  }
+
+  const snapshot = await readFeedbackStateSnapshot();
+  const type = input.type
+    ? normalizeFeedbackInputType(input.type)
+    : await promptForFeedbackType();
+  const title =
+    trimOptionalCliText(input.title) ??
+    (await promptForRequiredFeedbackText("title", "Short summary"));
+  const description =
+    trimOptionalCliText(input.description) ??
+    (await promptForRequiredFeedbackText(
+      "description",
+      "Detailed explanation.",
+      true
+    ));
+
+  const result = await submitFeedback({
+    type,
+    title,
+    description,
+    technicalContext: createFeedbackTechnicalContext({
+      cliVersion: packageJson.version,
+      snapshot,
+      source: "cli"
+    })
+  });
+
+  printFeedbackResult(result, input.json);
 }
 
 function assertNoExternalSessionOverrideForStoredSession(cdpUrl?: string): void {
@@ -7249,8 +7551,17 @@ export function createCliProgram(): Command {
       : undefined;
   };
 
-  program.hook("preAction", () => {
+  program.hook("preAction", (_command, actionCommand) => {
     cliSelectorLocale = readSelectorLocale();
+    const profileName = readCommandProfileName(actionCommand);
+    activeCliInvocation = {
+      commandName: describeCliCommand(actionCommand),
+      ...(profileName ? { profileName } : {})
+    };
+  });
+
+  program.hook("postAction", async () => {
+    await maybeEmitCliFeedbackHint();
   });
 
   program
@@ -7699,6 +8010,61 @@ export function createCliProgram(): Command {
         cdpUrl: readCdpUrl()
       });
     });
+
+  program
+    .command("feedback")
+    .description("File agent feedback as a GitHub issue or submit saved feedback")
+    .option(
+      "--type <type>",
+      `Feedback type (${FEEDBACK_TYPES.join(", ")})`
+    )
+    .option("--title <title>", "Short summary for the feedback issue")
+    .option(
+      "--description <description>",
+      "Detailed explanation. Omit to enter a multiline prompt interactively."
+    )
+    .option(
+      "--submit-pending",
+      "Submit all locally saved feedback files after authenticating with gh",
+      false
+    )
+    .option("--json", "Print the structured feedback result as JSON", false)
+    .addHelpText(
+      "after",
+      [
+        "",
+        "Interactive mode:",
+        "  - running `linkedin-buddy feedback` with no text flags prompts for type, title, and description",
+        "  - the description prompt accepts multiple lines and ends on an empty line",
+        "",
+        "Privacy:",
+        "  - secrets, emails, LinkedIn URLs, member identifiers, IP addresses, and user-home file paths are redacted automatically",
+        "  - command arguments, response payloads, and LinkedIn data are never attached automatically",
+        "",
+        "Fallback:",
+        "  - if `gh auth status` is not authenticated, feedback is saved under `.linkedin-buddy/pending-feedback/`",
+        "  - later submit saved files with `gh auth login` then `linkedin-buddy feedback --submit-pending`",
+        "",
+        `Encouragement hints appear once per active session, every ${DEFAULT_FEEDBACK_HINT_EVERY_N} invocations, and after errors.`
+      ].join("\n")
+    )
+    .action(
+      async (options: {
+        description?: string;
+        json: boolean;
+        submitPending: boolean;
+        title?: string;
+        type?: string;
+      }) => {
+        await runFeedbackCommand({
+          json: options.json,
+          submitPending: options.submitPending,
+          ...(options.description ? { description: options.description } : {}),
+          ...(options.title ? { title: options.title } : {}),
+          ...(options.type ? { type: options.type } : {})
+        });
+      }
+    );
 
   const keepAliveCommand = program
     .command("keepalive")
@@ -9642,7 +10008,11 @@ export async function runCli(argv: string[] = process.argv): Promise<void> {
 
   try {
     await program.parseAsync(argv);
+  } catch (error) {
+    await maybeEmitCliFeedbackHint(error);
+    throw error;
   } finally {
+    activeCliInvocation = undefined;
     process.argv = originalArgv;
   }
 }

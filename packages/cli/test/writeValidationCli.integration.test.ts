@@ -143,7 +143,11 @@ describe("write validation CLI integration", () => {
       `Failed to parse LinkedIn Buddy config file at ${configPath}.`
     );
 
-    expect(stderrChunks).toEqual([]);
+    expect(
+      stderrChunks.filter(
+        (chunk) => !chunk.includes("linkedin-buddy feedback")
+      )
+    ).toEqual([]);
     await expect(readFile(configPath, "utf8")).resolves.toBe("{ invalid-json\n");
   });
 });

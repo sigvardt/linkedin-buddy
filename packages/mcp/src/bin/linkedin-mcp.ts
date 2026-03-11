@@ -7,8 +7,10 @@ import {
   ACTIVITY_EVENT_TYPES,
   ACTIVITY_WATCH_KINDS,
   ACTIVITY_WATCH_STATUSES,
+  buildFeedbackHintMessage,
   DEFAULT_LINKEDIN_PERSONA_POST_IMAGE_COUNT,
   DEFAULT_FOLLOWUP_SINCE,
+  createFeedbackTechnicalContext,
   LINKEDIN_FEED_REACTION_TYPES,
   LINKEDIN_INBOX_REACTION_TYPES,
   LINKEDIN_MEMBER_REPORT_REASONS,
@@ -20,6 +22,7 @@ import {
   buildLinkedInImagePersonaFromProfileSeed,
   createCoreRuntime,
   isSearchCategory,
+  normalizeFeedbackInputType,
   normalizeLinkedInFeedReaction,
   normalizeLinkedInInboxReaction,
   normalizeLinkedInMemberReportReason,
@@ -27,11 +30,14 @@ import {
   normalizeLinkedInPostVisibility,
   normalizeLinkedInPrivacySettingKey,
   normalizeLinkedInPrivacySettingValue,
+  readFeedbackStateSnapshot,
+  recordFeedbackInvocation,
   resolveFollowupSinceWindow,
   redactStructuredValue,
   resolvePrivacyConfig,
   SEARCH_CATEGORIES,
   toLinkedInBuddyErrorPayload,
+  submitFeedback,
   WEBHOOK_DELIVERY_ATTEMPT_STATUSES,
   WEBHOOK_SUBSCRIPTION_STATUSES,
   type ActivityEventType,
@@ -49,6 +55,7 @@ import {
   type CallToolRequest
 } from "@modelcontextprotocol/sdk/types.js";
 import {
+  SUBMIT_FEEDBACK_TOOL,
   LINKEDIN_ACTIONS_CONFIRM_TOOL,
   LINKEDIN_ASSETS_GENERATE_PROFILE_IMAGES_TOOL,
   LINKEDIN_ANALYTICS_CONTENT_METRICS_TOOL,
@@ -201,6 +208,15 @@ function readString(args: ToolArgs, key: string, fallback: string): string {
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
     : fallback;
+}
+
+function trimOrUndefined(value: string | undefined): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : undefined;
 }
 
 function readRequiredString(args: ToolArgs, key: string): string {
@@ -542,6 +558,36 @@ function toErrorResult(error: unknown): ToolErrorResult {
       }
     ]
   };
+}
+
+function shouldTrackMcpFeedback(toolName: string): boolean {
+  return toolName !== SUBMIT_FEEDBACK_TOOL;
+}
+
+function addFeedbackHintToResult<T extends ToolResult | ToolErrorResult>(
+  result: T
+): T {
+  const firstContent = result.content[0];
+  if (!firstContent || firstContent.type !== "text") {
+    return result;
+  }
+
+  try {
+    const parsed = JSON.parse(firstContent.text) as Record<string, unknown>;
+    parsed.feedback_hint = buildFeedbackHintMessage();
+
+    return {
+      ...result,
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(parsed, null, 2)
+        }
+      ]
+    };
+  } catch {
+    return result;
+  }
 }
 
 function readTargetProfileName(target: Record<string, unknown>): string | undefined {
@@ -903,6 +949,44 @@ async function handleSessionHealth(args: ToolArgs): Promise<ToolResult> {
   } finally {
     runtime.close();
   }
+}
+
+async function handleSubmitFeedback(args: ToolArgs): Promise<ToolResult> {
+  const snapshot = await readFeedbackStateSnapshot();
+  const feedbackType = normalizeFeedbackInputType(readRequiredString(args, "type"));
+  const title = readRequiredString(args, "title");
+  const description = readRequiredString(args, "description");
+
+  const result = await submitFeedback({
+    type: feedbackType,
+    title,
+    description,
+    technicalContext: createFeedbackTechnicalContext({
+      cliVersion: packageJson.version,
+      mcpToolName: SUBMIT_FEEDBACK_TOOL,
+      snapshot,
+      source: "mcp"
+    })
+  });
+
+  return toToolResult({
+    repository: result.repository,
+    status: result.status,
+    title: result.title,
+    type: result.type,
+    labels: result.labels,
+    redaction_applied: result.redactionApplied,
+    ...(result.url ? { url: result.url } : {}),
+    ...(result.pendingFilePath
+      ? {
+          pending_file_path: path.join(
+            ".linkedin-buddy",
+            "pending-feedback",
+            path.basename(result.pendingFilePath)
+          )
+        }
+      : {})
+  });
 }
 
 async function handleListThreads(args: ToolArgs): Promise<ToolResult> {
@@ -4504,6 +4588,31 @@ const server = new Server(
 
 export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
       {
+        name: SUBMIT_FEEDBACK_TOOL,
+        description:
+          "File agent feedback as a GitHub issue or save it locally when GitHub CLI authentication is unavailable.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["type", "title", "description"],
+          properties: {
+            type: {
+              type: "string",
+              enum: ["bug", "feature", "improvement"],
+              description: "Feedback classification chosen by the agent."
+            },
+            title: {
+              type: "string",
+              description: "Short summary for the feedback issue."
+            },
+            description: {
+              type: "string",
+              description: "Detailed explanation of the bug, feature request, or improvement."
+            }
+          }
+        }
+      },
+      {
         name: LINKEDIN_SESSION_STATUS_TOOL,
         description:
           "Check LinkedIn session authentication status for a profile, including the resolved anti-bot evasion configuration.",
@@ -7249,6 +7358,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 });
 
 const TOOL_HANDLERS: Record<string, ToolHandler> = {
+  [SUBMIT_FEEDBACK_TOOL]: handleSubmitFeedback,
   [LINKEDIN_SESSION_STATUS_TOOL]: handleSessionStatus,
   [LINKEDIN_SESSION_OPEN_LOGIN_TOOL]: handleSessionOpenLogin,
   [LINKEDIN_SESSION_HEALTH_TOOL]: handleSessionHealth,
@@ -7374,16 +7484,78 @@ export async function handleToolCall(
   name: string,
   args: ToolArgs = {}
 ): Promise<ToolResult | ToolErrorResult> {
+  let errorForTracking: unknown;
+
   try {
     const handler = TOOL_HANDLERS[name];
     if (handler) {
       const validatedArgs = validateToolArguments(name, args);
-      return await handler(validatedArgs);
+      const profileName = trimOrUndefined(
+        readString(validatedArgs, "profileName", "")
+      );
+      const result = await handler(validatedArgs);
+
+      if (!shouldTrackMcpFeedback(name)) {
+        return result;
+      }
+
+      const decision = await recordFeedbackInvocation({
+        source: "mcp",
+        invocationName: name,
+        mcpToolName: name,
+        ...(profileName ? { activeProfileName: profileName } : {})
+      });
+
+      return decision.showHint ? addFeedbackHintToResult(result) : result;
     }
 
-    return toErrorResult(`Unknown tool: ${name}`);
+    errorForTracking = new LinkedInBuddyError(
+      "ACTION_PRECONDITION_FAILED",
+      `Unknown tool: ${name}`
+    );
+    const unknownToolResult = toErrorResult(errorForTracking);
+
+    if (!shouldTrackMcpFeedback(name)) {
+      return unknownToolResult;
+    }
+
+    const decision = await recordFeedbackInvocation({
+      source: "mcp",
+      invocationName: name,
+      mcpToolName: name,
+      error: errorForTracking
+    });
+
+    return decision.showHint
+      ? addFeedbackHintToResult(unknownToolResult)
+      : unknownToolResult;
   } catch (error) {
-    return toErrorResult(error);
+    errorForTracking = error;
+    const errorResult = toErrorResult(error);
+
+    if (!shouldTrackMcpFeedback(name)) {
+      return errorResult;
+    }
+
+    try {
+      const validatedArgs = name in TOOL_HANDLERS
+        ? validateToolArguments(name, args)
+        : args;
+      const profileName = trimOrUndefined(
+        readString(validatedArgs, "profileName", "")
+      );
+      const decision = await recordFeedbackInvocation({
+        source: "mcp",
+        invocationName: name,
+        mcpToolName: name,
+        ...(profileName ? { activeProfileName: profileName } : {}),
+        error: errorForTracking
+      });
+
+      return decision.showHint ? addFeedbackHintToResult(errorResult) : errorResult;
+    } catch {
+      return errorResult;
+    }
   }
 }
 
