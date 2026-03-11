@@ -795,6 +795,11 @@ const PROFILE_SETTINGS_FIELD_DEFINITIONS = [
   }
 ] as const satisfies readonly EditableFieldDefinition[];
 
+const PROFILE_INTRO_EDITOR_FIELD_DEFINITIONS = [
+  ...PROFILE_INTRO_FIELD_DEFINITIONS,
+  ...PROFILE_SETTINGS_FIELD_DEFINITIONS
+] as const satisfies readonly EditableFieldDefinition[];
+
 const PROFILE_SECTION_FIELD_DEFINITIONS: Record<
   LinkedInProfileSectionType,
   readonly EditableFieldDefinition[]
@@ -2856,15 +2861,6 @@ interface ProfileEditorSurface {
   root: Locator;
 }
 
-const EDITABLE_FIELD_CONTROL_SELECTOR = [
-  "input",
-  "textarea",
-  "select",
-  "[role='combobox']",
-  "[role='textbox']",
-  "[contenteditable='true']"
-].join(", ");
-
 const EDITABLE_FIELD_CONTROL_XPATH = [
   "self::input",
   "self::textarea",
@@ -2873,11 +2869,6 @@ const EDITABLE_FIELD_CONTROL_XPATH = [
   "@role='textbox'",
   "@contenteditable='true'"
 ].join(" or ");
-
-const MAIN_EDITABLE_FIELD_CONTROL_SELECTOR = EDITABLE_FIELD_CONTROL_SELECTOR
-  .split(", ")
-  .map((selector) => `main ${selector}`)
-  .join(", ");
 
 export async function resolveFirstVisibleLocator(
   locator: Locator
@@ -3132,28 +3123,23 @@ async function waitForVisibleDialog(page: Page): Promise<Locator> {
   return dialog;
 }
 
-async function waitForVisibleProfileIntroEditPage(page: Page): Promise<Locator> {
-  await page.waitForURL((url) => isProfileIntroEditHref(url.toString()), {
-    timeout: 10_000
-  });
+async function resolveLatestVisibleDialog(page: Page): Promise<Locator | null> {
+  const dialogs = page.locator("[role='dialog']");
+  const dialogCount = await dialogs.count().catch(() => 0);
 
-  const readyCandidates: LocatorCandidate[] = [
-    {
-      key: "intro-edit-page-field",
-      locator: page.locator(MAIN_EDITABLE_FIELD_CONTROL_SELECTOR)
-    },
-    {
-      key: "intro-edit-page-submit",
-      locator: page.locator("main button[type='submit']")
+  for (let index = dialogCount - 1; index >= 0; index -= 1) {
+    const candidate = dialogs.nth(index);
+    if (await candidate.isVisible().catch(() => false)) {
+      return candidate;
     }
-  ];
+  }
 
-  const ready = await waitForFirstVisibleLocator(readyCandidates, 10_000);
-  if (!ready) {
-    throw new LinkedInBuddyError(
-      "TARGET_NOT_FOUND",
-      "Could not find the intro editor after navigating to the edit page."
-    );
+  return null;
+}
+
+async function resolveVisibleProfileIntroEditPage(page: Page): Promise<Locator | null> {
+  if (!isProfileIntroEditHref(page.url())) {
+    return null;
   }
 
   const form = await resolveFirstVisibleLocator(page.locator("main form"));
@@ -3161,9 +3147,66 @@ async function waitForVisibleProfileIntroEditPage(page: Page): Promise<Locator> 
     return form;
   }
 
-  const main = page.locator("main").first();
-  await main.waitFor({ state: "visible", timeout: 10_000 });
-  return main;
+  return resolveFirstVisibleLocator(page.locator("main"));
+}
+
+async function hasVisibleEditableField(
+  root: Locator,
+  definitions: readonly EditableFieldDefinition[]
+): Promise<boolean> {
+  for (const definition of definitions) {
+    if (await findDialogFieldLocator(root, definition)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function waitForVisibleProfileIntroEditorSurface(
+  page: Page,
+  timeoutMs: number
+): Promise<ProfileEditorSurface | null> {
+  const deadline = Date.now() + timeoutMs;
+  let fallbackSurface: ProfileEditorSurface | null = null;
+
+  while (Date.now() < deadline) {
+    const pageRoot = await resolveVisibleProfileIntroEditPage(page);
+    if (pageRoot) {
+      const pageSurface = {
+        kind: "page" as const,
+        root: pageRoot
+      };
+      fallbackSurface = pageSurface;
+
+      if (
+        await hasVisibleEditableField(pageSurface.root, PROFILE_INTRO_EDITOR_FIELD_DEFINITIONS)
+      ) {
+        return pageSurface;
+      }
+    }
+
+    const dialogRoot = await resolveLatestVisibleDialog(page);
+    if (dialogRoot) {
+      const dialogSurface = {
+        kind: "dialog" as const,
+        root: dialogRoot
+      };
+      fallbackSurface ??= dialogSurface;
+
+      if (
+        await hasVisibleEditableField(dialogSurface.root, PROFILE_INTRO_EDITOR_FIELD_DEFINITIONS)
+      ) {
+        return dialogSurface;
+      }
+    }
+
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 200);
+    });
+  }
+
+  return fallbackSurface;
 }
 
 async function waitForVisibleOverlay(page: Page): Promise<Locator> {
@@ -3606,25 +3649,17 @@ async function openIntroEditSurface(
     );
   }
 
-  const dialogPromise = waitForVisibleDialog(page).then((dialog) => ({
-    kind: "dialog" as const,
-    root: dialog
-  }));
-  const pagePromise = waitForVisibleProfileIntroEditPage(page).then((root) => ({
-    kind: "page" as const,
-    root
-  }));
-
   await resolved.locator.first().click();
 
-  try {
-    return await Promise.any([dialogPromise, pagePromise]);
-  } catch {
-    throw new LinkedInBuddyError(
-      "TARGET_NOT_FOUND",
-      "Could not open the intro editor after clicking the edit control."
-    );
+  const surface = await waitForVisibleProfileIntroEditorSurface(page, 10_000);
+  if (surface) {
+    return surface;
   }
+
+  throw new LinkedInBuddyError(
+    "TARGET_NOT_FOUND",
+    "Could not open the intro editor after clicking the edit control."
+  );
 }
 
 async function openGlobalAddSectionDialog(
