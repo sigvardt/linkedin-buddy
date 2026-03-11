@@ -31,6 +31,6 @@
     "eslint": "^10.0.3",
     "globals": "^17.4.0",
     "typescript": "^5.8.2",
-    "vitest": "^3.0.7"
+    "vitest": "^4.0.18"
   }
 }
