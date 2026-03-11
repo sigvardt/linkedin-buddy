@@ -501,15 +501,20 @@ const PROFILE_UPLOAD_MIME_TYPES: Record<string, string> = {
   ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 };
 
+export const PROFILE_GLOBAL_ADD_SECTION_CONTROL = {
+  labels: {
+    en: ["Add profile section", "Add section"],
+    da: ["Tilføj profilsektion", "Tilføj sektion"]
+  },
+  roles: ["button", "link"]
+} as const;
+
 const PROFILE_ACTION_LABELS = {
   add: {
     en: ["Add"],
     da: ["Tilføj"]
   },
-  addProfileSection: {
-    en: ["Add profile section"],
-    da: ["Tilføj profilsektion"]
-  },
+  addProfileSection: PROFILE_GLOBAL_ADD_SECTION_CONTROL.labels,
   edit: {
     en: ["Edit"],
     da: ["Rediger"]
@@ -3578,11 +3583,23 @@ async function openGlobalAddSectionDialog(
   selectorLocale: LinkedInSelectorLocale
 ): Promise<Locator> {
   const topCardRoot = await getTopCardRoot(page);
-  const addCandidates = createActionCandidates(
-    topCardRoot,
-    getUiActionLabels("addProfileSection", selectorLocale),
-    "profile-section-add"
-  );
+  const addSectionLabels = getUiActionLabels("addProfileSection", selectorLocale);
+  const addCandidates: LocatorCandidate[] = [
+    ...PROFILE_GLOBAL_ADD_SECTION_CONTROL.roles.flatMap((role) =>
+      createActionCandidates(
+        topCardRoot,
+        addSectionLabels,
+        `profile-section-add-${role}`,
+        role
+      )
+    ),
+    {
+      key: "profile-section-add-generic",
+      locator: topCardRoot
+        .locator("button, a, [role='button'], [role='link']")
+        .filter({ hasText: buildTextRegex(addSectionLabels) })
+    }
+  ];
   const resolved = await findFirstVisibleLocator(addCandidates);
 
   if (!resolved) {
