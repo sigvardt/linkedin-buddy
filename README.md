@@ -29,6 +29,8 @@
 
 <p align="center">
   <a href="#quick-start">Quick start</a> •
+  <a href="#demo">Demo</a> •
+  <a href="#visual-tour">Visual tour</a> •
   <a href="#mcp-quick-connect">MCP quick connect</a> •
   <a href="#usage-examples">Usage examples</a> •
   <a href="#comparison-table">Comparison table</a> •
@@ -89,9 +91,37 @@ npm exec -w @linkedin-buddy/cli -- linkedin search "developer relations" --categ
 
 ## Demo
 
-![LinkedIn Buddy quick-start placeholder](./assets/readme/demo-placeholder.svg)
+<p align="center">
+  <img src="./assets/media/demo/core-workflow.gif" alt="Animated terminal demo showing install, authentication, status verification, and a first LinkedIn search" width="960" />
+</p>
 
-Placeholder preview for the README until richer demo GIFs and screenshots land.
+<p align="center">
+  Safe demo data only — the README media does not embed live LinkedIn content.
+</p>
+
+## Visual Tour
+
+| Architecture | Workflow |
+| --- | --- |
+| ![System architecture diagram showing LinkedIn Buddy CLI, MCP server, shared runtime, persistent profile, SQLite state, and LinkedIn web app](./assets/media/diagrams/system-architecture.svg) | ![Workflow diagram showing install, build, login, read, prepare, and confirm stages](./assets/media/diagrams/install-to-daily-use.svg) |
+
+| Integrations |
+| --- |
+| ![Integration diagram showing Claude Desktop, Cursor, Cline, GPT workflows, and local scripts connecting through linkedin-mcp to one local runtime](./assets/media/diagrams/mcp-client-integration.svg) |
+
+### Feature illustrations
+
+| Search surface | Confirmed actions | Activity webhooks |
+| --- | --- | --- |
+| ![Annotated search illustration showing people and job search in the CLI with shared categories and structured results](./assets/media/features/search-surface.svg) | ![Prepare-and-confirm illustration showing preview, token, and confirm steps for write actions](./assets/media/features/confirmed-actions.svg) | ![Activity illustration showing watches, webhook delivery, and local artifacts](./assets/media/features/activity-webhooks.svg) |
+
+### Terminal snapshots
+
+| Install and build | MCP quick connect | Confirm before write |
+| --- | --- | --- |
+| ![Terminal screenshot showing git clone, npm install, Playwright install, and npm run build](./assets/media/terminals/install-and-build.svg) | ![Terminal screenshot showing MCP configuration JSON and next steps](./assets/media/terminals/mcp-quick-connect.svg) | ![Terminal screenshot showing prepare and confirm commands with preview details](./assets/media/terminals/confirm-before-write.svg) |
+
+See [`assets/media/README.md`](./assets/media/README.md) for the organized asset inventory and size budget, and [`docs/readme-media-research.md`](./docs/readme-media-research.md) for the research notes behind the chosen formats.
 
 ## MCP Quick Connect
 
@@ -184,24 +214,6 @@ try {
 }
 ```
 
-## Architecture Diagram
-
-```mermaid
-flowchart LR
-  user[Operator or AI agent] --> cli[linkedin CLI]
-  user --> mcp[linkedin-mcp]
-  cli --> core[@linkedin-buddy/core runtime]
-  mcp --> core
-  core --> auth[Persistent Playwright profile]
-  core --> db[(SQLite state)]
-  core --> twoPhase[Two-phase action engine]
-  core --> artifacts[Logs, screenshots, traces]
-  core --> activity[Activity watches and webhooks]
-  auth --> linkedin[LinkedIn web app]
-  twoPhase --> linkedin
-  activity --> linkedin
-```
-
 ## Comparison Table
 
 Quick positioning snapshot for people evaluating LinkedIn MCP, LinkedIn CLI, and LinkedIn API-style tools.
@@ -227,6 +239,8 @@ See [`docs/repository-seo.md`](./docs/repository-seo.md) for the keyword targets
 | Selector auditing | [`docs/selector-audit.md`](./docs/selector-audit.md) |
 | Draft quality evaluation | [`docs/draft-quality-evaluation.md`](./docs/draft-quality-evaluation.md) |
 | Brand and social preview assets | [`docs/brand-guidelines.md`](./docs/brand-guidelines.md) |
+| README media research | [`docs/readme-media-research.md`](./docs/readme-media-research.md) |
+| README media inventory | [`assets/media/README.md`](./assets/media/README.md) |
 
 ## Contributing
 

@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" fill="none" role="img" aria-labelledby="title desc">
+<title>Search people, companies, jobs, posts, groups, and events</title>
+<desc>One command surface spans LinkedIn discovery workflows, with consistent flags and structured results for humans and agents.</desc>
+<defs>
+<filter id="card-shadow" x="-20%" y="-20%" width="140%" height="160%">
+<feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#0f172a" flood-opacity=".12"/>
+</filter>
+<pattern id="bg-grid" width="48" height="48" patternUnits="userSpaceOnUse">
+<path d="M48 0H0V48" fill="none" stroke="#E8EEF5" stroke-width="1"/>
+</pattern>
+<marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="12" markerHeight="12" orient="auto-start-reverse">
+<path d="M0 0L12 6L0 12Z" fill="#0F172A"/>
+</marker>
+</defs>
+<rect width="1280" height="720" fill="#FFF7ED"/>
+<rect width="1280" height="720" fill="url(#bg-grid)" opacity=".45"/>
+<circle cx="1080" cy="124" r="176" fill="#14B8A6" opacity=".12"/>
+<circle cx="170" cy="604" r="156" fill="#FF7A59" opacity=".1"/>
+<circle cx="936" cy="612" r="114" fill="#38BDF8" opacity=".08"/>
+<path d="M112 188C184 154 248 150 334 176" fill="none" stroke="#14B8A6" stroke-linecap="round" stroke-width="8"/>
+<circle cx="334" cy="176" r="10" fill="#14B8A6"/>
+<g>
+<rect x="72" y="56" width="222" height="32" rx="16" fill="#0F172A" stroke="none" stroke-width="1.5"/>
+<text x="183" y="77.1" fill="#FFF7ED" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">FEATURE ILLUSTRATION</text>
+</g>
+<text x="72" y="138" fill="#0F172A" font-family="'Sora', 'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif" font-size="48" font-weight="700" letter-spacing="-.8">Search people, companies, jobs, posts, groups, and events</text>
+<text x="72" y="178" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="22" font-weight="500">One command surface spans LinkedIn discovery workflows, with</text>
+<text x="72" y="212" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="22" font-weight="500">consistent flags and structured results for humans and agents.</text>
+<g filter="url(#card-shadow)">
+<rect x="70" y="238" width="720" height="388" rx="30" fill="#111827" stroke="#0B1220" stroke-width="2"/>
+<circle cx="104" cy="272" r="8" fill="#FF7A59"/>
+<circle cx="132" cy="272" r="8" fill="#F59E0B"/>
+<circle cx="160" cy="272" r="8" fill="#14B8A6"/>
+<text x="762" y="278" fill="#E5E7EB" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="18" font-weight="600" text-anchor="end">Search</text>
+<text x="104" y="334" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#14B8A6">$</tspan><tspan dx="8" fill="#FFFFFF"> linkedin search &quot;developer relations&quot; --category people --limit 5</tspan></text>
+<text x="104" y="368" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#E5E7EB">1. Taylor Reed — Developer Relations @ Orbital</tspan></text>
+<text x="104" y="402" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#E5E7EB">2. Morgan Lee — DevRel Lead @ Graphite</tspan></text>
+<text x="104" y="436" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#E5E7EB">3. Sam Chen — Staff Developer Advocate @ Northwind</tspan></text>
+<text x="104" y="470" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#E5E7EB">4. Priya Patel — Developer Marketing @ MetricFlow</tspan></text>
+<text x="104" y="504" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#E5E7EB">5. Jess Kim — Community Programs @ Kernel</tspan></text>
+<text x="104" y="538" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#14B8A6">$</tspan><tspan dx="8" fill="#FFFFFF"> linkedin jobs search &quot;product manager&quot; --location Copenhagen --limit 3</tspan></text>
+<text x="104" y="572" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#E5E7EB">1. Senior Product Manager — Northwind • Copenhagen</tspan></text>
+<text x="104" y="606" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#E5E7EB">2. Platform PM — Signal Harbor • Remote</tspan></text>
+<text x="104" y="640" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#E5E7EB">3. Product Growth Lead — Blue Atlas • Hybrid</tspan></text>
+</g>
+<g filter="url(#card-shadow)">
+<rect x="824" y="248" width="382" height="178" rx="28" fill="#FFFFFF" stroke="#D7E0EA" stroke-width="2"/>
+<g>
+<rect x="848" y="268" width="107" height="30" rx="15" fill="#14B8A6" stroke="none" stroke-width="1.5"/>
+<text x="901.5" y="288.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Coverage</text>
+</g>
+<text x="848" y="330" fill="#0F172A" font-family="'Sora', 'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif" font-size="33" font-weight="700">One discovery surface</text>
+<text x="848" y="368" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="19" font-weight="500">People, companies, jobs, posts, groups</text>
+<text x="848" y="398" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="19" font-weight="500">events, profiles, and saved flows</text>
+</g>
+<g filter="url(#card-shadow)">
+<rect x="824" y="452" width="382" height="174" rx="28" fill="#FFFFFF" stroke="#D7E0EA" stroke-width="2"/>
+<g>
+<rect x="848" y="472" width="94" height="30" rx="15" fill="#FF7A59" stroke="none" stroke-width="1.5"/>
+<text x="895" y="492.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Output</text>
+</g>
+<text x="848" y="534" fill="#0F172A" font-family="'Sora', 'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif" font-size="33" font-weight="700">Results stay structured</text>
+<text x="848" y="572" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="19" font-weight="500">Easy to skim in a terminal</text>
+<text x="848" y="602" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="19" font-weight="500">Easy to rank in an MCP client</text>
+<text x="848" y="632" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="19" font-weight="500">Easy to script in TypeScript</text>
+</g>
+<g>
+<rect x="72" y="648" width="94" height="30" rx="15" fill="#FFFFFF" stroke="none" stroke-width="1.5"/>
+<text x="119" y="668.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">People</text>
+</g>
+<g>
+<rect x="180" y="648" width="116" height="30" rx="15" fill="#FFFFFF" stroke="none" stroke-width="1.5"/>
+<text x="238" y="668.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Companies</text>
+</g>
+<g>
+<rect x="310" y="648" width="94" height="30" rx="15" fill="#14B8A6" stroke="none" stroke-width="1.5"/>
+<text x="357" y="668.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Jobs</text>
+</g>
+<g>
+<rect x="418" y="648" width="94" height="30" rx="15" fill="#FFFFFF" stroke="none" stroke-width="1.5"/>
+<text x="465" y="668.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Posts</text>
+</g>
+<g>
+<rect x="526" y="648" width="94" height="30" rx="15" fill="#FFFFFF" stroke="none" stroke-width="1.5"/>
+<text x="573" y="668.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Groups</text>
+</g>
+<g>
+<rect x="634" y="648" width="94" height="30" rx="15" fill="#FF7A59" stroke="none" stroke-width="1.5"/>
+<text x="681" y="668.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Events</text>
+</g>
+</svg>

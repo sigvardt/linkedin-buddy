@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" fill="none" role="img" aria-labelledby="title desc">
+<title>Plug LinkedIn Buddy into your favorite MCP workflows</title>
+<desc>AI clients speak MCP over stdio, operators keep the CLI, and both surfaces share the same local Playwright-backed runtime.</desc>
+<defs>
+<filter id="card-shadow" x="-20%" y="-20%" width="140%" height="160%">
+<feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#0f172a" flood-opacity=".12"/>
+</filter>
+<pattern id="bg-grid" width="48" height="48" patternUnits="userSpaceOnUse">
+<path d="M48 0H0V48" fill="none" stroke="#E8EEF5" stroke-width="1"/>
+</pattern>
+<marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="12" markerHeight="12" orient="auto-start-reverse">
+<path d="M0 0L12 6L0 12Z" fill="#0F172A"/>
+</marker>
+</defs>
+<rect width="1280" height="720" fill="#FFF7ED"/>
+<rect width="1280" height="720" fill="url(#bg-grid)" opacity=".45"/>
+<circle cx="1080" cy="124" r="176" fill="#14B8A6" opacity=".12"/>
+<circle cx="170" cy="604" r="156" fill="#FF7A59" opacity=".1"/>
+<circle cx="936" cy="612" r="114" fill="#38BDF8" opacity=".08"/>
+<path d="M112 188C184 154 248 150 334 176" fill="none" stroke="#14B8A6" stroke-linecap="round" stroke-width="8"/>
+<circle cx="334" cy="176" r="10" fill="#14B8A6"/>
+<g>
+<rect x="72" y="56" width="212" height="32" rx="16" fill="#0F172A" stroke="none" stroke-width="1.5"/>
+<text x="178" y="77.1" fill="#FFF7ED" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">INTEGRATION DIAGRAM</text>
+</g>
+<text x="72" y="138" fill="#0F172A" font-family="'Sora', 'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif" font-size="48" font-weight="700" letter-spacing="-.8">Plug LinkedIn Buddy into your favorite MCP workflows</text>
+<text x="72" y="178" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="22" font-weight="500">AI clients speak MCP over stdio, operators keep the CLI, and both</text>
+<text x="72" y="212" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="22" font-weight="500">surfaces share the same local Playwright-backed runtime.</text>
+<g filter="url(#card-shadow)">
+<rect x="70" y="238" width="260" height="370" rx="28" fill="#FFFFFF" stroke="#D7E0EA" stroke-width="2"/>
+<g>
+<rect x="94" y="258" width="97" height="30" rx="15" fill="#FF7A59" stroke="none" stroke-width="1.5"/>
+<text x="142.5" y="278.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Clients</text>
+</g>
+<text x="94" y="320" fill="#0F172A" font-family="'Sora', 'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif" font-size="31" font-weight="700">MCP-capable tools</text>
+<text x="94" y="358" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="19" font-weight="500">Claude Desktop</text>
+<text x="94" y="390" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="19" font-weight="500">Cursor</text>
+<text x="94" y="422" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="19" font-weight="500">Cline</text>
+<text x="94" y="454" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="19" font-weight="500">GPT agent</text>
+<text x="94" y="486" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="19" font-weight="500">Local scripts</text>
+</g>
+<g filter="url(#card-shadow)">
+<rect x="372" y="242" width="404" height="242" rx="30" fill="#111827" stroke="#0B1220" stroke-width="2"/>
+<circle cx="406" cy="276" r="8" fill="#FF7A59"/>
+<circle cx="434" cy="276" r="8" fill="#F59E0B"/>
+<circle cx="462" cy="276" r="8" fill="#14B8A6"/>
+<text x="748" y="282" fill="#E5E7EB" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="18" font-weight="600" text-anchor="end">mcp.json</text>
+<text x="406" y="338" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#E5E7EB">{</tspan></text>
+<text x="406" y="372" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#E5E7EB">  </tspan><tspan dx="0" fill="#38BDF8">&quot;mcpServers&quot;</tspan><tspan dx="0" fill="#E5E7EB">: </tspan><tspan dx="0" fill="#E5E7EB">{</tspan></text>
+<text x="406" y="406" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#E5E7EB">    </tspan><tspan dx="0" fill="#38BDF8">&quot;linkedin&quot;</tspan><tspan dx="0" fill="#E5E7EB">: </tspan><tspan dx="0" fill="#E5E7EB">{</tspan></text>
+<text x="406" y="440" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#E5E7EB">      </tspan><tspan dx="0" fill="#38BDF8">&quot;command&quot;</tspan><tspan dx="0" fill="#E5E7EB">: </tspan><tspan dx="0" fill="#34D399">&quot;npm&quot;</tspan></text>
+<text x="406" y="474" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#E5E7EB">      </tspan><tspan dx="0" fill="#38BDF8">&quot;args&quot;</tspan><tspan dx="0" fill="#E5E7EB">: </tspan><tspan dx="0" fill="#34D399">[&quot;exec&quot;, &quot;-w&quot;, &quot;@linkedin-buddy/mcp&quot;,</tspan></text>
+<text x="406" y="508" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#34D399">        &quot;--&quot;, &quot;linkedin-mcp&quot;]</tspan></text>
+<text x="406" y="542" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#E5E7EB">      }</tspan></text>
+<text x="406" y="576" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#E5E7EB">    }</tspan></text>
+<text x="406" y="610" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#E5E7EB">}</tspan></text>
+</g>
+<g filter="url(#card-shadow)">
+<rect x="372" y="516" width="404" height="134" rx="30" fill="#111827" stroke="#0B1220" stroke-width="2"/>
+<circle cx="406" cy="550" r="8" fill="#FF7A59"/>
+<circle cx="434" cy="550" r="8" fill="#F59E0B"/>
+<circle cx="462" cy="550" r="8" fill="#14B8A6"/>
+<text x="748" y="556" fill="#E5E7EB" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="18" font-weight="600" text-anchor="end">CLI fallback</text>
+<text x="406" y="612" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#14B8A6">$</tspan><tspan dx="8" fill="#FFFFFF"> linkedin search &quot;product marketing&quot; --category people --limit 3</tspan></text>
+<text x="406" y="646" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#34D399">✓</tspan><tspan dx="8" fill="#E5E7EB"> same local profile, same runtime</tspan></text>
+</g>
+<g filter="url(#card-shadow)">
+<rect x="820" y="238" width="386" height="190" rx="28" fill="#FFFFFF" stroke="#D7E0EA" stroke-width="2"/>
+<g>
+<rect x="844" y="258" width="94" height="30" rx="15" fill="#14B8A6" stroke="none" stroke-width="1.5"/>
+<text x="891" y="278.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Bridge</text>
+</g>
+<text x="844" y="320" fill="#0F172A" font-family="'Sora', 'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif" font-size="34" font-weight="700">linkedin-mcp</text>
+<text x="844" y="358" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="19" font-weight="500">stdio transport</text>
+<text x="844" y="388" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="19" font-weight="500">structured tool results</text>
+<text x="844" y="418" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="19" font-weight="500">shared auth and safety rails</text>
+</g>
+<g filter="url(#card-shadow)">
+<rect x="820" y="458" width="386" height="192" rx="28" fill="#FFFFFF" stroke="#D7E0EA" stroke-width="2"/>
+<g>
+<rect x="844" y="478" width="136" height="30" rx="15" fill="#38BDF8" stroke="none" stroke-width="1.5"/>
+<text x="912" y="498.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Shared core</text>
+</g>
+<text x="844" y="540" fill="#0F172A" font-family="'Sora', 'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif" font-size="34" font-weight="700">One local runtime</text>
+<text x="844" y="578" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="19" font-weight="500">Playwright profile reuse</text>
+<text x="844" y="608" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="19" font-weight="500">SQLite prepared actions</text>
+<text x="844" y="638" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="19" font-weight="500">Artifacts, watches, webhooks</text>
+</g>
+<path d="M330 422H372" fill="none" stroke="#0F172A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M776 330H820" fill="none" stroke="#0F172A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M776 582H820" fill="none" stroke="#0F172A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M1013 428V458" fill="none" stroke="#0F172A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+<g>
+<rect x="72" y="666" width="174" height="30" rx="15" fill="#FFFFFF" stroke="none" stroke-width="1.5"/>
+<text x="159" y="686.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">No hosted proxy</text>
+</g>
+<g>
+<rect x="260" y="666" width="212" height="30" rx="15" fill="#14B8A6" stroke="none" stroke-width="1.5"/>
+<text x="366" y="686.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Local profile reuse</text>
+</g>
+<g>
+<rect x="486" y="666" width="251" height="30" rx="15" fill="#FFFFFF" stroke="none" stroke-width="1.5"/>
+<text x="611.5" y="686.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Structured tool results</text>
+</g>
+</svg>
