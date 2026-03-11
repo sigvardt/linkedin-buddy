@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" fill="none" role="img" aria-labelledby="title desc">
+<title>Drop the MCP server into your client config</title>
+<desc>Point any stdio-based MCP client at the built linkedin-mcp command through npm exec and keep everything local.</desc>
+<defs>
+<filter id="card-shadow" x="-20%" y="-20%" width="140%" height="160%">
+<feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#0f172a" flood-opacity=".12"/>
+</filter>
+<pattern id="bg-grid" width="48" height="48" patternUnits="userSpaceOnUse">
+<path d="M48 0H0V48" fill="none" stroke="#E8EEF5" stroke-width="1"/>
+</pattern>
+<marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="12" markerHeight="12" orient="auto-start-reverse">
+<path d="M0 0L12 6L0 12Z" fill="#0F172A"/>
+</marker>
+</defs>
+<rect width="1280" height="720" fill="#FFF7ED"/>
+<rect width="1280" height="720" fill="url(#bg-grid)" opacity=".45"/>
+<circle cx="1080" cy="124" r="176" fill="#14B8A6" opacity=".12"/>
+<circle cx="170" cy="604" r="156" fill="#FF7A59" opacity=".1"/>
+<circle cx="936" cy="612" r="114" fill="#38BDF8" opacity=".08"/>
+<path d="M112 188C184 154 248 150 334 176" fill="none" stroke="#14B8A6" stroke-linecap="round" stroke-width="8"/>
+<circle cx="334" cy="176" r="10" fill="#14B8A6"/>
+<g>
+<rect x="72" y="56" width="193" height="32" rx="16" fill="#0F172A" stroke="none" stroke-width="1.5"/>
+<text x="168.5" y="77.1" fill="#FFF7ED" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">TERMINAL SNAPSHOT</text>
+</g>
+<text x="72" y="138" fill="#0F172A" font-family="'Sora', 'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif" font-size="48" font-weight="700" letter-spacing="-.8">Drop the MCP server into your client config</text>
+<text x="72" y="178" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="22" font-weight="500">Point any stdio-based MCP client at the built linkedin-mcp command</text>
+<text x="72" y="212" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="22" font-weight="500">through npm exec and keep everything local.</text>
+<g filter="url(#card-shadow)">
+<rect x="70" y="242" width="742" height="356" rx="30" fill="#111827" stroke="#0B1220" stroke-width="2"/>
+<circle cx="104" cy="276" r="8" fill="#FF7A59"/>
+<circle cx="132" cy="276" r="8" fill="#F59E0B"/>
+<circle cx="160" cy="276" r="8" fill="#14B8A6"/>
+<text x="784" y="282" fill="#E5E7EB" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="18" font-weight="600" text-anchor="end">mcp.json</text>
+<text x="104" y="338" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#E5E7EB">{</tspan></text>
+<text x="104" y="372" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#E5E7EB">  </tspan><tspan dx="0" fill="#38BDF8">&quot;mcpServers&quot;</tspan><tspan dx="0" fill="#E5E7EB">: </tspan><tspan dx="0" fill="#E5E7EB">{</tspan></text>
+<text x="104" y="406" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#E5E7EB">    </tspan><tspan dx="0" fill="#38BDF8">&quot;linkedin&quot;</tspan><tspan dx="0" fill="#E5E7EB">: </tspan><tspan dx="0" fill="#E5E7EB">{</tspan></text>
+<text x="104" y="440" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#E5E7EB">      </tspan><tspan dx="0" fill="#38BDF8">&quot;command&quot;</tspan><tspan dx="0" fill="#E5E7EB">: </tspan><tspan dx="0" fill="#34D399">&quot;npm&quot;</tspan></text>
+<text x="104" y="474" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#E5E7EB">      </tspan><tspan dx="0" fill="#38BDF8">&quot;args&quot;</tspan><tspan dx="0" fill="#E5E7EB">: </tspan><tspan dx="0" fill="#34D399">[&quot;exec&quot;, &quot;-w&quot;, &quot;@linkedin-buddy/mcp&quot;,</tspan></text>
+<text x="104" y="508" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#34D399">        &quot;--&quot;, &quot;linkedin-mcp&quot;]</tspan></text>
+<text x="104" y="542" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#E5E7EB">      }</tspan></text>
+<text x="104" y="576" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#E5E7EB">    }</tspan></text>
+<text x="104" y="610" xml:space="preserve" fill="#E5E7EB" font-family="'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace" font-size="21" font-weight="500" font-variant-ligatures="none"><tspan fill="#E5E7EB">}</tspan></text>
+</g>
+<g filter="url(#card-shadow)">
+<rect x="850" y="250" width="354" height="348" rx="28" fill="#FFFFFF" stroke="#D7E0EA" stroke-width="2"/>
+<g>
+<rect x="874" y="270" width="97" height="30" rx="15" fill="#FF7A59" stroke="none" stroke-width="1.5"/>
+<text x="922.5" y="290.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Connect</text>
+</g>
+<text x="874" y="332" fill="#0F172A" font-family="'Sora', 'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif" font-size="32" font-weight="700">Once your client restarts</text>
+<text x="874" y="370" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="20" font-weight="500">Call linkedin.session.status</text>
+<text x="874" y="404" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="20" font-weight="500">Search people or jobs</text>
+<text x="874" y="438" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="20" font-weight="500">Read inbox, feed, notifications</text>
+<text x="874" y="472" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="20" font-weight="500">Confirm staged actions safely</text>
+</g>
+<g>
+<rect x="72" y="634" width="164" height="30" rx="15" fill="#FFFFFF" stroke="none" stroke-width="1.5"/>
+<text x="154" y="654.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Claude Desktop</text>
+</g>
+<g>
+<rect x="250" y="634" width="94" height="30" rx="15" fill="#FFFFFF" stroke="none" stroke-width="1.5"/>
+<text x="297" y="654.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Cursor</text>
+</g>
+<g>
+<rect x="358" y="634" width="94" height="30" rx="15" fill="#FFFFFF" stroke="none" stroke-width="1.5"/>
+<text x="405" y="654.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Cline</text>
+</g>
+<g>
+<rect x="466" y="634" width="155" height="30" rx="15" fill="#14B8A6" stroke="none" stroke-width="1.5"/>
+<text x="543.5" y="654.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">GPT workflows</text>
+</g>
+</svg>

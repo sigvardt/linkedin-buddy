@@ -1,0 +1,138 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" fill="none" role="img" aria-labelledby="title desc">
+<title>One local runtime, three operator surfaces</title>
+<desc>CLI, MCP, and TypeScript all route through the same Playwright profile, SQLite state, and confirm-before-write engine.</desc>
+<defs>
+<filter id="card-shadow" x="-20%" y="-20%" width="140%" height="160%">
+<feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#0f172a" flood-opacity=".12"/>
+</filter>
+<pattern id="bg-grid" width="48" height="48" patternUnits="userSpaceOnUse">
+<path d="M48 0H0V48" fill="none" stroke="#E8EEF5" stroke-width="1"/>
+</pattern>
+<marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="12" markerHeight="12" orient="auto-start-reverse">
+<path d="M0 0L12 6L0 12Z" fill="#0F172A"/>
+</marker>
+</defs>
+<rect width="1280" height="720" fill="#FFF7ED"/>
+<rect width="1280" height="720" fill="url(#bg-grid)" opacity=".45"/>
+<circle cx="1080" cy="124" r="176" fill="#14B8A6" opacity=".12"/>
+<circle cx="170" cy="604" r="156" fill="#FF7A59" opacity=".1"/>
+<circle cx="936" cy="612" r="114" fill="#38BDF8" opacity=".08"/>
+<path d="M112 188C184 154 248 150 334 176" fill="none" stroke="#14B8A6" stroke-linecap="round" stroke-width="8"/>
+<circle cx="334" cy="176" r="10" fill="#14B8A6"/>
+<g>
+<rect x="72" y="56" width="164" height="32" rx="16" fill="#0F172A" stroke="none" stroke-width="1.5"/>
+<text x="154" y="77.1" fill="#FFF7ED" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">SYSTEM DIAGRAM</text>
+</g>
+<text x="72" y="138" fill="#0F172A" font-family="'Sora', 'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif" font-size="48" font-weight="700" letter-spacing="-.8">One local runtime, three operator surfaces</text>
+<text x="72" y="178" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="22" font-weight="500">CLI, MCP, and TypeScript all route through the same Playwright</text>
+<text x="72" y="212" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="22" font-weight="500">profile, SQLite state, and confirm-before-write engine.</text>
+<g filter="url(#card-shadow)">
+<rect x="70" y="236" width="228" height="136" rx="28" fill="#FFFFFF" stroke="#D7E0EA" stroke-width="2"/>
+<g>
+<rect x="94" y="256" width="94" height="30" rx="15" fill="#14B8A6" stroke="none" stroke-width="1.5"/>
+<text x="141" y="276.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Human</text>
+</g>
+<text x="94" y="318" fill="#0F172A" font-family="'Sora', 'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif" font-size="30" font-weight="700">Operator</text>
+<text x="94" y="356" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="18" font-weight="500">Runs the CLI</text>
+<text x="94" y="384" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="18" font-weight="500">Reviews previews</text>
+<text x="94" y="412" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="18" font-weight="500">Confirms the final action</text>
+</g>
+<g filter="url(#card-shadow)">
+<rect x="70" y="398" width="228" height="162" rx="28" fill="#FFFFFF" stroke="#D7E0EA" stroke-width="2"/>
+<g>
+<rect x="94" y="418" width="94" height="30" rx="15" fill="#FF7A59" stroke="none" stroke-width="1.5"/>
+<text x="141" y="438.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">AI</text>
+</g>
+<text x="94" y="480" fill="#0F172A" font-family="'Sora', 'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif" font-size="30" font-weight="700">MCP clients</text>
+<text x="94" y="518" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="18" font-weight="500">Claude Desktop</text>
+<text x="94" y="546" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="18" font-weight="500">Cursor / Cline</text>
+<text x="94" y="574" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="18" font-weight="500">GPT workflows</text>
+</g>
+<g filter="url(#card-shadow)">
+<rect x="336" y="258" width="224" height="114" rx="28" fill="#111827" stroke="#0B1220" stroke-width="2"/>
+<g>
+<rect x="360" y="278" width="97" height="30" rx="15" fill="#0F172A" stroke="none" stroke-width="1.5"/>
+<text x="408.5" y="298.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Surface</text>
+</g>
+<text x="360" y="340" fill="#FFFFFF" font-family="'Sora', 'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif" font-size="28" font-weight="700">linkedin</text>
+<text x="360" y="378" fill="#E5E7EB" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="18" font-weight="500">Search, inbox, feed, jobs</text>
+</g>
+<g filter="url(#card-shadow)">
+<rect x="336" y="408" width="224" height="114" rx="28" fill="#111827" stroke="#0B1220" stroke-width="2"/>
+<g>
+<rect x="360" y="428" width="97" height="30" rx="15" fill="#14B8A6" stroke="none" stroke-width="1.5"/>
+<text x="408.5" y="448.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Surface</text>
+</g>
+<text x="360" y="490" fill="#FFFFFF" font-family="'Sora', 'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif" font-size="28" font-weight="700">linkedin-mcp</text>
+<text x="360" y="528" fill="#E5E7EB" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="18" font-weight="500">Structured tools over stdio</text>
+</g>
+<g filter="url(#card-shadow)">
+<rect x="604" y="242" width="292" height="286" rx="28" fill="#FFFFFF" stroke="#D7E0EA" stroke-width="2"/>
+<g>
+<rect x="628" y="262" width="94" height="30" rx="15" fill="#FF7A59" stroke="none" stroke-width="1.5"/>
+<text x="675" y="282.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Core</text>
+</g>
+<text x="628" y="324" fill="#0F172A" font-family="'Sora', 'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif" font-size="32" font-weight="700">@linkedin-buddy/core</text>
+<text x="628" y="362" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="18" font-weight="500">Shared auth/session service</text>
+<text x="628" y="390" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="18" font-weight="500">Search, inbox, feed, jobs, profile</text>
+<text x="628" y="418" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="18" font-weight="500">Rate limiter, artifacts, analytics</text>
+<text x="628" y="446" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="18" font-weight="500">Activity poller and webhook delivery</text>
+</g>
+<g filter="url(#card-shadow)">
+<rect x="940" y="214" width="262" height="100" rx="28" fill="#FFFFFF" stroke="#D7E0EA" stroke-width="2"/>
+<g>
+<rect x="964" y="234" width="97" height="30" rx="15" fill="#14B8A6" stroke="none" stroke-width="1.5"/>
+<text x="1012.5" y="254.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Browser</text>
+</g>
+<text x="964" y="296" fill="#0F172A" font-family="'Sora', 'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif" font-size="28" font-weight="700">Persistent profile</text>
+<text x="964" y="334" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="18" font-weight="500">Playwright context reuse</text>
+</g>
+<g filter="url(#card-shadow)">
+<rect x="940" y="336" width="262" height="100" rx="28" fill="#FFFFFF" stroke="#D7E0EA" stroke-width="2"/>
+<g>
+<rect x="964" y="356" width="94" height="30" rx="15" fill="#38BDF8" stroke="none" stroke-width="1.5"/>
+<text x="1011" y="376.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">State</text>
+</g>
+<text x="964" y="418" fill="#0F172A" font-family="'Sora', 'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif" font-size="28" font-weight="700">SQLite + actions</text>
+<text x="964" y="456" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="18" font-weight="500">Prepared writes, watches, logs</text>
+</g>
+<g filter="url(#card-shadow)">
+<rect x="940" y="458" width="262" height="100" rx="28" fill="#FFFFFF" stroke="#D7E0EA" stroke-width="2"/>
+<g>
+<rect x="964" y="478" width="94" height="30" rx="15" fill="#FF7A59" stroke="none" stroke-width="1.5"/>
+<text x="1011" y="498.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Safety</text>
+</g>
+<text x="964" y="540" fill="#0F172A" font-family="'Sora', 'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif" font-size="28" font-weight="700">Confirm engine</text>
+<text x="964" y="578" fill="#334155" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="18" font-weight="500">Prepare → preview → confirm</text>
+</g>
+<g filter="url(#card-shadow)">
+<rect x="940" y="580" width="262" height="92" rx="28" fill="#111827" stroke="#0B1220" stroke-width="2"/>
+<g>
+<rect x="964" y="600" width="94" height="30" rx="15" fill="#0F172A" stroke="none" stroke-width="1.5"/>
+<text x="1011" y="620.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Target</text>
+</g>
+<text x="964" y="662" fill="#FFFFFF" font-family="'Sora', 'Avenir Next', 'Trebuchet MS', 'Segoe UI', sans-serif" font-size="28" font-weight="700">LinkedIn web app</text>
+<text x="964" y="700" fill="#E5E7EB" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="18" font-weight="500">Reads and writes after confirm</text>
+</g>
+<path d="M298 304H336" fill="none" stroke="#0F172A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M298 478H336" fill="none" stroke="#0F172A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M560 314H604" fill="none" stroke="#0F172A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M560 464H604" fill="none" stroke="#0F172A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M896 264H940" fill="none" stroke="#0F172A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M896 386H940" fill="none" stroke="#0F172A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M896 508H940" fill="none" stroke="#0F172A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M1071 558V580" fill="none" stroke="#0F172A" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+<path d="M1071 314V580" fill="none" stroke="#0F172A" stroke-width="3" stroke-linecap="round" stroke-dasharray="10 10" opacity=".55" marker-end="url(#arrow)"/>
+<g>
+<rect x="72" y="634" width="212" height="30" rx="15" fill="#FFFFFF" stroke="none" stroke-width="1.5"/>
+<text x="178" y="654.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Local-first runtime</text>
+</g>
+<g>
+<rect x="298" y="634" width="212" height="30" rx="15" fill="#14B8A6" stroke="none" stroke-width="1.5"/>
+<text x="404" y="654.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Shared safety rails</text>
+</g>
+<g>
+<rect x="524" y="634" width="241" height="30" rx="15" fill="#FFFFFF" stroke="none" stroke-width="1.5"/>
+<text x="644.5" y="654.1" fill="#0F172A" font-family="'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', sans-serif" font-size="15" font-weight="700" text-anchor="middle">Artifacts stay on disk</text>
+</g>
+</svg>
