@@ -262,7 +262,11 @@ describe("linkedin keepalive CLI UX", () => {
     const output = String(consoleLogSpy.mock.calls.at(-1)?.[0] ?? "");
 
     expect(output).toContain("Keepalive Start: STARTED");
-    expect(stderrChunks).toEqual([]);
+    expect(
+      stderrChunks.filter(
+        (chunk) => !chunk.includes("linkedin-buddy feedback")
+      )
+    ).toEqual([]);
   });
 
   it("formats keepalive input errors with actionable guidance in human mode", async () => {

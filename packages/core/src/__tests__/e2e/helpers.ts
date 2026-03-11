@@ -116,7 +116,8 @@ import {
   LINKEDIN_SEARCH_TOOL,
   LINKEDIN_SESSION_HEALTH_TOOL,
   LINKEDIN_SESSION_OPEN_LOGIN_TOOL,
-  LINKEDIN_SESSION_STATUS_TOOL
+  LINKEDIN_SESSION_STATUS_TOOL,
+  SUBMIT_FEEDBACK_TOOL
 } from "../../../../mcp/src/index.js";
 import { getCdpUrl, withAssistantHome, withE2EEnvironment } from "./setup.js";
 
@@ -1011,6 +1012,7 @@ export const MCP_TOOL_NAMES = {
   groupsPreparePost: LINKEDIN_GROUPS_PREPARE_POST_TOOL,
   groupsSearch: LINKEDIN_GROUPS_SEARCH_TOOL,
   groupsView: LINKEDIN_GROUPS_VIEW_TOOL,
+  submitFeedback: SUBMIT_FEEDBACK_TOOL,
   sessionStatus: LINKEDIN_SESSION_STATUS_TOOL,
   sessionOpenLogin: LINKEDIN_SESSION_OPEN_LOGIN_TOOL,
   sessionHealth: LINKEDIN_SESSION_HEALTH_TOOL,

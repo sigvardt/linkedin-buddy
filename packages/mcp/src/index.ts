@@ -1,3 +1,4 @@
+export const SUBMIT_FEEDBACK_TOOL = "submit_feedback";
 export const LINKEDIN_SESSION_STATUS_TOOL = "linkedin.session.status";
 export const LINKEDIN_SESSION_OPEN_LOGIN_TOOL = "linkedin.session.open_login";
 export const LINKEDIN_SESSION_HEALTH_TOOL = "linkedin.session.health";
