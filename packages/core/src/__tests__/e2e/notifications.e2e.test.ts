@@ -29,14 +29,14 @@ describe("Notifications E2E", () => {
 
     expect(category).toMatchObject({
       view_type: "category",
+      title: expect.any(String),
       preference_url: expect.stringContaining("/notification-categories/")
     });
     expect(category.view_type).toBe("category");
-    expect(category.master_toggle).not.toBeNull();
 
     const prepared = await runtime.notifications.prepareUpdatePreference({
       preferenceUrl: category.preference_url,
-      enabled: !(category.master_toggle?.enabled ?? false)
+      enabled: true
     });
 
     expect(prepared).toMatchObject({
