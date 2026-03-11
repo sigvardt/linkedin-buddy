@@ -44,6 +44,8 @@ and troubleshooting guide.
 
 The MCP server now exposes:
 
+- `linkedin.profile.prepare_update_settings`
+- `linkedin.profile.prepare_update_public_profile`
 - `linkedin.members.prepare_block`
 - `linkedin.members.prepare_unblock`
 - `linkedin.members.prepare_report`

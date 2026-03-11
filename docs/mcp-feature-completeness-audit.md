@@ -19,7 +19,7 @@ land in focused slices.
 | Domain | MCP tools | Coverage summary |
 | --- | --- | --- |
 | Session | `linkedin.session.status`, `linkedin.session.open_login`, `linkedin.session.health` | Session/auth health only |
-| Profile | `linkedin.profile.view`, `linkedin.profile.view_editable`, `linkedin.profile.prepare_update_intro`, `linkedin.profile.prepare_upsert_section_item`, `linkedin.profile.prepare_remove_section_item`, `linkedin.profile.prepare_upload_photo`, `linkedin.profile.prepare_upload_banner`, `linkedin.profile.prepare_featured_add`, `linkedin.profile.prepare_featured_remove`, `linkedin.profile.prepare_featured_reorder`, `linkedin.actions.confirm` | Read/write profile inspection plus intro, structured section editing, profile media uploads, and featured-section management |
+| Profile | `linkedin.profile.view`, `linkedin.profile.view_editable`, `linkedin.profile.prepare_update_intro`, `linkedin.profile.prepare_update_settings`, `linkedin.profile.prepare_update_public_profile`, `linkedin.profile.prepare_upsert_section_item`, `linkedin.profile.prepare_remove_section_item`, `linkedin.profile.prepare_upload_photo`, `linkedin.profile.prepare_upload_banner`, `linkedin.profile.prepare_featured_add`, `linkedin.profile.prepare_featured_remove`, `linkedin.profile.prepare_featured_reorder`, `linkedin.profile.prepare_add_skill`, `linkedin.profile.prepare_reorder_skills`, `linkedin.profile.prepare_endorse_skill`, `linkedin.profile.prepare_request_recommendation`, `linkedin.profile.prepare_write_recommendation`, `linkedin.actions.confirm` | Read/write profile inspection plus intro/settings/public-profile updates, structured section editing, profile media uploads, featured management, and profile skill/recommendation actions |
 | Search | `linkedin.search` | Read-only search for `people`, `companies`, and `jobs` only |
 | Inbox | `linkedin.inbox.list_threads`, `linkedin.inbox.get_thread`, `linkedin.inbox.prepare_reply`, `linkedin.actions.confirm` | Read existing threads and send replies through two-phase confirm |
 | Connections | `linkedin.connections.list`, `linkedin.connections.pending`, `linkedin.connections.invite`, `linkedin.connections.accept`, `linkedin.connections.withdraw`, `linkedin.connections.prepare_ignore`, `linkedin.connections.prepare_remove`, `linkedin.connections.prepare_follow`, `linkedin.connections.prepare_unfollow`, `linkedin.network.prepare_followup_after_accept`, `linkedin.actions.confirm` | Basic network reads plus invite/accept/withdraw/ignore/remove/follow/unfollow and follow-up preparation |
@@ -38,11 +38,11 @@ land in focused slices.
   to `linkedin.connections.invite`, `linkedin.connections.accept`,
   `linkedin.connections.withdraw`, `linkedin.feed.like`, and
   `linkedin.feed.comment`.
-- Profile editing now covers intro updates plus editable about / experience /
-  education / certifications / languages / projects / volunteer / honors
-  section CRUD, profile photo/banner uploads, and featured add/remove/reorder
-  through two-phase prepare/confirm. There is still no MCP support for skills,
-  endorsements, or recommendations.
+- Profile editing now covers intro updates, industry/public profile URL
+  settings, editable about / experience / education / certifications /
+  languages / projects / volunteer / honors section CRUD, profile photo/banner
+  uploads, featured add/remove/reorder, skill add/reorder/endorse, and
+  recommendation request/write flows through two-phase prepare/confirm.
 - Privacy coverage now focuses on `profile_viewing_mode`,
   `connections_visibility`, and `last_name_visibility`. Broader account,
   discoverability, and visibility settings remain outside the MCP surface.
@@ -64,7 +64,6 @@ land in focused slices.
 
 | Issue | Priority | Missing feature cluster | Suggested MCP surface |
 | --- | --- | --- | --- |
-| #228 | Medium | Skills, endorsements, and recommendations | `linkedin.profile.prepare_add_skill`, `linkedin.profile.prepare_endorse_skill`, `linkedin.profile.prepare_request_recommendation` |
 | #229 | High | Starting new LinkedIn message threads | `linkedin.inbox.search_recipients`, `linkedin.inbox.prepare_new_thread` |
 | #230 | Medium | Inbox reactions and thread triage actions | `linkedin.inbox.prepare_react`, `linkedin.inbox.archive_thread`, `linkedin.inbox.mark_unread`, `linkedin.inbox.mute_thread` |
 | #233 | High | Repost/share/save feed interactions | `linkedin.feed.prepare_repost`, `linkedin.feed.prepare_share`, `linkedin.feed.save_post`, `linkedin.feed.prepare_remove_reaction` |

@@ -13,6 +13,15 @@ const baseEditableProfile = {
     location: "Copenhagen, Denmark",
     supported_fields: ["firstName", "lastName", "headline", "location"]
   },
+  settings: {
+    industry: "Technology, Information and Internet",
+    supported_fields: ["industry"]
+  },
+  public_profile: {
+    vanity_name: "avery-cole-example",
+    public_profile_url: "https://www.linkedin.com/in/avery-cole-example/",
+    supported_fields: ["vanityName", "publicProfileUrl"]
+  },
   sections: [
     {
       section: "about",
@@ -55,7 +64,8 @@ describe("profile seed planner", () => {
       intro: {
         firstName: "Avery",
         headline: "Automation Engineer at Example Labs",
-        industry: "Software Development"
+        industry: "Software Development",
+        customProfileUrl: "avery-automation"
       },
       about: "Building production LLM systems.",
       certifications: [
@@ -71,16 +81,13 @@ describe("profile seed planner", () => {
 
     expect(spec.intro).toMatchObject({
       firstName: "Avery",
-      headline: "Automation Engineer at Example Labs"
+      headline: "Automation Engineer at Example Labs",
+      industry: "Software Development",
+      customProfileUrl: "avery-automation"
     });
     expect(spec.about).toBe("Building production LLM systems.");
     expect(spec.sections.certifications).toHaveLength(1);
     expect(spec.unsupportedFields).toEqual([
-      {
-        path: "intro.industry",
-        reason: "Industry is not exposed by the current LinkedIn profile edit automation.",
-        issueNumber: 252
-      },
       {
         path: "skills",
         reason: "Skills are not exposed by the current LinkedIn profile edit automation.",
@@ -89,11 +96,25 @@ describe("profile seed planner", () => {
     ]);
   });
 
+  it("normalizes top-level settings and public profile aliases into intro fields", () => {
+    const spec = parseProfileSeedSpec({
+      industry: "Software Development",
+      publicProfileUrl: "https://www.linkedin.com/in/avery-automation/"
+    });
+
+    expect(spec.intro).toMatchObject({
+      industry: "Software Development",
+      customProfileUrl: "https://www.linkedin.com/in/avery-automation/"
+    });
+  });
+
   it("builds intro, about, upsert, and replace actions", () => {
     const spec = parseProfileSeedSpec({
       intro: {
         headline: "Automation Engineer at Example Labs",
-        location: "Copenhagen, Capital Region of Denmark, Denmark"
+        location: "Copenhagen, Capital Region of Denmark, Denmark",
+        industry: "Software Development",
+        customProfileUrl: "avery-automation"
       },
       about: "Building production LLM systems.",
       certifications: [],
@@ -113,6 +134,8 @@ describe("profile seed planner", () => {
 
     expect(plan.actions.map((action) => action.kind)).toEqual([
       "update_intro",
+      "update_settings",
+      "update_public_profile",
       "upsert_section_item",
       "remove_section_item",
       "upsert_section_item"
@@ -126,6 +149,20 @@ describe("profile seed planner", () => {
       }
     });
     expect(plan.actions[1]).toMatchObject({
+      kind: "update_settings",
+      input: {
+        profileName: "smoke",
+        industry: "Software Development"
+      }
+    });
+    expect(plan.actions[2]).toMatchObject({
+      kind: "update_public_profile",
+      input: {
+        profileName: "smoke",
+        vanityName: "avery-automation"
+      }
+    });
+    expect(plan.actions[3]).toMatchObject({
       kind: "upsert_section_item",
       input: {
         profileName: "smoke",

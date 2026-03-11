@@ -26,11 +26,17 @@ describe("Profile E2E", () => {
     expect(Array.isArray(profile.education)).toBe(true);
   });
 
-  it("view editable profile returns a featured collection shape", async (context) => {
+  it("view editable profile returns profile settings and featured collection shapes", async (context) => {
     skipIfE2EUnavailable(e2e, context);
     const runtime = e2e.runtime();
     const profile = await runtime.profile.viewEditableProfile();
 
+    expect(profile.settings).toMatchObject({
+      supported_fields: ["industry"]
+    });
+    expect(profile.public_profile).toMatchObject({
+      supported_fields: ["vanityName", "publicProfileUrl"]
+    });
     expect(profile.featured).toMatchObject({
       can_add: expect.any(Boolean),
       can_remove: expect.any(Boolean),

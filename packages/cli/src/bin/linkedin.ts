@@ -5865,6 +5865,72 @@ async function runProfileViewEditable(input: {
   }
 }
 
+async function runProfilePrepareUpdateSettings(input: {
+  profileName: string;
+  industry: string;
+  operatorNote?: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.profile.prepare_update_settings.start", {
+      profileName: input.profileName
+    });
+
+    const prepared = runtime.profile.prepareUpdateSettings({
+      profileName: input.profileName,
+      industry: input.industry,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "cli.profile.prepare_update_settings.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runProfilePrepareUpdatePublicProfile(input: {
+  profileName: string;
+  vanityName: string;
+  operatorNote?: string;
+}, cdpUrl?: string): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.profile.prepare_update_public_profile.start", {
+      profileName: input.profileName
+    });
+
+    const prepared = runtime.profile.prepareUpdatePublicProfile({
+      profileName: input.profileName,
+      vanityName: input.vanityName,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+
+    runtime.logger.log("info", "cli.profile.prepare_update_public_profile.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 function summarizeProfileSeedUnsupportedFields(
   unsupportedFields: readonly ProfileSeedUnsupportedField[]
 ): string {
@@ -5909,6 +5975,10 @@ function prepareProfileSeedAction(
   switch (action.kind) {
     case "update_intro":
       return runtime.profile.prepareUpdateIntro(action.input);
+    case "update_settings":
+      return runtime.profile.prepareUpdateSettings(action.input);
+    case "update_public_profile":
+      return runtime.profile.prepareUpdatePublicProfile(action.input);
     case "upsert_section_item":
       return runtime.profile.prepareUpsertSectionItem(action.input);
     case "remove_section_item":
@@ -9218,6 +9288,47 @@ export function createCliProgram(): Command {
     });
 
   profileCommand
+    .command("update-settings")
+    .description("Prepare to update LinkedIn profile-level settings (two-phase)")
+    .requiredOption("--industry <industry>", "Primary professional category / industry")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("--operator-note <note>", "Optional note attached to the prepared action")
+    .action(
+      async (
+        options: {
+          industry: string;
+          operatorNote?: string;
+          profile: string;
+        }
+      ) => {
+        await runProfilePrepareUpdateSettings({
+          profileName: options.profile,
+          industry: options.industry,
+          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
+        }, readCdpUrl());
+      }
+    );
+
+  profileCommand
+    .command("update-public-profile")
+    .description("Prepare to update the LinkedIn custom public profile URL (two-phase)")
+    .argument("<vanityName>", "Custom public profile vanity name or linkedin.com/in/ URL")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("--operator-note <note>", "Optional note attached to the prepared action")
+    .action(
+      async (
+        vanityName: string,
+        options: { operatorNote?: string; profile: string }
+      ) => {
+        await runProfilePrepareUpdatePublicProfile({
+          profileName: options.profile,
+          vanityName,
+          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
+        }, readCdpUrl());
+      }
+    );
+
+  profileCommand
     .command("apply-spec")
     .description("Apply a JSON profile seed spec with paced LinkedIn profile edits")
     .requiredOption("--spec <path>", "Path to a JSON profile seed spec")
@@ -9229,7 +9340,7 @@ export function createCliProgram(): Command {
     )
     .option(
       "--allow-partial",
-      "Continue when the spec includes unsupported fields such as skills or custom public URL",
+      "Continue when the spec includes unsupported fields such as skills",
       false
     )
     .option(
@@ -9246,7 +9357,7 @@ export function createCliProgram(): Command {
         "Notes:",
         "  - uses the existing two-phase profile edit actions under the hood and confirms them one by one",
         "  - paces edits with a randomized delay so large profile updates do not fire back-to-back",
-        "  - unsupported fields currently include skills (#228) plus industry/custom public URL (#252)",
+        "  - unsupported fields currently include skills (#228)",
         "  - run \"linkedin profile editable\" first if you want to inspect the current section structure"
       ].join("\n")
     )
