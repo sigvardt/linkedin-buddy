@@ -662,6 +662,8 @@ Exposed tools:
 - `linkedin.profile.view`
 - `linkedin.profile.view_editable`
 - `linkedin.profile.prepare_update_intro`
+- `linkedin.profile.prepare_update_settings`
+- `linkedin.profile.prepare_update_public_profile`
 - `linkedin.profile.prepare_upsert_section_item`
 - `linkedin.profile.prepare_remove_section_item`
 - `linkedin.profile.prepare_upload_photo`

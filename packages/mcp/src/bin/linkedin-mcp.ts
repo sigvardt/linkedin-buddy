@@ -1216,15 +1216,19 @@ async function handleProfilePrepareUpdatePublicProfile(
     const operatorNote = readString(args, "operatorNote", "");
     const vanityName =
       typeof args.vanityName === "string" ? readString(args, "vanityName", "") : "";
+    const customProfileUrl =
+      typeof args.customProfileUrl === "string"
+        ? readString(args, "customProfileUrl", "")
+        : "";
     const publicProfileUrl =
       typeof args.publicProfileUrl === "string"
         ? readString(args, "publicProfileUrl", "")
         : "";
 
-    if (!vanityName && !publicProfileUrl) {
+    if (!vanityName && !customProfileUrl && !publicProfileUrl) {
       throw new LinkedInAssistantError(
         "ACTION_PRECONDITION_FAILED",
-        "vanityName or publicProfileUrl is required."
+        "vanityName, customProfileUrl, or publicProfileUrl is required."
       );
     }
 
@@ -1239,6 +1243,7 @@ async function handleProfilePrepareUpdatePublicProfile(
     const prepared = runtime.profile.prepareUpdatePublicProfile({
       profileName,
       ...(vanityName ? { vanityName } : {}),
+      ...(customProfileUrl ? { customProfileUrl } : {}),
       ...(publicProfileUrl ? { publicProfileUrl } : {}),
       ...(operatorNote ? { operatorNote } : {})
     });
@@ -3942,7 +3947,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: LINKEDIN_PROFILE_PREPARE_UPDATE_PUBLIC_PROFILE_TOOL,
         description:
-          "Prepare a LinkedIn custom public profile URL update (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+          "Prepare a LinkedIn public profile URL / vanity URL update (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -3954,6 +3959,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             vanityName: {
               type: "string",
               description: "Requested public profile vanity name (slug only)."
+            },
+            customProfileUrl: {
+              type: "string",
+              description:
+                "Requested public profile vanity name or full LinkedIn profile URL. Alias for vanityName."
             },
             publicProfileUrl: {
               type: "string",

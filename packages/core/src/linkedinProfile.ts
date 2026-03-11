@@ -167,9 +167,22 @@ export interface LinkedInProfileEditableFeaturedSection {
   items: LinkedInProfileEditableFeaturedItem[];
 }
 
+export interface LinkedInProfileEditableSettings {
+  industry: string;
+  supported_fields: ["industry"];
+}
+
+export interface LinkedInProfileEditablePublicProfile {
+  vanity_name: string | null;
+  public_profile_url: string | null;
+  supported_fields: ("vanityName" | "publicProfileUrl")[];
+}
+
 export interface LinkedInEditableProfile {
   profile_url: string;
   intro: LinkedInProfileEditableIntro;
+  settings: LinkedInProfileEditableSettings;
+  public_profile: LinkedInProfileEditablePublicProfile;
   sections: LinkedInProfileEditableSection[];
   featured: LinkedInProfileEditableFeaturedSection;
 }
@@ -212,9 +225,13 @@ export interface PrepareUpdateProfileSettingsInput {
 export interface PrepareUpdateProfilePublicProfileInput {
   profileName?: string;
   vanityName?: string;
+  customProfileUrl?: string;
   publicProfileUrl?: string;
   operatorNote?: string;
 }
+
+export type PrepareUpdateSettingsInput = PrepareUpdateProfileSettingsInput;
+export type PrepareUpdatePublicProfileInput = PrepareUpdateProfilePublicProfileInput;
 
 export interface PrepareUpsertSectionItemInput {
   profileName?: string;
@@ -1046,6 +1063,80 @@ const RECOMMENDATION_WRITE_FIELD_DEFINITIONS = [
 const LINKEDIN_PUBLIC_PROFILE_SETTINGS_URL =
   "https://www.linkedin.com/public-profile/settings/?trk=d_flagship3_profile_self_view_public_profile";
 
+function buildFallbackEditablePublicProfile(
+  profile: LinkedInProfile
+): LinkedInProfileEditablePublicProfile {
+  const vanityName = normalizeText(profile.vanity_name);
+  return {
+    vanity_name: vanityName || null,
+    public_profile_url:
+      vanityName.length > 0
+        ? buildLinkedInPublicProfileUrl(vanityName)
+        : profile.profile_url
+          ? normalizeLinkedInProfileUrl(profile.profile_url)
+          : null,
+    supported_fields: ["vanityName", "publicProfileUrl"]
+  };
+}
+
+async function extractEditableSettings(
+  page: Page,
+  selectorLocale: LinkedInSelectorLocale
+): Promise<LinkedInProfileEditableSettings> {
+  let dialog: Locator | null = null;
+
+  try {
+    dialog = await openIntroEditDialog(page, selectorLocale);
+    const industryField = await findDialogFieldLocator(
+      dialog,
+      PROFILE_SETTINGS_FIELD_DEFINITIONS[0]
+    );
+
+    return {
+      industry: industryField
+        ? normalizeText(
+            await industryField.evaluate((element) => {
+              if (
+                element instanceof globalThis.HTMLInputElement ||
+                element instanceof globalThis.HTMLTextAreaElement ||
+                element instanceof globalThis.HTMLSelectElement
+              ) {
+                return element.value;
+              }
+
+              return element.getAttribute("value") ?? element.textContent ?? "";
+            })
+          )
+        : "",
+      supported_fields: ["industry"]
+    };
+  } catch {
+    return {
+      industry: "",
+      supported_fields: ["industry"]
+    };
+  } finally {
+    if (dialog) {
+      const closeCandidates: LocatorCandidate[] = [
+        ...createActionCandidates(dialog, getUiActionLabels("close", selectorLocale), "dialog-close"),
+        {
+          key: "dialog-close-button",
+          locator: dialog.locator("button[aria-label*='close' i], button[aria-label*='dismiss' i]")
+        }
+      ];
+      const resolvedClose = await findFirstVisibleLocator(closeCandidates);
+
+      if (resolvedClose) {
+        await resolvedClose.locator.first().click().catch(() => undefined);
+      } else {
+        await page.keyboard.press("Escape").catch(() => undefined);
+      }
+
+      await dialog.waitFor({ state: "hidden", timeout: 5_000 }).catch(() => undefined);
+    }
+  }
+}
+
 function normalizeText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
 }
@@ -1345,6 +1436,40 @@ function normalizeLinkedInVanityName(value: string | undefined): string {
 
 function buildLinkedInPublicProfileUrl(vanityName: string): string {
   return `https://www.linkedin.com/in/${encodeURIComponent(vanityName)}/`;
+}
+
+function normalizePreparedPublicProfileInput(
+  input: Pick<
+    PrepareUpdateProfilePublicProfileInput,
+    "vanityName" | "customProfileUrl" | "publicProfileUrl"
+  >
+): {
+  vanityName: string;
+  publicProfileUrl: string;
+} {
+  const rawValues = [input.vanityName, input.customProfileUrl, input.publicProfileUrl]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .map((value) => normalizeLinkedInVanityName(value));
+
+  const [vanityName] = rawValues;
+  if (!vanityName) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      "Public profile update requires vanityName, customProfileUrl, or publicProfileUrl."
+    );
+  }
+
+  if (rawValues.some((value) => value.toLowerCase() !== vanityName.toLowerCase())) {
+    throw new LinkedInAssistantError(
+      "ACTION_PRECONDITION_FAILED",
+      "vanityName, customProfileUrl, and publicProfileUrl must all point to the same LinkedIn public profile URL."
+    );
+  }
+
+  return {
+    vanityName,
+    publicProfileUrl: buildLinkedInPublicProfileUrl(vanityName)
+  };
 }
 
 async function stagePreparedUploadArtifact(
@@ -3583,6 +3708,38 @@ async function savePublicProfileVanityName(
         current_vanity_name: currentValue
       }
     );
+  }
+}
+
+async function extractEditablePublicProfile(
+  page: Page,
+  profile: LinkedInProfile
+): Promise<LinkedInProfileEditablePublicProfile> {
+  const fallbackProfile = buildFallbackEditablePublicProfile(profile);
+
+  try {
+    await navigateToPublicProfileSettings(page);
+    const input = await getPublicProfileVanityInput(page);
+    const inputValue = normalizeText(await input.inputValue().catch(() => ""));
+    const editableInputValue = inputValue
+      ? inputValue
+      : normalizeText(
+          await openPublicProfileVanityEditor(page)
+            .then(async (editableInput) => editableInput.inputValue())
+            .catch(() => "")
+        );
+    if (!editableInputValue) {
+      return fallbackProfile;
+    }
+
+    const vanityName = normalizeLinkedInVanityName(editableInputValue);
+    return {
+      vanity_name: vanityName,
+      public_profile_url: buildLinkedInPublicProfileUrl(vanityName),
+      supported_fields: ["vanityName", "publicProfileUrl"]
+    };
+  } catch {
+    return fallbackProfile;
   }
 }
 
@@ -5909,16 +6066,14 @@ async function executeUpdateProfilePublicProfile(
   payload: Record<string, unknown>
 ): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
   const profileName = String(target.profile_name ?? "default");
-  const vanityName = normalizeLinkedInVanityName(
-    typeof payload.vanity_name === "string"
-      ? payload.vanity_name
-      : typeof target.vanity_name === "string"
-        ? target.vanity_name
-        : typeof payload.public_profile_url === "string"
-          ? payload.public_profile_url
-          : undefined
-  );
-  const publicProfileUrl = buildLinkedInPublicProfileUrl(vanityName);
+  const publicProfile = normalizePreparedPublicProfileInput({
+    ...(typeof payload.vanity_name === "string"
+      ? { vanityName: payload.vanity_name }
+      : {}),
+    ...(typeof payload.public_profile_url === "string"
+      ? { publicProfileUrl: payload.public_profile_url }
+      : {})
+  });
 
   return runtime.profileManager.runWithContext(
     {
@@ -5938,13 +6093,13 @@ async function executeUpdateProfilePublicProfile(
         targetUrl: LINKEDIN_PUBLIC_PROFILE_SETTINGS_URL,
         metadata: {
           profile_name: profileName,
-          vanity_name: vanityName,
-          public_profile_url: publicProfileUrl
+          vanity_name: publicProfile.vanityName,
+          public_profile_url: publicProfile.publicProfileUrl
         },
         errorDetails: {
           profile_name: profileName,
-          vanity_name: vanityName,
-          public_profile_url: publicProfileUrl
+          vanity_name: publicProfile.vanityName,
+          public_profile_url: publicProfile.publicProfileUrl
         },
         mapError: (error) =>
           asLinkedInAssistantError(
@@ -5955,15 +6110,32 @@ async function executeUpdateProfilePublicProfile(
         execute: async () => {
           await navigateToPublicProfileSettings(page);
           const input = await openPublicProfileVanityEditor(page);
-          await input.fill(vanityName);
-          await savePublicProfileVanityName(page, vanityName);
+          const currentVanityName = normalizeText(await input.inputValue().catch(() => ""));
+          if (
+            currentVanityName &&
+            normalizeLinkedInVanityName(currentVanityName).toLowerCase() ===
+              publicProfile.vanityName.toLowerCase()
+          ) {
+            return {
+              ok: true,
+              result: {
+                status: "profile_public_profile_updated",
+                vanity_name: publicProfile.vanityName,
+                public_profile_url: publicProfile.publicProfileUrl
+              },
+              artifacts: []
+            };
+          }
+
+          await input.fill(publicProfile.vanityName);
+          await savePublicProfileVanityName(page, publicProfile.vanityName);
 
           return {
             ok: true,
             result: {
               status: "profile_public_profile_updated",
-              vanity_name: vanityName,
-              public_profile_url: publicProfileUrl
+              vanity_name: publicProfile.vanityName,
+              public_profile_url: publicProfile.publicProfileUrl
             },
             artifacts: []
           };
@@ -6506,6 +6678,7 @@ export class LinkedInProfileService {
           await navigateToOwnProfile(page);
 
           const profile = await extractProfileData(page, this.runtime.selectorLocale);
+          const settings = await extractEditableSettings(page, this.runtime.selectorLocale);
           const sections = await extractEditableSections(
             page,
             this.runtime.selectorLocale,
@@ -6515,6 +6688,7 @@ export class LinkedInProfileService {
             page,
             this.runtime.selectorLocale
           );
+          const publicProfile = await extractEditablePublicProfile(page, profile);
 
           return {
             profile_url: profile.profile_url,
@@ -6524,6 +6698,8 @@ export class LinkedInProfileService {
               location: profile.location,
               supported_fields: ["firstName", "lastName", "headline", "location"]
             },
+            settings,
+            public_profile: publicProfile,
             sections,
             featured
           };
@@ -6612,28 +6788,24 @@ export class LinkedInProfileService {
     input: PrepareUpdateProfilePublicProfileInput
   ): PreparedActionResult {
     const profileName = input.profileName ?? "default";
-    const vanityName = normalizeLinkedInVanityName(
-      input.vanityName ?? input.publicProfileUrl
-    );
-    const publicProfileUrl = buildLinkedInPublicProfileUrl(vanityName);
+    const publicProfile = normalizePreparedPublicProfileInput(input);
 
     const target = {
-      profile_name: profileName,
-      vanity_name: vanityName
+      profile_name: profileName
     };
     const preview = {
-      summary: `Update LinkedIn custom public profile URL to ${vanityName}`,
+      summary: "Update LinkedIn public profile URL",
       target,
-      vanity_name: vanityName,
-      public_profile_url: publicProfileUrl
+      vanity_name: publicProfile.vanityName,
+      public_profile_url: publicProfile.publicProfileUrl
     };
 
     return this.runtime.twoPhaseCommit.prepare({
       actionType: UPDATE_PROFILE_PUBLIC_PROFILE_ACTION_TYPE,
       target,
       payload: {
-        vanity_name: vanityName,
-        public_profile_url: publicProfileUrl
+        vanity_name: publicProfile.vanityName,
+        public_profile_url: publicProfile.publicProfileUrl
       },
       preview,
       ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})

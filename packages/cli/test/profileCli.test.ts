@@ -68,6 +68,15 @@ describe("CLI profile commands", () => {
         location: "Copenhagen, Denmark",
         supported_fields: ["firstName", "lastName", "headline", "location"]
       },
+      settings: {
+        industry: "Technology, Information and Internet",
+        supported_fields: ["industry"]
+      },
+      public_profile: {
+        vanity_name: "avery-cole-example",
+        public_profile_url: "https://www.linkedin.com/in/avery-cole-example/",
+        supported_fields: ["vanityName", "publicProfileUrl"]
+      },
       sections: []
     });
     profileCliMocks.viewProfile.mockResolvedValue({
@@ -113,6 +122,13 @@ describe("CLI profile commands", () => {
     });
     profileCliMocks.confirmByToken
       .mockResolvedValueOnce({
+        preparedActionId: "pa_intro",
+        status: "executed",
+        actionType: "profile.update_intro",
+        result: { status: "profile_intro_updated" },
+        artifacts: []
+      })
+      .mockResolvedValueOnce({
         preparedActionId: "pa_settings",
         status: "executed",
         actionType: "profile.update_settings",
@@ -124,13 +140,6 @@ describe("CLI profile commands", () => {
         status: "executed",
         actionType: "profile.update_public_profile",
         result: { status: "profile_public_profile_updated" },
-        artifacts: []
-      })
-      .mockResolvedValueOnce({
-        preparedActionId: "pa_intro",
-        status: "executed",
-        actionType: "profile.update_intro",
-        result: { status: "profile_intro_updated" },
         artifacts: []
       })
       .mockResolvedValueOnce({
@@ -241,7 +250,7 @@ describe("CLI profile commands", () => {
             headline: "Automation Engineer at Example Labs",
             location: "Copenhagen, Capital Region of Denmark, Denmark",
             industry: "Software Development",
-            customProfileUrl: "avery-cole-example"
+            customProfileUrl: "avery-automation"
           },
           about: "Building production LLM systems.",
           skills: ["TypeScript", "Python"]
@@ -276,9 +285,9 @@ describe("CLI profile commands", () => {
     expect(output.profile_name).toBe("smoke");
     expect(output.executed_action_count).toBe(4);
     expect(output.actions.map((action) => action.action_type)).toEqual([
+      "profile.update_intro",
       "profile.update_settings",
       "profile.update_public_profile",
-      "profile.update_intro",
       "profile.upsert_section_item"
     ]);
     expect(output.unsupported_fields).toEqual([
@@ -304,7 +313,7 @@ describe("CLI profile commands", () => {
     expect(profileCliMocks.prepareUpdatePublicProfile).toHaveBeenCalledWith(
       expect.objectContaining({
         profileName: "smoke",
-        vanityName: "avery-cole-example"
+        vanityName: "avery-automation"
       })
     );
     expect(profileCliMocks.prepareUpsertSectionItem).toHaveBeenCalledWith(

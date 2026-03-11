@@ -322,7 +322,7 @@ describe("LinkedInProfileService prepare helpers", () => {
         preparedActionId: expect.stringMatching(/^pa_/),
         confirmToken: expect.stringMatching(/^ct_/),
         preview: {
-          summary: "Update LinkedIn custom public profile URL to avery-cole-example",
+          summary: "Update LinkedIn public profile URL",
           vanity_name: "avery-cole-example",
           public_profile_url: "https://www.linkedin.com/in/avery-cole-example/"
         }
@@ -340,6 +340,25 @@ describe("LinkedInProfileService prepare helpers", () => {
       const prepared = service.prepareUpdatePublicProfile({
         profileName: "default",
         publicProfileUrl: "https://www.linkedin.com/in/avery-cole-example/"
+      });
+
+      expect(prepared.preview).toMatchObject({
+        vanity_name: "avery-cole-example",
+        public_profile_url: "https://www.linkedin.com/in/avery-cole-example/"
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("accepts the customProfileUrl alias when preparing a custom public profile URL update", () => {
+    const db = new AssistantDatabase(":memory:");
+
+    try {
+      const service = new LinkedInProfileService(createTestRuntime(db));
+      const prepared = service.prepareUpdatePublicProfile({
+        profileName: "default",
+        customProfileUrl: "https://www.linkedin.com/in/avery-cole-example/"
       });
 
       expect(prepared.preview).toMatchObject({
