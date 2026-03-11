@@ -2988,13 +2988,38 @@ async function readPageAttributeWithTimeout(
   }
 }
 
-async function canRecoverOwnProfileNavigationTimeout(page: Page): Promise<boolean> {
-  const SHORT_TIMEOUT_MS = 1_000;
+async function hasOwnProfileEditControl(
+  page: Page,
+  options: { requireVisible: boolean }
+): Promise<boolean> {
+  const selectors = [
+    buildProfileIntroEditHrefSelector(),
+    ...PROFILE_MEDIA_STRUCTURAL_SELECTORS.photo,
+    ...PROFILE_MEDIA_STRUCTURAL_SELECTORS.banner
+  ];
 
-  if (await isLocatorVisible(page.locator(buildProfileIntroEditHrefSelector()))) {
-    return true;
+  for (const selector of selectors) {
+    const locator = page.locator(selector);
+    if (await isLocatorVisible(locator)) {
+      return true;
+    }
+
+    if (!options.requireVisible) {
+      try {
+        if ((await locator.count()) > 0) {
+          return true;
+        }
+      } catch {
+        // Best effort — some page states do not expose countable edit controls yet.
+      }
+    }
   }
 
+  return false;
+}
+
+async function canRecoverOwnProfileNavigationTimeout(page: Page): Promise<boolean> {
+  const SHORT_TIMEOUT_MS = 1_000;
   const currentProfileUrl = tryNormalizeLinkedInProfileUrl(page.url());
   if (!currentProfileUrl) {
     return false;
@@ -3039,13 +3064,10 @@ async function canRecoverOwnProfileNavigationTimeout(page: Page): Promise<boolea
   }
 
   if (currentProfileUrl === LINKEDIN_SELF_PROFILE_URL) {
-    return (
-      canonicalProfileUrl !== null ||
-      ogProfileUrl !== null
-    );
+    return hasOwnProfileEditControl(page, { requireVisible: false });
   }
 
-  return false;
+  return hasOwnProfileEditControl(page, { requireVisible: true });
 }
 
 async function waitForVisibleDialog(page: Page): Promise<Locator> {

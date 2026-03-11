@@ -125,6 +125,7 @@ function createNavigationMockPage(options: {
   gotoError?: Error;
   headingVisible?: boolean;
   introEditVisible?: boolean;
+  introEditPresent?: boolean;
   menuProfileUrl?: string | null;
   networkIdleError?: Error;
   ogProfileUrl?: string | null;
@@ -144,6 +145,10 @@ function createNavigationMockPage(options: {
     locator: vi.fn((selector: string) => {
       const isIntroEditSelector =
         selector.includes("/edit/intro/") || selector.includes("/edit/forms/intro/");
+      const introEditCount =
+        isIntroEditSelector && (options.introEditVisible || options.introEditPresent)
+          ? 1
+          : 0;
       const visible =
         selector === "h1"
           ? (options.headingVisible ?? false)
@@ -159,11 +164,13 @@ function createNavigationMockPage(options: {
               ? options.ogProfileUrl
               : null;
 
+      const count = vi.fn(async () => introEditCount);
       const isVisible = vi.fn(async () => visible);
       const getAttribute = vi.fn(async () => attributeValue ?? null);
       const waitFor = vi.fn(async () => undefined);
       const first = vi.fn();
       const mockLocator = {
+        count,
         first,
         getAttribute,
         isVisible,
@@ -310,12 +317,11 @@ describe("resolveFirstVisibleLocator", () => {
 });
 
 describe("navigateToOwnProfile", () => {
-  it("recovers from /in/me/ navigation timeouts once self-profile metadata is present", async () => {
+  it("recovers from /in/me/ navigation timeouts once self-only edit controls are present", async () => {
     const timeoutError = new playwrightErrors.TimeoutError("Navigation timeout");
     const page = createNavigationMockPage({
-      canonicalUrl: "https://www.linkedin.com/in/joi-ascend/",
       gotoError: timeoutError,
-      title: "Joi Ascend | LinkedIn",
+      introEditPresent: true,
       urlAfterGoto: "https://www.linkedin.com/in/me/"
     });
 
@@ -340,11 +346,33 @@ describe("navigateToOwnProfile", () => {
     await expect(navigateToOwnProfile(page)).resolves.toBeUndefined();
   });
 
+  it("recovers on a resolved vanity URL when a self-only edit control is already visible", async () => {
+    const timeoutError = new playwrightErrors.TimeoutError("Navigation timeout");
+    const page = createNavigationMockPage({
+      gotoError: timeoutError,
+      introEditVisible: true,
+      urlAfterGoto: "https://www.linkedin.com/in/joi-ascend/"
+    });
+
+    await expect(navigateToOwnProfile(page)).resolves.toBeUndefined();
+  });
+
   it("rethrows /in/me/ timeouts when no self-profile signals are available", async () => {
     const timeoutError = new playwrightErrors.TimeoutError("Navigation timeout");
     const page = createNavigationMockPage({
       gotoError: timeoutError,
       title: "Feed | LinkedIn",
+      urlAfterGoto: "https://www.linkedin.com/in/me/"
+    });
+
+    await expect(navigateToOwnProfile(page)).rejects.toBe(timeoutError);
+  });
+
+  it("rethrows /in/me/ timeouts when the profile metadata points to another member", async () => {
+    const timeoutError = new playwrightErrors.TimeoutError("Navigation timeout");
+    const page = createNavigationMockPage({
+      canonicalUrl: "https://www.linkedin.com/in/someone-else/",
+      gotoError: timeoutError,
       urlAfterGoto: "https://www.linkedin.com/in/me/"
     });
 
@@ -358,6 +386,17 @@ describe("navigateToOwnProfile", () => {
       gotoError: timeoutError,
       menuProfileUrl: "https://www.linkedin.com/in/joi-ascend/",
       title: "Someone Else | LinkedIn",
+      urlAfterGoto: "https://www.linkedin.com/in/someone-else/"
+    });
+
+    await expect(navigateToOwnProfile(page)).rejects.toBe(timeoutError);
+  });
+
+  it("rethrows timeouts when only hidden edit-control DOM is present on another page", async () => {
+    const timeoutError = new playwrightErrors.TimeoutError("Navigation timeout");
+    const page = createNavigationMockPage({
+      gotoError: timeoutError,
+      introEditPresent: true,
       urlAfterGoto: "https://www.linkedin.com/in/someone-else/"
     });
 
