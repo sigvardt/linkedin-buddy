@@ -40,6 +40,7 @@ function createMockPage(options: {
     name: string,
     currentUrl: string
   ) => string | null;
+  onClick?: (selector: string, currentUrl: string) => void;
   onWait?: () => void;
   isVisible: (selector: string, currentUrl: string) => boolean;
   selfProfileGotoUrl?: string;
@@ -86,10 +87,22 @@ function createMockPage(options: {
       options.onWait?.();
     }),
     locator: vi.fn((selector: string) => {
-      const visible = options.isVisible(selector, currentUrl);
-      const click = vi.fn(async () => undefined);
-      const count = vi.fn(async () => (visible ? 1 : 0));
-      const isVisible = vi.fn(async () => visible);
+      const click = vi.fn(async () => {
+        options.onClick?.(selector, currentUrl);
+      });
+      const count = vi.fn(async () =>
+        options.isVisible(selector, currentUrl) ? 1 : 0
+      );
+      const evaluate = vi.fn(async (callback: (element: unknown) => unknown) => {
+        const element = {
+          click: () => {
+            options.onClick?.(selector, currentUrl);
+          }
+        };
+
+        return callback(element);
+      });
+      const isVisible = vi.fn(async () => options.isVisible(selector, currentUrl));
       const textContent = vi.fn(async () => {
         return options.textContent?.(selector, currentUrl) ?? null;
       });
@@ -100,6 +113,7 @@ function createMockPage(options: {
       const mockLocator = {
         click,
         count,
+        evaluate,
         first,
         getAttribute,
         isVisible,
@@ -374,7 +388,7 @@ describe("LinkedInAuthService auth flow", () => {
       initialUrl: "https://www.linkedin.com/login",
       onWait: () => {
         waitCount += 1;
-        if (waitCount === 1) {
+        if (waitCount === 2) {
           navVisible = true;
           setUrl("https://www.linkedin.com/feed/");
         }
@@ -422,6 +436,121 @@ describe("LinkedInAuthService auth flow", () => {
       expect.stringContaining("type='password'"),
       "secret",
       { fieldLabel: "password" }
+    );
+  });
+
+  it("headlessLogin reveals the standard form from remembered-account login", async () => {
+    let loginFormVisible = false;
+    let waitCount = 0;
+    let navVisible = false;
+
+    const { page, setUrl } = createMockPage({
+      initialUrl: "https://www.linkedin.com/login",
+      onClick: (selector) => {
+        if (selector.includes("sign-in-other-account-button-remember-me")) {
+          loginFormVisible = true;
+        }
+      },
+      onWait: () => {
+        waitCount += 1;
+        if (waitCount === 1) {
+          navVisible = true;
+          setUrl("https://www.linkedin.com/feed/");
+        }
+      },
+      isVisible: (selector, currentUrl) => {
+        if (selector.includes("sign-in-other-account-button-remember-me")) {
+          return currentUrl.includes("/login") && !loginFormVisible;
+        }
+
+        if (selector.includes("session_key")) {
+          return currentUrl.includes("/login") && loginFormVisible;
+        }
+
+        if (selector.includes("session_password")) {
+          return currentUrl.includes("/login") && loginFormVisible;
+        }
+
+        if (selector === "nav.global-nav") {
+          return navVisible;
+        }
+
+        return false;
+      }
+    });
+
+    const context = createContextWithPage(page);
+    const profileManager = {
+      runWithContext: vi.fn(async (_options, callback) => callback(context))
+    } as const;
+    const auth = new LinkedInAuthService(profileManager as unknown as ProfileManager);
+
+    const result = await auth.headlessLogin({
+      email: "linkedin-mcp@signikant.com",
+      password: "secret",
+      pollIntervalMs: 1,
+      timeoutMs: 100
+    });
+
+    expect(result.authenticated).toBe(true);
+    expect(result.checkpoint).toBe(false);
+    expect(page.locator).toHaveBeenCalledWith(
+      expect.stringContaining("sign-in-other-account-button-remember-me")
+    );
+  });
+
+  it("headlessLogin can reuse a matching remembered-account card", async () => {
+    let navVisible = false;
+
+    const { page, setUrl } = createMockPage({
+      initialUrl: "https://www.linkedin.com/login",
+      onClick: (selector) => {
+        if (selector.includes("remember-me-submit-button")) {
+          navVisible = true;
+          setUrl("https://www.linkedin.com/feed/");
+        }
+      },
+      isVisible: (selector, currentUrl) => {
+        if (selector.includes("remember-me-submit-button")) {
+          return currentUrl.includes("/login");
+        }
+
+        if (selector === "nav.global-nav") {
+          return navVisible;
+        }
+
+        return false;
+      },
+      textContent: (selector, currentUrl) => {
+        if (
+          selector.includes("remember-me-submit-button") &&
+          currentUrl.includes("/login")
+        ) {
+          return "Joi Ascend l*****@signikant.com";
+        }
+
+        return null;
+      }
+    });
+
+    const context = createContextWithPage(page);
+    const profileManager = {
+      runWithContext: vi.fn(async (_options, callback) => callback(context))
+    } as const;
+    const auth = new LinkedInAuthService(profileManager as unknown as ProfileManager);
+
+    const result = await auth.headlessLogin({
+      email: "linkedin-mcp@signikant.com",
+      password: "secret",
+      pollIntervalMs: 1,
+      timeoutMs: 100
+    });
+
+    expect(result.authenticated).toBe(true);
+    expect(result.checkpoint).toBe(false);
+    expect(humanizeMocks.type).not.toHaveBeenCalled();
+    expect(page.locator).toHaveBeenCalledWith(
+      expect.stringContaining("remember-me-submit-button")
     );
   });
 });

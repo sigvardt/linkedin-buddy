@@ -13,7 +13,9 @@ import {
 } from "./sessionInspection.js";
 import {
   LINKEDIN_LOGIN_EMAIL_INPUT_SELECTOR,
-  LINKEDIN_LOGIN_PASSWORD_INPUT_SELECTOR
+  LINKEDIN_LOGIN_OTHER_ACCOUNT_SELECTOR,
+  LINKEDIN_LOGIN_PASSWORD_INPUT_SELECTOR,
+  LINKEDIN_LOGIN_REMEMBERED_ACCOUNT_SELECTOR
 } from "./loginSelectors.js";
 import {
   DEFAULT_LINKEDIN_SELECTOR_LOCALE,
@@ -25,6 +27,12 @@ import {
   recordRateLimit,
   type RateLimitState
 } from "./rateLimitState.js";
+
+const LINKEDIN_HEADLESS_LOGIN_URL =
+  "https://www.linkedin.com/login";
+const HEADLESS_LOGIN_SURFACE_TIMEOUT_MS = 10_000;
+
+type HeadlessLoginSurface = "credentials" | "authenticated" | "unresolved";
 
 /** Authentication snapshot for a LinkedIn browser profile. */
 export interface SessionStatus {
@@ -107,6 +115,121 @@ async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+function isLikelyRememberedAccountMatch(text: string | null, email: string): boolean {
+  if (!text) {
+    return false;
+  }
+
+  const normalized = text.replace(/\s+/g, " ").trim().toLowerCase();
+  const [localPart, domain] = email.trim().toLowerCase().split("@");
+
+  if (!localPart || !domain) {
+    return false;
+  }
+
+  return normalized.includes(`@${domain}`) && normalized.includes(localPart[0] ?? "");
+}
+
+async function resolveHeadlessLoginSurface(
+  page: Page,
+  selectorLocale: LinkedInSelectorLocale,
+  email: string
+): Promise<HeadlessLoginSurface> {
+  const otherAccountLink = page.locator(LINKEDIN_LOGIN_OTHER_ACCOUNT_SELECTOR).first();
+  const rememberedAccountButton = page
+    .locator(LINKEDIN_LOGIN_REMEMBERED_ACCOUNT_SELECTOR)
+    .first();
+  const deadline = Date.now() + HEADLESS_LOGIN_SURFACE_TIMEOUT_MS;
+
+  while (Date.now() < deadline) {
+    if (await isVisibleSafe(page, LINKEDIN_LOGIN_EMAIL_INPUT_SELECTOR)) {
+      return "credentials";
+    }
+
+    const sessionStatus = await inspectLinkedInSession(page, { selectorLocale });
+    if (sessionStatus.authenticated) {
+      return "authenticated";
+    }
+
+    const rememberedAccountCount = await rememberedAccountButton.count().catch(() => 0);
+    if (rememberedAccountCount > 0) {
+      const rememberedAccountText = await rememberedAccountButton
+        .textContent()
+        .catch(() => null);
+
+      if (isLikelyRememberedAccountMatch(rememberedAccountText, email)) {
+        const clickedRememberedAccount = await rememberedAccountButton
+          .evaluate((element) => {
+            if (
+              typeof element === "object" &&
+              element !== null &&
+              "click" in element &&
+              typeof element.click === "function"
+            ) {
+              element.click();
+              return true;
+            }
+
+            return false;
+          })
+          .catch(() => false);
+
+        if (clickedRememberedAccount) {
+          await page.waitForTimeout(500);
+          continue;
+        }
+      }
+    }
+
+    const otherAccountCount = await otherAccountLink.count().catch(() => 0);
+    if (otherAccountCount > 0) {
+      const clickedOtherAccount = await otherAccountLink
+        .evaluate((element) => {
+          if (
+            typeof element === "object" &&
+            element !== null &&
+            "click" in element &&
+            typeof element.click === "function"
+          ) {
+            element.click();
+            return true;
+          }
+
+          return false;
+        })
+        .catch(() => false);
+
+      if (clickedOtherAccount) {
+        await page.waitForTimeout(250);
+        continue;
+      }
+
+      const otherAccountUrl =
+        (await otherAccountLink.getAttribute("href").catch(() => null)) ??
+        (await otherAccountLink.getAttribute("data-original-url").catch(() => null));
+
+      if (otherAccountUrl) {
+        await page.goto(otherAccountUrl, {
+          waitUntil: "domcontentloaded"
+        });
+      } else {
+        await otherAccountLink.click();
+      }
+    }
+
+    const currentUrl = page.url();
+    if (!currentUrl.includes("/login") || currentUrl.includes("/checkpoint")) {
+      break;
+    }
+
+    await page.waitForTimeout(250);
+  }
+
+  return (await isVisibleSafe(page, LINKEDIN_LOGIN_EMAIL_INPUT_SELECTOR))
+    ? "credentials"
+    : "unresolved";
 }
 
 async function enrichAuthenticatedSessionStatus<T extends { authenticated: boolean }>(
@@ -319,7 +442,7 @@ export class LinkedInAuthService {
       },
       async (context) => {
         const page = await getPage(context);
-        await page.goto("https://www.linkedin.com/login", {
+        await page.goto(LINKEDIN_HEADLESS_LOGIN_URL, {
           waitUntil: "domcontentloaded"
         });
 
@@ -348,6 +471,27 @@ export class LinkedInAuthService {
         }
 
         try {
+          const loginSurface = await resolveHeadlessLoginSurface(
+            page,
+            this.selectorLocale,
+            options.email
+          );
+
+          if (loginSurface === "authenticated") {
+            await clearRateLimitState();
+            const resolvedStatus = await enrichAuthenticatedSessionStatus(
+              page,
+              await inspectLinkedInSession(page, {
+                selectorLocale: this.selectorLocale
+              })
+            );
+            return {
+              ...resolvedStatus,
+              timedOut: false,
+              checkpoint: false
+            };
+          }
+
           const hp = humanize(page);
           await hp.type(LINKEDIN_LOGIN_EMAIL_INPUT_SELECTOR, options.email, {
             fieldLabel: "email"

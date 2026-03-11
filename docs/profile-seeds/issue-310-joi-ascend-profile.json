@@ -1,0 +1,126 @@
+{
+  "metadata": {
+    "issue": 310,
+    "persona": "Joi Ascend",
+    "notes": [
+      "Seed spec for the dedicated Joi Ascend LinkedIn test account.",
+      "Professional identity: applied AI and automation at Signikant in Copenhagen.",
+      "Use with `linkedin profile apply-spec --allow-partial --yes` so unsupported fields such as skills do not block the run."
+    ]
+  },
+  "intro": {
+    "firstName": "Joi",
+    "lastName": "Ascend",
+    "headline": "AI Operations & Automation at Signikant | Workflow tooling, reliability, applied AI",
+    "location": "Copenhagen, Denmark",
+    "industry": "Software Development"
+  },
+  "about": "I work at the intersection of applied AI, automation, and operator experience. My focus is building workflows that help teams move faster without losing clarity, reliability, or accountability.\n\nA lot of my day-to-day work is about turning vague ideas into systems that people can actually trust in production: better tooling for human-in-the-loop workflows, clearer instrumentation, and practical rollout paths for AI-assisted products.\n\nI enjoy the details that make automation feel useful rather than magical — thoughtful pacing, readable feedback loops, and strong operational foundations for small teams shipping quickly.",
+  "experience": [
+    {
+      "title": "AI Operations & Automation",
+      "company": "Signikant",
+      "employmentType": "Full-time",
+      "location": "Copenhagen, Denmark",
+      "currentlyWorkingHere": true,
+      "startMonth": "January",
+      "startYear": "2025",
+      "description": "Builds operator-facing automation, evaluation workflows, and internal tooling for AI-assisted product delivery with an emphasis on reliability and observability."
+    },
+    {
+      "title": "Software Engineer",
+      "company": "Nordic Product Studio",
+      "employmentType": "Full-time",
+      "location": "Copenhagen, Denmark",
+      "startMonth": "June",
+      "startYear": "2022",
+      "endMonth": "December",
+      "endYear": "2024",
+      "description": "Worked across backend services and developer tooling, improving release confidence, debugging workflows, and internal platform quality."
+    }
+  ],
+  "education": [
+    {
+      "school": "Technical University of Denmark",
+      "degree": "MSc",
+      "fieldOfStudy": "Computer Science and Engineering",
+      "startMonth": "September",
+      "startYear": "2020",
+      "endMonth": "June",
+      "endYear": "2022",
+      "description": "Focused on distributed systems, machine learning, and dependable software delivery."
+    },
+    {
+      "school": "Copenhagen School of Design and Technology",
+      "degree": "BSc",
+      "fieldOfStudy": "Software Development",
+      "startMonth": "September",
+      "startYear": "2017",
+      "endMonth": "June",
+      "endYear": "2020",
+      "description": "Studied modern web engineering, databases, interaction design, and collaborative product development."
+    }
+  ],
+  "certifications": [
+    {
+      "name": "Professional Machine Learning Engineer",
+      "issuingOrganization": "Google Cloud",
+      "issueMonth": "May",
+      "issueYear": "2024",
+      "credentialId": "JOI-GCP-ML-2024"
+    },
+    {
+      "name": "AWS Certified Developer - Associate",
+      "issuingOrganization": "Amazon Web Services",
+      "issueMonth": "October",
+      "issueYear": "2023",
+      "credentialId": "JOI-AWS-DEV-2023"
+    }
+  ],
+  "languages": [
+    {
+      "name": "English",
+      "proficiency": "Full professional proficiency"
+    },
+    {
+      "name": "Danish",
+      "proficiency": "Professional working proficiency"
+    }
+  ],
+  "projects": [
+    {
+      "title": "Workflow Evaluation Toolkit",
+      "description": "Designed lightweight evaluation routines for prompt, retrieval, and regression checks across automation workflows.",
+      "startMonth": "February",
+      "startYear": "2025"
+    },
+    {
+      "title": "Operator Review Console",
+      "description": "Built internal review surfaces for human-in-the-loop automation with traceability, auditability, and practical feedback loops.",
+      "startMonth": "April",
+      "startYear": "2025"
+    }
+  ],
+  "volunteerExperience": [
+    {
+      "role": "Technical Mentor",
+      "organization": "Code Club Copenhagen",
+      "cause": "Education",
+      "startMonth": "September",
+      "startYear": "2023",
+      "description": "Mentors students in programming fundamentals, product thinking, and collaborative software projects."
+    }
+  ],
+  "skills": [
+    "TypeScript",
+    "Node.js",
+    "Playwright",
+    "Applied AI",
+    "Automation",
+    "Prompt Engineering",
+    "Developer Tooling",
+    "Observability",
+    "CI/CD",
+    "Quality Engineering"
+  ]
+}

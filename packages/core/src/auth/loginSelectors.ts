@@ -20,8 +20,24 @@ const LINKEDIN_LOGIN_PASSWORD_INPUT_SELECTORS = [
   "input[placeholder*='password' i]"
 ] as const;
 
+const LINKEDIN_LOGIN_OTHER_ACCOUNT_SELECTORS = [
+  "a[data-view-name='sign-in-other-account-button-remember-me']:visible",
+  "a[href='/login/'][data-view-name='sign-in-other-account-button-remember-me']:visible",
+  "a[href='https://www.linkedin.com/login/'][data-view-name='sign-in-other-account-button-remember-me']:visible"
+] as const;
+
+const LINKEDIN_LOGIN_REMEMBERED_ACCOUNT_SELECTORS = [
+  "[data-view-name='remember-me-submit-button']:visible"
+] as const;
+
 export const LINKEDIN_LOGIN_EMAIL_INPUT_SELECTOR =
   LINKEDIN_LOGIN_EMAIL_INPUT_SELECTORS.join(", ");
 
 export const LINKEDIN_LOGIN_PASSWORD_INPUT_SELECTOR =
   LINKEDIN_LOGIN_PASSWORD_INPUT_SELECTORS.join(", ");
+
+export const LINKEDIN_LOGIN_OTHER_ACCOUNT_SELECTOR =
+  LINKEDIN_LOGIN_OTHER_ACCOUNT_SELECTORS.join(", ");
+
+export const LINKEDIN_LOGIN_REMEMBERED_ACCOUNT_SELECTOR =
+  LINKEDIN_LOGIN_REMEMBERED_ACCOUNT_SELECTORS.join(", ");

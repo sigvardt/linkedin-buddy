@@ -1,0 +1,70 @@
+{
+  "metadata": {
+    "issue": 310,
+    "persona": "Joi Ascend",
+    "notes": [
+      "Base activity seed for the Joi Ascend test account.",
+      "Replace feed.likes and feed.comments with operator-curated live targets before execution if you want those actions inside a single seed run.",
+      "All copy is intentionally professional, friendly, and low-pressure."
+    ]
+  },
+  "connections": {
+    "acceptPending": {
+      "limit": 5
+    },
+    "invites": []
+  },
+  "posts": [
+    {
+      "text": "One pattern I keep seeing in applied AI work: a team’s confidence rarely comes from one more dashboard. It comes from shorter feedback loops, examples people can inspect, and small workflow improvements that make quality easier to discuss.\n\nThe tooling that sticks is usually the tooling that makes context visible.",
+      "visibility": "connections"
+    },
+    {
+      "text": "Good automation should reduce coordination cost, not create mystery. I have been thinking a lot about operator-facing workflows lately — especially how pacing, traceability, and readable outputs make AI-assisted systems much easier to trust in practice.",
+      "visibility": "connections"
+    },
+    {
+      "text": "A small engineering lesson from recent internal tooling work: teams move faster when evaluation is close to the place where decisions are made. A clear diff, a few representative examples, and lightweight regression checks often go further than another abstract score.",
+      "visibility": "connections"
+    },
+    {
+      "text": "I enjoy building systems that sit between product delivery and operational reliability. The interesting work is usually in the details: how people review outputs, how issues are surfaced, and how a workflow stays understandable after the first demo.",
+      "visibility": "connections"
+    }
+  ],
+  "feed": {
+    "discoveryLimit": 15,
+    "likes": [],
+    "comments": []
+  },
+  "jobs": {
+    "searches": [
+      {
+        "query": "AI engineer",
+        "location": "Copenhagen, Denmark",
+        "limit": 5,
+        "viewTop": 2
+      },
+      {
+        "query": "Developer tools engineer",
+        "location": "Remote",
+        "limit": 5,
+        "viewTop": 2
+      }
+    ]
+  },
+  "messaging": {
+    "newThreads": [
+      {
+        "recipients": [
+          "Simon Miller"
+        ],
+        "text": "Hi Simon — I have been refreshing a LinkedIn test account for tooling validation today and wanted to say hello. Hope your week is going well."
+      }
+    ],
+    "replies": []
+  },
+  "notifications": {
+    "limit": 20
+  }
+}
