@@ -14,6 +14,12 @@ import {
   LINKEDIN_GROUPS_SEARCH_TOOL,
   LINKEDIN_GROUPS_VIEW_TOOL,
   LINKEDIN_INBOX_SEARCH_RECIPIENTS_TOOL,
+  LINKEDIN_JOBS_ALERTS_CREATE_TOOL,
+  LINKEDIN_JOBS_ALERTS_LIST_TOOL,
+  LINKEDIN_JOBS_ALERTS_REMOVE_TOOL,
+  LINKEDIN_JOBS_PREPARE_EASY_APPLY_TOOL,
+  LINKEDIN_JOBS_SAVE_TOOL,
+  LINKEDIN_JOBS_UNSAVE_TOOL,
   LINKEDIN_MEMBERS_PREPARE_REPORT_TOOL,
   LINKEDIN_NEWSLETTER_LIST_TOOL,
   LINKEDIN_NEWSLETTER_PREPARE_CREATE_TOOL,
@@ -85,6 +91,14 @@ interface FakeRuntime {
   privacySettings: {
     getSettings: ReturnType<typeof vi.fn>;
   };
+  jobs: {
+    listJobAlerts: ReturnType<typeof vi.fn>;
+    prepareCreateJobAlert: ReturnType<typeof vi.fn>;
+    prepareEasyApply: ReturnType<typeof vi.fn>;
+    prepareRemoveJobAlert: ReturnType<typeof vi.fn>;
+    prepareSaveJob: ReturnType<typeof vi.fn>;
+    prepareUnsaveJob: ReturnType<typeof vi.fn>;
+  };
   runId: string;
 }
 
@@ -135,6 +149,14 @@ function createFakeRuntime(): FakeRuntime {
     },
     privacySettings: {
       getSettings: vi.fn()
+    },
+    jobs: {
+      listJobAlerts: vi.fn(),
+      prepareCreateJobAlert: vi.fn(),
+      prepareEasyApply: vi.fn(),
+      prepareRemoveJobAlert: vi.fn(),
+      prepareSaveJob: vi.fn(),
+      prepareUnsaveJob: vi.fn()
     }
   };
 }
@@ -990,6 +1012,197 @@ describe("handleToolCall", () => {
     expect(fakeRuntime.analytics.getPostMetrics).toHaveBeenCalledWith({
       profileName: "default",
       postUrl: "urn:li:activity:123"
+    });
+    expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("prepares jobs save and unsave actions through the MCP contract", async () => {
+    fakeRuntime.jobs.prepareSaveJob.mockReturnValue({
+      preparedActionId: "pa_job_save",
+      confirmToken: "ct_job_save",
+      expiresAtMs: 123,
+      preview: {
+        summary: "Save LinkedIn job https://www.linkedin.com/jobs/view/123/"
+      }
+    });
+    fakeRuntime.jobs.prepareUnsaveJob.mockReturnValue({
+      preparedActionId: "pa_job_unsave",
+      confirmToken: "ct_job_unsave",
+      expiresAtMs: 123,
+      preview: {
+        summary: "Unsave LinkedIn job https://www.linkedin.com/jobs/view/123/"
+      }
+    });
+
+    const saveResult = await handleToolCall(LINKEDIN_JOBS_SAVE_TOOL, {
+      profileName: "default",
+      jobId: "123"
+    });
+    const unsaveResult = await handleToolCall(LINKEDIN_JOBS_UNSAVE_TOOL, {
+      profileName: "default",
+      jobId: "123",
+      operatorNote: "cleanup"
+    });
+
+    expect("isError" in saveResult && saveResult.isError).toBe(false);
+    expect(parseToolPayload(saveResult)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      preparedActionId: "pa_job_save",
+      confirmToken: "ct_job_save"
+    });
+    expect(fakeRuntime.jobs.prepareSaveJob).toHaveBeenCalledWith({
+      profileName: "default",
+      jobId: "123"
+    });
+
+    expect("isError" in unsaveResult && unsaveResult.isError).toBe(false);
+    expect(parseToolPayload(unsaveResult)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      preparedActionId: "pa_job_unsave",
+      confirmToken: "ct_job_unsave"
+    });
+    expect(fakeRuntime.jobs.prepareUnsaveJob).toHaveBeenCalledWith({
+      profileName: "default",
+      jobId: "123",
+      operatorNote: "cleanup"
+    });
+    expect(fakeRuntime.close).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns job alert listings through the MCP contract", async () => {
+    fakeRuntime.jobs.listJobAlerts.mockResolvedValue({
+      count: 1,
+      alerts: [
+        {
+          alert_id: "alert-1",
+          query: "Staff Engineer",
+          location: "Remote",
+          frequency: "Daily",
+          search_url:
+            "https://www.linkedin.com/jobs/search/?keywords=Staff%20Engineer&location=Remote",
+          enabled: true
+        }
+      ]
+    });
+
+    const result = await handleToolCall(LINKEDIN_JOBS_ALERTS_LIST_TOOL, {
+      profileName: "default",
+      limit: 5
+    });
+
+    expect("isError" in result && result.isError).toBe(false);
+    expect(parseToolPayload(result)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      count: 1,
+      alerts: [
+        expect.objectContaining({
+          alert_id: "alert-1",
+          enabled: true
+        })
+      ]
+    });
+    expect(fakeRuntime.jobs.listJobAlerts).toHaveBeenCalledWith({
+      profileName: "default",
+      limit: 5
+    });
+    expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("prepares job alert create and remove actions through the MCP contract", async () => {
+    fakeRuntime.jobs.prepareCreateJobAlert.mockReturnValue({
+      preparedActionId: "pa_alert_create",
+      confirmToken: "ct_alert_create",
+      expiresAtMs: 123,
+      preview: {
+        summary: 'Create a LinkedIn job alert for "Staff Engineer" in Remote'
+      }
+    });
+    fakeRuntime.jobs.prepareRemoveJobAlert.mockResolvedValue({
+      preparedActionId: "pa_alert_remove",
+      confirmToken: "ct_alert_remove",
+      expiresAtMs: 123,
+      preview: {
+        summary: 'Remove LinkedIn job alert for "Staff Engineer" in Remote'
+      }
+    });
+
+    const createResult = await handleToolCall(LINKEDIN_JOBS_ALERTS_CREATE_TOOL, {
+      profileName: "default",
+      query: "Staff Engineer",
+      location: "Remote"
+    });
+    const removeResult = await handleToolCall(LINKEDIN_JOBS_ALERTS_REMOVE_TOOL, {
+      profileName: "default",
+      alertId: "alert-1",
+      operatorNote: "cleanup"
+    });
+
+    expect("isError" in createResult && createResult.isError).toBe(false);
+    expect(parseToolPayload(createResult)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      preparedActionId: "pa_alert_create",
+      confirmToken: "ct_alert_create"
+    });
+    expect(fakeRuntime.jobs.prepareCreateJobAlert).toHaveBeenCalledWith({
+      profileName: "default",
+      query: "Staff Engineer",
+      location: "Remote"
+    });
+
+    expect("isError" in removeResult && removeResult.isError).toBe(false);
+    expect(parseToolPayload(removeResult)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      preparedActionId: "pa_alert_remove",
+      confirmToken: "ct_alert_remove"
+    });
+    expect(fakeRuntime.jobs.prepareRemoveJobAlert).toHaveBeenCalledWith({
+      profileName: "default",
+      alertId: "alert-1",
+      operatorNote: "cleanup"
+    });
+    expect(fakeRuntime.close).toHaveBeenCalledTimes(2);
+  });
+
+  it("prepares Easy Apply actions through the MCP contract", async () => {
+    fakeRuntime.jobs.prepareEasyApply.mockReturnValue({
+      preparedActionId: "pa_easy_apply",
+      confirmToken: "ct_easy_apply",
+      expiresAtMs: 123,
+      preview: {
+        summary: "Submit LinkedIn Easy Apply application for https://www.linkedin.com/jobs/view/123/"
+      }
+    });
+
+    const result = await handleToolCall(LINKEDIN_JOBS_PREPARE_EASY_APPLY_TOOL, {
+      profileName: "default",
+      jobId: "123",
+      email: "candidate@example.com",
+      resumePath: "/tmp/resume.pdf",
+      answers: {
+        "Years of experience": 8
+      }
+    });
+
+    expect("isError" in result && result.isError).toBe(false);
+    expect(parseToolPayload(result)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      preparedActionId: "pa_easy_apply",
+      confirmToken: "ct_easy_apply"
+    });
+    expect(fakeRuntime.jobs.prepareEasyApply).toHaveBeenCalledWith({
+      profileName: "default",
+      jobId: "123",
+      email: "candidate@example.com",
+      resumePath: "/tmp/resume.pdf",
+      answers: {
+        "Years of experience": 8
+      }
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });
