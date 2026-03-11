@@ -12,6 +12,10 @@ import {
   type LinkedInSessionIdentity
 } from "./sessionInspection.js";
 import {
+  LINKEDIN_LOGIN_EMAIL_INPUT_SELECTOR,
+  LINKEDIN_LOGIN_PASSWORD_INPUT_SELECTOR
+} from "./loginSelectors.js";
+import {
   DEFAULT_LINKEDIN_SELECTOR_LOCALE,
   type LinkedInSelectorLocale
 } from "../selectorLocale.js";
@@ -345,10 +349,10 @@ export class LinkedInAuthService {
 
         try {
           const hp = humanize(page);
-          await hp.type("input[name='session_key'], input#username", options.email, {
+          await hp.type(LINKEDIN_LOGIN_EMAIL_INPUT_SELECTOR, options.email, {
             fieldLabel: "email"
           });
-          await hp.type("input[name='session_password'], input#password", options.password, {
+          await hp.type(LINKEDIN_LOGIN_PASSWORD_INPUT_SELECTOR, options.password, {
             fieldLabel: "password"
           });
         } finally {

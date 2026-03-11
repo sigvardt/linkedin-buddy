@@ -365,4 +365,63 @@ describe("LinkedInAuthService auth flow", () => {
     expect(rateLimitStateMocks.recordRateLimit).not.toHaveBeenCalled();
     expect(humanizeMocks.type).toHaveBeenCalledTimes(2);
   });
+
+  it("headlessLogin targets nameless login inputs when legacy names are absent", async () => {
+    let waitCount = 0;
+    let navVisible = false;
+
+    const { page, setUrl } = createMockPage({
+      initialUrl: "https://www.linkedin.com/login",
+      onWait: () => {
+        waitCount += 1;
+        if (waitCount === 1) {
+          navVisible = true;
+          setUrl("https://www.linkedin.com/feed/");
+        }
+      },
+      isVisible: (selector, currentUrl) => {
+        if (selector.includes("autocomplete~='username'")) {
+          return currentUrl.includes("/login");
+        }
+
+        if (selector.includes("type='password'")) {
+          return currentUrl.includes("/login");
+        }
+
+        if (selector === "nav.global-nav") {
+          return navVisible;
+        }
+
+        return false;
+      }
+    });
+
+    const context = createContextWithPage(page);
+    const profileManager = {
+      runWithContext: vi.fn(async (_options, callback) => callback(context))
+    } as const;
+    const auth = new LinkedInAuthService(profileManager as unknown as ProfileManager);
+
+    const result = await auth.headlessLogin({
+      email: "test@example.com",
+      password: "secret",
+      pollIntervalMs: 1,
+      timeoutMs: 100
+    });
+
+    expect(result.authenticated).toBe(true);
+    expect(result.checkpoint).toBe(false);
+    expect(humanizeMocks.type).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining("autocomplete~='username'"),
+      "test@example.com",
+      { fieldLabel: "email" }
+    );
+    expect(humanizeMocks.type).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("type='password'"),
+      "secret",
+      { fieldLabel: "password" }
+    );
+  });
 });

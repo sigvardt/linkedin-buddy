@@ -4,6 +4,10 @@ import {
   buildLinkedInAriaLabelContainsSelector,
   type LinkedInSelectorLocale
 } from "../selectorLocale.js";
+import {
+  LINKEDIN_LOGIN_EMAIL_INPUT_SELECTOR,
+  LINKEDIN_LOGIN_PASSWORD_INPUT_SELECTOR
+} from "./loginSelectors.js";
 
 /**
  * Snapshot of whether a Playwright page currently appears authenticated to
@@ -27,7 +31,6 @@ export interface LinkedInSessionIdentity {
   vanityName: string | null;
 }
 
-const LOGIN_FORM_SELECTOR = "input[name='session_key'], input#username";
 const CHECKPOINT_FORM_SELECTOR = "form[action*='checkpoint']";
 const AUTH_NAV_SELECTOR = "nav.global-nav";
 const AUTH_PROFILE_MENU_SELECTOR = "[data-control-name='nav.settings_view_profile']";
@@ -244,7 +247,15 @@ export async function inspectLinkedInSession(
     };
   }
 
-  const loginFormVisible = await isVisibleSafe(page, LOGIN_FORM_SELECTOR);
+  const loginEmailInputVisible = await isVisibleSafe(
+    page,
+    LINKEDIN_LOGIN_EMAIL_INPUT_SELECTOR
+  );
+  const loginPasswordInputVisible = await isVisibleSafe(
+    page,
+    LINKEDIN_LOGIN_PASSWORD_INPUT_SELECTOR
+  );
+  const loginFormVisible = loginEmailInputVisible && loginPasswordInputVisible;
   const loginWallVisible = await isVisibleSafe(page, LOGIN_WALL_SELECTOR);
   if (loginFormVisible || isLoginUrl(currentUrl) || loginWallVisible) {
     return {
