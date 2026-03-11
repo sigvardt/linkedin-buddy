@@ -18,7 +18,7 @@ vi.mock("node:readline/promises", () => ({
   }))
 }));
 
-vi.mock("@linkedin-assistant/core", async () => {
+vi.mock("@linkedin-buddy/core", async () => {
   const actual = await import("../../core/src/index.js");
   return {
     ...actual,
