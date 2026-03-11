@@ -16,6 +16,13 @@ import { LinkedInBuddyError, asLinkedInBuddyError } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
+import {
+  consumeRateLimitOrThrow,
+  createConfirmRateLimitMessage,
+  peekRateLimitPreview,
+  type ConsumeRateLimitInput,
+  type RateLimiter
+} from "./rateLimiter.js";
 import type { LinkedInSelectorLocale } from "./selectorLocale.js";
 import { getLinkedInSelectorPhrases } from "./selectorLocale.js";
 import type {
@@ -63,6 +70,7 @@ interface LinkedInProfileRuntimeBase {
   cdpUrl?: string | undefined;
   selectorLocale: LinkedInSelectorLocale;
   profileManager: ProfileManager;
+  rateLimiter: RateLimiter;
   logger: JsonEventLogger;
 }
 
@@ -86,6 +94,84 @@ export const REQUEST_PROFILE_RECOMMENDATION_ACTION_TYPE =
   "profile.recommendation_request";
 export const WRITE_PROFILE_RECOMMENDATION_ACTION_TYPE =
   "profile.recommendation_write";
+
+const PROFILE_RATE_LIMIT_CONFIGS = {
+  [UPDATE_PROFILE_INTRO_ACTION_TYPE]: {
+    counterKey: "linkedin.profile.update_intro",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 10
+  },
+  [UPDATE_PROFILE_SETTINGS_ACTION_TYPE]: {
+    counterKey: "linkedin.profile.update_settings",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 10
+  },
+  [UPDATE_PROFILE_PUBLIC_PROFILE_ACTION_TYPE]: {
+    counterKey: "linkedin.profile.update_public_profile",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 10
+  },
+  [UPSERT_PROFILE_SECTION_ITEM_ACTION_TYPE]: {
+    counterKey: "linkedin.profile.upsert_section_item",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 10
+  },
+  [REMOVE_PROFILE_SECTION_ITEM_ACTION_TYPE]: {
+    counterKey: "linkedin.profile.remove_section_item",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 10
+  },
+  [UPLOAD_PROFILE_PHOTO_ACTION_TYPE]: {
+    counterKey: "linkedin.profile.upload_photo",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 5
+  },
+  [UPLOAD_PROFILE_BANNER_ACTION_TYPE]: {
+    counterKey: "linkedin.profile.upload_banner",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 5
+  },
+  [ADD_PROFILE_FEATURED_ACTION_TYPE]: {
+    counterKey: "linkedin.profile.featured_add",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 10
+  },
+  [REMOVE_PROFILE_FEATURED_ACTION_TYPE]: {
+    counterKey: "linkedin.profile.featured_remove",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 10
+  },
+  [REORDER_PROFILE_FEATURED_ACTION_TYPE]: {
+    counterKey: "linkedin.profile.featured_reorder",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 10
+  },
+  [ADD_PROFILE_SKILL_ACTION_TYPE]: {
+    counterKey: "linkedin.profile.skill_add",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 10
+  },
+  [REORDER_PROFILE_SKILLS_ACTION_TYPE]: {
+    counterKey: "linkedin.profile.skills_reorder",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 10
+  },
+  [ENDORSE_PROFILE_SKILL_ACTION_TYPE]: {
+    counterKey: "linkedin.profile.skill_endorse",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 30
+  },
+  [REQUEST_PROFILE_RECOMMENDATION_ACTION_TYPE]: {
+    counterKey: "linkedin.profile.recommendation_request",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 5
+  },
+  [WRITE_PROFILE_RECOMMENDATION_ACTION_TYPE]: {
+    counterKey: "linkedin.profile.recommendation_write",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 5
+  }
+} as const satisfies Record<string, ConsumeRateLimitInput>;
 
 export const LINKEDIN_PROFILE_SECTION_TYPES = [
   "about",
@@ -1139,6 +1225,39 @@ async function extractEditableSettings(
 
 function normalizeText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function getProfileRateLimitConfig(actionType: string): ConsumeRateLimitInput {
+  const config = (
+    PROFILE_RATE_LIMIT_CONFIGS as Record<string, ConsumeRateLimitInput>
+  )[actionType];
+
+  if (!config) {
+    throw new LinkedInBuddyError("UNKNOWN", "Missing rate limit policy.", {
+      action_type: actionType
+    });
+  }
+
+  return config;
+}
+
+function createProfileRateLimitGuard(
+  runtime: LinkedInProfileExecutorRuntime,
+  actionType: string,
+  actionId: string,
+  profileName: string,
+  details: Record<string, unknown>
+): () => void {
+  return () =>
+    consumeRateLimitOrThrow(runtime.rateLimiter, {
+      config: getProfileRateLimitConfig(actionType),
+      message: createConfirmRateLimitMessage(actionType),
+      details: {
+        action_id: actionId,
+        profile_name: profileName,
+        ...details
+      }
+    });
 }
 
 function isAbsoluteUrl(value: string): boolean {
@@ -5258,6 +5377,15 @@ async function executeAddProfileSkill(
           profile_name: profileName,
           skill_name: skillName
         },
+        beforeExecute: createProfileRateLimitGuard(
+          runtime,
+          ADD_PROFILE_SKILL_ACTION_TYPE,
+          actionId,
+          profileName,
+          {
+            skill_name: skillName
+          }
+        ),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
@@ -5321,6 +5449,15 @@ async function executeReorderProfileSkills(
           profile_name: profileName,
           skill_count: skillNames.length
         },
+        beforeExecute: createProfileRateLimitGuard(
+          runtime,
+          REORDER_PROFILE_SKILLS_ACTION_TYPE,
+          actionId,
+          profileName,
+          {
+            skill_count: skillNames.length
+          }
+        ),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
@@ -5391,6 +5528,16 @@ async function executeEndorseProfileSkill(
           target_profile_url: targetProfileUrl,
           skill_name: skillName
         },
+        beforeExecute: createProfileRateLimitGuard(
+          runtime,
+          ENDORSE_PROFILE_SKILL_ACTION_TYPE,
+          actionId,
+          profileName,
+          {
+            target_profile_url: targetProfileUrl,
+            skill_name: skillName
+          }
+        ),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
@@ -5469,6 +5616,16 @@ async function executeRequestProfileRecommendation(
           target_profile_url: targetProfileUrl,
           provided_fields: Object.keys(fields)
         },
+        beforeExecute: createProfileRateLimitGuard(
+          runtime,
+          REQUEST_PROFILE_RECOMMENDATION_ACTION_TYPE,
+          actionId,
+          profileName,
+          {
+            target_profile_url: targetProfileUrl,
+            provided_fields: Object.keys(fields)
+          }
+        ),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
@@ -5556,6 +5713,16 @@ async function executeWriteProfileRecommendation(
           target_profile_url: targetProfileUrl,
           provided_fields: Object.keys(fields)
         },
+        beforeExecute: createProfileRateLimitGuard(
+          runtime,
+          WRITE_PROFILE_RECOMMENDATION_ACTION_TYPE,
+          actionId,
+          profileName,
+          {
+            target_profile_url: targetProfileUrl,
+            provided_fields: Object.keys(fields)
+          }
+        ),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
@@ -5633,6 +5800,18 @@ async function executeUploadProfileMedia(
           media_kind: kind,
           file_name: upload.file_name
         },
+        beforeExecute: createProfileRateLimitGuard(
+          runtime,
+          kind === "photo"
+            ? UPLOAD_PROFILE_PHOTO_ACTION_TYPE
+            : UPLOAD_PROFILE_BANNER_ACTION_TYPE,
+          actionId,
+          profileName,
+          {
+            media_kind: kind,
+            file_name: upload.file_name
+          }
+        ),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
@@ -5724,6 +5903,17 @@ async function executeAddFeaturedItem(
           ...(url ? { url } : {}),
           ...(upload ? { file_name: upload.file_name } : {})
         },
+        beforeExecute: createProfileRateLimitGuard(
+          runtime,
+          ADD_PROFILE_FEATURED_ACTION_TYPE,
+          actionId,
+          profileName,
+          {
+            featured_kind: kind,
+            ...(url ? { url } : {}),
+            ...(upload ? { file_name: upload.file_name } : {})
+          }
+        ),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
@@ -5816,6 +6006,16 @@ async function executeRemoveFeaturedItem(
           ...(match.url ? { url: match.url } : {}),
           ...(match.title ? { title: match.title } : {})
         },
+        beforeExecute: createProfileRateLimitGuard(
+          runtime,
+          REMOVE_PROFILE_FEATURED_ACTION_TYPE,
+          actionId,
+          profileName,
+          {
+            ...(match.url ? { url: match.url } : {}),
+            ...(match.title ? { title: match.title } : {})
+          }
+        ),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
@@ -5891,6 +6091,15 @@ async function executeReorderFeaturedItems(
           profile_name: profileName,
           item_count: itemIds.length
         },
+        beforeExecute: createProfileRateLimitGuard(
+          runtime,
+          REORDER_PROFILE_FEATURED_ACTION_TYPE,
+          actionId,
+          profileName,
+          {
+            item_count: itemIds.length
+          }
+        ),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
@@ -5953,6 +6162,15 @@ async function executeUpdateProfileIntro(
           profile_name: profileName,
           updated_fields: Object.keys(updates)
         },
+        beforeExecute: createProfileRateLimitGuard(
+          runtime,
+          UPDATE_PROFILE_INTRO_ACTION_TYPE,
+          actionId,
+          profileName,
+          {
+            updated_fields: Object.keys(updates)
+          }
+        ),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
@@ -6023,6 +6241,15 @@ async function executeUpdateProfileSettings(
           profile_name: profileName,
           updated_fields: Object.keys(updates)
         },
+        beforeExecute: createProfileRateLimitGuard(
+          runtime,
+          UPDATE_PROFILE_SETTINGS_ACTION_TYPE,
+          actionId,
+          profileName,
+          {
+            updated_fields: Object.keys(updates)
+          }
+        ),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
@@ -6101,6 +6328,16 @@ async function executeUpdateProfilePublicProfile(
           vanity_name: publicProfile.vanityName,
           public_profile_url: publicProfile.publicProfileUrl
         },
+        beforeExecute: createProfileRateLimitGuard(
+          runtime,
+          UPDATE_PROFILE_PUBLIC_PROFILE_ACTION_TYPE,
+          actionId,
+          profileName,
+          {
+            vanity_name: publicProfile.vanityName,
+            public_profile_url: publicProfile.publicProfileUrl
+          }
+        ),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
@@ -6193,6 +6430,17 @@ async function executeUpsertProfileSectionItem(
           mode,
           updated_fields: Object.keys(values)
         },
+        beforeExecute: createProfileRateLimitGuard(
+          runtime,
+          UPSERT_PROFILE_SECTION_ITEM_ACTION_TYPE,
+          actionId,
+          profileName,
+          {
+            section,
+            mode,
+            updated_fields: Object.keys(values)
+          }
+        ),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
@@ -6289,6 +6537,15 @@ async function executeRemoveProfileSectionItem(
           profile_name: profileName,
           section
         },
+        beforeExecute: createProfileRateLimitGuard(
+          runtime,
+          REMOVE_PROFILE_SECTION_ITEM_ACTION_TYPE,
+          actionId,
+          profileName,
+          {
+            section
+          }
+        ),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
@@ -6620,6 +6877,28 @@ export function createProfileActionExecutors(): Record<
 export class LinkedInProfileService {
   constructor(private readonly runtime: LinkedInProfileRuntime) {}
 
+  private prepareRateLimitedAction(input: {
+    actionType: string;
+    target: Record<string, unknown>;
+    payload: Record<string, unknown>;
+    preview: Record<string, unknown>;
+    operatorNote?: string;
+  }): PreparedActionResult {
+    return this.runtime.twoPhaseCommit.prepare({
+      actionType: input.actionType,
+      target: input.target,
+      payload: input.payload,
+      preview: {
+        ...input.preview,
+        rate_limit: peekRateLimitPreview(
+          this.runtime.rateLimiter,
+          getProfileRateLimitConfig(input.actionType)
+        )
+      },
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+  }
+
   async viewProfile(input: ViewProfileInput): Promise<LinkedInProfile> {
     const profileName = input.profileName ?? "default";
     const profileUrl = resolveProfileUrl(input.target);
@@ -6741,7 +7020,7 @@ export class LinkedInProfileService {
       intro_updates: updates
     };
 
-    return this.runtime.twoPhaseCommit.prepare({
+    return this.prepareRateLimitedAction({
       actionType: UPDATE_PROFILE_INTRO_ACTION_TYPE,
       target,
       payload: {
@@ -6773,7 +7052,7 @@ export class LinkedInProfileService {
       settings_updates: updates
     };
 
-    return this.runtime.twoPhaseCommit.prepare({
+    return this.prepareRateLimitedAction({
       actionType: UPDATE_PROFILE_SETTINGS_ACTION_TYPE,
       target,
       payload: {
@@ -6800,7 +7079,7 @@ export class LinkedInProfileService {
       public_profile_url: publicProfile.publicProfileUrl
     };
 
-    return this.runtime.twoPhaseCommit.prepare({
+    return this.prepareRateLimitedAction({
       actionType: UPDATE_PROFILE_PUBLIC_PROFILE_ACTION_TYPE,
       target,
       payload: {
@@ -6842,7 +7121,7 @@ export class LinkedInProfileService {
       ...(match ? { match } : {})
     };
 
-    return this.runtime.twoPhaseCommit.prepare({
+    return this.prepareRateLimitedAction({
       actionType: UPSERT_PROFILE_SECTION_ITEM_ACTION_TYPE,
       target,
       payload: {
@@ -6885,7 +7164,7 @@ export class LinkedInProfileService {
       ...(match ? { match } : {})
     };
 
-    return this.runtime.twoPhaseCommit.prepare({
+    return this.prepareRateLimitedAction({
       actionType: REMOVE_PROFILE_SECTION_ITEM_ACTION_TYPE,
       target,
       payload: {
@@ -6919,7 +7198,7 @@ export class LinkedInProfileService {
       upload: buildPreparedUploadPreview(upload)
     };
 
-    return this.runtime.twoPhaseCommit.prepare({
+    return this.prepareRateLimitedAction({
       actionType: UPLOAD_PROFILE_PHOTO_ACTION_TYPE,
       target,
       payload: {
@@ -6952,7 +7231,7 @@ export class LinkedInProfileService {
       upload: buildPreparedUploadPreview(upload)
     };
 
-    return this.runtime.twoPhaseCommit.prepare({
+    return this.prepareRateLimitedAction({
       actionType: UPLOAD_PROFILE_BANNER_ACTION_TYPE,
       target,
       payload: {
@@ -7000,7 +7279,7 @@ export class LinkedInProfileService {
       ...(upload ? { upload: buildPreparedUploadPreview(upload) } : {})
     };
 
-    return this.runtime.twoPhaseCommit.prepare({
+    return this.prepareRateLimitedAction({
       actionType: ADD_PROFILE_FEATURED_ACTION_TYPE,
       target,
       payload: {
@@ -7038,7 +7317,7 @@ export class LinkedInProfileService {
       ...(match ? { match } : {})
     };
 
-    return this.runtime.twoPhaseCommit.prepare({
+    return this.prepareRateLimitedAction({
       actionType: REMOVE_PROFILE_FEATURED_ACTION_TYPE,
       target,
       payload: {
@@ -7093,7 +7372,7 @@ export class LinkedInProfileService {
       item_ids: itemIds
     };
 
-    return this.runtime.twoPhaseCommit.prepare({
+    return this.prepareRateLimitedAction({
       actionType: REORDER_PROFILE_FEATURED_ACTION_TYPE,
       target,
       payload: {
@@ -7117,7 +7396,7 @@ export class LinkedInProfileService {
       skill_name: skillName
     };
 
-    return this.runtime.twoPhaseCommit.prepare({
+    return this.prepareRateLimitedAction({
       actionType: ADD_PROFILE_SKILL_ACTION_TYPE,
       target,
       payload: {
@@ -7143,7 +7422,7 @@ export class LinkedInProfileService {
       skill_names: skillNames
     };
 
-    return this.runtime.twoPhaseCommit.prepare({
+    return this.prepareRateLimitedAction({
       actionType: REORDER_PROFILE_SKILLS_ACTION_TYPE,
       target,
       payload: {
@@ -7172,7 +7451,7 @@ export class LinkedInProfileService {
       skill_name: skillName
     };
 
-    return this.runtime.twoPhaseCommit.prepare({
+    return this.prepareRateLimitedAction({
       actionType: ENDORSE_PROFILE_SKILL_ACTION_TYPE,
       target,
       payload: {
@@ -7211,7 +7490,7 @@ export class LinkedInProfileService {
       ...(Object.keys(fields).length > 0 ? { fields } : {})
     };
 
-    return this.runtime.twoPhaseCommit.prepare({
+    return this.prepareRateLimitedAction({
       actionType: REQUEST_PROFILE_RECOMMENDATION_ACTION_TYPE,
       target,
       payload: {
@@ -7257,7 +7536,7 @@ export class LinkedInProfileService {
       fields
     };
 
-    return this.runtime.twoPhaseCommit.prepare({
+    return this.prepareRateLimitedAction({
       actionType: WRITE_PROFILE_RECOMMENDATION_ACTION_TYPE,
       target,
       payload: {

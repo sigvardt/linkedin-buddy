@@ -8,6 +8,7 @@ import {
   createMemberActionExecutors,
   normalizeLinkedInMemberReportReason
 } from "../linkedinMembers.js";
+import { createAllowedRateLimiterStub } from "./rateLimiterTestUtils.js";
 
 describe("LinkedIn member safety constants", () => {
   it("exposes the supported report reasons", () => {
@@ -61,7 +62,9 @@ describe("LinkedInMembersService prepare flows", () => {
       expiresAtMs: 123,
       preview: input.preview
     }));
+    const rateLimiter = createAllowedRateLimiterStub();
     const service = new LinkedInMembersService({
+      rateLimiter,
       twoPhaseCommit: { prepare }
     } as unknown as ConstructorParameters<typeof LinkedInMembersService>[0]);
 
@@ -77,10 +80,16 @@ describe("LinkedInMembersService prepare flows", () => {
       target: {
         target_profile: "target-user",
         profile_name: "default"
+      },
+      rate_limit: {
+        counter_key: "linkedin.members.block_member"
       }
     });
     expect(unblockPrepared.preview).toMatchObject({
-      summary: "Unblock LinkedIn member target-user"
+      summary: "Unblock LinkedIn member target-user",
+      rate_limit: {
+        counter_key: "linkedin.members.unblock_member"
+      }
     });
 
     expect(prepare).toHaveBeenNthCalledWith(
@@ -103,7 +112,9 @@ describe("LinkedInMembersService prepare flows", () => {
       expiresAtMs: 123,
       preview: input.preview
     }));
+    const rateLimiter = createAllowedRateLimiterStub();
     const service = new LinkedInMembersService({
+      rateLimiter,
       twoPhaseCommit: { prepare }
     } as unknown as ConstructorParameters<typeof LinkedInMembersService>[0]);
 
@@ -118,6 +129,9 @@ describe("LinkedInMembersService prepare flows", () => {
       payload: {
         reason: "spam",
         details: "Repeated unsolicited outreach."
+      },
+      rate_limit: {
+        counter_key: "linkedin.members.report_member"
       }
     });
     expect(prepare).toHaveBeenCalledWith(

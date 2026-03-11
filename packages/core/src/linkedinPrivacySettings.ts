@@ -10,6 +10,13 @@ import {
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
+import {
+  consumeRateLimitOrThrow,
+  createConfirmRateLimitMessage,
+  peekRateLimitPreview,
+  type ConsumeRateLimitInput,
+  type RateLimiter
+} from "./rateLimiter.js";
 import type { LinkedInSelectorLocale } from "./selectorLocale.js";
 import type {
   ActionExecutor,
@@ -59,6 +66,7 @@ export interface LinkedInPrivacySettingsExecutorRuntime {
   cdpUrl?: string | undefined;
   selectorLocale: LinkedInSelectorLocale;
   profileManager: ProfileManager;
+  rateLimiter: RateLimiter;
   logger: JsonEventLogger;
   artifacts: ArtifactHelpers;
   confirmFailureArtifacts: ConfirmFailureArtifactConfig;
@@ -73,6 +81,12 @@ export interface LinkedInPrivacySettingsRuntime
 }
 
 export const UPDATE_PRIVACY_SETTING_ACTION_TYPE = "privacy.update_setting";
+
+const UPDATE_PRIVACY_SETTING_RATE_LIMIT_CONFIG = {
+  counterKey: "linkedin.privacy.update_setting",
+  windowSizeMs: 24 * 60 * 60 * 1000,
+  limit: 10
+} as const satisfies ConsumeRateLimitInput;
 
 interface VisibleLocatorCandidate {
   key: string;
@@ -812,6 +826,19 @@ async function executeUpdatePrivacySetting(
           setting_key: settingKey,
           requested_value: requestedValue
         },
+        beforeExecute: () =>
+          consumeRateLimitOrThrow(runtime.rateLimiter, {
+            config: UPDATE_PRIVACY_SETTING_RATE_LIMIT_CONFIG,
+            message: createConfirmRateLimitMessage(
+              UPDATE_PRIVACY_SETTING_ACTION_TYPE
+            ),
+            details: {
+              action_id: actionId,
+              profile_name: profileName,
+              setting_key: settingKey,
+              requested_value: requestedValue
+            }
+          }),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
@@ -996,7 +1023,11 @@ export class LinkedInPrivacySettingsService {
           label: descriptor.label,
           description: descriptor.description,
           value
-        }
+        },
+        rate_limit: peekRateLimitPreview(
+          this.runtime.rateLimiter,
+          UPDATE_PRIVACY_SETTING_RATE_LIMIT_CONFIG
+        )
       },
       ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
     });

@@ -11,6 +11,13 @@ import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
 import {
+  consumeRateLimitOrThrow,
+  createConfirmRateLimitMessage,
+  peekRateLimitPreview,
+  type ConsumeRateLimitInput,
+  type RateLimiter
+} from "./rateLimiter.js";
+import {
   buildLinkedInSelectorPhraseRegex,
   type LinkedInSelectorLocale
 } from "./selectorLocale.js";
@@ -25,6 +32,24 @@ import type {
 export const GROUP_JOIN_ACTION_TYPE = "groups.join";
 export const GROUP_LEAVE_ACTION_TYPE = "groups.leave";
 export const GROUP_POST_ACTION_TYPE = "groups.post";
+
+const GROUP_RATE_LIMIT_CONFIGS = {
+  [GROUP_JOIN_ACTION_TYPE]: {
+    counterKey: "linkedin.groups.join",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 10
+  },
+  [GROUP_LEAVE_ACTION_TYPE]: {
+    counterKey: "linkedin.groups.leave",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 10
+  },
+  [GROUP_POST_ACTION_TYPE]: {
+    counterKey: "linkedin.groups.post",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 1
+  }
+} as const satisfies Record<string, ConsumeRateLimitInput>;
 
 export type LinkedInGroupMembershipState =
   | "member"
@@ -95,6 +120,7 @@ export interface LinkedInGroupsExecutorRuntime {
   cdpUrl?: string | undefined;
   selectorLocale: LinkedInSelectorLocale;
   profileManager: ProfileManager;
+  rateLimiter: RateLimiter;
   logger: JsonEventLogger;
   artifacts: ArtifactHelpers;
   confirmFailureArtifacts: ConfirmFailureArtifactConfig;
@@ -128,6 +154,20 @@ interface GroupDetailSnapshot {
 
 function normalizeText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function getGroupRateLimitConfig(actionType: string): ConsumeRateLimitInput {
+  const config = (
+    GROUP_RATE_LIMIT_CONFIGS as Record<string, ConsumeRateLimitInput>
+  )[actionType];
+
+  if (!config) {
+    throw new LinkedInBuddyError("UNKNOWN", "Missing rate limit policy.", {
+      action_type: actionType
+    });
+  }
+
+  return config;
 }
 
 function escapeRegExp(value: string): string {
@@ -495,6 +535,17 @@ async function executeJoinGroup(
           group_id: groupId,
           group_url: groupUrl
         },
+        beforeExecute: () =>
+          consumeRateLimitOrThrow(runtime.rateLimiter, {
+            config: getGroupRateLimitConfig(GROUP_JOIN_ACTION_TYPE),
+            message: createConfirmRateLimitMessage(GROUP_JOIN_ACTION_TYPE),
+            details: {
+              action_id: actionId,
+              profile_name: profileName,
+              group_id: groupId,
+              group_url: groupUrl
+            }
+          }),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
@@ -599,6 +650,17 @@ async function executeLeaveGroup(
           group_id: groupId,
           group_url: groupUrl
         },
+        beforeExecute: () =>
+          consumeRateLimitOrThrow(runtime.rateLimiter, {
+            config: getGroupRateLimitConfig(GROUP_LEAVE_ACTION_TYPE),
+            message: createConfirmRateLimitMessage(GROUP_LEAVE_ACTION_TYPE),
+            details: {
+              action_id: actionId,
+              profile_name: profileName,
+              group_id: groupId,
+              group_url: groupUrl
+            }
+          }),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
@@ -710,6 +772,17 @@ async function executePostToGroup(
           group_id: groupId,
           group_url: groupUrl
         },
+        beforeExecute: () =>
+          consumeRateLimitOrThrow(runtime.rateLimiter, {
+            config: getGroupRateLimitConfig(GROUP_POST_ACTION_TYPE),
+            message: createConfirmRateLimitMessage(GROUP_POST_ACTION_TYPE),
+            details: {
+              action_id: actionId,
+              profile_name: profileName,
+              group_id: groupId,
+              group_url: groupUrl
+            }
+          }),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
@@ -972,7 +1045,11 @@ export class LinkedInGroupsService {
       preview: {
         summary: input.summary,
         target,
-        ...(input.payload ? { payload: input.payload } : {})
+        ...(input.payload ? { payload: input.payload } : {}),
+        rate_limit: peekRateLimitPreview(
+          this.runtime.rateLimiter,
+          getGroupRateLimitConfig(input.actionType)
+        )
       },
       ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
     });

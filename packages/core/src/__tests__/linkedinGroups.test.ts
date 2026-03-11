@@ -8,6 +8,7 @@ import {
   buildGroupViewUrl,
   createGroupActionExecutors
 } from "../linkedinGroups.js";
+import { createAllowedRateLimiterStub } from "./rateLimiterTestUtils.js";
 
 describe("LinkedInGroups helpers", () => {
   it("builds group search URLs", () => {
@@ -42,7 +43,9 @@ describe("LinkedInGroupsService prepare flows", () => {
       expiresAtMs: 123,
       preview: input.preview
     }));
+    const rateLimiter = createAllowedRateLimiterStub();
     const service = new LinkedInGroupsService({
+      rateLimiter,
       twoPhaseCommit: { prepare }
     } as unknown as ConstructorParameters<typeof LinkedInGroupsService>[0]);
 
@@ -59,10 +62,16 @@ describe("LinkedInGroupsService prepare flows", () => {
         group_id: "9806731",
         group_url: "https://www.linkedin.com/groups/9806731/",
         profile_name: "default"
+      },
+      rate_limit: {
+        counter_key: "linkedin.groups.join"
       }
     });
     expect(leavePrepared.preview).toMatchObject({
-      summary: "Leave LinkedIn group 9806731"
+      summary: "Leave LinkedIn group 9806731",
+      rate_limit: {
+        counter_key: "linkedin.groups.leave"
+      }
     });
 
     expect(prepare).toHaveBeenNthCalledWith(
@@ -85,7 +94,9 @@ describe("LinkedInGroupsService prepare flows", () => {
       expiresAtMs: 123,
       preview: input.preview
     }));
+    const rateLimiter = createAllowedRateLimiterStub();
     const service = new LinkedInGroupsService({
+      rateLimiter,
       twoPhaseCommit: { prepare }
     } as unknown as ConstructorParameters<typeof LinkedInGroupsService>[0]);
 
@@ -98,6 +109,9 @@ describe("LinkedInGroupsService prepare flows", () => {
       summary: "Post in LinkedIn group 9806731",
       payload: {
         text: "Ship it."
+      },
+      rate_limit: {
+        counter_key: "linkedin.groups.post"
       }
     });
     expect(prepare).toHaveBeenCalledWith(

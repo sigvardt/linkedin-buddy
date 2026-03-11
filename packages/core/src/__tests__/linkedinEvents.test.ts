@@ -6,6 +6,7 @@ import {
   buildEventViewUrl,
   createEventActionExecutors
 } from "../linkedinEvents.js";
+import { createAllowedRateLimiterStub } from "./rateLimiterTestUtils.js";
 
 describe("LinkedInEvents helpers", () => {
   it("builds event search URLs", () => {
@@ -41,7 +42,9 @@ describe("LinkedInEventsService prepare flows", () => {
       expiresAtMs: 123,
       preview: input.preview
     }));
+    const rateLimiter = createAllowedRateLimiterStub();
     const service = new LinkedInEventsService({
+      rateLimiter,
       twoPhaseCommit: { prepare }
     } as unknown as ConstructorParameters<typeof LinkedInEventsService>[0]);
 
@@ -58,6 +61,9 @@ describe("LinkedInEventsService prepare flows", () => {
       },
       payload: {
         response: "attend"
+      },
+      rate_limit: {
+        counter_key: "linkedin.events.rsvp"
       }
     });
     expect(prepare).toHaveBeenCalledWith(
