@@ -33,3 +33,4 @@ test/fixtures/*
 test/fixtures/*/responses/
 test/fixtures/*/responses/**
 test/fixtures/*/session.har
+agent-orchestrator.yaml
