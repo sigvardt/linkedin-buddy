@@ -26,10 +26,12 @@ import {
   WRITE_PROFILE_RECOMMENDATION_ACTION_TYPE,
   LinkedInProfileService,
   createProfileActionExecutors,
+  findIntroLocationFieldLocator,
   isProfileIntroEditHref,
   navigateToOwnProfile,
   resolveFirstVisibleLocator,
   resolveProfileUrl,
+  splitProfileIntroLocationValue,
   type LinkedInProfileRuntime
 } from "../linkedinProfile.js";
 import { TwoPhaseCommitService } from "../twoPhaseCommit.js";
@@ -118,6 +120,86 @@ class MockLocator {
   async isVisible(): Promise<boolean> {
     const index = this.resolvedIndex ?? 0;
     return this.visibility[index] ?? false;
+  }
+}
+
+class MockDialogFieldLocator {
+  constructor(
+    readonly label: string,
+    readonly visible: boolean = true
+  ) {}
+}
+
+class MockDialogQueryLocator {
+  constructor(
+    readonly fields: readonly MockDialogFieldLocator[],
+    readonly resolvedIndex: number | null = null
+  ) {}
+
+  get resolvedLabel(): string | null {
+    return this.fields[this.resolvedIndex ?? 0]?.label ?? null;
+  }
+
+  async count(): Promise<number> {
+    return this.resolvedIndex === null ? this.fields.length : 1;
+  }
+
+  first(): MockDialogQueryLocator {
+    if (this.resolvedIndex !== null) {
+      return this;
+    }
+
+    return new MockDialogQueryLocator(this.fields, 0);
+  }
+
+  nth(index: number): MockDialogQueryLocator {
+    if (this.resolvedIndex !== null) {
+      return this;
+    }
+
+    return new MockDialogQueryLocator(this.fields, index);
+  }
+
+  locator(): MockDialogQueryLocator {
+    return this;
+  }
+
+  async isVisible(): Promise<boolean> {
+    return this.fields[this.resolvedIndex ?? 0]?.visible ?? false;
+  }
+}
+
+class MockDialogLocator {
+  constructor(private readonly fields: readonly MockDialogFieldLocator[]) {}
+
+  getByLabel(labelMatcher: RegExp): MockDialogQueryLocator {
+    return new MockDialogQueryLocator(
+      this.fields.filter((field) => labelMatcher.test(field.label))
+    );
+  }
+
+  getByRole(_role: string, options: { name?: RegExp } = {}): MockDialogQueryLocator {
+    const labelMatcher = options.name ?? /.*/;
+
+    return new MockDialogQueryLocator(
+      this.fields.filter((field) => labelMatcher.test(field.label))
+    );
+  }
+
+  getByText(labelMatcher: RegExp): MockDialogQueryLocator {
+    return new MockDialogQueryLocator(
+      this.fields.filter((field) => labelMatcher.test(field.label))
+    );
+  }
+
+  locator(selector: string): MockDialogQueryLocator {
+    const matches = Array.from(selector.matchAll(/"([^"]+)"/g));
+    const rawAlias = matches.at(-1)?.[1] ?? "";
+    const normalizedAlias = rawAlias.toLowerCase();
+
+    return new MockDialogQueryLocator(
+      this.fields.filter((field) => field.label.toLowerCase().includes(normalizedAlias))
+    );
   }
 }
 
@@ -317,6 +399,56 @@ describe("resolveFirstVisibleLocator", () => {
     await expect(
       resolveFirstVisibleLocator(locator as unknown as Locator)
     ).resolves.toBeNull();
+  });
+});
+
+describe("findIntroLocationFieldLocator", () => {
+  it("prefers the live split city field over the country field", async () => {
+    const dialog = new MockDialogLocator([
+      new MockDialogFieldLocator("Country/Region*"),
+      new MockDialogFieldLocator("City")
+    ]);
+
+    const locator = await findIntroLocationFieldLocator(dialog as unknown as Locator);
+
+    expect(locator).not.toBeNull();
+    expect((locator as unknown as MockDialogQueryLocator).resolvedLabel).toBe("City");
+  });
+
+  it("falls back to the classic single location label", async () => {
+    const dialog = new MockDialogLocator([new MockDialogFieldLocator("Location")]);
+
+    const locator = await findIntroLocationFieldLocator(dialog as unknown as Locator);
+
+    expect(locator).not.toBeNull();
+    expect((locator as unknown as MockDialogQueryLocator).resolvedLabel).toBe("Location");
+  });
+});
+
+describe("splitProfileIntroLocationValue", () => {
+  it("splits country and city for the current intro editor layout", () => {
+    expect(splitProfileIntroLocationValue("Copenhagen, Denmark")).toEqual({
+      city: "Copenhagen",
+      countryOrRegion: "Denmark"
+    });
+  });
+
+  it("keeps detailed locality text while peeling off the country", () => {
+    expect(
+      splitProfileIntroLocationValue(
+        "2800, Copenhagen, Capital Region of Denmark, Denmark"
+      )
+    ).toEqual({
+      city: "2800, Copenhagen, Capital Region of Denmark",
+      countryOrRegion: "Denmark"
+    });
+  });
+
+  it("leaves single-part locations untouched", () => {
+    expect(splitProfileIntroLocationValue("Copenhagen")).toEqual({
+      city: "Copenhagen",
+      countryOrRegion: null
+    });
   });
 });
 
