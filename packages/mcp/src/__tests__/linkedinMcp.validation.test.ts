@@ -1,4 +1,4 @@
-import { LinkedInAssistantError } from "@linkedin-assistant/core";
+import { LinkedInBuddyError } from "@linkedin-buddy/core";
 import { describe, expect, it } from "vitest";
 import {
   LINKEDIN_INBOX_SEARCH_RECIPIENTS_TOOL,
@@ -92,12 +92,12 @@ function synthesizeTypeMismatchValue(schema: LinkedInMcpInputSchema): unknown {
   }
 }
 
-function captureValidationFailure(action: () => unknown): LinkedInAssistantError {
+function captureValidationFailure(action: () => unknown): LinkedInBuddyError {
   try {
     action();
   } catch (error) {
-    expect(error).toBeInstanceOf(LinkedInAssistantError);
-    const assistantError = error as LinkedInAssistantError;
+    expect(error).toBeInstanceOf(LinkedInBuddyError);
+    const assistantError = error as LinkedInBuddyError;
     expect(assistantError.code).toBe("ACTION_PRECONDITION_FAILED");
     return assistantError;
   }

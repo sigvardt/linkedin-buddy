@@ -615,7 +615,7 @@ function throwToolSchemaValidationError(
   message: string,
   details: Record<string, unknown> = {}
 ): never {
-  throw new LinkedInAssistantError(
+  throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `${formatToolSchemaPath(path)} ${message}`,
     {
@@ -653,7 +653,7 @@ function validateToolArgValueAgainstSchema(
         validateToolArgValueAgainstSchema(candidate, value, path);
         return;
       } catch (error) {
-        if (!(error instanceof LinkedInAssistantError)) {
+        if (!(error instanceof LinkedInBuddyError)) {
           throw error;
         }
       }
@@ -6956,7 +6956,7 @@ const TOOL_DEFINITION_BY_NAME = new Map(
 export function validateToolArguments(name: string, args: unknown): ToolArgs {
   const definition = TOOL_DEFINITION_BY_NAME.get(name);
   if (!definition) {
-    throw new LinkedInAssistantError("TARGET_NOT_FOUND", `Unknown tool: ${name}.`, {
+    throw new LinkedInBuddyError("TARGET_NOT_FOUND", `Unknown tool: ${name}.`, {
       tool: name
     });
   }
