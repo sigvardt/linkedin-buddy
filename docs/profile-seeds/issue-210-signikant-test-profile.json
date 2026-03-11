@@ -1,0 +1,143 @@
+{
+  "metadata": {
+    "issue": 210,
+    "persona": "Joi Ascend",
+    "notes": [
+      "Curated seed for the dedicated Signikant LinkedIn test account.",
+      "Skills are intentionally included for downstream asset generation even though profile editing still skips them (#228)."
+    ]
+  },
+  "intro": {
+    "firstName": "Joi",
+    "lastName": "Ascend",
+    "headline": "AI/ML Engineer at Signikant | TypeScript, Python, LLM Systems, Developer Tooling",
+    "location": "Copenhagen, Capital Region of Denmark, Denmark",
+    "industry": "Software Development",
+    "customProfileUrl": "joi-ascend-a534b73b6"
+  },
+  "about": "I work on AI systems that need to be useful beyond the demo. At Signikant I build LLM-enabled workflows, evaluation tooling, and operator-facing automation with an emphasis on observability, reliability, and product fit.\n\nOver the last several years I have worked across backend services, developer tooling, and applied machine learning. I enjoy turning ambiguous product goals into clear experiments, instrumentation, and delivery plans that small teams can maintain.\n\nI am especially interested in practical AI engineering: evaluation loops, human-in-the-loop review, trustworthy automation, and the platform work that helps teams move faster with confidence.",
+  "experience": [
+    {
+      "title": "AI/ML Engineer",
+      "company": "Signikant",
+      "employmentType": "Full-time",
+      "location": "Copenhagen, Denmark",
+      "currentlyWorkingHere": true,
+      "startMonth": "April",
+      "startYear": "2023",
+      "description": "Build LLM-enabled product workflows, evaluation pipelines, and internal tooling for human-in-the-loop AI systems. Partner with product and engineering on observability, quality gates, and pragmatic rollout strategy."
+    },
+    {
+      "title": "Senior Software Engineer",
+      "company": "Northstar Labs",
+      "employmentType": "Full-time",
+      "location": "Copenhagen, Denmark",
+      "startMonth": "January",
+      "startYear": "2021",
+      "endMonth": "March",
+      "endYear": "2023",
+      "description": "Led backend and developer tooling projects for data-rich SaaS products, improving deployment confidence, tracing, and operational insight across services."
+    },
+    {
+      "title": "Software Engineer",
+      "company": "Meshworks",
+      "employmentType": "Full-time",
+      "location": "Aarhus, Denmark",
+      "startMonth": "August",
+      "startYear": "2018",
+      "endMonth": "December",
+      "endYear": "2020",
+      "description": "Worked across Node.js APIs and frontend systems, focusing on workflow automation, internal platform ergonomics, and reliable delivery."
+    }
+  ],
+  "education": [
+    {
+      "school": "Technical University of Denmark",
+      "degree": "MSc",
+      "fieldOfStudy": "Computer Science",
+      "startMonth": "September",
+      "startYear": "2016",
+      "endMonth": "June",
+      "endYear": "2018",
+      "description": "Focused on machine learning, distributed systems, and software architecture."
+    },
+    {
+      "school": "Copenhagen School of Design and Technology",
+      "degree": "BSc",
+      "fieldOfStudy": "Software Development",
+      "startMonth": "September",
+      "startYear": "2013",
+      "endMonth": "June",
+      "endYear": "2016",
+      "description": "Coursework included application architecture, databases, HCI, and modern web engineering."
+    }
+  ],
+  "certifications": [
+    {
+      "name": "Google Cloud Professional Machine Learning Engineer",
+      "issuingOrganization": "Google Cloud",
+      "issueMonth": "May",
+      "issueYear": "2024",
+      "credentialId": "JOI-GCP-ML-2024"
+    },
+    {
+      "name": "AWS Certified Developer - Associate",
+      "issuingOrganization": "Amazon Web Services",
+      "issueMonth": "October",
+      "issueYear": "2022",
+      "credentialId": "JOI-AWS-DEV-2022"
+    }
+  ],
+  "languages": [
+    {
+      "name": "English",
+      "proficiency": "Full professional proficiency"
+    },
+    {
+      "name": "Danish",
+      "proficiency": "Professional working proficiency"
+    }
+  ],
+  "projects": [
+    {
+      "title": "LLM Evaluation Toolkit",
+      "description": "Built a lightweight evaluation harness for prompt, retrieval, and regression testing across AI workflow releases.",
+      "startMonth": "June",
+      "startYear": "2023"
+    },
+    {
+      "title": "Operator Review Console",
+      "description": "Created internal review surfaces for human-in-the-loop automation with trace-linked context and clearer feedback loops.",
+      "startMonth": "November",
+      "startYear": "2023"
+    }
+  ],
+  "volunteerExperience": [
+    {
+      "role": "Technical Mentor",
+      "organization": "Coding Pirates Copenhagen",
+      "cause": "Education",
+      "startMonth": "September",
+      "startYear": "2022",
+      "description": "Mentor students on programming fundamentals, problem-solving, and collaborative software projects."
+    }
+  ],
+  "skills": [
+    "TypeScript",
+    "JavaScript",
+    "Node.js",
+    "Python",
+    "Machine Learning",
+    "LLM Systems",
+    "Prompt Engineering",
+    "Developer Tooling",
+    "Workflow Automation",
+    "Applied AI",
+    "Evaluation",
+    "Observability",
+    "MLOps",
+    "Product Discovery",
+    "API Design",
+    "Playwright"
+  ]
+}
