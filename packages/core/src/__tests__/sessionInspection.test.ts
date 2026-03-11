@@ -96,10 +96,12 @@ describe("inspectLinkedInSession", () => {
     expect(status.sessionCookiePresent).toBe(false);
   });
 
-  it("marks the session unauthenticated when the login form is visible", async () => {
+  it("marks the session unauthenticated when nameless login inputs are visible", async () => {
     const page = createMockPage({
       url: "https://www.linkedin.com/feed/",
-      isVisible: (selector) => selector.includes("input[name='session_key']")
+      isVisible: (selector) =>
+        selector.includes("autocomplete~='username'") ||
+        selector.includes("type='password'")
     });
 
     const status = await inspectLinkedInSession(page);
@@ -151,7 +153,8 @@ describe("inspectLinkedInSession", () => {
     const page = createMockPage({
       url: "https://www.linkedin.com/uas/login?session_redirect=https%3A%2F%2Fwww.linkedin.com%2Ffeed%2F",
       isVisible: (selector) =>
-        selector.includes("input[name='session_key']") ||
+        selector.includes("autocomplete~='username'") ||
+        selector.includes("type='password'") ||
         selector.includes("form[action*='checkpoint']")
     });
 
