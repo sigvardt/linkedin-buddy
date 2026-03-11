@@ -8,6 +8,13 @@ import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
 import {
+  consumeRateLimitOrThrow,
+  createConfirmRateLimitMessage,
+  peekRateLimitPreview,
+  type ConsumeRateLimitInput,
+  type RateLimiter
+} from "./rateLimiter.js";
+import {
   normalizeLinkedInProfileUrl,
   resolveProfileUrl
 } from "./linkedinProfile.js";
@@ -88,6 +95,7 @@ export interface LinkedInConnectionsExecutorRuntime {
   cdpUrl?: string | undefined;
   selectorLocale: LinkedInSelectorLocale;
   profileManager: ProfileManager;
+  rateLimiter: RateLimiter;
   logger: JsonEventLogger;
   artifacts: ArtifactHelpers;
   confirmFailureArtifacts: ConfirmFailureArtifactConfig;
@@ -112,6 +120,44 @@ export const REMOVE_CONNECTION_ACTION_TYPE = "connections.remove_connection";
 export const FOLLOW_MEMBER_ACTION_TYPE = "connections.follow_member";
 export const UNFOLLOW_MEMBER_ACTION_TYPE = "connections.unfollow_member";
 
+const CONNECTION_RATE_LIMIT_CONFIGS = {
+  [SEND_INVITATION_ACTION_TYPE]: {
+    counterKey: "linkedin.connections.send_invitation",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 20
+  },
+  [ACCEPT_INVITATION_ACTION_TYPE]: {
+    counterKey: "linkedin.connections.accept_invitation",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 30
+  },
+  [WITHDRAW_INVITATION_ACTION_TYPE]: {
+    counterKey: "linkedin.connections.withdraw_invitation",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 20
+  },
+  [IGNORE_INVITATION_ACTION_TYPE]: {
+    counterKey: "linkedin.connections.ignore_invitation",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 30
+  },
+  [REMOVE_CONNECTION_ACTION_TYPE]: {
+    counterKey: "linkedin.connections.remove_connection",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 20
+  },
+  [FOLLOW_MEMBER_ACTION_TYPE]: {
+    counterKey: "linkedin.connections.follow_member",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 30
+  },
+  [UNFOLLOW_MEMBER_ACTION_TYPE]: {
+    counterKey: "linkedin.connections.unfollow_member",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 30
+  }
+} as const satisfies Record<string, ConsumeRateLimitInput>;
+
 const CONNECTIONS_URL = "https://www.linkedin.com/mynetwork/invite-connect/connections/";
 const INVITATIONS_RECEIVED_URL = "https://www.linkedin.com/mynetwork/invitation-manager/";
 const INVITATIONS_SENT_URL = "https://www.linkedin.com/mynetwork/invitation-manager/sent/";
@@ -122,6 +168,22 @@ const INVITATIONS_SENT_URL = "https://www.linkedin.com/mynetwork/invitation-mana
 
 function normalizeText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function getConnectionRateLimitConfig(
+  actionType: string
+): ConsumeRateLimitInput {
+  const config = (
+    CONNECTION_RATE_LIMIT_CONFIGS as Record<string, ConsumeRateLimitInput>
+  )[actionType];
+
+  if (!config) {
+    throw new LinkedInBuddyError("UNKNOWN", "Missing rate limit policy.", {
+      action_type: actionType
+    });
+  }
+
+  return config;
 }
 
 type LocatorRoot = Page | Locator;
@@ -741,6 +803,18 @@ async function executeSendInvitation(
           profile_url: profileUrl,
           note_included: note.length > 0
         },
+        beforeExecute: () =>
+          consumeRateLimitOrThrow(runtime.rateLimiter, {
+            config: getConnectionRateLimitConfig(SEND_INVITATION_ACTION_TYPE),
+            message: createConfirmRateLimitMessage(SEND_INVITATION_ACTION_TYPE),
+            details: {
+              action_id: actionId,
+              profile_name: profileName,
+              target_profile: targetProfile,
+              profile_url: profileUrl,
+              note_included: note.length > 0
+            }
+          }),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
@@ -1182,6 +1256,16 @@ async function executeAcceptInvitation(
         errorDetails: {
           target_profile: targetProfile
         },
+        beforeExecute: () =>
+          consumeRateLimitOrThrow(runtime.rateLimiter, {
+            config: getConnectionRateLimitConfig(ACCEPT_INVITATION_ACTION_TYPE),
+            message: createConfirmRateLimitMessage(ACCEPT_INVITATION_ACTION_TYPE),
+            details: {
+              action_id: actionId,
+              profile_name: profileName,
+              target_profile: targetProfile
+            }
+          }),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
@@ -1281,6 +1365,16 @@ async function executeWithdrawInvitation(
         errorDetails: {
           target_profile: targetProfile
         },
+        beforeExecute: () =>
+          consumeRateLimitOrThrow(runtime.rateLimiter, {
+            config: getConnectionRateLimitConfig(WITHDRAW_INVITATION_ACTION_TYPE),
+            message: createConfirmRateLimitMessage(WITHDRAW_INVITATION_ACTION_TYPE),
+            details: {
+              action_id: actionId,
+              profile_name: profileName,
+              target_profile: targetProfile
+            }
+          }),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
@@ -1400,6 +1494,16 @@ async function executeIgnoreInvitation(
         errorDetails: {
           target_profile: targetProfile
         },
+        beforeExecute: () =>
+          consumeRateLimitOrThrow(runtime.rateLimiter, {
+            config: getConnectionRateLimitConfig(IGNORE_INVITATION_ACTION_TYPE),
+            message: createConfirmRateLimitMessage(IGNORE_INVITATION_ACTION_TYPE),
+            details: {
+              action_id: actionId,
+              profile_name: profileName,
+              target_profile: targetProfile
+            }
+          }),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
@@ -1503,6 +1607,17 @@ async function executeRemoveConnection(
           target_profile: targetProfile,
           profile_url: profileUrl
         },
+        beforeExecute: () =>
+          consumeRateLimitOrThrow(runtime.rateLimiter, {
+            config: getConnectionRateLimitConfig(REMOVE_CONNECTION_ACTION_TYPE),
+            message: createConfirmRateLimitMessage(REMOVE_CONNECTION_ACTION_TYPE),
+            details: {
+              action_id: actionId,
+              profile_name: profileName,
+              target_profile: targetProfile,
+              profile_url: profileUrl
+            }
+          }),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
@@ -1632,6 +1747,17 @@ async function executeFollowMember(
           target_profile: targetProfile,
           profile_url: profileUrl
         },
+        beforeExecute: () =>
+          consumeRateLimitOrThrow(runtime.rateLimiter, {
+            config: getConnectionRateLimitConfig(FOLLOW_MEMBER_ACTION_TYPE),
+            message: createConfirmRateLimitMessage(FOLLOW_MEMBER_ACTION_TYPE),
+            details: {
+              action_id: actionId,
+              profile_name: profileName,
+              target_profile: targetProfile,
+              profile_url: profileUrl
+            }
+          }),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
@@ -1745,6 +1871,17 @@ async function executeUnfollowMember(
           target_profile: targetProfile,
           profile_url: profileUrl
         },
+        beforeExecute: () =>
+          consumeRateLimitOrThrow(runtime.rateLimiter, {
+            config: getConnectionRateLimitConfig(UNFOLLOW_MEMBER_ACTION_TYPE),
+            message: createConfirmRateLimitMessage(UNFOLLOW_MEMBER_ACTION_TYPE),
+            details: {
+              action_id: actionId,
+              profile_name: profileName,
+              target_profile: targetProfile,
+              profile_url: profileUrl
+            }
+          }),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
@@ -2002,7 +2139,11 @@ export class LinkedInConnectionsService {
       payload: {},
       preview: {
         summary: input.summary,
-        target
+        target,
+        rate_limit: peekRateLimitPreview(
+          this.runtime.rateLimiter,
+          getConnectionRateLimitConfig(input.actionType)
+        )
       },
       ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
     });
@@ -2156,7 +2297,11 @@ export class LinkedInConnectionsService {
       target,
       outbound: {
         note: input.note ?? ""
-      }
+      },
+      rate_limit: peekRateLimitPreview(
+        this.runtime.rateLimiter,
+        getConnectionRateLimitConfig(SEND_INVITATION_ACTION_TYPE)
+      )
     };
 
     return this.runtime.twoPhaseCommit.prepare({

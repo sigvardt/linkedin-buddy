@@ -29,6 +29,7 @@ import {
   type LinkedInProfileRuntime
 } from "../linkedinProfile.js";
 import { TwoPhaseCommitService } from "../twoPhaseCommit.js";
+import { createAllowedRateLimiterStub } from "./rateLimiterTestUtils.js";
 
 const tempDirs: string[] = [];
 
@@ -65,6 +66,8 @@ function createTestRuntime(
   db: AssistantDatabase,
   artifactsRoot: string = createTempArtifactsDir()
 ): LinkedInProfileRuntime {
+  const rateLimiter = createAllowedRateLimiterStub();
+
   return {
     auth: {
       ensureAuthenticated: vi.fn(async () => undefined)
@@ -74,6 +77,7 @@ function createTestRuntime(
     profileManager: {
       runWithContext: vi.fn()
     },
+    rateLimiter: rateLimiter as unknown as LinkedInProfileRuntime["rateLimiter"],
     logger: {
       log: vi.fn()
     },
@@ -275,6 +279,9 @@ describe("LinkedInProfileService prepare helpers", () => {
           intro_updates: {
             headline: "Automation Engineer",
             location: "Copenhagen"
+          },
+          rate_limit: {
+            counter_key: "linkedin.profile.update_intro"
           }
         }
       });
@@ -706,6 +713,9 @@ describe("LinkedInProfileService prepare helpers", () => {
         fields: {
           relationship: "colleague",
           text: "A thoughtful collaborator who consistently follows through."
+        },
+        rate_limit: {
+          counter_key: "linkedin.profile.recommendation_write"
         }
       });
     } finally {

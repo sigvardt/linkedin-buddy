@@ -36,6 +36,7 @@ export interface ExecuteConfirmActionWithArtifactsInput<
   persistTraceOnSuccess?: boolean;
   metadata?: Record<string, unknown> | undefined;
   errorDetails?: Record<string, unknown> | undefined;
+  beforeExecute?: (() => void) | undefined;
   mapError: (error: unknown) => LinkedInBuddyError;
   execute: () => Promise<ActionExecutorResult>;
 }
@@ -458,6 +459,7 @@ export async function executeConfirmActionWithArtifacts<
   }
 
   try {
+    input.beforeExecute?.();
     const result = await input.execute();
     const artifactPaths = [...result.artifacts];
 

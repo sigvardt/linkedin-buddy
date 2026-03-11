@@ -11,6 +11,13 @@ import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
 import {
+  consumeRateLimitOrThrow,
+  createConfirmRateLimitMessage,
+  peekRateLimitPreview,
+  type ConsumeRateLimitInput,
+  type RateLimiter
+} from "./rateLimiter.js";
+import {
   normalizeLinkedInProfileUrl,
   resolveProfileUrl
 } from "./linkedinProfile.js";
@@ -66,6 +73,7 @@ export interface LinkedInMembersExecutorRuntime {
   cdpUrl?: string | undefined;
   selectorLocale: LinkedInSelectorLocale;
   profileManager: ProfileManager;
+  rateLimiter: RateLimiter;
   logger: JsonEventLogger;
   artifacts: ArtifactHelpers;
   confirmFailureArtifacts: ConfirmFailureArtifactConfig;
@@ -78,6 +86,24 @@ export interface LinkedInMembersRuntime extends LinkedInMembersExecutorRuntime {
 export const BLOCK_MEMBER_ACTION_TYPE = "members.block_member";
 export const UNBLOCK_MEMBER_ACTION_TYPE = "members.unblock_member";
 export const REPORT_MEMBER_ACTION_TYPE = "members.report_member";
+
+const MEMBER_RATE_LIMIT_CONFIGS = {
+  [BLOCK_MEMBER_ACTION_TYPE]: {
+    counterKey: "linkedin.members.block_member",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 10
+  },
+  [UNBLOCK_MEMBER_ACTION_TYPE]: {
+    counterKey: "linkedin.members.unblock_member",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 10
+  },
+  [REPORT_MEMBER_ACTION_TYPE]: {
+    counterKey: "linkedin.members.report_member",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 10
+  }
+} as const satisfies Record<string, ConsumeRateLimitInput>;
 
 const BLOCKED_MEMBERS_URLS = [
   "https://www.linkedin.com/mypreferences/d/blocking",
@@ -92,6 +118,20 @@ interface VisibleLocatorCandidate {
 
 function normalizeText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function getMemberRateLimitConfig(actionType: string): ConsumeRateLimitInput {
+  const config = (
+    MEMBER_RATE_LIMIT_CONFIGS as Record<string, ConsumeRateLimitInput>
+  )[actionType];
+
+  if (!config) {
+    throw new LinkedInBuddyError("UNKNOWN", "Missing rate limit policy.", {
+      action_type: actionType
+    });
+  }
+
+  return config;
 }
 
 function escapeRegExp(value: string): string {
@@ -739,6 +779,17 @@ async function executeBlockMember(
           target_profile: targetProfile,
           profile_url: profileUrl
         },
+        beforeExecute: () =>
+          consumeRateLimitOrThrow(runtime.rateLimiter, {
+            config: getMemberRateLimitConfig(BLOCK_MEMBER_ACTION_TYPE),
+            message: createConfirmRateLimitMessage(BLOCK_MEMBER_ACTION_TYPE),
+            details: {
+              action_id: actionId,
+              profile_name: profileName,
+              target_profile: targetProfile,
+              profile_url: profileUrl
+            }
+          }),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
@@ -837,6 +888,16 @@ async function executeUnblockMember(
         errorDetails: {
           target_profile: targetProfile
         },
+        beforeExecute: () =>
+          consumeRateLimitOrThrow(runtime.rateLimiter, {
+            config: getMemberRateLimitConfig(UNBLOCK_MEMBER_ACTION_TYPE),
+            message: createConfirmRateLimitMessage(UNBLOCK_MEMBER_ACTION_TYPE),
+            details: {
+              action_id: actionId,
+              profile_name: profileName,
+              target_profile: targetProfile
+            }
+          }),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
@@ -995,6 +1056,18 @@ async function executeReportMember(
           report_reason: reason,
           profile_url: profileUrl
         },
+        beforeExecute: () =>
+          consumeRateLimitOrThrow(runtime.rateLimiter, {
+            config: getMemberRateLimitConfig(REPORT_MEMBER_ACTION_TYPE),
+            message: createConfirmRateLimitMessage(REPORT_MEMBER_ACTION_TYPE),
+            details: {
+              action_id: actionId,
+              profile_name: profileName,
+              target_profile: targetProfile,
+              report_reason: reason,
+              profile_url: profileUrl
+            }
+          }),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
@@ -1179,7 +1252,11 @@ export class LinkedInMembersService {
       preview: {
         summary: input.summary,
         target,
-        ...(input.payload ? { payload: input.payload } : {})
+        ...(input.payload ? { payload: input.payload } : {}),
+        rate_limit: peekRateLimitPreview(
+          this.runtime.rateLimiter,
+          getMemberRateLimitConfig(input.actionType)
+        )
       },
       ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
     });

@@ -207,4 +207,54 @@ describe("executeConfirmActionWithArtifacts", () => {
     expect(result.artifacts[0]).toContain("trace-confirm-send-message");
     expect(statSync(runtime.artifacts.resolve(result.artifacts[0])).size).toBeGreaterThan(0);
   });
+
+  it("runs beforeExecute hooks and preserves RATE_LIMITED failures", async () => {
+    const runtime = createTestRuntime(2_048);
+    const context = createContext(createTraceArchive(), {
+      nodes: [{ role: { value: "RootWebArea" } }]
+    });
+    const page = createPage(
+      context,
+      "https://www.linkedin.com/in/realsimonmiller/"
+    );
+    const beforeExecute = vi.fn(() => {
+      throw new LinkedInBuddyError("RATE_LIMITED", "Local cooldown active.", {
+        rate_limit: {
+          counter_key: "linkedin.connections.send_invitation"
+        }
+      });
+    });
+    const execute = vi.fn(async () => ({
+      ok: true,
+      result: {},
+      artifacts: []
+    }));
+
+    await expect(
+      executeConfirmActionWithArtifacts({
+        runtime,
+        context,
+        page,
+        actionId: "act-3",
+        actionType: "connections.send_invitation",
+        profileName: "default",
+        beforeExecute,
+        mapError: (error) =>
+          asLinkedInBuddyError(error, "UNKNOWN", "Connection action failed."),
+        execute
+      })
+    ).rejects.toMatchObject({
+      code: "RATE_LIMITED",
+      details: {
+        action_id: "act-3",
+        artifact_paths: expect.any(Array),
+        rate_limit: {
+          counter_key: "linkedin.connections.send_invitation"
+        }
+      }
+    });
+
+    expect(beforeExecute).toHaveBeenCalledOnce();
+    expect(execute).not.toHaveBeenCalled();
+  });
 });

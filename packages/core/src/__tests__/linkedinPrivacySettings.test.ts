@@ -8,6 +8,7 @@ import {
   normalizeLinkedInPrivacySettingKey,
   normalizeLinkedInPrivacySettingValue
 } from "../linkedinPrivacySettings.js";
+import { createAllowedRateLimiterStub } from "./rateLimiterTestUtils.js";
 
 describe("LinkedIn privacy setting constants", () => {
   it("exposes the supported setting keys", () => {
@@ -84,7 +85,9 @@ describe("LinkedInPrivacySettingsService prepare flow", () => {
       expiresAtMs: 123,
       preview: input.preview
     }));
+    const rateLimiter = createAllowedRateLimiterStub();
     const service = new LinkedInPrivacySettingsService({
+      rateLimiter,
       twoPhaseCommit: { prepare }
     } as unknown as ConstructorParameters<typeof LinkedInPrivacySettingsService>[0]);
 
@@ -103,6 +106,9 @@ describe("LinkedInPrivacySettingsService prepare flow", () => {
       target: {
         profile_name: "default",
         setting_key: "connections_visibility"
+      },
+      rate_limit: {
+        counter_key: "linkedin.privacy.update_setting"
       }
     });
     expect(prepare).toHaveBeenCalledWith(

@@ -10,6 +10,7 @@ import {
   WITHDRAW_INVITATION_ACTION_TYPE,
   createConnectionActionExecutors
 } from "../linkedinConnections.js";
+import { createAllowedRateLimiterStub } from "./rateLimiterTestUtils.js";
 
 describe("Connection action type constants", () => {
   it("has correct send invitation action type", () => {
@@ -65,7 +66,7 @@ describe("createConnectionActionExecutors", () => {
 });
 
 describe("LinkedInConnectionsService prepare relationship actions", () => {
-  it("prepares ignore, remove, follow, and unfollow actions with targeted previews", () => {
+  it("prepares connection actions with targeted previews and rate-limit metadata", () => {
     const prepare = vi.fn((input: {
       preview: Record<string, unknown>;
     }) => ({
@@ -74,10 +75,17 @@ describe("LinkedInConnectionsService prepare relationship actions", () => {
       expiresAtMs: 123,
       preview: input.preview
     }));
+    const rateLimiter = createAllowedRateLimiterStub();
 
     const service = new LinkedInConnectionsService({
+      rateLimiter,
       twoPhaseCommit: { prepare }
     } as unknown as ConstructorParameters<typeof LinkedInConnectionsService>[0]);
+
+    const sendPrepared = service.prepareSendInvitation({
+      targetProfile: "target-user",
+      note: "Let's connect."
+    });
 
     const ignorePrepared = service.prepareIgnoreInvitation({
       targetProfile: "target-user"
@@ -92,37 +100,59 @@ describe("LinkedInConnectionsService prepare relationship actions", () => {
       targetProfile: "target-user"
     });
 
+    expect(sendPrepared.preview).toMatchObject({
+      summary: "Send connection invitation to target-user",
+      rate_limit: {
+        counter_key: "linkedin.connections.send_invitation"
+      }
+    });
     expect(ignorePrepared.preview).toMatchObject({
       summary: "Ignore connection invitation from target-user",
       target: {
         target_profile: "target-user",
         profile_name: "default"
+      },
+      rate_limit: {
+        counter_key: "linkedin.connections.ignore_invitation"
       }
     });
     expect(removePrepared.preview).toMatchObject({
-      summary: "Remove existing connection with target-user"
+      summary: "Remove existing connection with target-user",
+      rate_limit: {
+        counter_key: "linkedin.connections.remove_connection"
+      }
     });
     expect(followPrepared.preview).toMatchObject({
-      summary: "Follow target-user"
+      summary: "Follow target-user",
+      rate_limit: {
+        counter_key: "linkedin.connections.follow_member"
+      }
     });
     expect(unfollowPrepared.preview).toMatchObject({
-      summary: "Unfollow target-user"
+      summary: "Unfollow target-user",
+      rate_limit: {
+        counter_key: "linkedin.connections.unfollow_member"
+      }
     });
 
     expect(prepare).toHaveBeenNthCalledWith(
       1,
-      expect.objectContaining({ actionType: IGNORE_INVITATION_ACTION_TYPE })
+      expect.objectContaining({ actionType: SEND_INVITATION_ACTION_TYPE })
     );
     expect(prepare).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ actionType: REMOVE_CONNECTION_ACTION_TYPE })
+      expect.objectContaining({ actionType: IGNORE_INVITATION_ACTION_TYPE })
     );
     expect(prepare).toHaveBeenNthCalledWith(
       3,
-      expect.objectContaining({ actionType: FOLLOW_MEMBER_ACTION_TYPE })
+      expect.objectContaining({ actionType: REMOVE_CONNECTION_ACTION_TYPE })
     );
     expect(prepare).toHaveBeenNthCalledWith(
       4,
+      expect.objectContaining({ actionType: FOLLOW_MEMBER_ACTION_TYPE })
+    );
+    expect(prepare).toHaveBeenNthCalledWith(
+      5,
       expect.objectContaining({ actionType: UNFOLLOW_MEMBER_ACTION_TYPE })
     );
   });

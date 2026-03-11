@@ -10,6 +10,13 @@ import {
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
+import {
+  consumeRateLimitOrThrow,
+  createConfirmRateLimitMessage,
+  peekRateLimitPreview,
+  type ConsumeRateLimitInput,
+  type RateLimiter
+} from "./rateLimiter.js";
 import type { LinkedInSelectorLocale } from "./selectorLocale.js";
 import type {
   ActionExecutor,
@@ -20,6 +27,12 @@ import type {
 } from "./twoPhaseCommit.js";
 
 export const EVENT_RSVP_ACTION_TYPE = "events.rsvp";
+
+const EVENT_RSVP_RATE_LIMIT_CONFIG = {
+  counterKey: "linkedin.events.rsvp",
+  windowSizeMs: 24 * 60 * 60 * 1000,
+  limit: 20
+} as const satisfies ConsumeRateLimitInput;
 
 export type LinkedInEventRsvpState = "not_responded" | "attending" | "unknown";
 
@@ -76,6 +89,7 @@ export interface LinkedInEventsExecutorRuntime {
   cdpUrl?: string | undefined;
   selectorLocale: LinkedInSelectorLocale;
   profileManager: ProfileManager;
+  rateLimiter: RateLimiter;
   logger: JsonEventLogger;
   artifacts: ArtifactHelpers;
   confirmFailureArtifacts: ConfirmFailureArtifactConfig;
@@ -519,6 +533,18 @@ async function executeEventRsvp(
           event_url: eventUrl,
           response: "attend"
         },
+        beforeExecute: () =>
+          consumeRateLimitOrThrow(runtime.rateLimiter, {
+            config: EVENT_RSVP_RATE_LIMIT_CONFIG,
+            message: createConfirmRateLimitMessage(EVENT_RSVP_ACTION_TYPE),
+            details: {
+              action_id: actionId,
+              profile_name: profileName,
+              event_id: eventId,
+              event_url: eventUrl,
+              response: "attend"
+            }
+          }),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
@@ -742,7 +768,11 @@ export class LinkedInEventsService {
         target,
         payload: {
           response: "attend"
-        }
+        },
+        rate_limit: peekRateLimitPreview(
+          this.runtime.rateLimiter,
+          EVENT_RSVP_RATE_LIMIT_CONFIG
+        )
       },
       ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
     });

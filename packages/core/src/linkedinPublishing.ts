@@ -13,6 +13,13 @@ import {
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
+import {
+  consumeRateLimitOrThrow,
+  createConfirmRateLimitMessage,
+  peekRateLimitPreview,
+  type ConsumeRateLimitInput,
+  type RateLimiter
+} from "./rateLimiter.js";
 import type { LinkedInSelectorLocale } from "./selectorLocale.js";
 import type {
   ActionExecutor,
@@ -29,6 +36,29 @@ export const CREATE_ARTICLE_ACTION_TYPE = "article.create";
 export const PUBLISH_ARTICLE_ACTION_TYPE = "article.publish";
 export const CREATE_NEWSLETTER_ACTION_TYPE = "newsletter.create";
 export const PUBLISH_NEWSLETTER_ISSUE_ACTION_TYPE = "newsletter.publish_issue";
+
+const PUBLISHING_RATE_LIMIT_CONFIGS = {
+  [CREATE_ARTICLE_ACTION_TYPE]: {
+    counterKey: "linkedin.article.create",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 1
+  },
+  [PUBLISH_ARTICLE_ACTION_TYPE]: {
+    counterKey: "linkedin.article.publish",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 1
+  },
+  [CREATE_NEWSLETTER_ACTION_TYPE]: {
+    counterKey: "linkedin.newsletter.create",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 1
+  },
+  [PUBLISH_NEWSLETTER_ISSUE_ACTION_TYPE]: {
+    counterKey: "linkedin.newsletter.publish_issue",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 1
+  }
+} as const satisfies Record<string, ConsumeRateLimitInput>;
 
 export const LINKEDIN_NEWSLETTER_CADENCE_TYPES = [
   "daily",
@@ -110,6 +140,7 @@ export interface LinkedInPublishingExecutorRuntime {
   cdpUrl?: string | undefined;
   selectorLocale: LinkedInSelectorLocale;
   profileManager: ProfileManager;
+  rateLimiter: RateLimiter;
   logger: JsonEventLogger;
   artifacts: ArtifactHelpers;
 }
@@ -143,6 +174,65 @@ interface EditorSurface {
 
 function normalizeText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/gu, " ").trim();
+}
+
+function getPublishingRateLimitConfig(
+  actionType: string
+): ConsumeRateLimitInput {
+  const config = (
+    PUBLISHING_RATE_LIMIT_CONFIGS as Record<string, ConsumeRateLimitInput>
+  )[actionType];
+
+  if (!config) {
+    throw new LinkedInBuddyError("UNKNOWN", "Missing rate limit policy.", {
+      action_type: actionType
+    });
+  }
+
+  return config;
+}
+
+function enforcePublishingRateLimit(input: {
+  runtime: LinkedInPublishingExecutorRuntime;
+  actionType: string;
+  actionId: string;
+  profileName: string;
+  details?: Record<string, unknown>;
+}): void {
+  consumeRateLimitOrThrow(input.runtime.rateLimiter, {
+    config: getPublishingRateLimitConfig(input.actionType),
+    message: createConfirmRateLimitMessage(input.actionType),
+    details: {
+      action_id: input.actionId,
+      profile_name: input.profileName,
+      ...(input.details ?? {})
+    }
+  });
+}
+
+function preparePublishingAction(
+  runtime: LinkedInPublishingRuntime,
+  input: {
+    actionType: string;
+    target: Record<string, unknown>;
+    payload: Record<string, unknown>;
+    preview: Record<string, unknown>;
+    operatorNote?: string;
+  }
+): PreparedActionResult {
+  return runtime.twoPhaseCommit.prepare({
+    actionType: input.actionType,
+    target: input.target,
+    payload: input.payload,
+    preview: {
+      ...input.preview,
+      rate_limit: peekRateLimitPreview(
+        runtime.rateLimiter,
+        getPublishingRateLimitConfig(input.actionType)
+      )
+    },
+    ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+  });
 }
 
 function containsUnsupportedControlCharacters(value: string): boolean {
@@ -1392,7 +1482,7 @@ export class LinkedInArticlesService {
               }))
             } satisfies Record<string, unknown>;
 
-            return this.runtime.twoPhaseCommit.prepare({
+            return preparePublishingAction(this.runtime, {
               actionType: CREATE_ARTICLE_ACTION_TYPE,
               target,
               payload: {
@@ -1540,7 +1630,7 @@ export class LinkedInArticlesService {
               }))
             } satisfies Record<string, unknown>;
 
-            return this.runtime.twoPhaseCommit.prepare({
+            return preparePublishingAction(this.runtime, {
               actionType: PUBLISH_ARTICLE_ACTION_TYPE,
               target,
               payload: {
@@ -1693,7 +1783,7 @@ export class LinkedInNewslettersService {
               }))
             } satisfies Record<string, unknown>;
 
-            return this.runtime.twoPhaseCommit.prepare({
+            return preparePublishingAction(this.runtime, {
               actionType: CREATE_NEWSLETTER_ACTION_TYPE,
               target,
               payload: {
@@ -1860,7 +1950,7 @@ export class LinkedInNewslettersService {
               }))
             } satisfies Record<string, unknown>;
 
-            return this.runtime.twoPhaseCommit.prepare({
+            return preparePublishingAction(this.runtime, {
               actionType: PUBLISH_NEWSLETTER_ISSUE_ACTION_TYPE,
               target,
               payload: {
@@ -2019,6 +2109,16 @@ class CreateArticleActionExecutor
           });
           tracingStarted = true;
 
+          enforcePublishingRateLimit({
+            runtime,
+            actionType: CREATE_ARTICLE_ACTION_TYPE,
+            actionId: action.id,
+            profileName,
+            details: {
+              title
+            }
+          });
+
           const editor = await openPublishingEditor(
             context,
             currentPage,
@@ -2140,6 +2240,16 @@ class PublishArticleActionExecutor
           });
           tracingStarted = true;
 
+          enforcePublishingRateLimit({
+            runtime,
+            actionType: PUBLISH_ARTICLE_ACTION_TYPE,
+            actionId: action.id,
+            profileName,
+            details: {
+              draft_url: draftUrl
+            }
+          });
+
           await page.goto(draftUrl, { waitUntil: "domcontentloaded" });
           await waitForNetworkIdleBestEffort(page, 10_000);
 
@@ -2260,6 +2370,16 @@ class CreateNewsletterActionExecutor
             sources: true
           });
           tracingStarted = true;
+
+          enforcePublishingRateLimit({
+            runtime,
+            actionType: CREATE_NEWSLETTER_ACTION_TYPE,
+            actionId: action.id,
+            profileName,
+            details: {
+              title
+            }
+          });
 
           const editor = await openPublishingEditor(
             context,
@@ -2398,6 +2518,17 @@ class PublishNewsletterIssueActionExecutor
             sources: true
           });
           tracingStarted = true;
+
+          enforcePublishingRateLimit({
+            runtime,
+            actionType: PUBLISH_NEWSLETTER_ISSUE_ACTION_TYPE,
+            actionId: action.id,
+            profileName,
+            details: {
+              newsletter_title: newsletterTitle,
+              title
+            }
+          });
 
           const editor = await openPublishingEditor(
             context,
