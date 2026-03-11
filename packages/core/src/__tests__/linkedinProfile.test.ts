@@ -10,6 +10,7 @@ import {
   ENDORSE_PROFILE_SKILL_ACTION_TYPE,
   LINKEDIN_PROFILE_SECTION_TYPES,
   LINKEDIN_PROFILE_FEATURED_ITEM_KINDS,
+  PROFILE_GLOBAL_ADD_SECTION_CONTROL,
   PROFILE_MEDIA_STRUCTURAL_SELECTORS,
   REMOVE_PROFILE_SECTION_ITEM_ACTION_TYPE,
   REMOVE_PROFILE_FEATURED_ACTION_TYPE,
@@ -328,6 +329,15 @@ describe("createProfileActionExecutors", () => {
     expect(PROFILE_MEDIA_STRUCTURAL_SELECTORS.banner).toContain(
       "[id^='cover-photo-dropdown-button-trigger-']"
     );
+  });
+
+  it("keeps selector fallbacks for the current self-profile add section control", () => {
+    expect(PROFILE_GLOBAL_ADD_SECTION_CONTROL.labels.en).toContain(
+      "Add profile section"
+    );
+    expect(PROFILE_GLOBAL_ADD_SECTION_CONTROL.labels.en).toContain("Add section");
+    expect(PROFILE_GLOBAL_ADD_SECTION_CONTROL.roles).toContain("button");
+    expect(PROFILE_GLOBAL_ADD_SECTION_CONTROL.roles).toContain("link");
   });
 });
 
