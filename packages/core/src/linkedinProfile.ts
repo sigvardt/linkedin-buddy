@@ -1391,7 +1391,7 @@ function normalizeLinkedInVanityName(value: string | undefined): string {
       .replace(/\/+$/, "");
 
     if (trimmed.length === 0 || /[/?#]/.test(trimmed)) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "vanityName must be a LinkedIn vanity slug or linkedin.com/in/ URL.",
         {
@@ -1411,7 +1411,7 @@ function normalizeLinkedInVanityName(value: string | undefined): string {
     const vanityMatch = parsedUrl.pathname.match(/^\/in\/([^/?#]+)\/?$/iu);
 
     if (!isLinkedInDomain || !vanityMatch?.[1]) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "publicProfileUrl must point to linkedin.com/in/<vanity-name>/.",
         {
@@ -1422,11 +1422,11 @@ function normalizeLinkedInVanityName(value: string | undefined): string {
 
     return decodeURIComponent(vanityMatch[1]);
   } catch (error) {
-    if (error instanceof LinkedInAssistantError) {
+    if (error instanceof LinkedInBuddyError) {
       throw error;
     }
 
-    throw asLinkedInAssistantError(
+    throw asLinkedInBuddyError(
       error,
       "ACTION_PRECONDITION_FAILED",
       "publicProfileUrl must be a valid LinkedIn profile URL."
@@ -1453,14 +1453,14 @@ function normalizePreparedPublicProfileInput(
 
   const [vanityName] = rawValues;
   if (!vanityName) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "Public profile update requires vanityName, customProfileUrl, or publicProfileUrl."
     );
   }
 
   if (rawValues.some((value) => value.toLowerCase() !== vanityName.toLowerCase())) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "vanityName, customProfileUrl, and publicProfileUrl must all point to the same LinkedIn public profile URL."
     );
@@ -3580,7 +3580,7 @@ async function navigateToPublicProfileSettings(page: Page): Promise<void> {
 async function getPublicProfileVanityInput(page: Page): Promise<Locator> {
   const input = page.locator("#vanityUrlForm").first();
   if (!(await isLocatorVisible(input))) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
       "Could not find the custom public profile URL field."
     );
@@ -3613,7 +3613,7 @@ async function openPublicProfileVanityEditor(page: Page): Promise<Locator> {
   ];
   const resolved = await findFirstVisibleLocator(editCandidates);
   if (!resolved) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
       "Could not find the edit control for the custom public profile URL."
     );
@@ -3661,7 +3661,7 @@ async function savePublicProfileVanityName(
   ];
   const resolved = await findFirstVisibleLocator(saveCandidates);
   if (!resolved) {
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
       "Could not find the save button for the custom public profile URL."
     );
@@ -3691,7 +3691,7 @@ async function savePublicProfileVanityName(
     const currentValue = normalizeText(await input.inputValue().catch(() => ""));
 
     if (errorText) {
-      throw new LinkedInAssistantError(
+      throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `LinkedIn rejected the requested custom public profile URL: ${errorText}`,
         {
@@ -3700,7 +3700,7 @@ async function savePublicProfileVanityName(
       );
     }
 
-    throw new LinkedInAssistantError(
+    throw new LinkedInBuddyError(
       "UNKNOWN",
       "LinkedIn custom public profile URL did not update as expected.",
       {
@@ -6024,7 +6024,7 @@ async function executeUpdateProfileSettings(
           updated_fields: Object.keys(updates)
         },
         mapError: (error) =>
-          asLinkedInAssistantError(
+          asLinkedInBuddyError(
             error,
             "UNKNOWN",
             "Failed to execute LinkedIn profile settings update."
@@ -6102,7 +6102,7 @@ async function executeUpdateProfilePublicProfile(
           public_profile_url: publicProfile.publicProfileUrl
         },
         mapError: (error) =>
-          asLinkedInAssistantError(
+          asLinkedInBuddyError(
             error,
             "UNKNOWN",
             "Failed to execute LinkedIn public profile update."
