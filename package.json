@@ -10,6 +10,7 @@
     "packages/*"
   ],
   "scripts": {
+    "brand:generate": "node ./scripts/generate-brand-assets.mjs",
     "lint": "eslint .",
     "scan:security": "node ./scripts/security-audit.mjs",
     "scan:security:head": "gitleaks detect --no-banner --no-git --source .",
