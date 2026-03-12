@@ -5974,7 +5974,7 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
   {
     name: LINKEDIN_ANALYTICS_PROFILE_VIEWS_TOOL,
     description: withSelectorAuditHint(
-      "Read the logged-in member's LinkedIn profile-view analytics cards with normalized numeric metrics.",
+      "Read the logged-in member's LinkedIn profile-view analytics. Returns timestamped metric cards with numeric values, deltas, trend direction, and unit classification for each profile-view data point.",
     ),
     inputSchema: {
       type: "object",
@@ -5991,7 +5991,7 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
   {
     name: LINKEDIN_ANALYTICS_SEARCH_APPEARANCES_TOOL,
     description: withSelectorAuditHint(
-      "Read the logged-in member's LinkedIn search-appearance analytics cards with normalized numeric metrics.",
+      "Read the logged-in member's LinkedIn search-appearance analytics. Returns timestamped metric cards with numeric values, deltas, trend direction, and unit classification for each search-appearance data point.",
     ),
     inputSchema: {
       type: "object",
@@ -6008,7 +6008,7 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
   {
     name: LINKEDIN_ANALYTICS_CONTENT_METRICS_TOOL,
     description: withSelectorAuditHint(
-      "Read LinkedIn content and impression analytics cards from the logged-in member's profile analytics surface.",
+      "Read LinkedIn content and impression analytics from the logged-in member's profile. Returns timestamped metric cards covering impressions, engagement, and creator analytics. Use limit to cap the number of returned cards.",
     ),
     inputSchema: {
       type: "object",
@@ -6022,7 +6022,7 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
         limit: {
           type: "number",
           description:
-            "Maximum number of content analytics cards to return. Defaults to 4.",
+            "Maximum number of content analytics cards to return (1–50). Defaults to 4.",
         },
       }),
     },
@@ -6030,7 +6030,7 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
   {
     name: LINKEDIN_ANALYTICS_POST_METRICS_TOOL,
     description: withSelectorAuditHint(
-      "Read normalized engagement metrics for one LinkedIn post URL, URN, or activity/share identifier.",
+      "Read normalized engagement metrics (reactions, comments, reposts, engagement total) for a single LinkedIn post. Accepts a post URL, URN, or activity/share identifier. Also returns the post content and author metadata.",
     ),
     inputSchema: {
       type: "object",
