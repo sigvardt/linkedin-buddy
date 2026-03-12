@@ -26,6 +26,7 @@
     "url": "https://github.com/sigvardt/linkedin-buddy/issues"
   },
   "homepage": "https://github.com/sigvardt/linkedin-buddy/tree/main/packages/core",
+  "author": "Joakim Sigvardt (https://github.com/sigvardt)",
   "keywords": [
     "linkedin",
     "linkedin-api",
