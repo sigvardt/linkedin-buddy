@@ -249,6 +249,7 @@ See [`docs/repository-seo.md`](./docs/repository-seo.md) for the keyword targets
 | README media inventory                   | [`assets/media/README.md`](./assets/media/README.md)                     |
 | Articles and newsletters                 | [`docs/articles-newsletters.md`](./docs/articles-newsletters.md)         |
 | Notifications                            | [`docs/notifications.md`](./docs/notifications.md)                       |
+| Rate limiting                            | [`docs/rate-limiting.md`](./docs/rate-limiting.md)                       |
 
 ## Contributing
 
