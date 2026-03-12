@@ -6,6 +6,16 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Brand identity and logo system with primary mark, wordmark lockup, badge
+  mark, favicon, social preview, and PNG raster exports at six sizes. Includes
+  brand guidelines documenting color palette, typography, accessibility
+  pairings, and usage rules.
+- README and GitHub SEO pass with keyword-targeted description, homepage,
+  topics, and per-package npm metadata. Includes a repository SEO playbook with
+  primary and secondary keyword targets and a GitHub-search baseline snapshot.
+- README media assets: hero demo GIF, three architecture diagrams, three
+  feature illustrations, three terminal snapshot cards, and a media inventory
+  README with principles, layout, and size budget.
 - Selector audit documentation covering CLI usage, sample output, core API
   configuration, README discoverability, CLI `--help` references, and MCP
   tool-description breadcrumbs.

@@ -32,6 +32,7 @@
     "nodejs",
     "ai-agents"
   ],
+  "author": "Joakim Sigvardt (https://github.com/sigvardt)",
   "engines": {
     "node": ">=22.0.0"
   },
