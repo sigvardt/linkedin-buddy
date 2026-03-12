@@ -33,6 +33,101 @@ The evasion system has three layers:
    - `runtime.evasion` is injected into auth and health responses
    - `EvasionSession` wraps a single Playwright page with page-level helpers
 
+## Stealth plugin integration
+
+For `moderate` and `paranoid` evasion levels, the system integrates
+`playwright-extra` and `puppeteer-extra-plugin-stealth` to harden the browser
+against common automation detection scripts.
+
+The stealth plugin applies 14 evasion techniques, including:
+
+- WebGL vendor and renderer spoofing
+- `navigator.plugins` and `navigator.languages` emulation
+- `chrome.runtime` mocking
+- User-Agent override to match platform expectations
+- `iframe.contentWindow` isolation patches
+- Media codecs and hardware concurrency masking
+- Window dimensions and screen resolution consistency
+- `navigator.webdriver` removal
+- `--disable-blink-features=AutomationControlled` flag injection
+
+Stealth is applied automatically via the `ProfileManager` when launching
+browser contexts.
+
+### Stealth configuration
+
+You can control the stealth plugin behavior through environment variables:
+
+- `LINKEDIN_BUDDY_STEALTH_ENABLED`: set to `false` to disable stealth even on
+  `moderate` or `paranoid` levels.
+- `LINKEDIN_BUDDY_LOCALE`: sets the browser locale. Defaults to `en-US`.
+- `LINKEDIN_BUDDY_TIMEZONE`: sets the browser timezone. Defaults to
+  `America/New_York`.
+
+## Cookie transplant
+
+The cookie transplant feature allows you to export an authenticated session from
+one profile and import it into another. This is useful for migrating sessions
+between environments or bypassing login flows when a valid session already
+exists.
+
+The system uses Playwright's `storageState()` API to capture both cookies and
+`localStorage` data.
+
+### CLI commands
+
+- `linkedin auth export-cookies --profile <name> --output <path>`: saves the
+  active session to a JSON file.
+- `linkedin auth import-cookies --profile <name> --file <path>`: loads a
+  previously exported session into the profile.
+
+### Usage example
+
+```bash
+# Export from default profile
+linkedin auth export-cookies --profile default --output ./session.json
+
+# Import into a new profile
+linkedin auth import-cookies --profile secondary --file ./session.json
+```
+
+### Technical details
+
+- The `li_at` cookie is the primary session token required for authentication.
+- The exported JSON file follows the `ExportedSessionState` schema, which
+  includes the export timestamp, profile name, cookies, and origin-specific
+  `localStorage` entries.
+
+## Headed fallback and pre-login warming
+
+To handle aggressive anti-bot checkpoints that trigger during the login phase,
+the system provides fallback and warming mechanisms.
+
+### Headed fallback
+
+When running in headless mode, LinkedIn may present a CAPTCHA or a security
+checkpoint that is difficult to bypass without human intervention.
+
+- `--headed-fallback`: this CLI flag enables automatic retry in headed mode
+  when a CAPTCHA is detected during a headless login attempt.
+- `LINKEDIN_BUDDY_HEADED_FALLBACK`: environment variable to enable this
+  behavior globally.
+
+When a checkpoint is caught, the current browser context is closed, and a new
+headed instance is launched to allow the operator to complete the challenge
+manually.
+
+### Pre-login warming
+
+Warming helps establish a natural browser history and cache before attempting to
+authenticate.
+
+- `--warm-profile`: this CLI flag instructs the browser to visit the LinkedIn
+  homepage and perform minor interactions (like scrolling) before navigating to
+  the login page.
+- `--headed`: forces the browser to run in headed mode for the entire duration
+  of the command, which can be useful for debugging or initial setup.
+
 ## Architecture overview
 
 The evasion flow is built around one resolved runtime snapshot and one optional
@@ -88,13 +183,13 @@ import { EvasionSession, createCoreRuntime } from "@linkedin-buddy/core";
 
 const runtime = createCoreRuntime({
   evasionLevel: "moderate",
-  evasionDiagnostics: true
+  evasionDiagnostics: true,
 });
 
 const session = new EvasionSession(page, runtime.evasion.level, {
   diagnosticsEnabled: runtime.evasion.diagnosticsEnabled,
   diagnosticsLabel: "feed",
-  logger: runtime.logger
+  logger: runtime.logger,
 });
 
 await session.hardenFingerprint();
@@ -132,11 +227,11 @@ disruptive than the underlying LinkedIn workflow.
 
 The default evasion level is `moderate`.
 
-| Level | Intended use | Fingerprint hardening | Mouse/scroll behavior | Timing behavior | Extra signals |
-| --- | --- | --- | --- | --- | --- |
-| `minimal` | deterministic development and test flows | disabled | straight mouse moves, no momentum scroll, no idle drift | fixed intervals, no reading pauses | no tab blur, no viewport jitter |
-| `moderate` | default production balance | `navigator.webdriver` hardening | Bezier moves, `0.15` overshoot, `3px` jitter, momentum scroll, idle drift | Poisson timing, reading pauses at `230 WPM` | no synthetic tab blur, no viewport jitter |
-| `paranoid` | more aggressive environments | `moderate` hardening plus canvas noise | Bezier moves, `0.25` overshoot, `6px` jitter, momentum scroll, idle drift | Poisson timing, reading pauses at `200 WPM` | synthetic tab blur and viewport resize events |
+| Level      | Intended use                             | Fingerprint hardening                  | Mouse/scroll behavior                                                     | Timing behavior                             | Extra signals                                 |
+| ---------- | ---------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------- | --------------------------------------------- |
+| `minimal`  | deterministic development and test flows | disabled                               | straight mouse moves, no momentum scroll, no idle drift                   | fixed intervals, no reading pauses          | no tab blur, no viewport jitter               |
+| `moderate` | default production balance               | `navigator.webdriver` hardening        | Bezier moves, `0.15` overshoot, `3px` jitter, momentum scroll, idle drift | Poisson timing, reading pauses at `230 WPM` | no synthetic tab blur, no viewport jitter     |
+| `paranoid` | more aggressive environments             | `moderate` hardening plus canvas noise | Bezier moves, `0.25` overshoot, `6px` jitter, momentum scroll, idle drift | Poisson timing, reading pauses at `200 WPM` | synthetic tab blur and viewport resize events |
 
 The stable feature names surfaced in status output are:
 
@@ -153,10 +248,14 @@ The stable feature names surfaced in status output are:
 
 ### Environment variables
 
-| Variable | Values | Default | Notes |
-| --- | --- | --- | --- |
-| `LINKEDIN_BUDDY_EVASION_LEVEL` | `minimal`, `moderate`, `paranoid` | `moderate` | Sets the default evasion profile for CLI, MCP, and any Core caller that does not override it |
-| `LINKEDIN_BUDDY_EVASION_DIAGNOSTICS` | strict boolean values such as `true`, `false`, `1`, `0`, `yes`, `no`, `on`, `off` | `false` | Enables `evasion.*` debug events in the run log |
+| Variable                             | Values                                                                            | Default            | Notes                                                                                                                                                 |
+| ------------------------------------ | --------------------------------------------------------------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LINKEDIN_BUDDY_EVASION_LEVEL`       | `minimal`, `moderate`, `paranoid`                                                 | `moderate`         | Sets the default evasion profile for CLI, MCP, and any Core caller that does not override it                                                          |
+| `LINKEDIN_BUDDY_EVASION_DIAGNOSTICS` | strict boolean values such as `true`, `false`, `1`, `0`, `yes`, `no`, `on`, `off` | `false`            | Enables `evasion.*` debug events in the run log                                                                                                       |
+| `LINKEDIN_BUDDY_STEALTH_ENABLED`     | `true`, `false`, `1`, `0`, `yes`, `no`, `on`, `off`                               | `true`             | Overrides the evasion-level default for the stealth plugin. When set to `false`, disables `playwright-extra` stealth even on `moderate` or `paranoid` |
+| `LINKEDIN_BUDDY_LOCALE`              | BCP 47 locale string                                                              | `en-US`            | Sets the browser locale for stealth sessions                                                                                                          |
+| `LINKEDIN_BUDDY_TIMEZONE`            | IANA timezone string                                                              | `America/New_York` | Sets the browser timezone for stealth sessions                                                                                                        |
+| `LINKEDIN_BUDDY_HEADED_FALLBACK`     | `true`, `false`, `1`, `0`, `yes`, `no`, `on`, `off`                               | `false`            | When enabled, retries login in headed mode if a CAPTCHA checkpoint is detected during headless login                                                  |
 
 Example:
 
@@ -174,7 +273,7 @@ import { createCoreRuntime } from "@linkedin-buddy/core";
 
 const runtime = createCoreRuntime({
   evasionLevel: "minimal",
-  evasionDiagnostics: false
+  evasionDiagnostics: false,
 });
 ```
 
@@ -182,14 +281,14 @@ const runtime = createCoreRuntime({
 
 Every surfaced evasion snapshot uses the same shape:
 
-| Field | Meaning |
-| --- | --- |
-| `level` | effective level after precedence is applied |
-| `source` | where the level came from: `default`, `env`, or `option` |
-| `diagnosticsEnabled` | whether verbose `evasion.*` events should be logged |
-| `enabledFeatures` / `disabledFeatures` | stable feature-name lists for UI and automation |
-| `profile` | concrete numeric and boolean values used by the active level |
-| `summary` | human-readable one-line description |
+| Field                                  | Meaning                                                      |
+| -------------------------------------- | ------------------------------------------------------------ |
+| `level`                                | effective level after precedence is applied                  |
+| `source`                               | where the level came from: `default`, `env`, or `option`     |
+| `diagnosticsEnabled`                   | whether verbose `evasion.*` events should be logged          |
+| `enabledFeatures` / `disabledFeatures` | stable feature-name lists for UI and automation              |
+| `profile`                              | concrete numeric and boolean values used by the active level |
+| `summary`                              | human-readable one-line description                          |
 
 ## CLI integration
 
@@ -264,11 +363,11 @@ npm exec -w @linkedin-buddy/mcp -- linkedin-mcp
 
 ### JSON path reference
 
-| Surface | JSON path |
-| --- | --- |
-| CLI `linkedin status` | `evasion` |
-| CLI `linkedin health` | `session.evasion` |
-| MCP `linkedin.session.status` | `status.evasion` |
+| Surface                       | JSON path         |
+| ----------------------------- | ----------------- |
+| CLI `linkedin status`         | `evasion`         |
+| CLI `linkedin health`         | `session.evasion` |
+| MCP `linkedin.session.status` | `status.evasion`  |
 | MCP `linkedin.session.health` | `session.evasion` |
 
 ## Core API notes
@@ -288,12 +387,15 @@ three groups:
 Example status-only usage without a full runtime:
 
 ```ts
-import { createEvasionStatus, resolveEvasionProfile } from "@linkedin-buddy/core";
+import {
+  createEvasionStatus,
+  resolveEvasionProfile,
+} from "@linkedin-buddy/core";
 
 const evasion = createEvasionStatus({
   level: "moderate",
   diagnosticsEnabled: true,
-  source: "option"
+  source: "option",
 });
 
 const profile = resolveEvasionProfile(evasion.level);

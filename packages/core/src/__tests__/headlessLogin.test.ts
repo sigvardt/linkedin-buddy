@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type {
   HeadlessLoginOptions,
-  HeadlessLoginResult
+  HeadlessLoginResult,
 } from "../auth/session.js";
 
 describe("HeadlessLoginOptions interface", () => {
   it("requires email and password", () => {
     const options: HeadlessLoginOptions = {
       email: "test@example.com",
-      password: "secret123"
+      password: "secret123",
     };
     expect(options.email).toBe("test@example.com");
     expect(options.password).toBe("secret123");
@@ -18,7 +18,7 @@ describe("HeadlessLoginOptions interface", () => {
     const options: HeadlessLoginOptions = {
       email: "test@example.com",
       password: "secret",
-      mfaCode: "123456"
+      mfaCode: "123456",
     };
     expect(options.mfaCode).toBe("123456");
   });
@@ -26,7 +26,7 @@ describe("HeadlessLoginOptions interface", () => {
   it("has mfaCode undefined by default", () => {
     const options: HeadlessLoginOptions = {
       email: "test@example.com",
-      password: "secret"
+      password: "secret",
     };
     expect(options.mfaCode).toBeUndefined();
   });
@@ -36,7 +36,7 @@ describe("HeadlessLoginOptions interface", () => {
       email: "test@example.com",
       password: "secret",
       timeoutMs: 30_000,
-      pollIntervalMs: 1_000
+      pollIntervalMs: 1_000,
     };
     expect(options.timeoutMs).toBe(30_000);
     expect(options.pollIntervalMs).toBe(1_000);
@@ -47,7 +47,7 @@ describe("HeadlessLoginOptions interface", () => {
       email: "test@example.com",
       password: "secret",
       profileName: "work",
-      cdpUrl: "http://localhost:9222"
+      cdpUrl: "http://localhost:9222",
     };
     expect(options.profileName).toBe("work");
     expect(options.cdpUrl).toBe("http://localhost:9222");
@@ -56,7 +56,7 @@ describe("HeadlessLoginOptions interface", () => {
   it("has defaults for optional fields", () => {
     const options: HeadlessLoginOptions = {
       email: "test@example.com",
-      password: "secret"
+      password: "secret",
     };
     expect(options.profileName).toBeUndefined();
     expect(options.cdpUrl).toBeUndefined();
@@ -70,7 +70,7 @@ describe("HeadlessLoginOptions interface", () => {
       password: "secret",
       retryOnRateLimit: true,
       maxRetries: 5,
-      retryBaseDelayMs: 60_000
+      retryBaseDelayMs: 60_000,
     };
     expect(options.retryOnRateLimit).toBe(true);
     expect(options.maxRetries).toBe(5);
@@ -80,11 +80,48 @@ describe("HeadlessLoginOptions interface", () => {
   it("has retry options undefined by default", () => {
     const options: HeadlessLoginOptions = {
       email: "test@example.com",
-      password: "secret"
+      password: "secret",
     };
     expect(options.retryOnRateLimit).toBeUndefined();
     expect(options.maxRetries).toBeUndefined();
     expect(options.retryBaseDelayMs).toBeUndefined();
+  });
+
+  it("accepts optional headed flag", () => {
+    const options: HeadlessLoginOptions = {
+      email: "test@example.com",
+      password: "secret",
+      headed: true,
+    };
+    expect(options.headed).toBe(true);
+  });
+
+  it("accepts optional headedFallback flag", () => {
+    const options: HeadlessLoginOptions = {
+      email: "test@example.com",
+      password: "secret",
+      headedFallback: true,
+    };
+    expect(options.headedFallback).toBe(true);
+  });
+
+  it("accepts optional warmProfile flag", () => {
+    const options: HeadlessLoginOptions = {
+      email: "test@example.com",
+      password: "secret",
+      warmProfile: true,
+    };
+    expect(options.warmProfile).toBe(true);
+  });
+
+  it("has headed, headedFallback, and warmProfile undefined by default", () => {
+    const options: HeadlessLoginOptions = {
+      email: "test@example.com",
+      password: "secret",
+    };
+    expect(options.headed).toBeUndefined();
+    expect(options.headedFallback).toBeUndefined();
+    expect(options.warmProfile).toBeUndefined();
   });
 });
 
@@ -96,7 +133,7 @@ describe("HeadlessLoginResult interface", () => {
       currentUrl: "https://www.linkedin.com/feed/",
       reason: "Authenticated",
       timedOut: false,
-      checkpoint: false
+      checkpoint: false,
     };
     expect(result.timedOut).toBe(false);
     expect(result.checkpoint).toBe(false);
@@ -110,7 +147,7 @@ describe("HeadlessLoginResult interface", () => {
       currentUrl: "https://www.linkedin.com/checkpoint/challenge/",
       reason: "LinkedIn checkpoint detected. Manual verification is required.",
       timedOut: false,
-      checkpoint: true
+      checkpoint: true,
     };
     expect(result.checkpoint).toBe(true);
     expect(result.authenticated).toBe(false);
@@ -126,7 +163,7 @@ describe("HeadlessLoginResult interface", () => {
       timedOut: false,
       checkpoint: true,
       checkpointType: "verification_code",
-      mfaRequired: true
+      mfaRequired: true,
     };
     expect(result.checkpoint).toBe(true);
     expect(result.checkpointType).toBe("verification_code");
@@ -142,7 +179,7 @@ describe("HeadlessLoginResult interface", () => {
       reason: "LinkedIn checkpoint detected. Manual verification is required.",
       timedOut: false,
       checkpoint: true,
-      checkpointType: "app_approval"
+      checkpointType: "app_approval",
     };
     expect(result.checkpointType).toBe("app_approval");
     expect(result.mfaRequired).toBeUndefined();
@@ -156,7 +193,7 @@ describe("HeadlessLoginResult interface", () => {
       reason: "LinkedIn checkpoint detected. Manual verification is required.",
       timedOut: false,
       checkpoint: true,
-      checkpointType: "captcha"
+      checkpointType: "captcha",
     };
     expect(result.checkpointType).toBe("captcha");
   });
@@ -169,7 +206,7 @@ describe("HeadlessLoginResult interface", () => {
       reason: "LinkedIn checkpoint detected. Manual verification is required.",
       timedOut: false,
       checkpoint: true,
-      checkpointType: "unknown"
+      checkpointType: "unknown",
     };
     expect(result.checkpointType).toBe("unknown");
   });
@@ -180,11 +217,10 @@ describe("HeadlessLoginResult interface", () => {
       checkedAt: new Date().toISOString(),
       currentUrl:
         "https://www.linkedin.com/checkpoint/challenge/?errorKey=challenge_global_internal_error",
-      reason:
-        "LinkedIn rate limit detected (challenge_global_internal_error)",
+      reason: "LinkedIn rate limit detected (challenge_global_internal_error)",
       timedOut: false,
       checkpoint: true,
-      checkpointType: "rate_limited"
+      checkpointType: "rate_limited",
     };
     expect(result.checkpointType).toBe("rate_limited");
     expect(result.checkpoint).toBe(true);
@@ -200,7 +236,7 @@ describe("HeadlessLoginResult interface", () => {
       currentUrl: "https://www.linkedin.com/feed/",
       reason: "Authenticated",
       timedOut: false,
-      checkpoint: false
+      checkpoint: false,
     };
     expect(result.checkpointType).toBeUndefined();
     expect(result.mfaRequired).toBeUndefined();
@@ -213,7 +249,7 @@ describe("HeadlessLoginResult interface", () => {
       currentUrl: "https://www.linkedin.com/feed/",
       reason: "LinkedIn session appears authenticated.",
       timedOut: false,
-      checkpoint: false
+      checkpoint: false,
     };
     expect(result.authenticated).toBe(true);
     expect(result.checkpoint).toBe(false);
@@ -228,7 +264,7 @@ describe("HeadlessLoginResult interface", () => {
       currentUrl: "https://www.linkedin.com/login",
       reason: "Login form is visible.",
       timedOut: true,
-      checkpoint: false
+      checkpoint: false,
     };
     expect(result.timedOut).toBe(true);
     expect(result.authenticated).toBe(false);
@@ -241,7 +277,7 @@ describe("HeadlessLoginResult interface", () => {
       currentUrl: "https://www.linkedin.com/login",
       reason: "Invalid credentials",
       timedOut: false,
-      checkpoint: false
+      checkpoint: false,
     };
     expect(result.authenticated).toBe(false);
     expect(result.reason).toBe("Invalid credentials");
@@ -256,7 +292,7 @@ describe("HeadlessLoginResult interface", () => {
       currentUrl: "https://www.linkedin.com/login",
       reason: "Login form is visible.",
       timedOut: true,
-      checkpoint: false
+      checkpoint: false,
     };
     expect(result).toHaveProperty("authenticated");
     expect(result).toHaveProperty("checkedAt");
@@ -273,7 +309,7 @@ describe("HeadlessLoginOptions mfaCallback", () => {
     const options: HeadlessLoginOptions = {
       email: "test@example.com",
       password: "secret",
-      mfaCallback: callback
+      mfaCallback: callback,
     };
     expect(options.mfaCallback).toBe(callback);
   });
@@ -281,7 +317,7 @@ describe("HeadlessLoginOptions mfaCallback", () => {
   it("has mfaCallback undefined by default", () => {
     const options: HeadlessLoginOptions = {
       email: "test@example.com",
-      password: "secret"
+      password: "secret",
     };
     expect(options.mfaCallback).toBeUndefined();
   });
@@ -291,7 +327,7 @@ describe("HeadlessLoginOptions mfaCallback", () => {
       email: "test@example.com",
       password: "secret",
       mfaCode: "123456",
-      mfaCallback: async () => "654321"
+      mfaCallback: async () => "654321",
     };
     expect(options.mfaCode).toBe("123456");
     expect(typeof options.mfaCallback).toBe("function");
@@ -302,7 +338,7 @@ describe("HeadlessLoginOptions mfaCallback", () => {
     const options: HeadlessLoginOptions = {
       email: "test@example.com",
       password: "secret",
-      mfaCallback: callback
+      mfaCallback: callback,
     };
     const result = await options.mfaCallback!();
     expect(result).toBeUndefined();
@@ -315,11 +351,12 @@ describe("HeadlessLoginResult page-closed scenarios", () => {
       authenticated: false,
       checkedAt: new Date().toISOString(),
       currentUrl: "unknown (page closed)",
-      reason: "Page closed after MFA code submission — code may be invalid or expired",
+      reason:
+        "Page closed after MFA code submission — code may be invalid or expired",
       timedOut: false,
       checkpoint: true,
       checkpointType: "verification_code",
-      mfaRequired: true
+      mfaRequired: true,
     };
     expect(result.authenticated).toBe(false);
     expect(result.currentUrl).toBe("unknown (page closed)");
@@ -335,7 +372,7 @@ describe("HeadlessLoginResult page-closed scenarios", () => {
       currentUrl: "unknown (page closed)",
       reason: "Page closed unexpectedly during login polling",
       timedOut: false,
-      checkpoint: false
+      checkpoint: false,
     };
     expect(result.authenticated).toBe(false);
     expect(result.reason).toContain("Page closed unexpectedly");
@@ -351,7 +388,7 @@ describe("HeadlessLoginResult early-return scenarios", () => {
       currentUrl: "https://www.linkedin.com/feed/",
       reason: "LinkedIn session appears authenticated.",
       timedOut: false,
-      checkpoint: false
+      checkpoint: false,
     };
     expect(result.authenticated).toBe(true);
     expect(result.timedOut).toBe(false);
@@ -367,11 +404,10 @@ describe("HeadlessLoginResult rate limit scenarios", () => {
       checkedAt: new Date().toISOString(),
       currentUrl:
         "https://www.linkedin.com/checkpoint/challenge/AgZrAAoAABNMi3w?errorKey=challenge_global_internal_error",
-      reason:
-        "LinkedIn rate limit detected (challenge_global_internal_error)",
+      reason: "LinkedIn rate limit detected (challenge_global_internal_error)",
       timedOut: false,
       checkpoint: true,
-      checkpointType: "rate_limited"
+      checkpointType: "rate_limited",
     };
     expect(result.checkpointType).toBe("rate_limited");
     expect(result.checkpoint).toBe(true);
@@ -384,11 +420,12 @@ describe("HeadlessLoginResult rate limit scenarios", () => {
     const rateLimited: HeadlessLoginResult = {
       authenticated: false,
       checkedAt: new Date().toISOString(),
-      currentUrl: "https://www.linkedin.com/checkpoint/challenge/?errorKey=challenge_global_internal_error",
+      currentUrl:
+        "https://www.linkedin.com/checkpoint/challenge/?errorKey=challenge_global_internal_error",
       reason: "LinkedIn rate limit detected (challenge_global_internal_error)",
       timedOut: false,
       checkpoint: true,
-      checkpointType: "rate_limited"
+      checkpointType: "rate_limited",
     };
 
     const unknown: HeadlessLoginResult = {
@@ -398,7 +435,7 @@ describe("HeadlessLoginResult rate limit scenarios", () => {
       reason: "LinkedIn checkpoint detected. Manual verification is required.",
       timedOut: false,
       checkpoint: true,
-      checkpointType: "unknown"
+      checkpointType: "unknown",
     };
 
     expect(rateLimited.checkpointType).not.toBe(unknown.checkpointType);

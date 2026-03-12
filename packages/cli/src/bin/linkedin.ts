@@ -10,7 +10,7 @@ import {
   readdir,
   stat,
   unlink,
-  writeFile
+  writeFile,
 } from "node:fs/promises";
 import path from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -30,6 +30,9 @@ import {
   AssistantDatabase,
   alignToBusinessHours,
   asLinkedInBuddyError,
+  exportSessionState,
+  hasLinkedInSessionToken,
+  importSessionState,
   buildFeedbackHintMessage,
   clearRateLimitState,
   createLocalDataDeletionPlan,
@@ -120,34 +123,34 @@ import {
   type FeedbackType,
   type WriteValidationAccountTargets,
   type WriteValidationActionPreview,
-  type WriteValidationReport
+  type WriteValidationReport,
 } from "@linkedin-buddy/core";
 import {
   DraftQualityProgressReporter,
   formatDraftQualityError,
   formatDraftQualityReport,
-  resolveDraftQualityOutputMode
+  resolveDraftQualityOutputMode,
 } from "../draftQualityOutput.js";
 import {
   ReadOnlyValidationProgressReporter,
   formatReadOnlyValidationError,
   formatReadOnlyValidationReport,
   resolveReadOnlyValidationOutputMode,
-  type ReadOnlyValidationOutputMode
+  type ReadOnlyValidationOutputMode,
 } from "../liveValidationOutput.js";
 import { HeadlessLoginProgressReporter } from "../headlessLoginOutput.js";
 import {
   formatSelectorAuditError,
   formatSelectorAuditReport,
   resolveSelectorAuditOutputMode,
-  SelectorAuditProgressReporter
+  SelectorAuditProgressReporter,
 } from "../selectorAuditOutput.js";
 import {
   formatWriteValidationError,
   formatWriteValidationReport,
   resolveWriteValidationOutputMode,
   WriteValidationProgressReporter,
-  type WriteValidationOutputMode
+  type WriteValidationOutputMode,
 } from "../writeValidationOutput.js";
 import {
   formatSchedulerError,
@@ -162,7 +165,7 @@ import {
   type SchedulerRunOnceReport,
   type SchedulerStartReport,
   type SchedulerStatusReport,
-  type SchedulerStopReport
+  type SchedulerStopReport,
 } from "../schedulerOutput.js";
 import {
   formatActivityDeliveryListReport,
@@ -197,7 +200,7 @@ import {
   type ActivityWebhookAddReport,
   type ActivityWebhookListReport,
   type ActivityWebhookMutationReport,
-  type ActivityWebhookRemovalReport
+  type ActivityWebhookRemovalReport,
 } from "../activityOutput.js";
 import {
   formatKeepAliveError,
@@ -209,7 +212,7 @@ import {
   type KeepAliveRecentEvent,
   type KeepAliveStartReport,
   type KeepAliveStatusReport,
-  type KeepAliveStopReport
+  type KeepAliveStopReport,
 } from "../keepAliveOutput.js";
 import {
   parseActivitySeedGeneratedImageManifest,
@@ -217,19 +220,18 @@ import {
   type ActivitySeedGeneratedPostImage,
   type ActivitySeedSpec,
   type ActivitySeedPostSpec,
-  type ActivitySeedJobSearchSpec
+  type ActivitySeedJobSearchSpec,
 } from "../activitySeed.js";
 import {
   createProfileSeedPlan,
   parseProfileSeedSpec,
   type ProfileSeedPlanAction,
-  type ProfileSeedUnsupportedField
+  type ProfileSeedUnsupportedField,
 } from "../profileSeed.js";
 
 const cliPrivacyConfig = resolvePrivacyConfig();
 const SELECTOR_AUDIT_DOC_PATH = "docs/selector-audit.md";
-const SELECTOR_AUDIT_DOC_REFERENCE =
-  `See ${SELECTOR_AUDIT_DOC_PATH} for sample output, configuration, and troubleshooting.`;
+const SELECTOR_AUDIT_DOC_REFERENCE = `See ${SELECTOR_AUDIT_DOC_PATH} for sample output, configuration, and troubleshooting.`;
 const MAX_JSON_INPUT_BYTES = 10 * 1024 * 1024;
 const LIVE_VALIDATION_HELP_COMMAND = "linkedin test live --help";
 const LIVE_VALIDATION_FAIL_EXIT_CODE = 1;
@@ -258,7 +260,7 @@ function writeCliNotice(message: string): void {
 function maybeWarnAboutSelectorLocaleConfig(selectorLocale?: string): void {
   const warning = getLinkedInSelectorLocaleConfigWarning(
     resolveLinkedInSelectorLocaleConfigResolution(selectorLocale),
-    "cli"
+    "cli",
   );
 
   if (!warning) {
@@ -297,7 +299,7 @@ function coercePositiveInt(value: string, label: string): number {
   if (!/^\d+$/u.test(normalized) || !Number.isFinite(parsed) || parsed <= 0) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      `${label} must be a positive integer.`
+      `${label} must be a positive integer.`,
     );
   }
   return parsed;
@@ -309,7 +311,7 @@ function coerceNonNegativeInt(value: string, label: string): number {
   if (!/^\d+$/u.test(normalized) || !Number.isFinite(parsed) || parsed < 0) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      `${label} must be a non-negative integer.`
+      `${label} must be a non-negative integer.`,
     );
   }
   return parsed;
@@ -322,7 +324,7 @@ function coerceSearchCategory(value: string): SearchCategory {
 
   throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
-    `category must be one of: ${SEARCH_CATEGORIES.join(", ")}.`
+    `category must be one of: ${SEARCH_CATEGORIES.join(", ")}.`,
   );
 }
 
@@ -331,14 +333,14 @@ function coerceProfileName(value: string, label: string = "profile"): string {
   if (normalized.length === 0) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      `${label} must not be empty.`
+      `${label} must not be empty.`,
     );
   }
 
   if (normalized === "." || normalized === ".." || /[\\/]/.test(normalized)) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      `${label} must not contain path separators or relative path segments.`
+      `${label} must not contain path separators or relative path segments.`,
     );
   }
 
@@ -347,7 +349,11 @@ function coerceProfileName(value: string, label: string = "profile"): string {
 
 function printJson(value: unknown): void {
   console.log(
-    JSON.stringify(redactStructuredValue(value, cliPrivacyConfig, "cli"), null, 2)
+    JSON.stringify(
+      redactStructuredValue(value, cliPrivacyConfig, "cli"),
+      null,
+      2,
+    ),
   );
 }
 
@@ -360,8 +366,8 @@ function createRuntime(cdpUrl?: string) {
       [
         "[linkedin] Warning: --cdp-url attaches to an existing browser session.",
         "This can share cookies/state with other Chrome sessions.",
-        "For an isolated tool-only profile, omit --cdp-url."
-      ].join(" ")
+        "For an isolated tool-only profile, omit --cdp-url.",
+      ].join(" "),
     );
     process.stderr.write("\n");
   }
@@ -371,13 +377,13 @@ function createRuntime(cdpUrl?: string) {
           cdpUrl,
           ...(evasionLevel ? { evasionLevel } : {}),
           privacy: cliPrivacyConfig,
-          ...(cliSelectorLocale ? { selectorLocale: cliSelectorLocale } : {})
+          ...(cliSelectorLocale ? { selectorLocale: cliSelectorLocale } : {}),
         }
       : {
           ...(evasionLevel ? { evasionLevel } : {}),
           privacy: cliPrivacyConfig,
-          ...(cliSelectorLocale ? { selectorLocale: cliSelectorLocale } : {})
-        }
+          ...(cliSelectorLocale ? { selectorLocale: cliSelectorLocale } : {}),
+        },
   );
 }
 
@@ -394,9 +400,9 @@ function resolveCliEvasionRuntimeConfig() {
   return resolveEvasionConfig(
     evasionLevel
       ? {
-          level: evasionLevel
+          level: evasionLevel,
         }
-      : {}
+      : {},
   );
 }
 
@@ -404,7 +410,7 @@ const DEFAULT_FIXTURE_RECORD_PROFILE = "fixtures";
 const DEFAULT_FIXTURE_RECORD_SET = "manual";
 const DEFAULT_FIXTURE_VIEWPORT = {
   width: 1440,
-  height: 900
+  height: 900,
 } as const;
 const FIXTURE_ROUTE_FILE_NAME = "routes.json";
 const FIXTURE_RESPONSE_DIR_NAME = "responses";
@@ -417,7 +423,8 @@ const FIXTURE_CAPTURE_URLS: Record<LinkedInReplayPageType, string> = {
   messaging: "https://www.linkedin.com/messaging/",
   notifications: "https://www.linkedin.com/notifications/",
   profile: "https://www.linkedin.com/in/me/",
-  search: "https://www.linkedin.com/search/results/people/?keywords=Simon%20Miller"
+  search:
+    "https://www.linkedin.com/search/results/people/?keywords=Simon%20Miller",
 };
 
 interface FixtureRecordInput {
@@ -430,7 +437,9 @@ interface FixtureRecordInput {
   width: number;
 }
 
-function isFixtureReplayPageType(value: string): value is LinkedInReplayPageType {
+function isFixtureReplayPageType(
+  value: string,
+): value is LinkedInReplayPageType {
   return (LINKEDIN_REPLAY_PAGE_TYPES as readonly string[]).includes(value);
 }
 
@@ -442,13 +451,13 @@ function coerceFixtureReplayPageType(value: string): LinkedInReplayPageType {
 
   throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
-    `page must be one of: ${LINKEDIN_REPLAY_PAGE_TYPES.join(", ")}.`
+    `page must be one of: ${LINKEDIN_REPLAY_PAGE_TYPES.join(", ")}.`,
   );
 }
 
 function collectFixtureReplayPageTypes(
   value: string,
-  previous: LinkedInReplayPageType[]
+  previous: LinkedInReplayPageType[],
 ): LinkedInReplayPageType[] {
   const nextValues = value
     .split(",")
@@ -459,7 +468,7 @@ function collectFixtureReplayPageTypes(
   if (nextValues.length === 0) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "page must include at least one page type when --page is provided."
+      "page must include at least one page type when --page is provided.",
     );
   }
 
@@ -475,7 +484,7 @@ function collectNonEmptyStrings(value: string, previous: string[]): string[] {
   if (nextValues.length === 0) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "Option must include at least one value when provided."
+      "Option must include at least one value when provided.",
     );
   }
 
@@ -483,7 +492,7 @@ function collectNonEmptyStrings(value: string, previous: string[]): string[] {
 }
 
 function uniqueFixtureReplayPageTypes(
-  pageTypes: LinkedInReplayPageType[]
+  pageTypes: LinkedInReplayPageType[],
 ): LinkedInReplayPageType[] {
   return Array.from(new Set(pageTypes));
 }
@@ -494,7 +503,7 @@ function sanitizeFixtureFileStem(value: string): string {
 
 function guessFixtureResponseExtension(
   contentType: string | undefined,
-  url: string
+  url: string,
 ): string {
   const normalizedType = (contentType ?? "").toLowerCase();
   if (normalizedType.includes("text/html")) {
@@ -529,7 +538,7 @@ function guessFixtureResponseExtension(
 }
 
 async function loadFixtureManifestOrCreate(
-  manifestPath: string
+  manifestPath: string,
 ): Promise<LinkedInFixtureManifest> {
   if (!existsSync(manifestPath)) {
     return createEmptyFixtureManifest();
@@ -541,7 +550,7 @@ async function loadFixtureManifestOrCreate(
 async function loadExistingFixtureRoutes(
   manifestPath: string,
   setName: string,
-  setSummary: LinkedInFixtureSetSummary | undefined
+  setSummary: LinkedInFixtureSetSummary | undefined,
 ): Promise<LinkedInFixtureRoute[]> {
   if (!setSummary) {
     return [];
@@ -550,7 +559,7 @@ async function loadExistingFixtureRoutes(
   const routesPath = path.resolve(
     path.dirname(manifestPath),
     setSummary.rootDir,
-    setSummary.routesPath
+    setSummary.routesPath,
   );
   if (!existsSync(routesPath)) {
     return [];
@@ -561,7 +570,7 @@ async function loadExistingFixtureRoutes(
 
 function mergeFixtureRoutes(
   existingRoutes: LinkedInFixtureRoute[],
-  nextRoutes: LinkedInFixtureRoute[]
+  nextRoutes: LinkedInFixtureRoute[],
 ): LinkedInFixtureRoute[] {
   const merged = new Map<string, LinkedInFixtureRoute>();
   for (const route of existingRoutes) {
@@ -574,7 +583,7 @@ function mergeFixtureRoutes(
   }
 
   return Array.from(merged.values()).sort((left, right) =>
-    buildFixtureRouteKey(left).localeCompare(buildFixtureRouteKey(right))
+    buildFixtureRouteKey(left).localeCompare(buildFixtureRouteKey(right)),
   );
 }
 
@@ -588,7 +597,9 @@ interface FixtureCaptureResponse {
   url(): string;
 }
 
-async function withFixtureReplayDisabled<T>(callback: () => Promise<T>): Promise<T> {
+async function withFixtureReplayDisabled<T>(
+  callback: () => Promise<T>,
+): Promise<T> {
   const previousValues = new Map<string, string | undefined>();
   // Recording must always talk to live LinkedIn, even if the caller currently
   // has replay mode enabled in the shell.
@@ -613,7 +624,7 @@ async function withFixtureReplayDisabled<T>(callback: () => Promise<T>): Promise
 async function captureFixtureResponse(
   response: FixtureCaptureResponse,
   setDir: string,
-  index: number
+  index: number,
 ): Promise<LinkedInFixtureRoute | null> {
   const url = response.url();
   if (!isLinkedInFixtureReplayUrl(url)) {
@@ -630,14 +641,17 @@ async function captureFixtureResponse(
   try {
     const parsed = new URL(url);
     const pathStem = sanitizeFixtureFileStem(
-      `${parsed.hostname}${parsed.pathname === "/" ? "/root" : parsed.pathname}`
+      `${parsed.hostname}${parsed.pathname === "/" ? "/root" : parsed.pathname}`,
     );
     fileStem = `${fileStem}-${pathStem}`;
   } catch {
     // Use the fallback sequence number stem.
   }
 
-  const relativeBodyPath = path.join(FIXTURE_RESPONSE_DIR_NAME, `${fileStem}${extension}`);
+  const relativeBodyPath = path.join(
+    FIXTURE_RESPONSE_DIR_NAME,
+    `${fileStem}${extension}`,
+  );
   const absoluteBodyPath = path.join(setDir, relativeBodyPath);
   const bodyBuffer = await response.body().catch(() => Buffer.from(""));
   await mkdir(path.dirname(absoluteBodyPath), { recursive: true });
@@ -648,7 +662,7 @@ async function captureFixtureResponse(
     url,
     status: response.status(),
     headers,
-    bodyPath: relativeBodyPath
+    bodyPath: relativeBodyPath,
   };
 }
 
@@ -661,7 +675,7 @@ async function runFixturesCheck(input: {
   const maxAgeDays = input.maxAgeDays ?? DEFAULT_FIXTURE_STALENESS_DAYS;
   const warnings = await checkLinkedInFixtureStaleness(manifestPath, {
     maxAgeDays,
-    ...(input.setName ? { setName: input.setName } : {})
+    ...(input.setName ? { setName: input.setName } : {}),
   });
 
   for (const warning of warnings) {
@@ -674,7 +688,7 @@ async function runFixturesCheck(input: {
     set_name: input.setName ?? null,
     stale: warnings.length > 0,
     warning_count: warnings.length,
-    warnings
+    warnings,
   });
 }
 
@@ -682,7 +696,7 @@ async function runFixturesRecord(input: FixtureRecordInput): Promise<void> {
   if (!stdin.isTTY || !stdout.isTTY) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "fixtures:record requires an interactive terminal because it pauses for manual navigation."
+      "fixtures:record requires an interactive terminal because it pauses for manual navigation.",
     );
   }
 
@@ -692,20 +706,24 @@ async function runFixturesRecord(input: FixtureRecordInput): Promise<void> {
   const previousSetSummary = manifest.sets[setName];
   const setRootDir = path.resolve(
     path.dirname(manifestPath),
-    previousSetSummary?.rootDir ?? setName
+    previousSetSummary?.rootDir ?? setName,
   );
   const pagesDir = path.join(setRootDir, FIXTURE_PAGES_DIR_NAME);
   const harRelativePath = input.har ? "session.har" : undefined;
-  const harAbsolutePath = harRelativePath ? path.join(setRootDir, harRelativePath) : undefined;
+  const harAbsolutePath = harRelativePath
+    ? path.join(setRootDir, harRelativePath)
+    : undefined;
   const existingRoutes = await loadExistingFixtureRoutes(
     manifestPath,
     setName,
-    previousSetSummary
+    previousSetSummary,
   );
   const capturedRoutes = new Map<string, LinkedInFixtureRoute>();
   const captureJobs: Array<Promise<void>> = [];
-  const pageEntries: Partial<Record<LinkedInReplayPageType, LinkedInFixturePageEntry>> = {
-    ...(previousSetSummary?.pages ?? {})
+  const pageEntries: Partial<
+    Record<LinkedInReplayPageType, LinkedInFixturePageEntry>
+  > = {
+    ...(previousSetSummary?.pages ?? {}),
   };
 
   await mkdir(path.dirname(manifestPath), { recursive: true });
@@ -713,12 +731,12 @@ async function runFixturesRecord(input: FixtureRecordInput): Promise<void> {
   await mkdir(pagesDir, { recursive: true });
 
   const profileManager = new ProfileManager(resolveConfigPaths(), {
-    evasion: resolveCliEvasionRuntimeConfig()
+    evasion: resolveCliEvasionRuntimeConfig(),
   });
   let captureLocale = previousSetSummary?.locale ?? "en-US";
   let captureViewport: { width: number; height: number } = {
     width: input.width,
-    height: input.height
+    height: input.height,
   };
 
   await withFixtureReplayDisabled(async () => {
@@ -729,16 +747,16 @@ async function runFixturesRecord(input: FixtureRecordInput): Promise<void> {
         launchOptions: {
           viewport: {
             width: input.width,
-            height: input.height
+            height: input.height,
           },
           ...(harAbsolutePath
             ? {
                 recordHar: {
-                  path: harAbsolutePath
-                }
+                  path: harAbsolutePath,
+                },
               }
-            : {})
-        }
+            : {}),
+        },
       },
       async (context) => {
         let responseIndex = existingRoutes.length;
@@ -746,13 +764,20 @@ async function runFixturesRecord(input: FixtureRecordInput): Promise<void> {
           // Increment synchronously before the async body write starts so the
           // route file and response filenames stay deterministic.
           responseIndex += 1;
-          const captureJob = captureFixtureResponse(response, setRootDir, responseIndex)
+          const captureJob = captureFixtureResponse(
+            response,
+            setRootDir,
+            responseIndex,
+          )
             .then((capturedRoute) => {
               if (!capturedRoute) {
                 return;
               }
 
-              capturedRoutes.set(buildFixtureRouteKey(capturedRoute), capturedRoute);
+              capturedRoutes.set(
+                buildFixtureRouteKey(capturedRoute),
+                capturedRoute,
+              );
             })
             .catch(() => undefined);
           captureJobs.push(captureJob);
@@ -761,34 +786,46 @@ async function runFixturesRecord(input: FixtureRecordInput): Promise<void> {
         const page = context.pages()[0] ?? (await context.newPage());
         const prompt = createInterface({
           input: stdin,
-          output: stdout
+          output: stdout,
         });
 
         try {
           for (const pageType of input.pageTypes) {
             const suggestedUrl = FIXTURE_CAPTURE_URLS[pageType];
             if (suggestedUrl) {
-              await page.goto(suggestedUrl, { waitUntil: "domcontentloaded" }).catch(() => undefined);
+              await page
+                .goto(suggestedUrl, { waitUntil: "domcontentloaded" })
+                .catch(() => undefined);
             }
 
             writeCliNotice(
-              `Navigate the browser to the LinkedIn ${pageType} page you want to capture.`
+              `Navigate the browser to the LinkedIn ${pageType} page you want to capture.`,
             );
             await prompt.question(
-              `Press Enter to capture ${pageType} (current page: ${page.url() || suggestedUrl}). `
+              `Press Enter to capture ${pageType} (current page: ${page.url() || suggestedUrl}). `,
             );
 
-            const htmlRelativePath = path.join(FIXTURE_PAGES_DIR_NAME, `${pageType}.html`);
+            const htmlRelativePath = path.join(
+              FIXTURE_PAGES_DIR_NAME,
+              `${pageType}.html`,
+            );
             const htmlAbsolutePath = path.join(setRootDir, htmlRelativePath);
-            await writeFile(htmlAbsolutePath, `${await page.content()}\n`, "utf8");
+            await writeFile(
+              htmlAbsolutePath,
+              `${await page.content()}\n`,
+              "utf8",
+            );
 
             const currentUrl = page.url();
             const pageTitle = await page.title().catch(() => undefined);
-            const pageLocale = await page.evaluate(() => navigator.language).catch(() => undefined);
+            const pageLocale = await page
+              .evaluate(() => navigator.language)
+              .catch(() => undefined);
             const viewport = page.viewportSize();
-            captureLocale = typeof pageLocale === "string" && pageLocale.trim().length > 0
-              ? pageLocale.trim()
-              : captureLocale;
+            captureLocale =
+              typeof pageLocale === "string" && pageLocale.trim().length > 0
+                ? pageLocale.trim()
+                : captureLocale;
             if (viewport) {
               captureViewport = viewport;
             }
@@ -800,7 +837,7 @@ async function runFixturesRecord(input: FixtureRecordInput): Promise<void> {
               recordedAt: new Date().toISOString(),
               ...(typeof pageTitle === "string" && pageTitle.trim().length > 0
                 ? { title: pageTitle.trim() }
-                : {})
+                : {}),
             };
           }
 
@@ -808,26 +845,28 @@ async function runFixturesRecord(input: FixtureRecordInput): Promise<void> {
         } finally {
           prompt.close();
         }
-      }
+      },
     );
   });
 
   // Finish any in-flight response writes before rewriting the route index.
   await Promise.allSettled(captureJobs);
 
-  const mergedRoutes = mergeFixtureRoutes(existingRoutes, [...capturedRoutes.values()]);
+  const mergedRoutes = mergeFixtureRoutes(existingRoutes, [
+    ...capturedRoutes.values(),
+  ]);
   await writeFile(
     path.join(setRootDir, FIXTURE_ROUTE_FILE_NAME),
     `${JSON.stringify(
       {
         format: LINKEDIN_FIXTURE_MANIFEST_FORMAT_VERSION,
         setName,
-        routes: mergedRoutes
+        routes: mergedRoutes,
       },
       null,
-      2
+      2,
     )}\n`,
-    "utf8"
+    "utf8",
   );
 
   const capturedAt = new Date().toISOString();
@@ -842,7 +881,7 @@ async function runFixturesRecord(input: FixtureRecordInput): Promise<void> {
     description:
       previousSetSummary?.description ??
       "Recorded manually through the LinkedIn fixture replay workflow.",
-    pages: pageEntries
+    pages: pageEntries,
   };
 
   manifest.sets[setName] = setSummary;
@@ -861,7 +900,9 @@ async function runFixturesRecord(input: FixtureRecordInput): Promise<void> {
     pages: pageEntries,
     routes_path: path.join(setSummary.rootDir, FIXTURE_ROUTE_FILE_NAME),
     route_count: mergedRoutes.length,
-    ...(harRelativePath ? { har_path: path.join(setSummary.rootDir, harRelativePath) } : {})
+    ...(harRelativePath
+      ? { har_path: path.join(setSummary.rootDir, harRelativePath) }
+      : {}),
   });
 }
 
@@ -952,7 +993,7 @@ function getKeepAliveFiles(profileName: string): KeepAliveFiles {
     dir,
     pidPath: path.join(dir, `${slug}.pid`),
     statePath: path.join(dir, `${slug}.state.json`),
-    logPath: path.join(dir, `${slug}.events.jsonl`)
+    logPath: path.join(dir, `${slug}.events.jsonl`),
   };
 }
 
@@ -963,7 +1004,7 @@ function getSchedulerFiles(profileName: string): SchedulerFiles {
     dir,
     pidPath: path.join(dir, `${slug}.pid`),
     statePath: path.join(dir, `${slug}.state.json`),
-    logPath: path.join(dir, `${slug}.events.jsonl`)
+    logPath: path.join(dir, `${slug}.events.jsonl`),
   };
 }
 
@@ -980,11 +1021,7 @@ async function readJsonFile<T>(filePath: string): Promise<T | null> {
     const raw = await readFile(filePath, "utf8");
     return JSON.parse(raw) as T;
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return null;
     }
     if (error instanceof SyntaxError) {
@@ -998,7 +1035,10 @@ async function writeJsonFile(filePath: string, value: unknown): Promise<void> {
   await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
-async function readJsonInputFile(filePath: string, label: string): Promise<unknown> {
+async function readJsonInputFile(
+  filePath: string,
+  label: string,
+): Promise<unknown> {
   const resolvedPath = path.resolve(filePath);
   let raw: string;
 
@@ -1009,8 +1049,8 @@ async function readJsonInputFile(filePath: string, label: string): Promise<unkno
         "ACTION_PRECONDITION_FAILED",
         `Expected ${label} path to point to a file.`,
         {
-          path: resolvedPath
-        }
+          path: resolvedPath,
+        },
       );
     }
 
@@ -1021,8 +1061,8 @@ async function readJsonInputFile(filePath: string, label: string): Promise<unkno
         {
           path: resolvedPath,
           size_bytes: fileStats.size,
-          limit_bytes: MAX_JSON_INPUT_BYTES
-        }
+          limit_bytes: MAX_JSON_INPUT_BYTES,
+        },
       );
     }
 
@@ -1032,19 +1072,15 @@ async function readJsonInputFile(filePath: string, label: string): Promise<unkno
       throw error;
     }
 
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `Could not read ${label}.`,
         {
           path: resolvedPath,
-          cause: "ENOENT"
+          cause: "ENOENT",
         },
-        { cause: error }
+        { cause: error },
       );
     }
 
@@ -1053,9 +1089,9 @@ async function readJsonInputFile(filePath: string, label: string): Promise<unkno
       `Could not read ${label}.`,
       {
         path: resolvedPath,
-        cause: error instanceof Error ? error.message : String(error)
+        cause: error instanceof Error ? error.message : String(error),
       },
-      error instanceof Error ? { cause: error } : undefined
+      error instanceof Error ? { cause: error } : undefined,
     );
   }
 
@@ -1067,14 +1103,17 @@ async function readJsonInputFile(filePath: string, label: string): Promise<unkno
       `Could not parse ${label} as JSON.`,
       {
         path: resolvedPath,
-        cause: error instanceof Error ? error.message : String(error)
+        cause: error instanceof Error ? error.message : String(error),
       },
-      error instanceof Error ? { cause: error } : undefined
+      error instanceof Error ? { cause: error } : undefined,
     );
   }
 }
 
-async function writeOutputJsonFile(filePath: string, value: unknown): Promise<string> {
+async function writeOutputJsonFile(
+  filePath: string,
+  value: unknown,
+): Promise<string> {
   const resolvedPath = path.resolve(filePath);
   await mkdir(path.dirname(resolvedPath), { recursive: true });
   await writeJsonFile(resolvedPath, value);
@@ -1082,24 +1121,24 @@ async function writeOutputJsonFile(filePath: string, value: unknown): Promise<st
 }
 
 function createDraftQualityProgressLogger(
-  onLog: (entry: { event: string; payload: Record<string, unknown> }) => void
+  onLog: (entry: { event: string; payload: Record<string, unknown> }) => void,
 ): {
   log(
     level: "debug" | "info" | "warn" | "error",
     event: string,
-    payload?: Record<string, unknown>
+    payload?: Record<string, unknown>,
   ): void;
 } {
   return {
     log(_level, event, payload = {}) {
       onLog({ event, payload });
-    }
+    },
   };
 }
 
 function attachHeadlessLoginLogObserver(
   logger: Pick<JsonEventLogger, "log">,
-  onLog: (entry: JsonLogEntry) => void
+  onLog: (entry: JsonLogEntry) => void,
 ): void {
   const originalLog = logger.log.bind(logger) as (
     ...args: Parameters<JsonEventLogger["log"]>
@@ -1119,18 +1158,17 @@ async function readKeepAlivePid(profileName: string): Promise<number | null> {
     const pid = Number.parseInt(raw.trim(), 10);
     return Number.isInteger(pid) && pid > 0 ? pid : null;
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return null;
     }
     throw error;
   }
 }
 
-async function writeKeepAlivePid(profileName: string, pid: number): Promise<void> {
+async function writeKeepAlivePid(
+  profileName: string,
+  pid: number,
+): Promise<void> {
   const files = getKeepAliveFiles(profileName);
   await ensureKeepAliveDir(files);
   await writeFile(files.pidPath, `${pid}\n`, "utf8");
@@ -1141,11 +1179,7 @@ async function removeKeepAlivePid(profileName: string): Promise<void> {
   try {
     await unlink(files.pidPath);
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return;
     }
     throw error;
@@ -1153,7 +1187,7 @@ async function removeKeepAlivePid(profileName: string): Promise<void> {
 }
 
 async function readKeepAliveState(
-  profileName: string
+  profileName: string,
 ): Promise<KeepAliveState | null> {
   const files = getKeepAliveFiles(profileName);
   return readJsonFile<KeepAliveState>(files.statePath);
@@ -1161,7 +1195,7 @@ async function readKeepAliveState(
 
 async function writeKeepAliveState(
   profileName: string,
-  state: KeepAliveState
+  state: KeepAliveState,
 ): Promise<void> {
   const files = getKeepAliveFiles(profileName);
   await ensureKeepAliveDir(files);
@@ -1170,7 +1204,7 @@ async function writeKeepAliveState(
 
 async function appendKeepAliveEvent(
   profileName: string,
-  event: Record<string, unknown>
+  event: Record<string, unknown>,
 ): Promise<void> {
   const files = getKeepAliveFiles(profileName);
   await ensureKeepAliveDir(files);
@@ -1200,13 +1234,13 @@ function asKeepAliveRecentEvent(value: unknown): KeepAliveRecentEvent | null {
   return {
     ...value,
     ts,
-    event
+    event,
   } as KeepAliveRecentEvent;
 }
 
 async function readKeepAliveRecentEvents(
   profileName: string,
-  limit: number = 5
+  limit: number = 5,
 ): Promise<KeepAliveRecentEvent[]> {
   const files = getKeepAliveFiles(profileName);
 
@@ -1228,11 +1262,7 @@ async function readKeepAliveRecentEvents(
 
     return events;
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return [];
     }
 
@@ -1247,18 +1277,17 @@ async function readSchedulerPid(profileName: string): Promise<number | null> {
     const pid = Number.parseInt(raw.trim(), 10);
     return Number.isInteger(pid) && pid > 0 ? pid : null;
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return null;
     }
     throw error;
   }
 }
 
-async function writeSchedulerPid(profileName: string, pid: number): Promise<void> {
+async function writeSchedulerPid(
+  profileName: string,
+  pid: number,
+): Promise<void> {
   const files = getSchedulerFiles(profileName);
   await ensureSchedulerDir(files);
   await writeFile(files.pidPath, `${pid}\n`, "utf8");
@@ -1269,11 +1298,7 @@ async function removeSchedulerPid(profileName: string): Promise<void> {
   try {
     await unlink(files.pidPath);
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return;
     }
     throw error;
@@ -1281,7 +1306,7 @@ async function removeSchedulerPid(profileName: string): Promise<void> {
 }
 
 async function readSchedulerState(
-  profileName: string
+  profileName: string,
 ): Promise<SchedulerState | null> {
   const files = getSchedulerFiles(profileName);
   return readJsonFile<SchedulerState>(files.statePath);
@@ -1289,7 +1314,7 @@ async function readSchedulerState(
 
 async function writeSchedulerState(
   profileName: string,
-  state: SchedulerState
+  state: SchedulerState,
 ): Promise<void> {
   const files = getSchedulerFiles(profileName);
   await ensureSchedulerDir(files);
@@ -1298,7 +1323,7 @@ async function writeSchedulerState(
 
 async function appendSchedulerEvent(
   profileName: string,
-  event: Record<string, unknown>
+  event: Record<string, unknown>,
 ): Promise<void> {
   const files = getSchedulerFiles(profileName);
   await ensureSchedulerDir(files);
@@ -1337,15 +1362,17 @@ async function sleep(ms: number): Promise<void> {
 
 async function promptYesNo(
   question: string,
-  output: typeof stdout | typeof process.stderr = stdout
+  output: typeof stdout | typeof process.stderr = stdout,
 ): Promise<boolean> {
   const readline = createInterface({
     input: stdin,
-    output
+    output,
   });
 
   try {
-    const response = await readline.question(`${question} Type "yes" to confirm: `);
+    const response = await readline.question(
+      `${question} Type "yes" to confirm: `,
+    );
     return response.trim().toLowerCase() === "yes";
   } finally {
     readline.close();
@@ -1354,11 +1381,11 @@ async function promptYesNo(
 
 async function promptTextInput(
   question: string,
-  output: typeof stdout | typeof process.stderr = process.stderr
+  output: typeof stdout | typeof process.stderr = process.stderr,
 ): Promise<string> {
   const readline = createInterface({
     input: stdin,
-    output
+    output,
   });
 
   try {
@@ -1370,11 +1397,11 @@ async function promptTextInput(
 
 async function promptMultilineInput(
   question: string,
-  output: typeof stdout | typeof process.stderr = process.stderr
+  output: typeof stdout | typeof process.stderr = process.stderr,
 ): Promise<string> {
   const readline = createInterface({
     input: stdin,
-    output
+    output,
   });
 
   try {
@@ -1396,9 +1423,7 @@ async function promptMultilineInput(
   }
 }
 
-function shouldUseAnsiColor(
-  stream: { isTTY?: boolean }
-): boolean {
+function shouldUseAnsiColor(stream: { isTTY?: boolean }): boolean {
   return (
     Boolean(stream.isTTY) &&
     typeof process.env.NO_COLOR === "undefined" &&
@@ -1411,7 +1436,7 @@ function assertInteractiveTerminal(operation: string): void {
   if (!stdin.isTTY || !stdout.isTTY) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      `Refusing to ${operation} in non-interactive mode.`
+      `Refusing to ${operation} in non-interactive mode.`,
     );
   }
 }
@@ -1427,11 +1452,12 @@ function trimOptionalCliText(value: string | undefined): string | undefined {
 
 function readCommandProfileName(command: Command): string | undefined {
   const options = command.opts<Record<string, unknown>>();
-  const profileValue = typeof options.profile === "string"
-    ? options.profile
-    : typeof options.profileName === "string"
-      ? options.profileName
-      : undefined;
+  const profileValue =
+    typeof options.profile === "string"
+      ? options.profile
+      : typeof options.profileName === "string"
+        ? options.profileName
+        : undefined;
 
   return trimOptionalCliText(profileValue);
 }
@@ -1467,8 +1493,10 @@ async function maybeEmitCliFeedbackHint(error?: unknown): Promise<void> {
     const decision = await recordFeedbackInvocation({
       source: "cli",
       invocationName: invocation.commandName,
-      ...(invocation.profileName ? { activeProfileName: invocation.profileName } : {}),
-      ...(typeof error !== "undefined" ? { error } : {})
+      ...(invocation.profileName
+        ? { activeProfileName: invocation.profileName }
+        : {}),
+      ...(typeof error !== "undefined" ? { error } : {}),
     });
 
     if (decision.showHint) {
@@ -1476,7 +1504,7 @@ async function maybeEmitCliFeedbackHint(error?: unknown): Promise<void> {
     }
   } catch (trackingError) {
     writeCliWarning(
-      `Could not update feedback hint state: ${asLinkedInBuddyError(trackingError).message}`
+      `Could not update feedback hint state: ${asLinkedInBuddyError(trackingError).message}`,
     );
   }
 }
@@ -1486,11 +1514,7 @@ async function pathExists(targetPath: string): Promise<boolean> {
     await access(targetPath);
     return true;
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return false;
     }
 
@@ -1501,7 +1525,7 @@ async function pathExists(targetPath: string): Promise<boolean> {
 function pluralize(
   count: number,
   singular: string,
-  plural: string = `${singular}s`
+  plural: string = `${singular}s`,
 ): string {
   return count === 1 ? singular : plural;
 }
@@ -1510,7 +1534,7 @@ function resolveLocalDataDeleteLabel(
   targetPath: string,
   paths: ReturnType<typeof resolveConfigPaths>,
   keepAliveDir: string,
-  legacyRateLimitStatePath: string
+  legacyRateLimitStatePath: string,
 ): string {
   if (targetPath === path.resolve(paths.dbPath)) {
     return "SQLite database";
@@ -1552,13 +1576,13 @@ function resolveLocalDataDeleteLabel(
 }
 
 async function createLocalDataDeletionPreview(
-  includeProfile: boolean
+  includeProfile: boolean,
 ): Promise<LocalDataDeletionPreview> {
   const deletionPlan = createLocalDataDeletionPlan({ includeProfile });
   const resolvedPaths = resolveConfigPaths(deletionPlan.baseDir);
   const keepAliveDir = resolveKeepAliveDir(deletionPlan.baseDir);
   const legacyRateLimitStatePath = path.resolve(
-    resolveLegacyRateLimitStateFilePath()
+    resolveLegacyRateLimitStateFilePath(),
   );
 
   const deleteItems = await Promise.all(
@@ -1568,15 +1592,15 @@ async function createLocalDataDeletionPreview(
         targetPath,
         resolvedPaths,
         keepAliveDir,
-        legacyRateLimitStatePath
+        legacyRateLimitStatePath,
       ),
       ...(targetPath === path.resolve(resolvedPaths.profilesDir)
         ? {
-            note: "Deletes tool-owned cookies, local storage, and saved browser sessions."
+            note: "Deletes tool-owned cookies, local storage, and saved browser sessions.",
           }
         : {}),
-      path: targetPath
-    }))
+      path: targetPath,
+    })),
   );
 
   const preserveItems = await Promise.all(
@@ -1586,19 +1610,19 @@ async function createLocalDataDeletionPreview(
             {
               label: "Browser profiles",
               note: "Preserved unless you rerun with --include-profile.",
-              path: path.resolve(resolvedPaths.profilesDir)
-            }
+              path: path.resolve(resolvedPaths.profilesDir),
+            },
           ]
         : []),
       {
         label: "Config file",
         note: "Preserved by design. Delete manually only if you want a full local reset.",
-        path: path.resolve(path.join(deletionPlan.baseDir, "config.json"))
-      }
+        path: path.resolve(path.join(deletionPlan.baseDir, "config.json")),
+      },
     ].map(async (item) => ({
       ...item,
-      exists: await pathExists(item.path)
-    }))
+      exists: await pathExists(item.path),
+    })),
   );
 
   return {
@@ -1611,13 +1635,13 @@ async function createLocalDataDeletionPreview(
     missingDeletePaths: deleteItems
       .filter((item) => !item.exists)
       .map((item) => item.path),
-    preserveItems
+    preserveItems,
   };
 }
 
 function printLocalDataPreviewSection(
   title: string,
-  items: LocalDataPreviewItem[]
+  items: LocalDataPreviewItem[],
 ): void {
   if (items.length === 0) {
     return;
@@ -1627,19 +1651,21 @@ function printLocalDataPreviewSection(
   for (const item of items) {
     const note = item.note ? ` — ${item.note}` : "";
     console.log(
-      `- ${item.label}: ${item.path} (${item.exists ? "present" : "already absent"})${note}`
+      `- ${item.label}: ${item.path} (${item.exists ? "present" : "already absent"})${note}`,
     );
   }
 }
 
 function printLocalDataDeletionPreview(
   preview: LocalDataDeletionPreview,
-  destructiveMode: boolean
+  destructiveMode: boolean,
 ): void {
   if (destructiveMode) {
     console.log("Local data deletion requested.");
   } else {
-    console.log("Local data deletion preview (dry-run). No files were removed.");
+    console.log(
+      "Local data deletion preview (dry-run). No files were removed.",
+    );
   }
 
   console.log(`Assistant home: ${preview.baseDir}`);
@@ -1647,34 +1673,36 @@ function printLocalDataDeletionPreview(
   printLocalDataPreviewSection("Preserved paths:", preview.preserveItems);
 
   if (preview.existingDeletePaths.length === 0) {
-    console.log("Nothing to delete. Tool-owned runtime state is already absent.");
+    console.log(
+      "Nothing to delete. Tool-owned runtime state is already absent.",
+    );
     return;
   }
 
   if (!destructiveMode) {
     console.log(
-      `Rerun with --confirm to permanently delete ${preview.existingDeletePaths.length} existing ${pluralize(preview.existingDeletePaths.length, "path")}.`
+      `Rerun with --confirm to permanently delete ${preview.existingDeletePaths.length} existing ${pluralize(preview.existingDeletePaths.length, "path")}.`,
     );
     if (preview.includeProfileRequested) {
       console.log(
-        "Browser profiles are included in this preview and still require a second confirmation during deletion."
+        "Browser profiles are included in this preview and still require a second confirmation during deletion.",
       );
     }
     return;
   }
 
   console.log(
-    `Ready to delete ${preview.existingDeletePaths.length} existing ${pluralize(preview.existingDeletePaths.length, "path")} after confirmation.`
+    `Ready to delete ${preview.existingDeletePaths.length} existing ${pluralize(preview.existingDeletePaths.length, "path")} after confirmation.`,
   );
   if (preview.includeProfileRequested) {
     console.log(
-      "Deleting browser profiles requires a second confirmation because signed-in browser state will be lost."
+      "Deleting browser profiles requires a second confirmation because signed-in browser state will be lost.",
     );
   }
 }
 
 function isLocalDataDeletionFailure(
-  value: unknown
+  value: unknown,
 ): value is LocalDataDeletionFailure {
   if (!value || typeof value !== "object") {
     return false;
@@ -1691,7 +1719,7 @@ function isLocalDataDeletionFailure(
 }
 
 function extractLocalDataDeletionFailures(
-  value: unknown
+  value: unknown,
 ): LocalDataDeletionFailure[] {
   if (!Array.isArray(value)) {
     return [];
@@ -1704,10 +1732,10 @@ function formatLocalDataDeletionError(error: unknown): LinkedInBuddyError {
   const assistantError = asLinkedInBuddyError(
     error,
     "UNKNOWN",
-    "Local data deletion failed."
+    "Local data deletion failed.",
   );
   const failedPaths = extractLocalDataDeletionFailures(
-    assistantError.details.failed_paths
+    assistantError.details.failed_paths,
   );
   if (failedPaths.length === 0) {
     return assistantError;
@@ -1726,12 +1754,14 @@ function formatLocalDataDeletionError(error: unknown): LinkedInBuddyError {
     assistantError.code,
     `Local data deletion completed with ${failedPaths.length} ${pluralize(failedPaths.length, "failure")}. ${deletedSummary} First blocked path: ${firstFailure.path}. ${firstFailure.recoveryHint ?? "Review failed_paths for recovery guidance and retry."}`,
     assistantError.details,
-    { cause: assistantError }
+    { cause: assistantError },
   );
 }
 
 function printLocalDataDeletionFailure(error: LinkedInBuddyError): void {
-  const failedPaths = extractLocalDataDeletionFailures(error.details.failed_paths);
+  const failedPaths = extractLocalDataDeletionFailures(
+    error.details.failed_paths,
+  );
   if (failedPaths.length === 0) {
     return;
   }
@@ -1739,14 +1769,14 @@ function printLocalDataDeletionFailure(error: LinkedInBuddyError): void {
   console.error("Local data deletion could not finish cleanly.");
   for (const failure of failedPaths.slice(0, 3)) {
     console.error(
-      `- ${failure.path}: ${failure.message}${failure.recoveryHint ? ` ${failure.recoveryHint}` : ""}`
+      `- ${failure.path}: ${failure.message}${failure.recoveryHint ? ` ${failure.recoveryHint}` : ""}`,
     );
   }
 
   if (failedPaths.length > 3) {
     const remainingFailures = failedPaths.length - 3;
     console.error(
-      `- ${remainingFailures} more ${pluralize(remainingFailures, "failure")} not shown. Inspect failed_paths in the JSON error output for the full list.`
+      `- ${remainingFailures} more ${pluralize(remainingFailures, "failure")} not shown. Inspect failed_paths in the JSON error output for the full list.`,
     );
   }
 }
@@ -1759,11 +1789,11 @@ function printLocalDataDeletionSummary(input: {
 }): void {
   console.log("Local data deletion completed.");
   console.log(
-    `- Removed ${input.deletedCount} ${pluralize(input.deletedCount, "path")}.`
+    `- Removed ${input.deletedCount} ${pluralize(input.deletedCount, "path")}.`,
   );
   if (input.missingCount > 0) {
     console.log(
-      `- Skipped ${input.missingCount} already-absent ${pluralize(input.missingCount, "path")}.`
+      `- Skipped ${input.missingCount} already-absent ${pluralize(input.missingCount, "path")}.`,
     );
   }
   if (input.includeProfileRequested && !input.includeProfileDeleted) {
@@ -1779,11 +1809,7 @@ async function findRunningKeepAlivePids(): Promise<number[]> {
   try {
     entries = await readdir(keepAliveDir, { withFileTypes: true });
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return [];
     }
 
@@ -1829,7 +1855,7 @@ function assertCdpUrlUnsupportedForDataDelete(cdpUrl?: string): void {
 
   throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
-    "The data delete command only deletes tool-owned local filesystem state and does not support --cdp-url."
+    "The data delete command only deletes tool-owned local filesystem state and does not support --cdp-url.",
   );
 }
 
@@ -1843,8 +1869,8 @@ async function assertNoRunningKeepAliveDaemons(): Promise<void> {
     "ACTION_PRECONDITION_FAILED",
     `Stop running keepalive daemons before deleting local data. Active PID${runningKeepAlivePids.length === 1 ? "" : "s"}: ${runningKeepAlivePids.join(", ")}.`,
     {
-      running_keepalive_pids: runningKeepAlivePids
-    }
+      running_keepalive_pids: runningKeepAlivePids,
+    },
   );
 }
 
@@ -1867,7 +1893,7 @@ async function runDataDelete(input: {
       missing_paths: preview.missingDeletePaths,
       nothing_to_delete: preview.existingDeletePaths.length === 0,
       preserved_paths: preview.preserveItems.map((item) => item.path),
-      would_delete_paths: preview.deleteItems.map((item) => item.path)
+      would_delete_paths: preview.deleteItems.map((item) => item.path),
     });
     return;
   }
@@ -1881,7 +1907,7 @@ async function runDataDelete(input: {
       include_profile_requested: input.includeProfile,
       missing_paths: preview.missingDeletePaths,
       nothing_to_delete: true,
-      preserved_paths: preview.preserveItems.map((item) => item.path)
+      preserved_paths: preview.preserveItems.map((item) => item.path),
     });
     return;
   }
@@ -1900,25 +1926,29 @@ async function runDataDelete(input: {
       include_profile_deleted: false,
       include_profile_requested: input.includeProfile,
       preserved_paths: preview.preserveItems.map((item) => item.path),
-      would_delete_paths: preview.existingDeletePaths
+      would_delete_paths: preview.existingDeletePaths,
     });
     return;
   }
 
   const profileItem = preview.deleteItems.find(
-    (item) => item.label === "Browser profiles"
+    (item) => item.label === "Browser profiles",
   );
   let includeProfile = false;
   if (input.includeProfile && profileItem?.exists) {
     includeProfile = await promptYesNo(
-      `Delete browser profile data at ${profileItem.path}? This removes saved sessions and cookies.`
+      `Delete browser profile data at ${profileItem.path}? This removes saved sessions and cookies.`,
     );
 
     if (!includeProfile) {
-      console.log("Browser profile deletion declined. Profiles will be preserved.");
+      console.log(
+        "Browser profile deletion declined. Profiles will be preserved.",
+      );
     }
   } else if (input.includeProfile) {
-    console.log("Browser profiles are already absent. Skipping the extra profile confirmation.");
+    console.log(
+      "Browser profiles are already absent. Skipping the extra profile confirmation.",
+    );
   }
 
   try {
@@ -1927,7 +1957,7 @@ async function runDataDelete(input: {
       deletedCount: deletionResult.deletedPaths.length,
       includeProfileDeleted: includeProfile,
       includeProfileRequested: input.includeProfile,
-      missingCount: deletionResult.missingPaths.length
+      missingCount: deletionResult.missingPaths.length,
     });
 
     printJson({
@@ -1940,7 +1970,7 @@ async function runDataDelete(input: {
       started_at: deletionResult.startedAt,
       completed_at: deletionResult.completedAt,
       deleted_paths: deletionResult.deletedPaths,
-      failed_paths: deletionResult.failedPaths
+      failed_paths: deletionResult.failedPaths,
     });
   } catch (error) {
     const formattedError = formatLocalDataDeletionError(error);
@@ -1959,7 +1989,7 @@ async function runStatus(profileName: string, cdpUrl?: string): Promise<void> {
       profileName,
       authenticated: status.authenticated,
       evasion_level: status.evasion?.level,
-      evasion_diagnostics_enabled: status.evasion?.diagnosticsEnabled ?? false
+      evasion_diagnostics_enabled: status.evasion?.diagnosticsEnabled ?? false,
     });
     printJson({ run_id: runtime.runId, profile_name: profileName, ...status });
   } finally {
@@ -1970,7 +2000,7 @@ async function runStatus(profileName: string, cdpUrl?: string): Promise<void> {
 function buildFeedbackJsonResult(
   result:
     | Awaited<ReturnType<typeof submitFeedback>>
-    | Awaited<ReturnType<typeof submitPendingFeedback>>
+    | Awaited<ReturnType<typeof submitPendingFeedback>>,
 ): Record<string, unknown> {
   if ("submittedCount" in result) {
     return {
@@ -1981,12 +2011,12 @@ function buildFeedbackJsonResult(
         file_path: formatFeedbackDisplayPath(item.filePath),
         title: item.title,
         type: item.type,
-        url: item.url
+        url: item.url,
       })),
       failures: result.failures.map((item) => ({
         file_path: formatFeedbackDisplayPath(item.filePath),
-        error: item.error
-      }))
+        error: item.error,
+      })),
     };
   }
 
@@ -2000,9 +2030,9 @@ function buildFeedbackJsonResult(
     ...(result.url ? { url: result.url } : {}),
     ...(result.pendingFilePath
       ? {
-          pending_file_path: formatFeedbackDisplayPath(result.pendingFilePath)
+          pending_file_path: formatFeedbackDisplayPath(result.pendingFilePath),
         }
-      : {})
+      : {}),
   };
 }
 
@@ -2010,7 +2040,7 @@ function printFeedbackResult(
   result:
     | Awaited<ReturnType<typeof submitFeedback>>
     | Awaited<ReturnType<typeof submitPendingFeedback>>,
-  json: boolean
+  json: boolean,
 ): void {
   if (json) {
     printJson(buildFeedbackJsonResult(result));
@@ -2024,22 +2054,22 @@ function printFeedbackResult(
     }
 
     const lines = [
-      `Submitted ${result.submittedCount} pending feedback file(s) to ${result.repository}.`
+      `Submitted ${result.submittedCount} pending feedback file(s) to ${result.repository}.`,
     ];
 
     for (const item of result.submitted) {
       lines.push(
-        `- ${formatFeedbackDisplayPath(item.filePath)} -> ${item.url}`
+        `- ${formatFeedbackDisplayPath(item.filePath)} -> ${item.url}`,
       );
     }
 
     if (result.failureCount > 0) {
       lines.push(
-        `${result.failureCount} pending feedback file(s) could not be submitted.`
+        `${result.failureCount} pending feedback file(s) could not be submitted.`,
       );
       for (const item of result.failures) {
         lines.push(
-          `- ${formatFeedbackDisplayPath(item.filePath)}: ${item.error}`
+          `- ${formatFeedbackDisplayPath(item.filePath)}: ${item.error}`,
         );
       }
     }
@@ -2056,8 +2086,8 @@ function printFeedbackResult(
   console.log(
     [
       `Feedback saved locally: ${formatFeedbackDisplayPath(result.pendingFilePath ?? "")}`,
-      "To submit: run `gh auth login` then `linkedin-buddy feedback --submit-pending`"
-    ].join("\n")
+      "To submit: run `gh auth login` then `linkedin-buddy feedback --submit-pending`",
+    ].join("\n"),
   );
 }
 
@@ -2067,15 +2097,13 @@ async function promptForFeedbackType(): Promise<FeedbackType> {
   while (true) {
     const value = await promptTextInput(
       `Feedback type (${FEEDBACK_TYPES.join("/")})`,
-      process.stderr
+      process.stderr,
     );
 
     try {
       return normalizeFeedbackInputType(value);
     } catch {
-      writeCliWarning(
-        `Please enter one of: ${FEEDBACK_TYPES.join(", ")}.`
-      );
+      writeCliWarning(`Please enter one of: ${FEEDBACK_TYPES.join(", ")}.`);
     }
   }
 }
@@ -2083,7 +2111,7 @@ async function promptForFeedbackType(): Promise<FeedbackType> {
 async function promptForRequiredFeedbackText(
   label: string,
   question: string,
-  multiline: boolean = false
+  multiline: boolean = false,
 ): Promise<string> {
   assertInteractiveTerminal("collect feedback interactively");
 
@@ -2126,7 +2154,7 @@ async function runFeedbackCommand(input: {
     (await promptForRequiredFeedbackText(
       "description",
       "Detailed explanation.",
-      true
+      true,
     ));
 
   const result = await submitFeedback({
@@ -2136,21 +2164,23 @@ async function runFeedbackCommand(input: {
     technicalContext: createFeedbackTechnicalContext({
       cliVersion: packageJson.version,
       snapshot,
-      source: "cli"
-    })
+      source: "cli",
+    }),
   });
 
   printFeedbackResult(result, input.json);
 }
 
-function assertNoExternalSessionOverrideForStoredSession(cdpUrl?: string): void {
+function assertNoExternalSessionOverrideForStoredSession(
+  cdpUrl?: string,
+): void {
   if (!cdpUrl) {
     return;
   }
 
   throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
-    "Stored-session auth and read-only live validation do not support --cdp-url. Omit --cdp-url to use the encrypted stored session flow."
+    "Stored-session auth and read-only live validation do not support --cdp-url. Omit --cdp-url to use the encrypted stored session flow.",
   );
 }
 
@@ -2159,25 +2189,28 @@ async function captureStoredSession(input: {
   timeoutMinutes: number;
 }): Promise<Awaited<ReturnType<typeof captureLinkedInSession>>> {
   writeCliNotice(
-    `Opening a dedicated Chromium window to capture session "${input.sessionName}".`
+    `Opening a dedicated Chromium window to capture session "${input.sessionName}".`,
   );
   writeCliNotice(
-    "Sign in manually. The browser closes automatically after the authenticated session is stored."
+    "Sign in manually. The browser closes automatically after the authenticated session is stored.",
   );
   writeCliNotice(
-    "Leave the LinkedIn window open after sign-in until the CLI confirms the session was captured. Press Ctrl+C if you need to cancel."
+    "Leave the LinkedIn window open after sign-in until the CLI confirms the session was captured. Press Ctrl+C if you need to cancel.",
   );
 
   return captureLinkedInSession({
     sessionName: input.sessionName,
-    timeoutMs: input.timeoutMinutes * 60_000
+    timeoutMs: input.timeoutMinutes * 60_000,
   });
 }
 
-async function runAuthSessionCapture(input: {
-  sessionName: string;
-  timeoutMinutes: number;
-}, cdpUrl?: string): Promise<void> {
+async function runAuthSessionCapture(
+  input: {
+    sessionName: string;
+    timeoutMinutes: number;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   assertNoExternalSessionOverrideForStoredSession(cdpUrl);
   assertInteractiveTerminal("capture a stored LinkedIn session");
 
@@ -2189,7 +2222,7 @@ async function runAuthSessionCapture(input: {
     current_url: result.currentUrl,
     li_at_expires_at: result.liAtCookieExpiresAt,
     session_file: result.filePath,
-    session_name: result.sessionName
+    session_name: result.sessionName,
   });
 }
 
@@ -2207,9 +2240,14 @@ async function maybeRefreshStoredSession(
     yes: boolean;
   },
   error: unknown,
-  promptOutput: typeof stdout | typeof process.stderr
+  promptOutput: typeof stdout | typeof process.stderr,
 ): Promise<boolean> {
-  if (input.yes || !stdin.isTTY || !stdout.isTTY || !isStoredSessionRefreshError(error)) {
+  if (
+    input.yes ||
+    !stdin.isTTY ||
+    !stdout.isTTY ||
+    !isStoredSessionRefreshError(error)
+  ) {
     return false;
   }
 
@@ -2217,11 +2255,11 @@ async function maybeRefreshStoredSession(
   writeCliNotice(
     errorPayload.code === "CAPTCHA_OR_CHALLENGE"
       ? "LinkedIn requested extra verification before the validation could continue."
-      : `Stored session "${input.sessionName}" needs to be refreshed before the validation can continue.`
+      : `Stored session "${input.sessionName}" needs to be refreshed before the validation can continue.`,
   );
   const confirmed = await promptYesNo(
     `Capture a fresh stored session named "${input.sessionName}" now?`,
-    promptOutput
+    promptOutput,
   );
   if (!confirmed) {
     return false;
@@ -2229,26 +2267,29 @@ async function maybeRefreshStoredSession(
 
   await captureStoredSession({
     sessionName: input.sessionName,
-    timeoutMinutes: input.timeoutMinutes
+    timeoutMinutes: input.timeoutMinutes,
   });
   return true;
 }
 
 function createReadOnlyValidationPrompter(
   sessionName: string,
-  promptOutput: typeof stdout | typeof process.stderr
+  promptOutput: typeof stdout | typeof process.stderr,
 ): (operation: LinkedInReadOnlyValidationOperation) => Promise<void> {
   return async (operation) => {
     promptOutput.write(`Read-only step: ${operation.summary}\n`);
-    const confirmed = await promptYesNo("Continue with this step?", promptOutput);
+    const confirmed = await promptYesNo(
+      "Continue with this step?",
+      promptOutput,
+    );
     if (!confirmed) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "Read-only live validation was cancelled by the operator.",
         {
           operation: operation.id,
-          session_name: sessionName
-        }
+          session_name: sessionName,
+        },
       );
     }
   };
@@ -2256,7 +2297,7 @@ function createReadOnlyValidationPrompter(
 
 function emitReadOnlyValidationResult(
   report: ReadOnlyValidationReport,
-  outputMode: ReadOnlyValidationOutputMode
+  outputMode: ReadOnlyValidationOutputMode,
 ): void {
   if (outputMode === "json") {
     printJson(report);
@@ -2264,12 +2305,12 @@ function emitReadOnlyValidationResult(
     const redactedReport = redactStructuredValue(
       report,
       cliPrivacyConfig,
-      "cli"
+      "cli",
     ) as typeof report;
     console.log(
       formatReadOnlyValidationReport(redactedReport, {
-        color: shouldUseAnsiColor(stdout)
-      })
+        color: shouldUseAnsiColor(stdout),
+      }),
     );
   }
 
@@ -2280,7 +2321,7 @@ function emitReadOnlyValidationResult(
 
 function emitReadOnlyValidationFailure(
   error: unknown,
-  outputMode: ReadOnlyValidationOutputMode
+  outputMode: ReadOnlyValidationOutputMode,
 ): void {
   process.exitCode = LIVE_VALIDATION_ERROR_EXIT_CODE;
 
@@ -2292,8 +2333,8 @@ function emitReadOnlyValidationFailure(
   process.stderr.write(
     `${formatReadOnlyValidationError(errorPayload, {
       color: shouldUseAnsiColor(process.stderr),
-      helpCommand: LIVE_VALIDATION_HELP_COMMAND
-    })}\n`
+      helpCommand: LIVE_VALIDATION_HELP_COMMAND,
+    })}\n`,
   );
 }
 
@@ -2307,34 +2348,37 @@ function validateReadOnlyValidationCliInput(input: {
       "retry-max-delay-ms must be greater than or equal to retry-base-delay-ms.",
       {
         retry_base_delay_ms: input.retryBaseDelayMs,
-        retry_max_delay_ms: input.retryMaxDelayMs
-      }
+        retry_max_delay_ms: input.retryMaxDelayMs,
+      },
     );
   }
 }
 
-async function runLiveReadOnlyValidation(input: {
-  json: boolean;
-  maxRequests: number;
-  maxRetries: number;
-  minIntervalMs: number;
-  progress: boolean;
-  readOnly: boolean;
-  retryBaseDelayMs: number;
-  retryMaxDelayMs: number;
-  sessionName: string;
-  timeoutSeconds: number;
-  yes: boolean;
-}, cdpUrl?: string): Promise<void> {
+async function runLiveReadOnlyValidation(
+  input: {
+    json: boolean;
+    maxRequests: number;
+    maxRetries: number;
+    minIntervalMs: number;
+    progress: boolean;
+    readOnly: boolean;
+    retryBaseDelayMs: number;
+    retryMaxDelayMs: number;
+    sessionName: string;
+    timeoutSeconds: number;
+    yes: boolean;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const outputMode = resolveReadOnlyValidationOutputMode(
     { json: input.json },
-    Boolean(stdout.isTTY)
+    Boolean(stdout.isTTY),
   );
   const promptOutput = outputMode === "json" ? process.stderr : stdout;
   const progressEnabled =
     outputMode === "human" && input.progress && Boolean(process.stderr.isTTY);
   const progressReporter = new ReadOnlyValidationProgressReporter({
-    enabled: progressEnabled
+    enabled: progressEnabled,
   });
 
   try {
@@ -2344,12 +2388,14 @@ async function runLiveReadOnlyValidation(input: {
     if (!input.readOnly) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        'Live validation is currently restricted to read-only mode. Rerun the command with "--read-only".'
+        'Live validation is currently restricted to read-only mode. Rerun the command with "--read-only".',
       );
     }
 
     if (!input.yes) {
-      assertInteractiveTerminal("run interactive live validation without --yes");
+      assertInteractiveTerminal(
+        "run interactive live validation without --yes",
+      );
     }
 
     const runValidation = async () => {
@@ -2365,14 +2411,14 @@ async function runLiveReadOnlyValidation(input: {
           ? {
               onLog: (entry) => {
                 progressReporter.handleLog(entry);
-              }
+              },
             }
           : {}),
         sessionName: input.sessionName,
         ...(onBeforeOperation ? { onBeforeOperation } : {}),
         retryBaseDelayMs: input.retryBaseDelayMs,
         retryMaxDelayMs: input.retryMaxDelayMs,
-        timeoutMs: input.timeoutSeconds * 1_000
+        timeoutMs: input.timeoutSeconds * 1_000,
       });
     };
 
@@ -2384,10 +2430,10 @@ async function runLiveReadOnlyValidation(input: {
         {
           sessionName: input.sessionName,
           timeoutMinutes: Math.max(1, Math.ceil(input.timeoutSeconds / 60)),
-          yes: input.yes
+          yes: input.yes,
         },
         error,
-        promptOutput
+        promptOutput,
       );
 
       if (refreshed) {
@@ -2411,7 +2457,7 @@ async function runRateLimitStatus(clear: boolean): Promise<void> {
   if (clear) {
     await clearRateLimitState();
     printJson({
-      cleared: true
+      cleared: true,
     });
     return;
   }
@@ -2428,7 +2474,7 @@ interface KeepAliveCliOutputOptions {
 
 function emitKeepAliveStartReport(
   report: KeepAliveStartReport,
-  options: KeepAliveCliOutputOptions
+  options: KeepAliveCliOutputOptions,
 ): void {
   if (options.outputMode === "json") {
     printJson(report);
@@ -2437,18 +2483,22 @@ function emitKeepAliveStartReport(
 
   console.log(
     formatKeepAliveStartReport(
-      redactStructuredValue(report, cliPrivacyConfig, "cli") as KeepAliveStartReport,
+      redactStructuredValue(
+        report,
+        cliPrivacyConfig,
+        "cli",
+      ) as KeepAliveStartReport,
       {
         quiet: options.quiet,
-        verbose: options.verbose
-      }
-    )
+        verbose: options.verbose,
+      },
+    ),
   );
 }
 
 function emitKeepAliveStatusReport(
   report: KeepAliveStatusReport,
-  options: KeepAliveCliOutputOptions
+  options: KeepAliveCliOutputOptions,
 ): void {
   if (options.outputMode === "json") {
     printJson(report);
@@ -2457,18 +2507,22 @@ function emitKeepAliveStatusReport(
 
   console.log(
     formatKeepAliveStatusReport(
-      redactStructuredValue(report, cliPrivacyConfig, "cli") as KeepAliveStatusReport,
+      redactStructuredValue(
+        report,
+        cliPrivacyConfig,
+        "cli",
+      ) as KeepAliveStatusReport,
       {
         quiet: options.quiet,
-        verbose: options.verbose
-      }
-    )
+        verbose: options.verbose,
+      },
+    ),
   );
 }
 
 function emitKeepAliveStopReport(
   report: KeepAliveStopReport,
-  options: KeepAliveCliOutputOptions
+  options: KeepAliveCliOutputOptions,
 ): void {
   if (options.outputMode === "json") {
     printJson(report);
@@ -2477,19 +2531,23 @@ function emitKeepAliveStopReport(
 
   console.log(
     formatKeepAliveStopReport(
-      redactStructuredValue(report, cliPrivacyConfig, "cli") as KeepAliveStopReport,
+      redactStructuredValue(
+        report,
+        cliPrivacyConfig,
+        "cli",
+      ) as KeepAliveStopReport,
       {
         quiet: options.quiet,
-        verbose: options.verbose
-      }
-    )
+        verbose: options.verbose,
+      },
+    ),
   );
 }
 
 function writeKeepAliveProgressNotice(
   outputMode: KeepAliveOutputMode,
   quiet: boolean,
-  message: string
+  message: string,
 ): void {
   if (outputMode === "human" && !quiet) {
     writeCliNotice(message);
@@ -2497,8 +2555,12 @@ function writeKeepAliveProgressNotice(
 }
 
 function warnAboutExternalCdpDaemonSession(): void {
-  writeCliWarning("--cdp-url attaches this daemon to an existing browser session.");
-  writeCliNotice("The daemon will share cookies and session state with that browser until you stop it.");
+  writeCliWarning(
+    "--cdp-url attaches this daemon to an existing browser session.",
+  );
+  writeCliNotice(
+    "The daemon will share cookies and session state with that browser until you stop it.",
+  );
   writeCliNotice("For an isolated tool-owned profile, omit --cdp-url.");
 }
 
@@ -2509,19 +2571,19 @@ function assertKeepAliveVerbosityOptions(input: {
   if (input.quiet && input.verbose) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      'Choose either "--quiet" or "--verbose", not both.'
+      'Choose either "--quiet" or "--verbose", not both.',
     );
   }
 }
 
 async function runKeepAliveCliAction(
   input: { json?: boolean; quiet?: boolean; verbose?: boolean },
-  action: (options: KeepAliveCliOutputOptions) => Promise<void>
+  action: (options: KeepAliveCliOutputOptions) => Promise<void>,
 ): Promise<void> {
   const options: KeepAliveCliOutputOptions = {
     outputMode: resolveKeepAliveOutputMode(input, Boolean(stdout.isTTY)),
     quiet: Boolean(input.quiet),
-    verbose: Boolean(input.verbose)
+    verbose: Boolean(input.verbose),
   };
 
   try {
@@ -2533,16 +2595,19 @@ async function runKeepAliveCliAction(
     }
 
     process.stderr.write(
-      `${formatKeepAliveError(toLinkedInBuddyErrorPayload(error, cliPrivacyConfig), {
-        quiet: options.quiet
-      })}\n`
+      `${formatKeepAliveError(
+        toLinkedInBuddyErrorPayload(error, cliPrivacyConfig),
+        {
+          quiet: options.quiet,
+        },
+      )}\n`,
     );
     process.exitCode = 1;
   }
 }
 
 async function buildKeepAliveStatusReport(
-  profileName: string
+  profileName: string,
 ): Promise<KeepAliveStatusReport> {
   const normalizedProfileName = coerceProfileName(profileName);
   const pid = await readKeepAlivePid(normalizedProfileName);
@@ -2558,34 +2623,43 @@ async function buildKeepAliveStatusReport(
     stale_pid_file: Boolean(pid && !running),
     state_path: files.statePath,
     log_path: files.logPath,
-    recent_events: await readKeepAliveRecentEvents(normalizedProfileName)
+    recent_events: await readKeepAliveRecentEvents(normalizedProfileName),
   };
 }
 
-async function runKeepAliveStart(input: {
-  profileName: string;
-  intervalSeconds: number;
-  jitterSeconds: number;
-  maxConsecutiveFailures: number;
-}, options: KeepAliveCliOutputOptions, cdpUrl?: string): Promise<void> {
+async function runKeepAliveStart(
+  input: {
+    profileName: string;
+    intervalSeconds: number;
+    jitterSeconds: number;
+    maxConsecutiveFailures: number;
+  },
+  options: KeepAliveCliOutputOptions,
+  cdpUrl?: string,
+): Promise<void> {
   const profileName = coerceProfileName(input.profileName);
   const files = getKeepAliveFiles(profileName);
   const existingPid = await readKeepAlivePid(profileName);
   if (existingPid && isProcessRunning(existingPid)) {
     const currentState = await readKeepAliveState(profileName);
-    emitKeepAliveStartReport({
-      started: false,
-      reason: "Keepalive daemon is already running for this profile.",
-      profile_name: profileName,
-      pid: existingPid,
-      state: currentState,
-      state_path: files.statePath,
-      log_path: files.logPath
-    }, options);
+    emitKeepAliveStartReport(
+      {
+        started: false,
+        reason: "Keepalive daemon is already running for this profile.",
+        profile_name: profileName,
+        pid: existingPid,
+        state: currentState,
+        state_path: files.statePath,
+        log_path: files.logPath,
+      },
+      options,
+    );
     return;
   }
 
-  const recoveredStalePid = Boolean(existingPid && !isProcessRunning(existingPid));
+  const recoveredStalePid = Boolean(
+    existingPid && !isProcessRunning(existingPid),
+  );
   if (existingPid && !isProcessRunning(existingPid)) {
     await removeKeepAlivePid(profileName);
   }
@@ -2597,14 +2671,14 @@ async function runKeepAliveStart(input: {
   writeKeepAliveProgressNotice(
     options.outputMode,
     options.quiet,
-    `Starting keepalive daemon for profile ${profileName}.`
+    `Starting keepalive daemon for profile ${profileName}.`,
   );
 
   const cliEntrypoint = resolveKeepAliveCliEntrypoint();
   if (!cliEntrypoint) {
     throw new LinkedInBuddyError(
       "UNKNOWN",
-      "Could not resolve CLI entrypoint for keepalive daemon startup."
+      "Could not resolve CLI entrypoint for keepalive daemon startup.",
     );
   }
 
@@ -2625,20 +2699,20 @@ async function runKeepAliveStart(input: {
     "--jitter-seconds",
     String(input.jitterSeconds),
     "--max-consecutive-failures",
-    String(input.maxConsecutiveFailures)
+    String(input.maxConsecutiveFailures),
   );
 
   const daemon = spawn(process.execPath, daemonArgs, {
     detached: true,
     stdio: "ignore",
-    env: process.env
+    env: process.env,
   });
   daemon.unref();
 
   if (!daemon.pid) {
     throw new LinkedInBuddyError(
       "UNKNOWN",
-      "Keepalive daemon did not return a process id."
+      "Keepalive daemon did not return a process id.",
     );
   }
 
@@ -2654,7 +2728,7 @@ async function runKeepAliveStart(input: {
     maxConsecutiveFailures: input.maxConsecutiveFailures,
     consecutiveFailures: 0,
     healthCheckInProgress: false,
-    ...(cdpUrl ? { cdpUrl } : {})
+    ...(cdpUrl ? { cdpUrl } : {}),
   };
 
   await writeKeepAlivePid(profileName, daemon.pid);
@@ -2663,18 +2737,21 @@ async function runKeepAliveStart(input: {
   writeKeepAliveProgressNotice(
     options.outputMode,
     options.quiet,
-    "The first session health check will continue in the background; use `linkedin keepalive status` to inspect it."
+    "The first session health check will continue in the background; use `linkedin keepalive status` to inspect it.",
   );
 
-  emitKeepAliveStartReport({
-    started: true,
-    profile_name: profileName,
-    pid: daemon.pid,
-    state: initialState,
-    state_path: files.statePath,
-    log_path: files.logPath,
-    ...(recoveredStalePid ? { recovered_stale_pid: true } : {})
-  }, options);
+  emitKeepAliveStartReport(
+    {
+      started: true,
+      profile_name: profileName,
+      pid: daemon.pid,
+      state: initialState,
+      state_path: files.statePath,
+      log_path: files.logPath,
+      ...(recoveredStalePid ? { recovered_stale_pid: true } : {}),
+    },
+    options,
+  );
 }
 
 function resolveKeepAliveCliEntrypoint(): string | undefined {
@@ -2685,7 +2762,7 @@ function resolveKeepAliveCliEntrypoint(): string | undefined {
 
   const compiledEntrypoint = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
-    "../../dist/bin/linkedin.js"
+    "../../dist/bin/linkedin.js",
   );
   if (existsSync(compiledEntrypoint)) {
     return compiledEntrypoint;
@@ -2696,14 +2773,17 @@ function resolveKeepAliveCliEntrypoint(): string | undefined {
 
 async function runKeepAliveStatus(
   profileName: string,
-  options: KeepAliveCliOutputOptions
+  options: KeepAliveCliOutputOptions,
 ): Promise<void> {
-  emitKeepAliveStatusReport(await buildKeepAliveStatusReport(profileName), options);
+  emitKeepAliveStatusReport(
+    await buildKeepAliveStatusReport(profileName),
+    options,
+  );
 }
 
 async function runKeepAliveStop(
   profileName: string,
-  options: KeepAliveCliOutputOptions
+  options: KeepAliveCliOutputOptions,
 ): Promise<void> {
   const normalizedProfileName = coerceProfileName(profileName);
   const files = getKeepAliveFiles(normalizedProfileName);
@@ -2711,14 +2791,17 @@ async function runKeepAliveStop(
   const previousState = await readKeepAliveState(normalizedProfileName);
 
   if (!pid) {
-    emitKeepAliveStopReport({
-      stopped: false,
-      profile_name: normalizedProfileName,
-      reason: "No keepalive daemon is currently running for this profile.",
-      state: previousState,
-      state_path: files.statePath,
-      log_path: files.logPath
-    }, options);
+    emitKeepAliveStopReport(
+      {
+        stopped: false,
+        profile_name: normalizedProfileName,
+        reason: "No keepalive daemon is currently running for this profile.",
+        state: previousState,
+        state_path: files.statePath,
+        log_path: files.logPath,
+      },
+      options,
+    );
     return;
   }
 
@@ -2731,25 +2814,28 @@ async function runKeepAliveStop(
         status: "stopped",
         updatedAt: now,
         stoppedAt: now,
-        lastError: "Recovered from stale pid file."
+        lastError: "Recovered from stale pid file.",
       });
     }
-    emitKeepAliveStopReport({
-      stopped: true,
-      profile_name: normalizedProfileName,
-      pid,
-      reason: "Removed a stale keepalive PID file for this profile.",
-      state: await readKeepAliveState(normalizedProfileName),
-      state_path: files.statePath,
-      log_path: files.logPath
-    }, options);
+    emitKeepAliveStopReport(
+      {
+        stopped: true,
+        profile_name: normalizedProfileName,
+        pid,
+        reason: "Removed a stale keepalive PID file for this profile.",
+        state: await readKeepAliveState(normalizedProfileName),
+        state_path: files.statePath,
+        log_path: files.logPath,
+      },
+      options,
+    );
     return;
   }
 
   writeKeepAliveProgressNotice(
     options.outputMode,
     options.quiet,
-    `Stopping keepalive daemon for profile ${normalizedProfileName}.`
+    `Stopping keepalive daemon for profile ${normalizedProfileName}.`,
   );
 
   try {
@@ -2761,8 +2847,8 @@ async function runKeepAliveStop(
       {
         profile_name: normalizedProfileName,
         pid,
-        cause: error instanceof Error ? error.message : String(error)
-      }
+        cause: error instanceof Error ? error.message : String(error),
+      },
     );
   }
 
@@ -2790,31 +2876,37 @@ async function runKeepAliveStop(
       stoppedAt: now,
       ...(running
         ? { lastError: "Keepalive daemon required SIGKILL to stop." }
-        : {})
+        : {}),
     });
   }
 
   const nextState = await readKeepAliveState(normalizedProfileName);
-  emitKeepAliveStopReport({
-    stopped: true,
-    profile_name: normalizedProfileName,
-    pid,
-    forced: running,
-    reason: running
-      ? "Keepalive daemon did not exit after SIGTERM, so it was force-stopped."
-      : "Keepalive daemon exited cleanly.",
-    state: nextState,
-    state_path: files.statePath,
-    log_path: files.logPath
-  }, options);
+  emitKeepAliveStopReport(
+    {
+      stopped: true,
+      profile_name: normalizedProfileName,
+      pid,
+      forced: running,
+      reason: running
+        ? "Keepalive daemon did not exit after SIGTERM, so it was force-stopped."
+        : "Keepalive daemon exited cleanly.",
+      state: nextState,
+      state_path: files.statePath,
+      log_path: files.logPath,
+    },
+    options,
+  );
 }
 
-async function runKeepAliveDaemon(input: {
-  profileName: string;
-  intervalSeconds: number;
-  jitterSeconds: number;
-  maxConsecutiveFailures: number;
-}, cdpUrl?: string): Promise<void> {
+async function runKeepAliveDaemon(
+  input: {
+    profileName: string;
+    intervalSeconds: number;
+    jitterSeconds: number;
+    maxConsecutiveFailures: number;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
   const profileName = coerceProfileName(input.profileName);
   let stopRequested = false;
@@ -2837,7 +2929,7 @@ async function runKeepAliveDaemon(input: {
     maxConsecutiveFailures: input.maxConsecutiveFailures,
     consecutiveFailures: 0,
     healthCheckInProgress: false,
-    ...(cdpUrl ? { cdpUrl } : {})
+    ...(cdpUrl ? { cdpUrl } : {}),
   };
 
   await writeKeepAlivePid(profileName, process.pid);
@@ -2850,13 +2942,14 @@ async function runKeepAliveDaemon(input: {
     cdp_url: cdpUrl ?? null,
     interval_ms: input.intervalSeconds * 1_000,
     jitter_ms: input.jitterSeconds * 1_000,
-    max_consecutive_failures: input.maxConsecutiveFailures
+    max_consecutive_failures: input.maxConsecutiveFailures,
   });
 
   try {
     while (!stopRequested) {
       const tickAt = new Date().toISOString();
-      const currentState = (await readKeepAliveState(profileName)) ?? initialState;
+      const currentState =
+        (await readKeepAliveState(profileName)) ?? initialState;
       const inProgressState: KeepAliveState = {
         ...currentState,
         pid: process.pid,
@@ -2866,7 +2959,7 @@ async function runKeepAliveDaemon(input: {
         jitterMs: input.jitterSeconds * 1_000,
         maxConsecutiveFailures: input.maxConsecutiveFailures,
         lastCheckStartedAt: tickAt,
-        healthCheckInProgress: true
+        healthCheckInProgress: true,
       };
 
       await writeKeepAliveState(profileName, inProgressState);
@@ -2875,7 +2968,7 @@ async function runKeepAliveDaemon(input: {
         event: "keepalive.tick.started",
         profile_name: profileName,
         interval_ms: input.intervalSeconds * 1_000,
-        jitter_ms: input.jitterSeconds * 1_000
+        jitter_ms: input.jitterSeconds * 1_000,
       });
 
       try {
@@ -2901,7 +2994,7 @@ async function runKeepAliveDaemon(input: {
           browserHealthy: health.browser.healthy,
           currentUrl: health.session.currentUrl,
           reason: health.session.reason,
-          healthCheckInProgress: false
+          healthCheckInProgress: false,
         };
         if (healthy) {
           nextState.lastHealthyAt = tickAt;
@@ -2919,7 +3012,7 @@ async function runKeepAliveDaemon(input: {
           authenticated: health.session.authenticated,
           reason: health.session.reason,
           interval_ms: input.intervalSeconds * 1_000,
-          jitter_ms: input.jitterSeconds * 1_000
+          jitter_ms: input.jitterSeconds * 1_000,
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -2943,7 +3036,7 @@ async function runKeepAliveDaemon(input: {
           consecutiveFailures,
           lastTickAt: tickAt,
           lastError: message,
-          healthCheckInProgress: false
+          healthCheckInProgress: false,
         };
         await writeKeepAliveState(profileName, nextState);
         await appendKeepAliveEvent(profileName, {
@@ -2954,7 +3047,7 @@ async function runKeepAliveDaemon(input: {
           error: message,
           interval_ms: input.intervalSeconds * 1_000,
           jitter_ms: input.jitterSeconds * 1_000,
-          ...(lockHeld ? { reason: "profile_lock_held" } : {})
+          ...(lockHeld ? { reason: "profile_lock_held" } : {}),
         });
       }
 
@@ -2965,7 +3058,7 @@ async function runKeepAliveDaemon(input: {
       const jitter = (Math.random() * 2 - 1) * (input.jitterSeconds * 1_000);
       let sleepRemainingMs = Math.max(
         1_000,
-        input.intervalSeconds * 1_000 + jitter
+        input.intervalSeconds * 1_000 + jitter,
       );
       while (!stopRequested && sleepRemainingMs > 0) {
         const chunkMs = Math.min(500, sleepRemainingMs);
@@ -2986,14 +3079,14 @@ async function runKeepAliveDaemon(input: {
       status: "stopped",
       updatedAt: now,
       healthCheckInProgress: false,
-      stoppedAt: now
+      stoppedAt: now,
     });
     await appendKeepAliveEvent(profileName, {
       ts: now,
       event: "keepalive.daemon.stopped",
       pid: process.pid,
       profile_name: profileName,
-      final_consecutive_failures: consecutiveFailures
+      final_consecutive_failures: consecutiveFailures,
     });
 
     await removeKeepAlivePid(profileName).catch(() => undefined);
@@ -3001,7 +3094,9 @@ async function runKeepAliveDaemon(input: {
   }
 }
 
-function summarizeSchedulerTick(result: SchedulerTickResult): SchedulerStateSummary {
+function summarizeSchedulerTick(
+  result: SchedulerTickResult,
+): SchedulerStateSummary {
   return {
     skippedReason: result.skippedReason,
     discoveredAcceptedConnections: result.discoveredAcceptedConnections,
@@ -3012,20 +3107,22 @@ function summarizeSchedulerTick(result: SchedulerTickResult): SchedulerStateSumm
     claimedJobs: result.claimedJobs,
     preparedJobs: result.preparedJobs,
     rescheduledJobs: result.rescheduledJobs,
-    failedJobs: result.failedJobs
+    failedJobs: result.failedJobs,
   };
 }
 
 function writeSchedulerProgressNotice(
   outputMode: SchedulerOutputMode,
-  message: string
+  message: string,
 ): void {
   if (outputMode === "human" && process.stderr.isTTY) {
     writeCliNotice(message);
   }
 }
 
-function tryParseSchedulerJobTargetLabel(job: SchedulerJobRow): string | undefined {
+function tryParseSchedulerJobTargetLabel(
+  job: SchedulerJobRow,
+): string | undefined {
   let parsed: unknown;
 
   try {
@@ -3066,7 +3163,7 @@ function createSchedulerJobPreview(job: SchedulerJobRow): SchedulerJobPreview {
     maxAttempts: job.max_attempts,
     preparedActionId: job.prepared_action_id,
     lastErrorCode: job.last_error_code,
-    lastErrorMessage: job.last_error_message
+    lastErrorMessage: job.last_error_message,
   };
 }
 
@@ -3079,11 +3176,13 @@ function createEmptySchedulerJobCounts(): SchedulerJobCounts {
     leased: 0,
     prepared: 0,
     failed: 0,
-    cancelled: 0
+    cancelled: 0,
   };
 }
 
-async function listSchedulerJobRows(profileName: string): Promise<SchedulerJobRow[]> {
+async function listSchedulerJobRows(
+  profileName: string,
+): Promise<SchedulerJobRow[]> {
   const { dbPath } = resolveConfigPaths();
   if (!(await pathExists(dbPath))) {
     return [];
@@ -3144,7 +3243,9 @@ function summarizeSchedulerJobRows(input: {
   const recent_jobs = input.jobs
     .filter(
       (job) =>
-        job.status === "prepared" || job.status === "failed" || job.status === "cancelled"
+        job.status === "prepared" ||
+        job.status === "failed" ||
+        job.status === "cancelled",
     )
     .sort((left, right) => right.updated_at - left.updated_at)
     .slice(0, input.jobLimit)
@@ -3153,7 +3254,7 @@ function summarizeSchedulerJobRows(input: {
   return {
     job_counts: jobCounts,
     next_jobs,
-    recent_jobs
+    recent_jobs,
   };
 }
 
@@ -3163,38 +3264,44 @@ function resolveSchedulerStatusConfig(): Pick<
 > {
   try {
     return {
-      scheduler_config: resolveSchedulerConfig()
+      scheduler_config: resolveSchedulerConfig(),
     };
   } catch (error) {
     return {
-      scheduler_config_error: toLinkedInBuddyErrorPayload(error, cliPrivacyConfig)
+      scheduler_config_error: toLinkedInBuddyErrorPayload(
+        error,
+        cliPrivacyConfig,
+      ),
     };
   }
 }
 
 function inferSchedulerNextWindowStartAt(
   state: SchedulerState | null,
-  schedulerConfig?: SchedulerConfig
+  schedulerConfig?: SchedulerConfig,
 ): string | undefined {
   if (!state) {
     return undefined;
   }
 
-  if (typeof state.nextWindowStartAt === "string" || state.nextWindowStartAt === null) {
+  if (
+    typeof state.nextWindowStartAt === "string" ||
+    state.nextWindowStartAt === null
+  ) {
     return state.nextWindowStartAt ?? undefined;
   }
 
   const nowMs = Date.now();
   const alignedAtMs = alignToBusinessHours(
     nowMs,
-    schedulerConfig?.businessHours ?? state.businessHours
+    schedulerConfig?.businessHours ?? state.businessHours,
   );
   return alignedAtMs > nowMs ? new Date(alignedAtMs).toISOString() : undefined;
 }
 
 async function buildSchedulerStatusReport(
   profileName: string,
-  jobLimit: number
+  jobLimit: number,
 ): Promise<SchedulerStatusReport> {
   const pid = await readSchedulerPid(profileName);
   const state = await readSchedulerState(profileName);
@@ -3205,12 +3312,12 @@ async function buildSchedulerStatusReport(
   const jobSummary = summarizeSchedulerJobRows({
     jobs,
     nowMs: Date.now(),
-    jobLimit
+    jobLimit,
   });
 
   const nextWindowStartAt = inferSchedulerNextWindowStartAt(
     state,
-    configInfo.scheduler_config
+    configInfo.scheduler_config,
   );
 
   return {
@@ -3222,19 +3329,19 @@ async function buildSchedulerStatusReport(
         ? null
         : {
             ...state,
-            ...(nextWindowStartAt !== undefined ? { nextWindowStartAt } : {})
+            ...(nextWindowStartAt !== undefined ? { nextWindowStartAt } : {}),
           },
     stale_pid_file: Boolean(pid && !running),
     state_path: files.statePath,
     log_path: files.logPath,
     ...configInfo,
-    ...jobSummary
+    ...jobSummary,
   };
 }
 
 function emitSchedulerStartReport(
   report: SchedulerStartReport,
-  outputMode: SchedulerOutputMode
+  outputMode: SchedulerOutputMode,
 ): void {
   if (outputMode === "json") {
     printJson(report);
@@ -3243,14 +3350,18 @@ function emitSchedulerStartReport(
 
   console.log(
     formatSchedulerStartReport(
-      redactStructuredValue(report, cliPrivacyConfig, "cli") as SchedulerStartReport
-    )
+      redactStructuredValue(
+        report,
+        cliPrivacyConfig,
+        "cli",
+      ) as SchedulerStartReport,
+    ),
   );
 }
 
 function emitSchedulerStatusReport(
   report: SchedulerStatusReport,
-  outputMode: SchedulerOutputMode
+  outputMode: SchedulerOutputMode,
 ): void {
   if (outputMode === "json") {
     printJson(report);
@@ -3259,14 +3370,18 @@ function emitSchedulerStatusReport(
 
   console.log(
     formatSchedulerStatusReport(
-      redactStructuredValue(report, cliPrivacyConfig, "cli") as SchedulerStatusReport
-    )
+      redactStructuredValue(
+        report,
+        cliPrivacyConfig,
+        "cli",
+      ) as SchedulerStatusReport,
+    ),
   );
 }
 
 function emitSchedulerStopReport(
   report: SchedulerStopReport,
-  outputMode: SchedulerOutputMode
+  outputMode: SchedulerOutputMode,
 ): void {
   if (outputMode === "json") {
     printJson(report);
@@ -3275,14 +3390,18 @@ function emitSchedulerStopReport(
 
   console.log(
     formatSchedulerStopReport(
-      redactStructuredValue(report, cliPrivacyConfig, "cli") as SchedulerStopReport
-    )
+      redactStructuredValue(
+        report,
+        cliPrivacyConfig,
+        "cli",
+      ) as SchedulerStopReport,
+    ),
   );
 }
 
 function emitSchedulerRunOnceReport(
   report: SchedulerRunOnceReport,
-  outputMode: SchedulerOutputMode
+  outputMode: SchedulerOutputMode,
 ): void {
   if (outputMode === "json") {
     printJson(report);
@@ -3291,14 +3410,18 @@ function emitSchedulerRunOnceReport(
 
   console.log(
     formatSchedulerRunOnceReport(
-      redactStructuredValue(report, cliPrivacyConfig, "cli") as SchedulerRunOnceReport
-    )
+      redactStructuredValue(
+        report,
+        cliPrivacyConfig,
+        "cli",
+      ) as SchedulerRunOnceReport,
+    ),
   );
 }
 
 async function runSchedulerCliAction(
   input: { json?: boolean },
-  action: (outputMode: SchedulerOutputMode) => Promise<void>
+  action: (outputMode: SchedulerOutputMode) => Promise<void>,
 ): Promise<void> {
   const outputMode = resolveSchedulerOutputMode(input, Boolean(stdout.isTTY));
 
@@ -3311,8 +3434,8 @@ async function runSchedulerCliAction(
 
     process.stderr.write(
       `${formatSchedulerError(
-        toLinkedInBuddyErrorPayload(error, cliPrivacyConfig)
-      )}\n`
+        toLinkedInBuddyErrorPayload(error, cliPrivacyConfig),
+      )}\n`,
     );
     process.exitCode = 1;
   }
@@ -3321,12 +3444,12 @@ async function runSchedulerCliAction(
 async function runSchedulerRunOnce(
   profileName: string,
   outputMode: SchedulerOutputMode,
-  cdpUrl?: string
+  cdpUrl?: string,
 ): Promise<void> {
   const normalizedProfileName = coerceProfileName(profileName);
   writeSchedulerProgressNotice(
     outputMode,
-    `Running one scheduler tick for profile ${normalizedProfileName}; this may take a moment.`
+    `Running one scheduler tick for profile ${normalizedProfileName}; this may take a moment.`,
   );
   const runtime = createRuntime(cdpUrl);
   const schedulerConfig = resolveSchedulerConfig();
@@ -3336,22 +3459,25 @@ async function runSchedulerRunOnce(
       db: runtime.db,
       logger: runtime.logger,
       followups: runtime.followups,
-      schedulerConfig
+      schedulerConfig,
     });
     const result = await scheduler.runTick({
       profileName: normalizedProfileName,
-      workerId: `cli:${runtime.runId}`
+      workerId: `cli:${runtime.runId}`,
     });
 
     if (result.failedJobs > 0) {
       process.exitCode = 1;
     }
 
-    emitSchedulerRunOnceReport({
-      run_id: runtime.runId,
-      scheduler_config: schedulerConfig,
-      ...result
-    }, outputMode);
+    emitSchedulerRunOnceReport(
+      {
+        run_id: runtime.runId,
+        scheduler_config: schedulerConfig,
+        ...result,
+      },
+      outputMode,
+    );
   } finally {
     runtime.close();
   }
@@ -3360,23 +3486,26 @@ async function runSchedulerRunOnce(
 async function runSchedulerStart(
   profileName: string,
   outputMode: SchedulerOutputMode,
-  cdpUrl?: string
+  cdpUrl?: string,
 ): Promise<void> {
   const normalizedProfileName = coerceProfileName(profileName);
   const files = getSchedulerFiles(normalizedProfileName);
   const existingPid = await readSchedulerPid(normalizedProfileName);
   if (existingPid && isProcessRunning(existingPid)) {
     const currentState = await readSchedulerState(normalizedProfileName);
-    emitSchedulerStartReport({
-      started: false,
-      reason: "Scheduler daemon is already running for this profile.",
-      profile_name: normalizedProfileName,
-      pid: existingPid,
-      state: currentState,
-      state_path: files.statePath,
-      log_path: files.logPath,
-      ...resolveSchedulerStatusConfig()
-    }, outputMode);
+    emitSchedulerStartReport(
+      {
+        started: false,
+        reason: "Scheduler daemon is already running for this profile.",
+        profile_name: normalizedProfileName,
+        pid: existingPid,
+        state: currentState,
+        state_path: files.statePath,
+        log_path: files.logPath,
+        ...resolveSchedulerStatusConfig(),
+      },
+      outputMode,
+    );
     return;
   }
 
@@ -3388,14 +3517,14 @@ async function runSchedulerStart(
 
   writeSchedulerProgressNotice(
     outputMode,
-    `Starting scheduler daemon for profile ${normalizedProfileName}.`
+    `Starting scheduler daemon for profile ${normalizedProfileName}.`,
   );
   const schedulerConfig = resolveSchedulerConfig();
   const cliEntrypoint = resolveKeepAliveCliEntrypoint();
   if (!cliEntrypoint) {
     throw new LinkedInBuddyError(
       "UNKNOWN",
-      "Could not resolve CLI entrypoint for scheduler daemon startup."
+      "Could not resolve CLI entrypoint for scheduler daemon startup.",
     );
   }
 
@@ -3411,14 +3540,14 @@ async function runSchedulerStart(
   const daemon = spawn(process.execPath, daemonArgs, {
     detached: true,
     stdio: "ignore",
-    env: process.env
+    env: process.env,
   });
   daemon.unref();
 
   if (!daemon.pid) {
     throw new LinkedInBuddyError(
       "UNKNOWN",
-      "Scheduler daemon did not return a process id."
+      "Scheduler daemon did not return a process id.",
     );
   }
 
@@ -3435,35 +3564,41 @@ async function runSchedulerStart(
     maxActiveJobsPerProfile: schedulerConfig.maxActiveJobsPerProfile,
     consecutiveFailures: 0,
     maxConsecutiveFailures: SCHEDULER_DAEMON_MAX_CONSECUTIVE_FAILURES,
-    ...(cdpUrl ? { cdpUrl } : {})
+    ...(cdpUrl ? { cdpUrl } : {}),
   };
 
   await writeSchedulerPid(normalizedProfileName, daemon.pid);
   await writeSchedulerState(normalizedProfileName, initialState);
 
-  emitSchedulerStartReport({
-    started: true,
-    profile_name: normalizedProfileName,
-    pid: daemon.pid,
-    state_path: files.statePath,
-    log_path: files.logPath,
-    scheduler_config: schedulerConfig
-  }, outputMode);
+  emitSchedulerStartReport(
+    {
+      started: true,
+      profile_name: normalizedProfileName,
+      pid: daemon.pid,
+      state_path: files.statePath,
+      log_path: files.logPath,
+      scheduler_config: schedulerConfig,
+    },
+    outputMode,
+  );
 }
 
 async function runSchedulerStatus(
   profileName: string,
   outputMode: SchedulerOutputMode,
-  jobLimit: number
+  jobLimit: number,
 ): Promise<void> {
   const normalizedProfileName = coerceProfileName(profileName);
-  const report = await buildSchedulerStatusReport(normalizedProfileName, jobLimit);
+  const report = await buildSchedulerStatusReport(
+    normalizedProfileName,
+    jobLimit,
+  );
   emitSchedulerStatusReport(report, outputMode);
 }
 
 async function runSchedulerStop(
   profileName: string,
-  outputMode: SchedulerOutputMode
+  outputMode: SchedulerOutputMode,
 ): Promise<void> {
   const normalizedProfileName = coerceProfileName(profileName);
   const files = getSchedulerFiles(normalizedProfileName);
@@ -3471,13 +3606,16 @@ async function runSchedulerStop(
   const previousState = await readSchedulerState(normalizedProfileName);
 
   if (!pid) {
-    emitSchedulerStopReport({
-      stopped: false,
-      profile_name: normalizedProfileName,
-      reason: "No scheduler daemon is currently running for this profile.",
-      state_path: files.statePath,
-      log_path: files.logPath
-    }, outputMode);
+    emitSchedulerStopReport(
+      {
+        stopped: false,
+        profile_name: normalizedProfileName,
+        reason: "No scheduler daemon is currently running for this profile.",
+        state_path: files.statePath,
+        log_path: files.logPath,
+      },
+      outputMode,
+    );
     return;
   }
 
@@ -3490,23 +3628,26 @@ async function runSchedulerStop(
         status: "stopped",
         updatedAt: now,
         stoppedAt: now,
-        lastError: "Recovered from stale pid file."
+        lastError: "Recovered from stale pid file.",
       });
     }
-    emitSchedulerStopReport({
-      stopped: true,
-      profile_name: normalizedProfileName,
-      pid,
-      reason: "Removed a stale scheduler PID file for this profile.",
-      state_path: files.statePath,
-      log_path: files.logPath
-    }, outputMode);
+    emitSchedulerStopReport(
+      {
+        stopped: true,
+        profile_name: normalizedProfileName,
+        pid,
+        reason: "Removed a stale scheduler PID file for this profile.",
+        state_path: files.statePath,
+        log_path: files.logPath,
+      },
+      outputMode,
+    );
     return;
   }
 
   writeSchedulerProgressNotice(
     outputMode,
-    `Stopping scheduler daemon for profile ${normalizedProfileName}.`
+    `Stopping scheduler daemon for profile ${normalizedProfileName}.`,
   );
 
   try {
@@ -3518,8 +3659,8 @@ async function runSchedulerStop(
       {
         profile_name: normalizedProfileName,
         pid,
-        cause: error instanceof Error ? error.message : String(error)
-      }
+        cause: error instanceof Error ? error.message : String(error),
+      },
     );
   }
 
@@ -3547,26 +3688,29 @@ async function runSchedulerStop(
       stoppedAt: now,
       ...(running
         ? { lastError: "Scheduler daemon required SIGKILL to stop." }
-        : {})
+        : {}),
     });
   }
 
-  emitSchedulerStopReport({
-    stopped: true,
-    profile_name: normalizedProfileName,
-    pid,
-    forced: running,
-    reason: running
-      ? "Scheduler daemon did not exit after SIGTERM, so it was force-stopped."
-      : "Scheduler daemon exited cleanly.",
-    state_path: files.statePath,
-    log_path: files.logPath
-  }, outputMode);
+  emitSchedulerStopReport(
+    {
+      stopped: true,
+      profile_name: normalizedProfileName,
+      pid,
+      forced: running,
+      reason: running
+        ? "Scheduler daemon did not exit after SIGTERM, so it was force-stopped."
+        : "Scheduler daemon exited cleanly.",
+      state_path: files.statePath,
+      log_path: files.logPath,
+    },
+    outputMode,
+  );
 }
 
 async function runSchedulerDaemon(
   profileName: string,
-  cdpUrl?: string
+  cdpUrl?: string,
 ): Promise<void> {
   const schedulerConfig = resolveSchedulerConfig();
   let stopRequested = false;
@@ -3591,7 +3735,7 @@ async function runSchedulerDaemon(
     maxActiveJobsPerProfile: schedulerConfig.maxActiveJobsPerProfile,
     consecutiveFailures: 0,
     maxConsecutiveFailures: SCHEDULER_DAEMON_MAX_CONSECUTIVE_FAILURES,
-    ...(cdpUrl ? { cdpUrl } : {})
+    ...(cdpUrl ? { cdpUrl } : {}),
   };
 
   await writeSchedulerPid(profileName, process.pid);
@@ -3602,7 +3746,7 @@ async function runSchedulerDaemon(
     pid: process.pid,
     profile_name: profileName,
     cdp_url: cdpUrl ?? null,
-    scheduler_config: schedulerConfig
+    scheduler_config: schedulerConfig,
   });
 
   try {
@@ -3617,16 +3761,16 @@ async function runSchedulerDaemon(
             db: runtime.db,
             logger: runtime.logger,
             followups: runtime.followups,
-            schedulerConfig
+            schedulerConfig,
           });
           const result = await scheduler.runTick({
             profileName,
-            workerId: `scheduler-daemon:${process.pid}`
+            workerId: `scheduler-daemon:${process.pid}`,
           });
 
           consecutiveFailures = 0;
           const nextState: SchedulerState = {
-            ...(await readSchedulerState(profileName)) ?? initialState,
+            ...((await readSchedulerState(profileName)) ?? initialState),
             pid: process.pid,
             profileName,
             updatedAt: tickAt,
@@ -3646,7 +3790,7 @@ async function runSchedulerDaemon(
             lastTickAt: tickAt,
             lastSuccessfulTickAt: tickAt,
             nextWindowStartAt: result.nextWindowStartAt,
-            lastSummary: summarizeSchedulerTick(result)
+            lastSummary: summarizeSchedulerTick(result),
           };
           if (result.preparedJobs > 0) {
             nextState.lastPreparedAt = tickAt;
@@ -3657,11 +3801,13 @@ async function runSchedulerDaemon(
           await appendSchedulerEvent(profileName, {
             ts: tickAt,
             event:
-              result.skippedReason === null ? "scheduler.tick" : "scheduler.tick.skipped",
+              result.skippedReason === null
+                ? "scheduler.tick"
+                : "scheduler.tick.skipped",
             profile_name: profileName,
             summary: summarizeSchedulerTick(result),
             skipped_reason: result.skippedReason,
-            next_window_start_at: result.nextWindowStartAt
+            next_window_start_at: result.nextWindowStartAt,
           });
         } finally {
           runtime.close();
@@ -3674,7 +3820,7 @@ async function runSchedulerDaemon(
         }
 
         const nextState: SchedulerState = {
-          ...(await readSchedulerState(profileName)) ?? initialState,
+          ...((await readSchedulerState(profileName)) ?? initialState),
           pid: process.pid,
           profileName,
           updatedAt: tickAt,
@@ -3689,7 +3835,7 @@ async function runSchedulerDaemon(
           consecutiveFailures,
           maxConsecutiveFailures: SCHEDULER_DAEMON_MAX_CONSECUTIVE_FAILURES,
           lastTickAt: tickAt,
-          lastError: message
+          lastError: message,
         };
         await writeSchedulerState(profileName, nextState);
         await appendSchedulerEvent(profileName, {
@@ -3698,7 +3844,7 @@ async function runSchedulerDaemon(
           profile_name: profileName,
           consecutive_failures: consecutiveFailures,
           error: message,
-          ...(lockHeld ? { reason: "profile_lock_held" } : {})
+          ...(lockHeld ? { reason: "profile_lock_held" } : {}),
         });
       }
 
@@ -3722,13 +3868,13 @@ async function runSchedulerDaemon(
       profileName,
       status: "stopped",
       updatedAt: now,
-      stoppedAt: now
+      stoppedAt: now,
     });
     await appendSchedulerEvent(profileName, {
       ts: now,
       event: "scheduler.daemon.stopped",
       pid: process.pid,
-      profile_name: profileName
+      profile_name: profileName,
     });
 
     await removeSchedulerPid(profileName).catch(() => undefined);
@@ -3775,7 +3921,7 @@ function sanitizeDiagnosticText(value: string): string {
 
 function sanitizeActivityPersistenceValue(
   value: unknown,
-  key?: string
+  key?: string,
 ): unknown {
   if (Array.isArray(value)) {
     return value.map((entry) => sanitizeActivityPersistenceValue(entry));
@@ -3811,12 +3957,12 @@ function sanitizeActivityPersistenceValue(
 
 function sanitizeActivityPersistenceRecord<T extends object>(
   value: T,
-  surface: "log" | "storage"
+  surface: "log" | "storage",
 ): T {
   return redactStructuredValue(
     sanitizeActivityPersistenceValue(value) as T,
     cliPrivacyConfig,
-    surface
+    surface,
   );
 }
 
@@ -3824,7 +3970,7 @@ function asCliObject(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "Activity target must be a JSON object."
+      "Activity target must be a JSON object.",
     );
   }
 
@@ -3833,7 +3979,7 @@ function asCliObject(value: unknown): Record<string, unknown> {
 
 function parseJsonObjectString(
   value: string,
-  label: string
+  label: string,
 ): Record<string, unknown> {
   try {
     return asCliObject(JSON.parse(value));
@@ -3846,8 +3992,8 @@ function parseJsonObjectString(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be valid JSON object text.`,
       {
-        cause: error instanceof Error ? error.message : String(error)
-      }
+        cause: error instanceof Error ? error.message : String(error),
+      },
     );
   }
 }
@@ -3863,7 +4009,7 @@ async function readActivityTargetInput(input: {
   if (target && targetFile) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "Specify either --target or --target-file, not both."
+      "Specify either --target or --target-file, not both.",
     );
   }
 
@@ -3881,7 +4027,7 @@ async function readActivityTargetInput(input: {
 function coerceEnumValue<T extends string>(
   value: string,
   allowed: readonly T[],
-  label: string
+  label: string,
 ): T {
   const normalized = value.trim();
   if ((allowed as readonly string[]).includes(normalized)) {
@@ -3890,19 +4036,19 @@ function coerceEnumValue<T extends string>(
 
   throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
-    `${label} must be one of: ${allowed.join(", ")}.`
+    `${label} must be one of: ${allowed.join(", ")}.`,
   );
 }
 
 function coerceActivityEventTypes(
-  values: string[] | undefined
+  values: string[] | undefined,
 ): ActivityEventType[] {
   if (!values || values.length === 0) {
     return [];
   }
 
   return values.map((value) =>
-    coerceEnumValue(value, ACTIVITY_EVENT_TYPES, "event")
+    coerceEnumValue(value, ACTIVITY_EVENT_TYPES, "event"),
   );
 }
 
@@ -3915,13 +4061,13 @@ function coerceActivityWatchStatusValue(value: string): ActivityWatchStatus {
 }
 
 function coerceWebhookSubscriptionStatusValue(
-  value: string
+  value: string,
 ): WebhookSubscriptionStatus {
   return coerceEnumValue(value, WEBHOOK_SUBSCRIPTION_STATUSES, "status");
 }
 
 function coerceWebhookDeliveryStatusValue(
-  value: string
+  value: string,
 ): WebhookDeliveryAttemptStatus {
   return coerceEnumValue(value, WEBHOOK_DELIVERY_ATTEMPT_STATUSES, "status");
 }
@@ -3933,7 +4079,7 @@ function getActivityFiles(profileName: string): ActivityFiles {
     dir,
     pidPath: path.join(dir, `${slug}.pid`),
     statePath: path.join(dir, `${slug}.state.json`),
-    logPath: path.join(dir, `${slug}.events.jsonl`)
+    logPath: path.join(dir, `${slug}.events.jsonl`),
   };
 }
 
@@ -3955,7 +4101,10 @@ async function readActivityPid(profileName: string): Promise<number | null> {
   }
 }
 
-async function writeActivityPid(profileName: string, pid: number): Promise<void> {
+async function writeActivityPid(
+  profileName: string,
+  pid: number,
+): Promise<void> {
   const files = getActivityFiles(profileName);
   await ensureActivityDir(files);
   await writeFile(files.pidPath, `${pid}\n`, "utf8");
@@ -3974,7 +4123,7 @@ async function removeActivityPid(profileName: string): Promise<void> {
 }
 
 async function readActivityState(
-  profileName: string
+  profileName: string,
 ): Promise<ActivityDaemonState | null> {
   const files = getActivityFiles(profileName);
   return readJsonFile<ActivityDaemonState>(files.statePath);
@@ -3982,31 +4131,31 @@ async function readActivityState(
 
 async function writeActivityState(
   profileName: string,
-  state: ActivityDaemonState
+  state: ActivityDaemonState,
 ): Promise<void> {
   const files = getActivityFiles(profileName);
   await ensureActivityDir(files);
   await writeJsonFile(
     files.statePath,
-    sanitizeActivityPersistenceRecord(state, "storage")
+    sanitizeActivityPersistenceRecord(state, "storage"),
   );
 }
 
 async function appendActivityEvent(
   profileName: string,
-  event: Record<string, unknown>
+  event: Record<string, unknown>,
 ): Promise<void> {
   const files = getActivityFiles(profileName);
   await ensureActivityDir(files);
   await appendFile(
     files.logPath,
     `${JSON.stringify(sanitizeActivityPersistenceRecord(event, "log"))}\n`,
-    "utf8"
+    "utf8",
   );
 }
 
 function summarizeActivityTick(
-  result: ActivityPollTickResult
+  result: ActivityPollTickResult,
 ): ActivityDaemonStateSummary {
   return {
     claimedWatches: result.claimedWatches,
@@ -4019,7 +4168,7 @@ function summarizeActivityTick(
     retriedDeliveries: result.retriedDeliveries,
     failedDeliveries: result.failedDeliveries,
     deadLetterDeliveries: result.deadLetterDeliveries,
-    disabledSubscriptions: result.disabledSubscriptions
+    disabledSubscriptions: result.disabledSubscriptions,
   };
 }
 
@@ -4029,11 +4178,14 @@ function resolveActivityStatusConfig(): Pick<
 > {
   try {
     return {
-      activity_config: resolveActivityWebhookConfig()
+      activity_config: resolveActivityWebhookConfig(),
     };
   } catch (error) {
     return {
-      activity_config_error: toLinkedInBuddyErrorPayload(error, cliPrivacyConfig)
+      activity_config_error: toLinkedInBuddyErrorPayload(
+        error,
+        cliPrivacyConfig,
+      ),
     };
   }
 }
@@ -4041,7 +4193,7 @@ function resolveActivityStatusConfig(): Pick<
 function emitActivityReport<Report extends object>(
   report: Report,
   outputMode: ActivityOutputMode,
-  formatter: (report: Report) => string
+  formatter: (report: Report) => string,
 ): void {
   if (outputMode === "json") {
     printJson(report);
@@ -4049,13 +4201,13 @@ function emitActivityReport<Report extends object>(
   }
 
   console.log(
-    formatter(redactStructuredValue(report, cliPrivacyConfig, "cli") as Report)
+    formatter(redactStructuredValue(report, cliPrivacyConfig, "cli") as Report),
   );
 }
 
 async function runActivityCliAction(
   input: { json?: boolean },
-  action: (outputMode: ActivityOutputMode) => Promise<void>
+  action: (outputMode: ActivityOutputMode) => Promise<void>,
 ): Promise<void> {
   const outputMode = resolveActivityOutputMode(input, Boolean(stdout.isTTY));
 
@@ -4068,20 +4220,24 @@ async function runActivityCliAction(
 
     process.stderr.write(
       `${formatActivityError(
-        toLinkedInBuddyErrorPayload(error, cliPrivacyConfig)
-      )}\n`
+        toLinkedInBuddyErrorPayload(error, cliPrivacyConfig),
+      )}\n`,
     );
     process.exitCode = 1;
   }
 }
 
-async function runActivityWatchAdd(input: {
-  profileName: string;
-  kind: ActivityWatchKind;
-  target?: Record<string, unknown>;
-  intervalSeconds?: number;
-  cron?: string;
-}, outputMode: ActivityOutputMode, cdpUrl?: string): Promise<void> {
+async function runActivityWatchAdd(
+  input: {
+    profileName: string;
+    kind: ActivityWatchKind;
+    target?: Record<string, unknown>;
+    intervalSeconds?: number;
+    cron?: string;
+  },
+  outputMode: ActivityOutputMode,
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
@@ -4089,7 +4245,7 @@ async function runActivityWatchAdd(input: {
       kind: input.kind,
       output_mode: outputMode,
       profile_name: input.profileName,
-      schedule_kind: input.cron ? "cron" : "interval"
+      schedule_kind: input.cron ? "cron" : "interval",
     });
 
     const watch = runtime.activityWatches.createWatch({
@@ -4099,19 +4255,19 @@ async function runActivityWatchAdd(input: {
       ...(typeof input.intervalSeconds === "number"
         ? { intervalSeconds: input.intervalSeconds }
         : {}),
-      ...(input.cron ? { cron: input.cron } : {})
+      ...(input.cron ? { cron: input.cron } : {}),
     });
 
     runtime.logger.log("info", "cli.activity.watch.add.done", {
       kind: watch.kind,
       profile_name: input.profileName,
-      watch_id: watch.id
+      watch_id: watch.id,
     });
 
     const report: ActivityWatchAddReport = {
       run_id: runtime.runId,
       profile_name: input.profileName,
-      watch
+      watch,
     };
     emitActivityReport(report, outputMode, formatActivityWatchAddReport);
   } finally {
@@ -4119,34 +4275,38 @@ async function runActivityWatchAdd(input: {
   }
 }
 
-async function runActivityWatchList(input: {
-  profileName: string;
-  status?: ActivityWatchStatus;
-}, outputMode: ActivityOutputMode, cdpUrl?: string): Promise<void> {
+async function runActivityWatchList(
+  input: {
+    profileName: string;
+    status?: ActivityWatchStatus;
+  },
+  outputMode: ActivityOutputMode,
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.activity.watch.list.start", {
       profile_name: input.profileName,
-      ...(input.status ? { status: input.status } : {})
+      ...(input.status ? { status: input.status } : {}),
     });
 
     const watches = runtime.activityWatches.listWatches({
       profileName: input.profileName,
-      ...(input.status ? { status: input.status } : {})
+      ...(input.status ? { status: input.status } : {}),
     });
 
     runtime.logger.log("info", "cli.activity.watch.list.done", {
       count: watches.length,
       profile_name: input.profileName,
-      ...(input.status ? { status: input.status } : {})
+      ...(input.status ? { status: input.status } : {}),
     });
 
     const report: ActivityWatchListReport = {
       run_id: runtime.runId,
       profile_name: input.profileName,
       count: watches.length,
-      watches
+      watches,
     };
     emitActivityReport(report, outputMode, formatActivityWatchListReport);
   } finally {
@@ -4157,28 +4317,28 @@ async function runActivityWatchList(input: {
 async function runActivityWatchPause(
   id: string,
   outputMode: ActivityOutputMode,
-  cdpUrl?: string
+  cdpUrl?: string,
 ): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.activity.watch.pause.start", {
-      watch_id: id
+      watch_id: id,
     });
 
     const watch = runtime.activityWatches.pauseWatch(id);
 
     runtime.logger.log("info", "cli.activity.watch.pause.done", {
       profile_name: watch.profileName,
-      watch_id: watch.id
+      watch_id: watch.id,
     });
 
     const report: ActivityWatchMutationReport = {
       run_id: runtime.runId,
-      watch
+      watch,
     };
     emitActivityReport(report, outputMode, (value) =>
-      formatActivityWatchMutationReport(value, "paused")
+      formatActivityWatchMutationReport(value, "paused"),
     );
   } finally {
     runtime.close();
@@ -4188,28 +4348,28 @@ async function runActivityWatchPause(
 async function runActivityWatchResume(
   id: string,
   outputMode: ActivityOutputMode,
-  cdpUrl?: string
+  cdpUrl?: string,
 ): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.activity.watch.resume.start", {
-      watch_id: id
+      watch_id: id,
     });
 
     const watch = runtime.activityWatches.resumeWatch(id);
 
     runtime.logger.log("info", "cli.activity.watch.resume.done", {
       profile_name: watch.profileName,
-      watch_id: watch.id
+      watch_id: watch.id,
     });
 
     const report: ActivityWatchMutationReport = {
       run_id: runtime.runId,
-      watch
+      watch,
     };
     emitActivityReport(report, outputMode, (value) =>
-      formatActivityWatchMutationReport(value, "resumed")
+      formatActivityWatchMutationReport(value, "resumed"),
     );
   } finally {
     runtime.close();
@@ -4219,26 +4379,26 @@ async function runActivityWatchResume(
 async function runActivityWatchRemove(
   id: string,
   outputMode: ActivityOutputMode,
-  cdpUrl?: string
+  cdpUrl?: string,
 ): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.activity.watch.remove.start", {
-      watch_id: id
+      watch_id: id,
     });
 
     const removed = runtime.activityWatches.removeWatch(id);
 
     runtime.logger.log("info", "cli.activity.watch.remove.done", {
       removed,
-      watch_id: id
+      watch_id: id,
     });
 
     const report: ActivityWatchRemovalReport = {
       run_id: runtime.runId,
       watch_id: id,
-      removed
+      removed,
     };
     emitActivityReport(report, outputMode, formatActivityWatchRemovalReport);
   } finally {
@@ -4246,20 +4406,24 @@ async function runActivityWatchRemove(
   }
 }
 
-async function runActivityWebhookAdd(input: {
-  watchId: string;
-  deliveryUrl: string;
-  eventTypes?: ActivityEventType[];
-  signingSecret?: string;
-  maxAttempts?: number;
-}, outputMode: ActivityOutputMode, cdpUrl?: string): Promise<void> {
+async function runActivityWebhookAdd(
+  input: {
+    watchId: string;
+    deliveryUrl: string;
+    eventTypes?: ActivityEventType[];
+    signingSecret?: string;
+    maxAttempts?: number;
+  },
+  outputMode: ActivityOutputMode,
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.activity.webhook.add.start", {
       delivery_url: input.deliveryUrl,
       output_mode: outputMode,
-      watch_id: input.watchId
+      watch_id: input.watchId,
     });
 
     const subscription = runtime.activityWatches.createWebhookSubscription({
@@ -4269,17 +4433,17 @@ async function runActivityWebhookAdd(input: {
       ...(input.signingSecret ? { signingSecret: input.signingSecret } : {}),
       ...(typeof input.maxAttempts === "number"
         ? { maxAttempts: input.maxAttempts }
-        : {})
+        : {}),
     });
 
     runtime.logger.log("info", "cli.activity.webhook.add.done", {
       webhook_subscription_id: subscription.id,
-      watch_id: subscription.watchId
+      watch_id: subscription.watchId,
     });
 
     const report: ActivityWebhookAddReport = {
       run_id: runtime.runId,
-      subscription
+      subscription,
     };
     emitActivityReport(report, outputMode, formatActivityWebhookAddReport);
   } finally {
@@ -4287,38 +4451,42 @@ async function runActivityWebhookAdd(input: {
   }
 }
 
-async function runActivityWebhookList(input: {
-  profileName: string;
-  watchId?: string;
-  status?: WebhookSubscriptionStatus;
-}, outputMode: ActivityOutputMode, cdpUrl?: string): Promise<void> {
+async function runActivityWebhookList(
+  input: {
+    profileName: string;
+    watchId?: string;
+    status?: WebhookSubscriptionStatus;
+  },
+  outputMode: ActivityOutputMode,
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.activity.webhook.list.start", {
       profile_name: input.profileName,
       ...(input.status ? { status: input.status } : {}),
-      ...(input.watchId ? { watch_id: input.watchId } : {})
+      ...(input.watchId ? { watch_id: input.watchId } : {}),
     });
 
     const subscriptions = runtime.activityWatches.listWebhookSubscriptions({
       profileName: input.profileName,
       ...(input.watchId ? { watchId: input.watchId } : {}),
-      ...(input.status ? { status: input.status } : {})
+      ...(input.status ? { status: input.status } : {}),
     });
 
     runtime.logger.log("info", "cli.activity.webhook.list.done", {
       count: subscriptions.length,
       profile_name: input.profileName,
       ...(input.status ? { status: input.status } : {}),
-      ...(input.watchId ? { watch_id: input.watchId } : {})
+      ...(input.watchId ? { watch_id: input.watchId } : {}),
     });
 
     const report: ActivityWebhookListReport = {
       run_id: runtime.runId,
       profile_name: input.profileName,
       count: subscriptions.length,
-      subscriptions
+      subscriptions,
     };
     emitActivityReport(report, outputMode, formatActivityWebhookListReport);
   } finally {
@@ -4329,28 +4497,28 @@ async function runActivityWebhookList(input: {
 async function runActivityWebhookPause(
   id: string,
   outputMode: ActivityOutputMode,
-  cdpUrl?: string
+  cdpUrl?: string,
 ): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.activity.webhook.pause.start", {
-      webhook_subscription_id: id
+      webhook_subscription_id: id,
     });
 
     const subscription = runtime.activityWatches.pauseWebhookSubscription(id);
 
     runtime.logger.log("info", "cli.activity.webhook.pause.done", {
       webhook_subscription_id: subscription.id,
-      watch_id: subscription.watchId
+      watch_id: subscription.watchId,
     });
 
     const report: ActivityWebhookMutationReport = {
       run_id: runtime.runId,
-      subscription
+      subscription,
     };
     emitActivityReport(report, outputMode, (value) =>
-      formatActivityWebhookMutationReport(value, "paused")
+      formatActivityWebhookMutationReport(value, "paused"),
     );
   } finally {
     runtime.close();
@@ -4360,28 +4528,28 @@ async function runActivityWebhookPause(
 async function runActivityWebhookResume(
   id: string,
   outputMode: ActivityOutputMode,
-  cdpUrl?: string
+  cdpUrl?: string,
 ): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.activity.webhook.resume.start", {
-      webhook_subscription_id: id
+      webhook_subscription_id: id,
     });
 
     const subscription = runtime.activityWatches.resumeWebhookSubscription(id);
 
     runtime.logger.log("info", "cli.activity.webhook.resume.done", {
       webhook_subscription_id: subscription.id,
-      watch_id: subscription.watchId
+      watch_id: subscription.watchId,
     });
 
     const report: ActivityWebhookMutationReport = {
       run_id: runtime.runId,
-      subscription
+      subscription,
     };
     emitActivityReport(report, outputMode, (value) =>
-      formatActivityWebhookMutationReport(value, "resumed")
+      formatActivityWebhookMutationReport(value, "resumed"),
     );
   } finally {
     runtime.close();
@@ -4391,26 +4559,26 @@ async function runActivityWebhookResume(
 async function runActivityWebhookRemove(
   id: string,
   outputMode: ActivityOutputMode,
-  cdpUrl?: string
+  cdpUrl?: string,
 ): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.activity.webhook.remove.start", {
-      webhook_subscription_id: id
+      webhook_subscription_id: id,
     });
 
     const removed = runtime.activityWatches.removeWebhookSubscription(id);
 
     runtime.logger.log("info", "cli.activity.webhook.remove.done", {
       removed,
-      webhook_subscription_id: id
+      webhook_subscription_id: id,
     });
 
     const report: ActivityWebhookRemovalReport = {
       run_id: runtime.runId,
       subscription_id: id,
-      removed
+      removed,
     };
     emitActivityReport(report, outputMode, formatActivityWebhookRemovalReport);
   } finally {
@@ -4418,37 +4586,41 @@ async function runActivityWebhookRemove(
   }
 }
 
-async function runActivityEventsList(input: {
-  profileName: string;
-  watchId?: string;
-  limit: number;
-}, outputMode: ActivityOutputMode, cdpUrl?: string): Promise<void> {
+async function runActivityEventsList(
+  input: {
+    profileName: string;
+    watchId?: string;
+    limit: number;
+  },
+  outputMode: ActivityOutputMode,
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.activity.events.list.start", {
       limit: input.limit,
       profile_name: input.profileName,
-      ...(input.watchId ? { watch_id: input.watchId } : {})
+      ...(input.watchId ? { watch_id: input.watchId } : {}),
     });
 
     const events = runtime.activityWatches.listEvents({
       profileName: input.profileName,
       ...(input.watchId ? { watchId: input.watchId } : {}),
-      limit: input.limit
+      limit: input.limit,
     });
 
     runtime.logger.log("info", "cli.activity.events.list.done", {
       count: events.length,
       profile_name: input.profileName,
-      ...(input.watchId ? { watch_id: input.watchId } : {})
+      ...(input.watchId ? { watch_id: input.watchId } : {}),
     });
 
     const report: ActivityEventListReport = {
       run_id: runtime.runId,
       profile_name: input.profileName,
       count: events.length,
-      events
+      events,
     };
     emitActivityReport(report, outputMode, formatActivityEventListReport);
   } finally {
@@ -4456,13 +4628,17 @@ async function runActivityEventsList(input: {
   }
 }
 
-async function runActivityDeliveriesList(input: {
-  profileName: string;
-  watchId?: string;
-  subscriptionId?: string;
-  status?: WebhookDeliveryAttemptStatus;
-  limit: number;
-}, outputMode: ActivityOutputMode, cdpUrl?: string): Promise<void> {
+async function runActivityDeliveriesList(
+  input: {
+    profileName: string;
+    watchId?: string;
+    subscriptionId?: string;
+    status?: WebhookDeliveryAttemptStatus;
+    limit: number;
+  },
+  outputMode: ActivityOutputMode,
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
@@ -4470,8 +4646,10 @@ async function runActivityDeliveriesList(input: {
       limit: input.limit,
       profile_name: input.profileName,
       ...(input.status ? { status: input.status } : {}),
-      ...(input.subscriptionId ? { subscription_id: input.subscriptionId } : {}),
-      ...(input.watchId ? { watch_id: input.watchId } : {})
+      ...(input.subscriptionId
+        ? { subscription_id: input.subscriptionId }
+        : {}),
+      ...(input.watchId ? { watch_id: input.watchId } : {}),
     });
 
     const deliveries = runtime.activityWatches.listDeliveries({
@@ -4479,22 +4657,24 @@ async function runActivityDeliveriesList(input: {
       ...(input.watchId ? { watchId: input.watchId } : {}),
       ...(input.subscriptionId ? { subscriptionId: input.subscriptionId } : {}),
       ...(input.status ? { status: input.status } : {}),
-      limit: input.limit
+      limit: input.limit,
     });
 
     runtime.logger.log("info", "cli.activity.deliveries.list.done", {
       count: deliveries.length,
       profile_name: input.profileName,
       ...(input.status ? { status: input.status } : {}),
-      ...(input.subscriptionId ? { subscription_id: input.subscriptionId } : {}),
-      ...(input.watchId ? { watch_id: input.watchId } : {})
+      ...(input.subscriptionId
+        ? { subscription_id: input.subscriptionId }
+        : {}),
+      ...(input.watchId ? { watch_id: input.watchId } : {}),
     });
 
     const report: ActivityDeliveryListReport = {
       run_id: runtime.runId,
       profile_name: input.profileName,
       count: deliveries.length,
-      deliveries
+      deliveries,
     };
     emitActivityReport(report, outputMode, formatActivityDeliveryListReport);
   } finally {
@@ -4505,7 +4685,7 @@ async function runActivityDeliveriesList(input: {
 async function runActivityRunOnce(
   profileName: string,
   outputMode: ActivityOutputMode,
-  cdpUrl?: string
+  cdpUrl?: string,
 ): Promise<void> {
   const normalizedProfileName = coerceProfileName(profileName);
   const runtime = createRuntime(cdpUrl);
@@ -4514,18 +4694,18 @@ async function runActivityRunOnce(
   try {
     runtime.logger.log("info", "cli.activity.run_once.start", {
       profile_name: normalizedProfileName,
-      worker_id: `cli:${runtime.runId}`
+      worker_id: `cli:${runtime.runId}`,
     });
 
     if (outputMode === "human") {
       writeCliNotice(
-        `Running one activity polling tick for profile "${normalizedProfileName}".`
+        `Running one activity polling tick for profile "${normalizedProfileName}".`,
       );
     }
 
     const result = await runtime.activityPoller.runTick({
       profileName: normalizedProfileName,
-      workerId: `cli:${runtime.runId}`
+      workerId: `cli:${runtime.runId}`,
     });
 
     if (
@@ -4541,14 +4721,14 @@ async function runActivityRunOnce(
       failed_deliveries: result.failedDeliveries,
       failed_watches: result.failedWatches,
       profile_name: normalizedProfileName,
-      worker_id: result.workerId
+      worker_id: result.workerId,
     });
 
     const report: ActivityRunOnceReport = {
       run_id: runtime.runId,
       profile_name: normalizedProfileName,
       activity_config: activityConfig,
-      ...result
+      ...result,
     };
     emitActivityReport(report, outputMode, formatActivityRunOnceReport);
   } finally {
@@ -4559,7 +4739,7 @@ async function runActivityRunOnce(
 async function runActivityStart(
   profileName: string,
   outputMode: ActivityOutputMode,
-  cdpUrl?: string
+  cdpUrl?: string,
 ): Promise<void> {
   const normalizedProfileName = coerceProfileName(profileName);
   const files = getActivityFiles(normalizedProfileName);
@@ -4573,7 +4753,7 @@ async function runActivityStart(
       state: await readActivityState(normalizedProfileName),
       state_path: files.statePath,
       log_path: files.logPath,
-      ...resolveActivityStatusConfig()
+      ...resolveActivityStatusConfig(),
     };
     emitActivityReport(report, outputMode, formatActivityStartReport);
     return;
@@ -4590,7 +4770,7 @@ async function runActivityStart(
 
   if (outputMode === "human") {
     writeCliNotice(
-      `Starting the activity daemon for profile "${normalizedProfileName}".`
+      `Starting the activity daemon for profile "${normalizedProfileName}".`,
     );
   }
 
@@ -4599,7 +4779,7 @@ async function runActivityStart(
   if (!cliEntrypoint) {
     throw new LinkedInBuddyError(
       "UNKNOWN",
-      "Could not resolve CLI entrypoint for activity daemon startup."
+      "Could not resolve CLI entrypoint for activity daemon startup.",
     );
   }
 
@@ -4615,14 +4795,14 @@ async function runActivityStart(
   const daemon = spawn(process.execPath, daemonArgs, {
     detached: true,
     stdio: "ignore",
-    env: process.env
+    env: process.env,
   });
   daemon.unref();
 
   if (!daemon.pid) {
     throw new LinkedInBuddyError(
       "UNKNOWN",
-      "Activity daemon did not return a process id."
+      "Activity daemon did not return a process id.",
     );
   }
 
@@ -4638,7 +4818,7 @@ async function runActivityStart(
     maxDeliveriesPerTick: activityConfig.maxDeliveriesPerTick,
     consecutiveFailures: 0,
     maxConsecutiveFailures: ACTIVITY_DAEMON_MAX_CONSECUTIVE_FAILURES,
-    ...(cdpUrl ? { cdpUrl } : {})
+    ...(cdpUrl ? { cdpUrl } : {}),
   };
 
   await writeActivityPid(normalizedProfileName, daemon.pid);
@@ -4650,14 +4830,14 @@ async function runActivityStart(
     pid: daemon.pid,
     state_path: files.statePath,
     log_path: files.logPath,
-    activity_config: activityConfig
+    activity_config: activityConfig,
   };
   emitActivityReport(report, outputMode, formatActivityStartReport);
 }
 
 async function runActivityStatus(
   profileName: string,
-  outputMode: ActivityOutputMode
+  outputMode: ActivityOutputMode,
 ): Promise<void> {
   const normalizedProfileName = coerceProfileName(profileName);
   const pid = await readActivityPid(normalizedProfileName);
@@ -4668,18 +4848,18 @@ async function runActivityStatus(
 
   try {
     const watches = db.listActivityWatches({
-      profileName: normalizedProfileName
+      profileName: normalizedProfileName,
     });
     const subscriptions = db.listWebhookSubscriptions({
-      profileName: normalizedProfileName
+      profileName: normalizedProfileName,
     });
     const recentEvents = db.listActivityEvents({
       profileName: normalizedProfileName,
-      limit: 5
+      limit: 5,
     });
     const recentDeliveries = db.listWebhookDeliveryAttempts({
       profileName: normalizedProfileName,
-      limit: 5
+      limit: 5,
     });
 
     const report: ActivityStatusReport = {
@@ -4691,14 +4871,15 @@ async function runActivityStatus(
       state_path: files.statePath,
       log_path: files.logPath,
       watch_count: watches.length,
-      active_watch_count: watches.filter((watch) => watch.status === "active").length,
+      active_watch_count: watches.filter((watch) => watch.status === "active")
+        .length,
       subscription_count: subscriptions.length,
       active_subscription_count: subscriptions.filter(
-        (subscription) => subscription.status === "active"
+        (subscription) => subscription.status === "active",
       ).length,
       recent_event_count: recentEvents.length,
       recent_delivery_count: recentDeliveries.length,
-      ...resolveActivityStatusConfig()
+      ...resolveActivityStatusConfig(),
     };
 
     if (report.activity_config_error) {
@@ -4713,7 +4894,7 @@ async function runActivityStatus(
 
 async function runActivityStop(
   profileName: string,
-  outputMode: ActivityOutputMode
+  outputMode: ActivityOutputMode,
 ): Promise<void> {
   const normalizedProfileName = coerceProfileName(profileName);
   const files = getActivityFiles(normalizedProfileName);
@@ -4726,7 +4907,7 @@ async function runActivityStop(
       profile_name: normalizedProfileName,
       reason: "No activity daemon is currently running for this profile.",
       state_path: files.statePath,
-      log_path: files.logPath
+      log_path: files.logPath,
     };
     emitActivityReport(report, outputMode, formatActivityStopReport);
     return;
@@ -4741,7 +4922,7 @@ async function runActivityStop(
         status: "stopped",
         updatedAt: now,
         stoppedAt: now,
-        lastError: "Recovered from stale pid file."
+        lastError: "Recovered from stale pid file.",
       });
     }
     const report: ActivityStopReport = {
@@ -4750,7 +4931,7 @@ async function runActivityStop(
       pid,
       reason: "Removed a stale activity PID file for this profile.",
       state_path: files.statePath,
-      log_path: files.logPath
+      log_path: files.logPath,
     };
     emitActivityReport(report, outputMode, formatActivityStopReport);
     return;
@@ -4758,7 +4939,7 @@ async function runActivityStop(
 
   if (outputMode === "human") {
     writeCliNotice(
-      `Stopping the activity daemon for profile "${normalizedProfileName}".`
+      `Stopping the activity daemon for profile "${normalizedProfileName}".`,
     );
   }
 
@@ -4771,8 +4952,8 @@ async function runActivityStop(
       {
         profile_name: normalizedProfileName,
         pid,
-        cause: error instanceof Error ? error.message : String(error)
-      }
+        cause: error instanceof Error ? error.message : String(error),
+      },
     );
   }
 
@@ -4798,7 +4979,9 @@ async function runActivityStop(
       status: "stopped",
       updatedAt: now,
       stoppedAt: now,
-      ...(running ? { lastError: "Activity daemon required SIGKILL to stop." } : {})
+      ...(running
+        ? { lastError: "Activity daemon required SIGKILL to stop." }
+        : {}),
     });
   }
 
@@ -4811,14 +4994,14 @@ async function runActivityStop(
       ? "Activity daemon did not exit after SIGTERM, so it was force-stopped."
       : "Activity daemon exited cleanly.",
     state_path: files.statePath,
-    log_path: files.logPath
+    log_path: files.logPath,
   };
   emitActivityReport(report, outputMode, formatActivityStopReport);
 }
 
 async function runActivityDaemon(
   profileName: string,
-  cdpUrl?: string
+  cdpUrl?: string,
 ): Promise<void> {
   const activityConfig = resolveActivityWebhookConfig();
   let stopRequested = false;
@@ -4842,7 +5025,7 @@ async function runActivityDaemon(
     maxDeliveriesPerTick: activityConfig.maxDeliveriesPerTick,
     consecutiveFailures: 0,
     maxConsecutiveFailures: ACTIVITY_DAEMON_MAX_CONSECUTIVE_FAILURES,
-    ...(cdpUrl ? { cdpUrl } : {})
+    ...(cdpUrl ? { cdpUrl } : {}),
   };
 
   await writeActivityPid(profileName, process.pid);
@@ -4853,7 +5036,7 @@ async function runActivityDaemon(
     pid: process.pid,
     profile_name: profileName,
     cdp_url: cdpUrl ?? null,
-    activity_config: activityConfig
+    activity_config: activityConfig,
   });
 
   try {
@@ -4866,7 +5049,7 @@ async function runActivityDaemon(
         try {
           const result = await runtime.activityPoller.runTick({
             profileName,
-            workerId: `activity-daemon:${process.pid}`
+            workerId: `activity-daemon:${process.pid}`,
           });
 
           consecutiveFailures = 0;
@@ -4890,7 +5073,7 @@ async function runActivityDaemon(
             maxConsecutiveFailures: ACTIVITY_DAEMON_MAX_CONSECUTIVE_FAILURES,
             lastTickAt: tickAt,
             lastSuccessfulTickAt: tickAt,
-            lastSummary: summarizeActivityTick(result)
+            lastSummary: summarizeActivityTick(result),
           };
           delete nextState.lastError;
 
@@ -4899,7 +5082,7 @@ async function runActivityDaemon(
             ts: tickAt,
             event: "activity.tick",
             profile_name: profileName,
-            summary: summarizeActivityTick(result)
+            summary: summarizeActivityTick(result),
           });
         } finally {
           runtime.close();
@@ -4926,7 +5109,7 @@ async function runActivityDaemon(
           consecutiveFailures,
           maxConsecutiveFailures: ACTIVITY_DAEMON_MAX_CONSECUTIVE_FAILURES,
           lastTickAt: tickAt,
-          lastError: message
+          lastError: message,
         };
         await writeActivityState(profileName, nextState);
         await appendActivityEvent(profileName, {
@@ -4935,7 +5118,7 @@ async function runActivityDaemon(
           profile_name: profileName,
           consecutive_failures: consecutiveFailures,
           error: message,
-          ...(lockHeld ? { reason: "profile_lock_held" } : {})
+          ...(lockHeld ? { reason: "profile_lock_held" } : {}),
         });
       }
 
@@ -4943,7 +5126,10 @@ async function runActivityDaemon(
         break;
       }
 
-      let sleepRemainingMs = Math.max(1_000, activityConfig.daemonPollIntervalMs);
+      let sleepRemainingMs = Math.max(
+        1_000,
+        activityConfig.daemonPollIntervalMs,
+      );
       while (!stopRequested && sleepRemainingMs > 0) {
         const chunkMs = Math.min(500, sleepRemainingMs);
         await sleep(chunkMs);
@@ -4959,13 +5145,13 @@ async function runActivityDaemon(
       profileName,
       status: "stopped",
       updatedAt: now,
-      stoppedAt: now
+      stoppedAt: now,
     });
     await appendActivityEvent(profileName, {
       ts: now,
       event: "activity.daemon.stopped",
       pid: process.pid,
-      profile_name: profileName
+      profile_name: profileName,
     });
 
     await removeActivityPid(profileName).catch(() => undefined);
@@ -4975,25 +5161,25 @@ async function runActivityDaemon(
 async function runLogin(
   profileName: string,
   timeoutMinutes: number,
-  cdpUrl?: string
+  cdpUrl?: string,
 ): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.login.start", {
       profileName,
-      timeoutMinutes
+      timeoutMinutes,
     });
 
     const result = await runtime.auth.openLogin({
       profileName,
-      timeoutMs: timeoutMinutes * 60_000
+      timeoutMs: timeoutMinutes * 60_000,
     });
 
     runtime.logger.log("info", "cli.login.done", {
       profileName,
       authenticated: result.authenticated,
-      timedOut: result.timedOut
+      timedOut: result.timedOut,
     });
 
     printJson({ run_id: runtime.runId, ...result });
@@ -5006,18 +5192,24 @@ async function runLogin(
   }
 }
 
-async function runHeadlessLogin(input: {
-  profileName: string;
-  email: string;
-  password: string;
-  mfaCode?: string;
-  mfaCallback?: () => Promise<string | undefined>;
-  timeoutMinutes: number;
-}, cdpUrl?: string): Promise<void> {
+async function runHeadlessLogin(
+  input: {
+    profileName: string;
+    email: string;
+    password: string;
+    mfaCode?: string;
+    mfaCallback?: () => Promise<string | undefined>;
+    timeoutMinutes: number;
+    headed?: boolean;
+    headedFallback?: boolean;
+    warmProfile?: boolean;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
   const progressEnabled = Boolean(process.stderr.isTTY);
   const progressReporter = new HeadlessLoginProgressReporter({
-    enabled: progressEnabled
+    enabled: progressEnabled,
   });
 
   if (progressEnabled) {
@@ -5029,7 +5221,7 @@ async function runHeadlessLogin(input: {
   try {
     runtime.logger.log("info", "cli.login.headless.start", {
       profileName: input.profileName,
-      email: input.email
+      email: input.email,
     });
 
     const result = await runtime.auth.headlessLogin({
@@ -5038,7 +5230,12 @@ async function runHeadlessLogin(input: {
       password: input.password,
       ...(typeof input.mfaCode === "string" ? { mfaCode: input.mfaCode } : {}),
       ...(input.mfaCallback ? { mfaCallback: input.mfaCallback } : {}),
-      timeoutMs: input.timeoutMinutes * 60_000
+      timeoutMs: input.timeoutMinutes * 60_000,
+      ...(input.headed != null ? { headed: input.headed } : {}),
+      ...(input.headedFallback != null
+        ? { headedFallback: input.headedFallback }
+        : {}),
+      ...(input.warmProfile != null ? { warmProfile: input.warmProfile } : {}),
     });
 
     runtime.logger.log("info", "cli.login.headless.done", {
@@ -5047,7 +5244,7 @@ async function runHeadlessLogin(input: {
       timedOut: result.timedOut,
       checkpoint: result.checkpoint,
       checkpointType: result.checkpointType,
-      mfaRequired: result.mfaRequired
+      mfaRequired: result.mfaRequired,
     });
 
     printJson({ run_id: runtime.runId, ...result });
@@ -5060,272 +5257,381 @@ async function runHeadlessLogin(input: {
   }
 }
 
-async function runInboxList(input: {
-  profileName: string;
-  limit: number;
-  unreadOnly: boolean;
-}, cdpUrl?: string): Promise<void> {
+async function runExportCookies(
+  input: {
+    profileName: string;
+    outputPath: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.auth.exportCookies.start", {
+      profileName: input.profileName,
+      outputPath: input.outputPath,
+    });
+
+    const state = await runtime.profileManager.runWithContext(
+      { cdpUrl, profileName: input.profileName },
+      async (context) =>
+        exportSessionState(context, input.outputPath, input.profileName),
+    );
+
+    const hasSession = hasLinkedInSessionToken(state);
+
+    runtime.logger.log("info", "cli.auth.exportCookies.done", {
+      profileName: input.profileName,
+      outputPath: input.outputPath,
+      cookieCount: state.cookies.length,
+      hasSession,
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      output_path: input.outputPath,
+      cookie_count: state.cookies.length,
+      has_session: hasSession,
+      exported_at: state.exportedAt,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runImportCookies(
+  input: {
+    profileName: string;
+    inputPath: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.auth.importCookies.start", {
+      profileName: input.profileName,
+      inputPath: input.inputPath,
+    });
+
+    const state = await runtime.profileManager.runWithContext(
+      { cdpUrl, profileName: input.profileName },
+      async (context) => importSessionState(context, input.inputPath),
+    );
+
+    const hasSession = hasLinkedInSessionToken(state);
+
+    runtime.logger.log("info", "cli.auth.importCookies.done", {
+      profileName: input.profileName,
+      cookieCount: state.cookies.length,
+      hasSession,
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      input_path: input.inputPath,
+      cookie_count: state.cookies.length,
+      has_session: hasSession,
+      imported_profile: state.profileName,
+      exported_at: state.exportedAt,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runInboxList(
+  input: {
+    profileName: string;
+    limit: number;
+    unreadOnly: boolean;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.inbox.list.start", {
       profileName: input.profileName,
       limit: input.limit,
-      unreadOnly: input.unreadOnly
+      unreadOnly: input.unreadOnly,
     });
 
     const threads = await runtime.inbox.listThreads({
       profileName: input.profileName,
       limit: input.limit,
-      unreadOnly: input.unreadOnly
+      unreadOnly: input.unreadOnly,
     });
 
     runtime.logger.log("info", "cli.inbox.list.done", {
       profileName: input.profileName,
-      count: threads.length
+      count: threads.length,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
       count: threads.length,
-      threads
+      threads,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runInboxShow(input: {
-  profileName: string;
-  thread: string;
-  limit: number;
-}, cdpUrl?: string): Promise<void> {
+async function runInboxShow(
+  input: {
+    profileName: string;
+    thread: string;
+    limit: number;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.inbox.show.start", {
       profileName: input.profileName,
       thread: input.thread,
-      limit: input.limit
+      limit: input.limit,
     });
 
     const thread = await runtime.inbox.getThread({
       profileName: input.profileName,
       thread: input.thread,
-      limit: input.limit
+      limit: input.limit,
     });
 
     runtime.logger.log("info", "cli.inbox.show.done", {
       profileName: input.profileName,
-      threadId: thread.thread_id
+      threadId: thread.thread_id,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      thread
+      thread,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runPrepareReply(input: {
-  profileName: string;
-  thread: string;
-  text: string;
-}, cdpUrl?: string): Promise<void> {
+async function runPrepareReply(
+  input: {
+    profileName: string;
+    thread: string;
+    text: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.inbox.prepare_reply.start", {
       profileName: input.profileName,
-      thread: input.thread
+      thread: input.thread,
     });
 
     const prepared = await runtime.inbox.prepareReply({
       profileName: input.profileName,
       thread: input.thread,
-      text: input.text
+      text: input.text,
     });
 
     runtime.logger.log("info", "cli.inbox.prepare_reply.done", {
       profileName: input.profileName,
-      preparedActionId: prepared.preparedActionId
+      preparedActionId: prepared.preparedActionId,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...prepared
+      ...prepared,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runInboxSearchRecipients(input: {
-  profileName: string;
-  query: string;
-  limit: number;
-}, cdpUrl?: string): Promise<void> {
+async function runInboxSearchRecipients(
+  input: {
+    profileName: string;
+    query: string;
+    limit: number;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.inbox.search_recipients.start", {
       limit: input.limit,
       profileName: input.profileName,
-      query: input.query
+      query: input.query,
     });
 
     const result = await runtime.inbox.searchRecipients({
       profileName: input.profileName,
       query: input.query,
-      limit: input.limit
+      limit: input.limit,
     });
 
     runtime.logger.log("info", "cli.inbox.search_recipients.done", {
       count: result.count,
       profileName: input.profileName,
-      query: input.query
+      query: input.query,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...result
+      ...result,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runPrepareNewThread(input: {
-  profileName: string;
-  recipients: string[];
-  text: string;
-}, cdpUrl?: string): Promise<void> {
+async function runPrepareNewThread(
+  input: {
+    profileName: string;
+    recipients: string[];
+    text: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.inbox.prepare_new_thread.start", {
       profileName: input.profileName,
-      recipientCount: input.recipients.length
+      recipientCount: input.recipients.length,
     });
 
     const prepared = await runtime.inbox.prepareNewThread({
       profileName: input.profileName,
       recipients: input.recipients,
-      text: input.text
+      text: input.text,
     });
 
     runtime.logger.log("info", "cli.inbox.prepare_new_thread.done", {
       preparedActionId: prepared.preparedActionId,
       profileName: input.profileName,
-      recipientCount: input.recipients.length
+      recipientCount: input.recipients.length,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...prepared
+      ...prepared,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runPrepareAddRecipients(input: {
-  profileName: string;
-  recipients: string[];
-  thread: string;
-}, cdpUrl?: string): Promise<void> {
+async function runPrepareAddRecipients(
+  input: {
+    profileName: string;
+    recipients: string[];
+    thread: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.inbox.prepare_add_recipients.start", {
       profileName: input.profileName,
       recipientCount: input.recipients.length,
-      thread: input.thread
+      thread: input.thread,
     });
 
     const prepared = await runtime.inbox.prepareAddRecipients({
       profileName: input.profileName,
       recipients: input.recipients,
-      thread: input.thread
+      thread: input.thread,
     });
 
     runtime.logger.log("info", "cli.inbox.prepare_add_recipients.done", {
       preparedActionId: prepared.preparedActionId,
       profileName: input.profileName,
       recipientCount: input.recipients.length,
-      thread: input.thread
+      thread: input.thread,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...prepared
+      ...prepared,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runConnectionsList(input: {
-  profileName: string;
-  limit: number;
-}, cdpUrl?: string): Promise<void> {
+async function runConnectionsList(
+  input: {
+    profileName: string;
+    limit: number;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.connections.list.start", {
       profileName: input.profileName,
-      limit: input.limit
+      limit: input.limit,
     });
 
     const connections = await runtime.connections.listConnections({
       profileName: input.profileName,
-      limit: input.limit
+      limit: input.limit,
     });
 
     runtime.logger.log("info", "cli.connections.list.done", {
       profileName: input.profileName,
-      count: connections.length
+      count: connections.length,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
       count: connections.length,
-      connections
+      connections,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runConnectionsPending(input: {
-  profileName: string;
-  filter: "sent" | "received" | "all";
-}, cdpUrl?: string): Promise<void> {
+async function runConnectionsPending(
+  input: {
+    profileName: string;
+    filter: "sent" | "received" | "all";
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.connections.pending.start", {
       profileName: input.profileName,
-      filter: input.filter
+      filter: input.filter,
     });
 
     const invitations = await runtime.connections.listPendingInvitations({
       profileName: input.profileName,
-      filter: input.filter
+      filter: input.filter,
     });
 
     runtime.logger.log("info", "cli.connections.pending.done", {
       profileName: input.profileName,
-      count: invitations.length
+      count: invitations.length,
     });
 
     printJson({
@@ -5333,181 +5639,199 @@ async function runConnectionsPending(input: {
       profile_name: input.profileName,
       filter: input.filter,
       count: invitations.length,
-      invitations
+      invitations,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runConnectionsInvite(input: {
-  profileName: string;
-  targetProfile: string;
-  note?: string;
-}, cdpUrl?: string): Promise<void> {
+async function runConnectionsInvite(
+  input: {
+    profileName: string;
+    targetProfile: string;
+    note?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.connections.invite.start", {
       profileName: input.profileName,
-      targetProfile: input.targetProfile
+      targetProfile: input.targetProfile,
     });
 
     const prepared = runtime.connections.prepareSendInvitation({
       profileName: input.profileName,
       targetProfile: input.targetProfile,
-      ...(input.note ? { note: input.note } : {})
+      ...(input.note ? { note: input.note } : {}),
     });
 
     runtime.logger.log("info", "cli.connections.invite.done", {
       profileName: input.profileName,
-      preparedActionId: prepared.preparedActionId
+      preparedActionId: prepared.preparedActionId,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...prepared
+      ...prepared,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runConnectionsAccept(input: {
-  profileName: string;
-  targetProfile: string;
-}, cdpUrl?: string): Promise<void> {
+async function runConnectionsAccept(
+  input: {
+    profileName: string;
+    targetProfile: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.connections.accept.start", {
       profileName: input.profileName,
-      targetProfile: input.targetProfile
+      targetProfile: input.targetProfile,
     });
 
     const prepared = runtime.connections.prepareAcceptInvitation({
       profileName: input.profileName,
-      targetProfile: input.targetProfile
+      targetProfile: input.targetProfile,
     });
 
     runtime.logger.log("info", "cli.connections.accept.done", {
       profileName: input.profileName,
-      preparedActionId: prepared.preparedActionId
+      preparedActionId: prepared.preparedActionId,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...prepared
+      ...prepared,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runConnectionsWithdraw(input: {
-  profileName: string;
-  targetProfile: string;
-}, cdpUrl?: string): Promise<void> {
+async function runConnectionsWithdraw(
+  input: {
+    profileName: string;
+    targetProfile: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.connections.withdraw.start", {
       profileName: input.profileName,
-      targetProfile: input.targetProfile
+      targetProfile: input.targetProfile,
     });
 
     const prepared = runtime.connections.prepareWithdrawInvitation({
       profileName: input.profileName,
-      targetProfile: input.targetProfile
+      targetProfile: input.targetProfile,
     });
 
     runtime.logger.log("info", "cli.connections.withdraw.done", {
       profileName: input.profileName,
-      preparedActionId: prepared.preparedActionId
+      preparedActionId: prepared.preparedActionId,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...prepared
+      ...prepared,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runMembersPrepareBlock(input: {
-  profileName: string;
-  targetProfile: string;
-}, cdpUrl?: string): Promise<void> {
+async function runMembersPrepareBlock(
+  input: {
+    profileName: string;
+    targetProfile: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.members.prepare_block.start", {
       profileName: input.profileName,
-      targetProfile: input.targetProfile
+      targetProfile: input.targetProfile,
     });
 
     const prepared = runtime.members.prepareBlockMember({
       profileName: input.profileName,
-      targetProfile: input.targetProfile
+      targetProfile: input.targetProfile,
     });
 
     runtime.logger.log("info", "cli.members.prepare_block.done", {
       profileName: input.profileName,
-      preparedActionId: prepared.preparedActionId
+      preparedActionId: prepared.preparedActionId,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...prepared
+      ...prepared,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runMembersPrepareUnblock(input: {
-  profileName: string;
-  targetProfile: string;
-}, cdpUrl?: string): Promise<void> {
+async function runMembersPrepareUnblock(
+  input: {
+    profileName: string;
+    targetProfile: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.members.prepare_unblock.start", {
       profileName: input.profileName,
-      targetProfile: input.targetProfile
+      targetProfile: input.targetProfile,
     });
 
     const prepared = runtime.members.prepareUnblockMember({
       profileName: input.profileName,
-      targetProfile: input.targetProfile
+      targetProfile: input.targetProfile,
     });
 
     runtime.logger.log("info", "cli.members.prepare_unblock.done", {
       profileName: input.profileName,
-      preparedActionId: prepared.preparedActionId
+      preparedActionId: prepared.preparedActionId,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...prepared
+      ...prepared,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runMembersPrepareReport(input: {
-  profileName: string;
-  targetProfile: string;
-  reason: string;
-  details?: string;
-}, cdpUrl?: string): Promise<void> {
+async function runMembersPrepareReport(
+  input: {
+    profileName: string;
+    targetProfile: string;
+    reason: string;
+    details?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
   const reason = normalizeLinkedInMemberReportReason(input.reason);
 
@@ -5515,65 +5839,71 @@ async function runMembersPrepareReport(input: {
     runtime.logger.log("info", "cli.members.prepare_report.start", {
       profileName: input.profileName,
       targetProfile: input.targetProfile,
-      reason
+      reason,
     });
 
     const prepared = runtime.members.prepareReportMember({
       profileName: input.profileName,
       targetProfile: input.targetProfile,
       reason,
-      ...(input.details ? { details: input.details } : {})
+      ...(input.details ? { details: input.details } : {}),
     });
 
     runtime.logger.log("info", "cli.members.prepare_report.done", {
       profileName: input.profileName,
-      preparedActionId: prepared.preparedActionId
+      preparedActionId: prepared.preparedActionId,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...prepared
+      ...prepared,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runPrivacyGetSettings(input: {
-  profileName: string;
-}, cdpUrl?: string): Promise<void> {
+async function runPrivacyGetSettings(
+  input: {
+    profileName: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.privacy.get_settings.start", {
-      profileName: input.profileName
+      profileName: input.profileName,
     });
 
     const settings = await runtime.privacySettings.getSettings({
-      profileName: input.profileName
+      profileName: input.profileName,
     });
 
     runtime.logger.log("info", "cli.privacy.get_settings.done", {
       profileName: input.profileName,
-      count: settings.length
+      count: settings.length,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      settings
+      settings,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runPrivacyPrepareUpdateSetting(input: {
-  profileName: string;
-  settingKey: string;
-  value: string;
-}, cdpUrl?: string): Promise<void> {
+async function runPrivacyPrepareUpdateSetting(
+  input: {
+    profileName: string;
+    settingKey: string;
+    value: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
   const settingKey = normalizeLinkedInPrivacySettingKey(input.settingKey);
   const value = normalizeLinkedInPrivacySettingValue(settingKey, input.value);
@@ -5582,51 +5912,56 @@ async function runPrivacyPrepareUpdateSetting(input: {
     runtime.logger.log("info", "cli.privacy.prepare_update_setting.start", {
       profileName: input.profileName,
       settingKey,
-      value
+      value,
     });
 
     const prepared = runtime.privacySettings.prepareUpdateSetting({
       profileName: input.profileName,
       settingKey,
-      value
+      value,
     });
 
     runtime.logger.log("info", "cli.privacy.prepare_update_setting.done", {
       profileName: input.profileName,
-      preparedActionId: prepared.preparedActionId
+      preparedActionId: prepared.preparedActionId,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...prepared
+      ...prepared,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runFollowupsList(input: {
-  profileName: string;
-  since: string;
-}, cdpUrl?: string): Promise<void> {
+async function runFollowupsList(
+  input: {
+    profileName: string;
+    since: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
   const { since, sinceMs } = resolveFollowupSinceWindow(input.since);
 
   try {
     runtime.logger.log("info", "cli.followups.list.start", {
       profileName: input.profileName,
-      since
+      since,
     });
 
-    const acceptedConnections = await runtime.followups.listAcceptedConnections({
-      profileName: input.profileName,
-      since
-    });
+    const acceptedConnections = await runtime.followups.listAcceptedConnections(
+      {
+        profileName: input.profileName,
+        since,
+      },
+    );
 
     runtime.logger.log("info", "cli.followups.list.done", {
       profileName: input.profileName,
-      count: acceptedConnections.length
+      count: acceptedConnections.length,
     });
 
     printJson({
@@ -5636,35 +5971,38 @@ async function runFollowupsList(input: {
       since_ms: sinceMs,
       since_at: new Date(sinceMs).toISOString(),
       count: acceptedConnections.length,
-      accepted_connections: acceptedConnections
+      accepted_connections: acceptedConnections,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runFollowupsPrepare(input: {
-  profileName: string;
-  since: string;
-}, cdpUrl?: string): Promise<void> {
+async function runFollowupsPrepare(
+  input: {
+    profileName: string;
+    since: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
   const { since, sinceMs } = resolveFollowupSinceWindow(input.since);
 
   try {
     runtime.logger.log("info", "cli.followups.prepare.start", {
       profileName: input.profileName,
-      since
+      since,
     });
 
     const result = await runtime.followups.prepareFollowupsAfterAccept({
       profileName: input.profileName,
-      since
+      since,
     });
 
     runtime.logger.log("info", "cli.followups.prepare.done", {
       profileName: input.profileName,
       acceptedConnectionCount: result.acceptedConnections.length,
-      preparedCount: result.preparedFollowups.length
+      preparedCount: result.preparedFollowups.length,
     });
 
     printJson({
@@ -5676,84 +6014,93 @@ async function runFollowupsPrepare(input: {
       accepted_connection_count: result.acceptedConnections.length,
       prepared_count: result.preparedFollowups.length,
       accepted_connections: result.acceptedConnections,
-      prepared_followups: result.preparedFollowups
+      prepared_followups: result.preparedFollowups,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runFeedList(input: {
-  profileName: string;
-  limit: number;
-}, cdpUrl?: string): Promise<void> {
+async function runFeedList(
+  input: {
+    profileName: string;
+    limit: number;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.feed.list.start", {
       profileName: input.profileName,
-      limit: input.limit
+      limit: input.limit,
     });
 
     const posts = await runtime.feed.viewFeed({
       profileName: input.profileName,
-      limit: input.limit
+      limit: input.limit,
     });
 
     runtime.logger.log("info", "cli.feed.list.done", {
       profileName: input.profileName,
-      count: posts.length
+      count: posts.length,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
       count: posts.length,
-      posts
+      posts,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runFeedView(input: {
-  profileName: string;
-  postUrl: string;
-}, cdpUrl?: string): Promise<void> {
+async function runFeedView(
+  input: {
+    profileName: string;
+    postUrl: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.feed.view.start", {
       profileName: input.profileName,
-      postUrl: input.postUrl
+      postUrl: input.postUrl,
     });
 
     const post = await runtime.feed.viewPost({
       profileName: input.profileName,
-      postUrl: input.postUrl
+      postUrl: input.postUrl,
     });
 
     runtime.logger.log("info", "cli.feed.view.done", {
       profileName: input.profileName,
-      postId: post.post_id
+      postId: post.post_id,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      post
+      post,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runFeedLike(input: {
-  profileName: string;
-  postUrl: string;
-  reaction?: string;
-  operatorNote?: string;
-}, cdpUrl?: string): Promise<void> {
+async function runFeedLike(
+  input: {
+    profileName: string;
+    postUrl: string;
+    reaction?: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
   const reaction = normalizeLinkedInFeedReaction(input.reaction, "like");
 
@@ -5761,652 +6108,720 @@ async function runFeedLike(input: {
     runtime.logger.log("info", "cli.feed.like.start", {
       profileName: input.profileName,
       postUrl: input.postUrl,
-      reaction
+      reaction,
     });
 
     const prepared = runtime.feed.prepareLikePost({
       profileName: input.profileName,
       postUrl: input.postUrl,
       reaction,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
 
     runtime.logger.log("info", "cli.feed.like.done", {
       profileName: input.profileName,
       preparedActionId: prepared.preparedActionId,
-      reaction
+      reaction,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...prepared
+      ...prepared,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runFeedComment(input: {
-  profileName: string;
-  postUrl: string;
-  text: string;
-  operatorNote?: string;
-}, cdpUrl?: string): Promise<void> {
+async function runFeedComment(
+  input: {
+    profileName: string;
+    postUrl: string;
+    text: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.feed.comment.start", {
       profileName: input.profileName,
-      postUrl: input.postUrl
+      postUrl: input.postUrl,
     });
 
     const prepared = runtime.feed.prepareCommentOnPost({
       profileName: input.profileName,
       postUrl: input.postUrl,
       text: input.text,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
 
     runtime.logger.log("info", "cli.feed.comment.done", {
       profileName: input.profileName,
-      preparedActionId: prepared.preparedActionId
+      preparedActionId: prepared.preparedActionId,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...prepared
+      ...prepared,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runFeedRepost(input: {
-  profileName: string;
-  postUrl: string;
-  operatorNote?: string;
-}, cdpUrl?: string): Promise<void> {
+async function runFeedRepost(
+  input: {
+    profileName: string;
+    postUrl: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.feed.repost.start", {
       profileName: input.profileName,
-      postUrl: input.postUrl
+      postUrl: input.postUrl,
     });
 
     const prepared = runtime.feed.prepareRepostPost({
       profileName: input.profileName,
       postUrl: input.postUrl,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
 
     runtime.logger.log("info", "cli.feed.repost.done", {
       profileName: input.profileName,
-      preparedActionId: prepared.preparedActionId
+      preparedActionId: prepared.preparedActionId,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...prepared
+      ...prepared,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runFeedShare(input: {
-  profileName: string;
-  postUrl: string;
-  text: string;
-  operatorNote?: string;
-}, cdpUrl?: string): Promise<void> {
+async function runFeedShare(
+  input: {
+    profileName: string;
+    postUrl: string;
+    text: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.feed.share.start", {
       profileName: input.profileName,
-      postUrl: input.postUrl
+      postUrl: input.postUrl,
     });
 
     const prepared = runtime.feed.prepareSharePost({
       profileName: input.profileName,
       postUrl: input.postUrl,
       text: input.text,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
 
     runtime.logger.log("info", "cli.feed.share.done", {
       profileName: input.profileName,
-      preparedActionId: prepared.preparedActionId
+      preparedActionId: prepared.preparedActionId,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...prepared
+      ...prepared,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runFeedSave(input: {
-  profileName: string;
-  postUrl: string;
-  operatorNote?: string;
-}, cdpUrl?: string): Promise<void> {
+async function runFeedSave(
+  input: {
+    profileName: string;
+    postUrl: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.feed.save.start", {
       profileName: input.profileName,
-      postUrl: input.postUrl
+      postUrl: input.postUrl,
     });
 
     const prepared = runtime.feed.prepareSavePost({
       profileName: input.profileName,
       postUrl: input.postUrl,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
 
     runtime.logger.log("info", "cli.feed.save.done", {
       profileName: input.profileName,
-      preparedActionId: prepared.preparedActionId
+      preparedActionId: prepared.preparedActionId,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...prepared
+      ...prepared,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runFeedUnsave(input: {
-  profileName: string;
-  postUrl: string;
-  operatorNote?: string;
-}, cdpUrl?: string): Promise<void> {
+async function runFeedUnsave(
+  input: {
+    profileName: string;
+    postUrl: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.feed.unsave.start", {
       profileName: input.profileName,
-      postUrl: input.postUrl
+      postUrl: input.postUrl,
     });
 
     const prepared = runtime.feed.prepareUnsavePost({
       profileName: input.profileName,
       postUrl: input.postUrl,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
 
     runtime.logger.log("info", "cli.feed.unsave.done", {
       profileName: input.profileName,
-      preparedActionId: prepared.preparedActionId
+      preparedActionId: prepared.preparedActionId,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...prepared
+      ...prepared,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runFeedRemoveReaction(input: {
-  profileName: string;
-  postUrl: string;
-  operatorNote?: string;
-}, cdpUrl?: string): Promise<void> {
+async function runFeedRemoveReaction(
+  input: {
+    profileName: string;
+    postUrl: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.feed.remove_reaction.start", {
       profileName: input.profileName,
-      postUrl: input.postUrl
+      postUrl: input.postUrl,
     });
 
     const prepared = runtime.feed.prepareRemoveReaction({
       profileName: input.profileName,
       postUrl: input.postUrl,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
 
     runtime.logger.log("info", "cli.feed.remove_reaction.done", {
       profileName: input.profileName,
-      preparedActionId: prepared.preparedActionId
+      preparedActionId: prepared.preparedActionId,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...prepared
+      ...prepared,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runPostPrepare(input: {
-  profileName: string;
-  text: string;
-  visibility?: string;
-  operatorNote?: string;
-}, cdpUrl?: string): Promise<void> {
+async function runPostPrepare(
+  input: {
+    profileName: string;
+    text: string;
+    visibility?: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
-  const visibility = normalizeLinkedInPostVisibility(input.visibility, "public");
+  const visibility = normalizeLinkedInPostVisibility(
+    input.visibility,
+    "public",
+  );
 
   try {
     runtime.logger.log("info", "cli.post.prepare.start", {
       profileName: input.profileName,
-      visibility
+      visibility,
     });
 
     const prepared = await runtime.posts.prepareCreate({
       profileName: input.profileName,
       text: input.text,
       visibility,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
 
     runtime.logger.log("info", "cli.post.prepare.done", {
       profileName: input.profileName,
       preparedActionId: prepared.preparedActionId,
-      visibility
+      visibility,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...prepared
+      ...prepared,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runArticlePrepareCreate(input: {
-  profileName: string;
-  title: string;
-  body: string;
-  operatorNote?: string;
-}, cdpUrl?: string): Promise<void> {
+async function runArticlePrepareCreate(
+  input: {
+    profileName: string;
+    title: string;
+    body: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
   try {
     runtime.logger.log("info", "cli.article.prepare_create.start", {
-      profileName: input.profileName
+      profileName: input.profileName,
     });
     const prepared = await runtime.articles.prepareCreate({
       profileName: input.profileName,
       title: input.title,
       body: input.body,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
     runtime.logger.log("info", "cli.article.prepare_create.done", {
       profileName: input.profileName,
-      preparedActionId: prepared.preparedActionId
+      preparedActionId: prepared.preparedActionId,
     });
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...prepared
+      ...prepared,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runArticlePreparePublish(input: {
-  profileName: string;
-  draftUrl: string;
-  operatorNote?: string;
-}, cdpUrl?: string): Promise<void> {
+async function runArticlePreparePublish(
+  input: {
+    profileName: string;
+    draftUrl: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
   try {
     runtime.logger.log("info", "cli.article.prepare_publish.start", {
       profileName: input.profileName,
-      draftUrl: input.draftUrl
+      draftUrl: input.draftUrl,
     });
     const prepared = await runtime.articles.preparePublish({
       profileName: input.profileName,
       draftUrl: input.draftUrl,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
     runtime.logger.log("info", "cli.article.prepare_publish.done", {
       profileName: input.profileName,
-      preparedActionId: prepared.preparedActionId
+      preparedActionId: prepared.preparedActionId,
     });
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...prepared
+      ...prepared,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runNewsletterPrepareCreate(input: {
-  profileName: string;
-  title: string;
-  description: string;
-  cadence: string;
-  operatorNote?: string;
-}, cdpUrl?: string): Promise<void> {
+async function runNewsletterPrepareCreate(
+  input: {
+    profileName: string;
+    title: string;
+    description: string;
+    cadence: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
   try {
     runtime.logger.log("info", "cli.newsletter.prepare_create.start", {
-      profileName: input.profileName
+      profileName: input.profileName,
     });
     const prepared = await runtime.newsletters.prepareCreate({
       profileName: input.profileName,
       title: input.title,
       description: input.description,
       cadence: input.cadence,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
     runtime.logger.log("info", "cli.newsletter.prepare_create.done", {
       profileName: input.profileName,
-      preparedActionId: prepared.preparedActionId
+      preparedActionId: prepared.preparedActionId,
     });
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...prepared
+      ...prepared,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runNewsletterPreparePublishIssue(input: {
-  profileName: string;
-  newsletter: string;
-  title: string;
-  body: string;
-  operatorNote?: string;
-}, cdpUrl?: string): Promise<void> {
+async function runNewsletterPreparePublishIssue(
+  input: {
+    profileName: string;
+    newsletter: string;
+    title: string;
+    body: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
   try {
     runtime.logger.log("info", "cli.newsletter.prepare_publish_issue.start", {
       profileName: input.profileName,
-      newsletter: input.newsletter
+      newsletter: input.newsletter,
     });
     const prepared = await runtime.newsletters.preparePublishIssue({
       profileName: input.profileName,
       newsletter: input.newsletter,
       title: input.title,
       body: input.body,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
     runtime.logger.log("info", "cli.newsletter.prepare_publish_issue.done", {
       profileName: input.profileName,
-      preparedActionId: prepared.preparedActionId
+      preparedActionId: prepared.preparedActionId,
     });
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...prepared
+      ...prepared,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runNewsletterList(input: {
-  profileName: string;
-}, cdpUrl?: string): Promise<void> {
+async function runNewsletterList(
+  input: {
+    profileName: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
   try {
     runtime.logger.log("info", "cli.newsletter.list.start", {
-      profileName: input.profileName
+      profileName: input.profileName,
     });
     const result = await runtime.newsletters.list({
-      profileName: input.profileName
+      profileName: input.profileName,
     });
     runtime.logger.log("info", "cli.newsletter.list.done", {
       profileName: input.profileName,
-      count: result.count
+      count: result.count,
     });
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...result
+      ...result,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runProfileView(input: {
-  profileName: string;
-  target: string;
-}, cdpUrl?: string): Promise<void> {
+async function runProfileView(
+  input: {
+    profileName: string;
+    target: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.profile.view.start", {
       profileName: input.profileName,
-      target: input.target
+      target: input.target,
     });
 
     const profile = await runtime.profile.viewProfile({
       profileName: input.profileName,
-      target: input.target
+      target: input.target,
     });
 
     runtime.logger.log("info", "cli.profile.view.done", {
       profileName: input.profileName,
-      fullName: profile.full_name
+      fullName: profile.full_name,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      profile
+      profile,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runCompanyPageView(input: {
-  profileName: string;
-  target: string;
-}, cdpUrl?: string): Promise<void> {
+async function runCompanyPageView(
+  input: {
+    profileName: string;
+    target: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.company.view.start", {
       profileName: input.profileName,
-      target: input.target
+      target: input.target,
     });
 
     const company = await runtime.companyPages.viewCompanyPage({
       profileName: input.profileName,
-      target: input.target
+      target: input.target,
     });
 
     runtime.logger.log("info", "cli.company.view.done", {
       profileName: input.profileName,
-      companyName: company.name
+      companyName: company.name,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      company
+      company,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runCompanyPrepareFollow(input: {
-  profileName: string;
-  targetCompany: string;
-  operatorNote?: string;
-}, cdpUrl?: string): Promise<void> {
+async function runCompanyPrepareFollow(
+  input: {
+    profileName: string;
+    targetCompany: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.company.prepare_follow.start", {
       profileName: input.profileName,
-      targetCompany: input.targetCompany
+      targetCompany: input.targetCompany,
     });
 
     const prepared = runtime.companyPages.prepareFollowCompanyPage({
       profileName: input.profileName,
       targetCompany: input.targetCompany,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
 
     runtime.logger.log("info", "cli.company.prepare_follow.done", {
       profileName: input.profileName,
-      preparedActionId: prepared.preparedActionId
+      preparedActionId: prepared.preparedActionId,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...prepared
+      ...prepared,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runCompanyPrepareUnfollow(input: {
-  profileName: string;
-  targetCompany: string;
-  operatorNote?: string;
-}, cdpUrl?: string): Promise<void> {
+async function runCompanyPrepareUnfollow(
+  input: {
+    profileName: string;
+    targetCompany: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.company.prepare_unfollow.start", {
       profileName: input.profileName,
-      targetCompany: input.targetCompany
+      targetCompany: input.targetCompany,
     });
 
     const prepared = runtime.companyPages.prepareUnfollowCompanyPage({
       profileName: input.profileName,
       targetCompany: input.targetCompany,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
 
     runtime.logger.log("info", "cli.company.prepare_unfollow.done", {
       profileName: input.profileName,
-      preparedActionId: prepared.preparedActionId
+      preparedActionId: prepared.preparedActionId,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...prepared
+      ...prepared,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runProfileViewEditable(input: {
-  profileName: string;
-}, cdpUrl?: string): Promise<void> {
+async function runProfileViewEditable(
+  input: {
+    profileName: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.profile.view_editable.start", {
-      profileName: input.profileName
+      profileName: input.profileName,
     });
 
     const profile = await runtime.profile.viewEditableProfile({
-      profileName: input.profileName
+      profileName: input.profileName,
     });
 
     runtime.logger.log("info", "cli.profile.view_editable.done", {
       profileName: input.profileName,
-      sectionCount: profile.sections.length
+      sectionCount: profile.sections.length,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      profile
+      profile,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runProfilePrepareUpdateSettings(input: {
-  profileName: string;
-  industry: string;
-  operatorNote?: string;
-}, cdpUrl?: string): Promise<void> {
+async function runProfilePrepareUpdateSettings(
+  input: {
+    profileName: string;
+    industry: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.profile.prepare_update_settings.start", {
-      profileName: input.profileName
+      profileName: input.profileName,
     });
 
     const prepared = runtime.profile.prepareUpdateSettings({
       profileName: input.profileName,
       industry: input.industry,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
 
     runtime.logger.log("info", "cli.profile.prepare_update_settings.done", {
       profileName: input.profileName,
-      preparedActionId: prepared.preparedActionId
+      preparedActionId: prepared.preparedActionId,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...prepared
+      ...prepared,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runProfilePrepareUpdatePublicProfile(input: {
-  profileName: string;
-  vanityName: string;
-  operatorNote?: string;
-}, cdpUrl?: string): Promise<void> {
+async function runProfilePrepareUpdatePublicProfile(
+  input: {
+    profileName: string;
+    vanityName: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
-    runtime.logger.log("info", "cli.profile.prepare_update_public_profile.start", {
-      profileName: input.profileName
-    });
+    runtime.logger.log(
+      "info",
+      "cli.profile.prepare_update_public_profile.start",
+      {
+        profileName: input.profileName,
+      },
+    );
 
     const prepared = runtime.profile.prepareUpdatePublicProfile({
       profileName: input.profileName,
       vanityName: input.vanityName,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
 
-    runtime.logger.log("info", "cli.profile.prepare_update_public_profile.done", {
-      profileName: input.profileName,
-      preparedActionId: prepared.preparedActionId
-    });
+    runtime.logger.log(
+      "info",
+      "cli.profile.prepare_update_public_profile.done",
+      {
+        profileName: input.profileName,
+        preparedActionId: prepared.preparedActionId,
+      },
+    );
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...prepared
+      ...prepared,
     });
   } finally {
     runtime.close();
@@ -6414,7 +6829,7 @@ async function runProfilePrepareUpdatePublicProfile(input: {
 }
 
 function summarizeProfileSeedUnsupportedFields(
-  unsupportedFields: readonly ProfileSeedUnsupportedField[]
+  unsupportedFields: readonly ProfileSeedUnsupportedField[],
 ): string {
   return unsupportedFields
     .map((field) => `${field.path} (#${field.issueNumber})`)
@@ -6422,7 +6837,7 @@ function summarizeProfileSeedUnsupportedFields(
 }
 
 function createProfileSeedUnsupportedFieldsError(
-  unsupportedFields: readonly ProfileSeedUnsupportedField[]
+  unsupportedFields: readonly ProfileSeedUnsupportedField[],
 ): LinkedInBuddyError {
   return new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
@@ -6431,9 +6846,9 @@ function createProfileSeedUnsupportedFieldsError(
       unsupported_fields: unsupportedFields.map((field) => ({
         path: field.path,
         issue_number: field.issueNumber,
-        reason: field.reason
-      }))
-    }
+        reason: field.reason,
+      })),
+    },
   );
 }
 
@@ -6452,7 +6867,7 @@ function sampleSeedDelay(baseDelayMs: number): number {
 
 function prepareProfileSeedAction(
   runtime: CliRuntime,
-  action: ProfileSeedPlanAction
+  action: ProfileSeedPlanAction,
 ) {
   switch (action.kind) {
     case "update_intro":
@@ -6483,14 +6898,18 @@ interface ActivitySeedPlanSummary {
   totalWriteActions: number;
 }
 
-function createActivitySeedPlanSummary(spec: ActivitySeedSpec): ActivitySeedPlanSummary {
+function createActivitySeedPlanSummary(
+  spec: ActivitySeedSpec,
+): ActivitySeedPlanSummary {
   const jobViewCount = spec.jobs.searches.reduce(
     (total, search) => total + (search.viewTop ?? 0),
-    0
+    0,
   );
   const totalWriteActions =
     spec.connections.invites.length +
-    (spec.connections.acceptPending ? spec.connections.acceptPending.limit : 0) +
+    (spec.connections.acceptPending
+      ? spec.connections.acceptPending.limit
+      : 0) +
     spec.posts.length +
     spec.feed.likes.length +
     spec.feed.comments.length +
@@ -6511,13 +6930,13 @@ function createActivitySeedPlanSummary(spec: ActivitySeedSpec): ActivitySeedPlan
     postCount: spec.posts.length,
     replyCount: spec.messaging.replies.length,
     totalReadSteps,
-    totalWriteActions
+    totalWriteActions,
   };
 }
 
 async function resolveActivitySeedGeneratedPostImages(
   spec: ActivitySeedSpec,
-  resolvedSpecPath: string
+  resolvedSpecPath: string,
 ): Promise<{
   manifestPath: string;
   postImages: ActivitySeedGeneratedPostImage[];
@@ -6529,24 +6948,24 @@ async function resolveActivitySeedGeneratedPostImages(
 
   const resolvedManifestPath = path.resolve(
     path.dirname(resolvedSpecPath),
-    manifestPathInput
+    manifestPathInput,
   );
   const rawManifest = await readJsonInputFile(
     resolvedManifestPath,
-    "activity seed generated image manifest"
+    "activity seed generated image manifest",
   );
   const manifest = parseActivitySeedGeneratedImageManifest(rawManifest);
 
   return {
     manifestPath: resolvedManifestPath,
-    postImages: manifest.postImages
+    postImages: manifest.postImages,
   };
 }
 
 function resolveActivitySeedPostMediaPath(
   post: ActivitySeedPostSpec,
   resolvedSpecPath: string,
-  generatedImages: readonly ActivitySeedGeneratedPostImage[]
+  generatedImages: readonly ActivitySeedGeneratedPostImage[],
 ): string | undefined {
   if (post.mediaPath) {
     return path.resolve(path.dirname(resolvedSpecPath), post.mediaPath);
@@ -6559,7 +6978,7 @@ function resolveActivitySeedPostMediaPath(
   if (generatedImages.length === 0) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "posts.generatedImageIndex requires assets.generatedImageManifestPath to be configured."
+      "posts.generatedImageIndex requires assets.generatedImageManifestPath to be configured.",
     );
   }
 
@@ -6567,7 +6986,7 @@ function resolveActivitySeedPostMediaPath(
   if (!generatedImage) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      `posts.generatedImageIndex ${post.generatedImageIndex} is out of range for the configured generated image manifest.`
+      `posts.generatedImageIndex ${post.generatedImageIndex} is out of range for the configured generated image manifest.`,
     );
   }
 
@@ -6592,7 +7011,7 @@ function normalizeComparableLinkedInIdentity(value: string): string {
 function createActivitySeedOperatorNote(
   resolvedSpecPath: string,
   sectionLabel: string,
-  explicitNote?: string
+  explicitNote?: string,
 ): string {
   const baseNote = explicitNote?.trim();
   if (baseNote) {
@@ -6614,7 +7033,7 @@ function summarizeConfirmedAction(confirmed: {
     prepared_action_id: confirmed.preparedActionId,
     status: confirmed.status,
     result: confirmed.result,
-    artifacts: confirmed.artifacts
+    artifacts: confirmed.artifacts,
   };
 }
 
@@ -6630,28 +7049,34 @@ async function maybeWarnAboutKeepAliveForSeeding(): Promise<number[]> {
   const runningKeepAlivePids = await findRunningKeepAlivePids();
   if (runningKeepAlivePids.length === 0) {
     writeCliWarning(
-      "No running keepalive daemon was detected. For long issue-212 seeding runs, start `linkedin keepalive start` in another terminal first."
+      "No running keepalive daemon was detected. For long issue-212 seeding runs, start `linkedin keepalive start` in another terminal first.",
     );
   } else {
     writeCliNotice(
-      `Detected keepalive daemon PID${runningKeepAlivePids.length === 1 ? "" : "s"}: ${runningKeepAlivePids.join(", ")}.`
+      `Detected keepalive daemon PID${runningKeepAlivePids.length === 1 ? "" : "s"}: ${runningKeepAlivePids.join(", ")}.`,
     );
   }
 
   return runningKeepAlivePids;
 }
 
-async function runProfileApplySpec(input: {
-  profileName: string;
-  specPath: string;
-  replace: boolean;
-  allowPartial: boolean;
-  delayMs: number;
-  yes: boolean;
-  outputPath?: string;
-}, cdpUrl?: string): Promise<void> {
+async function runProfileApplySpec(
+  input: {
+    profileName: string;
+    specPath: string;
+    replace: boolean;
+    allowPartial: boolean;
+    delayMs: number;
+    yes: boolean;
+    outputPath?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const resolvedSpecPath = path.resolve(input.specPath);
-  const rawSpec = await readJsonInputFile(resolvedSpecPath, "profile seed spec");
+  const rawSpec = await readJsonInputFile(
+    resolvedSpecPath,
+    "profile seed spec",
+  );
   const spec = parseProfileSeedSpec(rawSpec);
   const runtime = createRuntime(cdpUrl);
 
@@ -6661,16 +7086,16 @@ async function runProfileApplySpec(input: {
       specPath: resolvedSpecPath,
       replace: input.replace,
       allowPartial: input.allowPartial,
-      delayMs: input.delayMs
+      delayMs: input.delayMs,
     });
 
     const editableProfile = await runtime.profile.viewEditableProfile({
-      profileName: input.profileName
+      profileName: input.profileName,
     });
     const plan = createProfileSeedPlan(editableProfile, spec, {
       profileName: input.profileName,
       operatorNote: `profile seed: ${path.basename(resolvedSpecPath)}`,
-      replace: input.replace
+      replace: input.replace,
     });
 
     if (plan.unsupportedFields.length > 0 && !input.allowPartial) {
@@ -6679,34 +7104,36 @@ async function runProfileApplySpec(input: {
 
     if (plan.unsupportedFields.length > 0) {
       writeCliWarning(
-        `Ignoring unsupported profile fields for this run: ${summarizeProfileSeedUnsupportedFields(plan.unsupportedFields)}.`
+        `Ignoring unsupported profile fields for this run: ${summarizeProfileSeedUnsupportedFields(plan.unsupportedFields)}.`,
       );
     }
 
     if (plan.actions.length > 0) {
       writeCliNotice(
-        `Loaded ${resolvedSpecPath} with ${plan.actions.length} supported profile ${plan.actions.length === 1 ? "edit" : "edits"}.`
+        `Loaded ${resolvedSpecPath} with ${plan.actions.length} supported profile ${plan.actions.length === 1 ? "edit" : "edits"}.`,
       );
     } else {
-      writeCliNotice(`Loaded ${resolvedSpecPath}; no supported profile edits are required.`);
+      writeCliNotice(
+        `Loaded ${resolvedSpecPath}; no supported profile edits are required.`,
+      );
     }
 
     if (!input.yes && plan.actions.length > 0) {
       if (!stdin.isTTY || !stdout.isTTY) {
         throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
-          "Refusing to apply a profile seed spec without --yes in non-interactive mode."
+          "Refusing to apply a profile seed spec without --yes in non-interactive mode.",
         );
       }
 
       const confirmed = await promptYesNo(
         `Apply ${plan.actions.length} LinkedIn profile ${plan.actions.length === 1 ? "edit" : "edits"}?`,
-        process.stderr
+        process.stderr,
       );
       if (!confirmed) {
         throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
-          "Operator declined profile seed execution."
+          "Operator declined profile seed execution.",
         );
       }
     }
@@ -6716,7 +7143,7 @@ async function runProfileApplySpec(input: {
       const action = plan.actions[index]!;
       const prepared = prepareProfileSeedAction(runtime, action);
       const confirmed = await runtime.twoPhaseCommit.confirmByToken({
-        confirmToken: prepared.confirmToken
+        confirmToken: prepared.confirmToken,
       });
 
       actionResults.push({
@@ -6725,7 +7152,7 @@ async function runProfileApplySpec(input: {
         prepared_action_id: confirmed.preparedActionId,
         status: confirmed.status,
         result: confirmed.result,
-        artifacts: confirmed.artifacts
+        artifacts: confirmed.artifacts,
       });
 
       if (index < plan.actions.length - 1 && input.delayMs > 0) {
@@ -6735,7 +7162,7 @@ async function runProfileApplySpec(input: {
 
     const finalProfile = await runtime.profile.viewProfile({
       profileName: input.profileName,
-      target: "me"
+      target: "me",
     });
 
     const report: Record<string, unknown> = {
@@ -6749,7 +7176,7 @@ async function runProfileApplySpec(input: {
       executed_action_count: actionResults.length,
       unsupported_fields: plan.unsupportedFields,
       actions: actionResults,
-      profile: finalProfile
+      profile: finalProfile,
     };
 
     if (input.outputPath) {
@@ -6761,7 +7188,7 @@ async function runProfileApplySpec(input: {
       specPath: resolvedSpecPath,
       plannedActionCount: plan.actions.length,
       executedActionCount: actionResults.length,
-      unsupportedFieldCount: plan.unsupportedFields.length
+      unsupportedFieldCount: plan.unsupportedFields.length,
     });
 
     printJson(report);
@@ -6773,13 +7200,13 @@ async function runProfileApplySpec(input: {
 async function runActivitySeedJobSearch(
   runtime: CliRuntime,
   profileName: string,
-  search: ActivitySeedJobSearchSpec
+  search: ActivitySeedJobSearchSpec,
 ): Promise<Record<string, unknown>> {
   const searchResult = await runtime.jobs.searchJobs({
     profileName,
     query: search.query,
     ...(search.location ? { location: search.location } : {}),
-    ...(search.limit ? { limit: search.limit } : {})
+    ...(search.limit ? { limit: search.limit } : {}),
   });
   const viewCount = Math.min(search.viewTop ?? 0, searchResult.results.length);
   const viewedJobs: Record<string, unknown>[] = [];
@@ -6787,7 +7214,7 @@ async function runActivitySeedJobSearch(
   for (const job of searchResult.results.slice(0, viewCount)) {
     const detail = await runtime.jobs.viewJob({
       profileName,
-      jobId: job.job_id
+      jobId: job.job_id,
     });
     viewedJobs.push(detail as unknown as Record<string, unknown>);
   }
@@ -6797,22 +7224,31 @@ async function runActivitySeedJobSearch(
     location: searchResult.location,
     count: searchResult.count,
     results: searchResult.results,
-    viewed_jobs: viewedJobs
+    viewed_jobs: viewedJobs,
   };
 }
 
-async function runSeedActivity(input: {
-  profileName: string;
-  specPath: string;
-  delayMs: number;
-  yes: boolean;
-  outputPath?: string;
-}, cdpUrl?: string): Promise<void> {
+async function runSeedActivity(
+  input: {
+    profileName: string;
+    specPath: string;
+    delayMs: number;
+    yes: boolean;
+    outputPath?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const resolvedSpecPath = path.resolve(input.specPath);
-  const rawSpec = await readJsonInputFile(resolvedSpecPath, "activity seed spec");
+  const rawSpec = await readJsonInputFile(
+    resolvedSpecPath,
+    "activity seed spec",
+  );
   const spec = parseActivitySeedSpec(rawSpec);
   const planSummary = createActivitySeedPlanSummary(spec);
-  const generatedImages = await resolveActivitySeedGeneratedPostImages(spec, resolvedSpecPath);
+  const generatedImages = await resolveActivitySeedGeneratedPostImages(
+    spec,
+    resolvedSpecPath,
+  );
   const runtime = createRuntime(cdpUrl);
 
   try {
@@ -6821,18 +7257,18 @@ async function runSeedActivity(input: {
       specPath: resolvedSpecPath,
       delayMs: input.delayMs,
       totalWriteActions: planSummary.totalWriteActions,
-      totalReadSteps: planSummary.totalReadSteps
+      totalReadSteps: planSummary.totalReadSteps,
     });
 
     const keepAlivePids = await maybeWarnAboutKeepAliveForSeeding();
 
     if (planSummary.totalWriteActions > 0) {
       writeCliNotice(
-        `Loaded ${resolvedSpecPath} with ${planSummary.totalWriteActions} write ${planSummary.totalWriteActions === 1 ? "action" : "actions"} and ${planSummary.totalReadSteps} read-only verification ${planSummary.totalReadSteps === 1 ? "step" : "steps"}.`
+        `Loaded ${resolvedSpecPath} with ${planSummary.totalWriteActions} write ${planSummary.totalWriteActions === 1 ? "action" : "actions"} and ${planSummary.totalReadSteps} read-only verification ${planSummary.totalReadSteps === 1 ? "step" : "steps"}.`,
       );
     } else {
       writeCliNotice(
-        `Loaded ${resolvedSpecPath}; no write actions are configured, so this run will only perform read-only checks.`
+        `Loaded ${resolvedSpecPath}; no write actions are configured, so this run will only perform read-only checks.`,
       );
     }
 
@@ -6840,18 +7276,18 @@ async function runSeedActivity(input: {
       if (!stdin.isTTY || !stdout.isTTY) {
         throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
-          "Refusing to apply an activity seed spec without --yes in non-interactive mode."
+          "Refusing to apply an activity seed spec without --yes in non-interactive mode.",
         );
       }
 
       const confirmed = await promptYesNo(
         `Execute ${planSummary.totalWriteActions} LinkedIn write ${planSummary.totalWriteActions === 1 ? "action" : "actions"} from this activity seed spec?`,
-        process.stderr
+        process.stderr,
       );
       if (!confirmed) {
         throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
-          "Operator declined activity seed execution."
+          "Operator declined activity seed execution.",
         );
       }
     }
@@ -6865,21 +7301,26 @@ async function runSeedActivity(input: {
       keep_alive_running: keepAlivePids.length > 0,
       plan: planSummary,
       evasion: runtime.evasion,
-      ...(generatedImages ? { generated_image_manifest_path: generatedImages.manifestPath } : {})
+      ...(generatedImages
+        ? { generated_image_manifest_path: generatedImages.manifestPath }
+        : {}),
     };
 
     const connectionsSection: Record<string, unknown> = {
       accepted_pending: [] as Record<string, unknown>[],
       invites: [] as Record<string, unknown>[],
-      skipped_invites: [] as Record<string, unknown>[]
+      skipped_invites: [] as Record<string, unknown>[],
     };
 
     if (spec.connections.acceptPending) {
       const pendingReceived = await runtime.connections.listPendingInvitations({
         profileName: input.profileName,
-        filter: "received"
+        filter: "received",
       });
-      const pendingToAccept = pendingReceived.slice(0, spec.connections.acceptPending.limit);
+      const pendingToAccept = pendingReceived.slice(
+        0,
+        spec.connections.acceptPending.limit,
+      );
       connectionsSection.pending_received = pendingReceived;
 
       for (const [index, invitation] of pendingToAccept.entries()) {
@@ -6889,17 +7330,19 @@ async function runSeedActivity(input: {
           operatorNote: createActivitySeedOperatorNote(
             resolvedSpecPath,
             `accept pending ${index + 1}`,
-            undefined
-          )
+            undefined,
+          ),
         });
         const confirmed = await runtime.twoPhaseCommit.confirmByToken({
-          confirmToken: prepared.confirmToken
+          confirmToken: prepared.confirmToken,
         });
-        (connectionsSection.accepted_pending as Record<string, unknown>[]).push({
-          target_profile: invitation.profile_url,
-          full_name: invitation.full_name,
-          ...summarizeConfirmedAction(confirmed)
-        });
+        (connectionsSection.accepted_pending as Record<string, unknown>[]).push(
+          {
+            target_profile: invitation.profile_url,
+            full_name: invitation.full_name,
+            ...summarizeConfirmedAction(confirmed),
+          },
+        );
         await maybeSleepSeedDelay(input.delayMs);
       }
     }
@@ -6908,40 +7351,50 @@ async function runSeedActivity(input: {
       const [existingConnections, pendingSent] = await Promise.all([
         runtime.connections.listConnections({
           profileName: input.profileName,
-          limit: Math.max(40, spec.connections.invites.length + 20)
+          limit: Math.max(40, spec.connections.invites.length + 20),
         }),
         runtime.connections.listPendingInvitations({
           profileName: input.profileName,
-          filter: "sent"
-        })
+          filter: "sent",
+        }),
       ]);
       const existingTargets = new Set(
         existingConnections
-          .map((connection) => normalizeComparableLinkedInIdentity(connection.profile_url))
-          .filter((value) => value.length > 0)
+          .map((connection) =>
+            normalizeComparableLinkedInIdentity(connection.profile_url),
+          )
+          .filter((value) => value.length > 0),
       );
       const pendingTargets = new Set(
         pendingSent
-          .map((invitation) => normalizeComparableLinkedInIdentity(invitation.profile_url))
-          .filter((value) => value.length > 0)
+          .map((invitation) =>
+            normalizeComparableLinkedInIdentity(invitation.profile_url),
+          )
+          .filter((value) => value.length > 0),
       );
 
       connectionsSection.connections_before = existingConnections;
       connectionsSection.pending_sent = pendingSent;
 
       for (const [index, invite] of spec.connections.invites.entries()) {
-        const normalizedTarget = normalizeComparableLinkedInIdentity(invite.targetProfile);
+        const normalizedTarget = normalizeComparableLinkedInIdentity(
+          invite.targetProfile,
+        );
         if (existingTargets.has(normalizedTarget)) {
-          (connectionsSection.skipped_invites as Record<string, unknown>[]).push({
+          (
+            connectionsSection.skipped_invites as Record<string, unknown>[]
+          ).push({
             target_profile: invite.targetProfile,
-            reason: "already_connected"
+            reason: "already_connected",
           });
           continue;
         }
         if (pendingTargets.has(normalizedTarget)) {
-          (connectionsSection.skipped_invites as Record<string, unknown>[]).push({
+          (
+            connectionsSection.skipped_invites as Record<string, unknown>[]
+          ).push({
             target_profile: invite.targetProfile,
-            reason: "invitation_already_pending"
+            reason: "invitation_already_pending",
           });
           continue;
         }
@@ -6953,16 +7406,16 @@ async function runSeedActivity(input: {
           operatorNote: createActivitySeedOperatorNote(
             resolvedSpecPath,
             `invite ${index + 1}`,
-            invite.operatorNote
-          )
+            invite.operatorNote,
+          ),
         });
         const confirmed = await runtime.twoPhaseCommit.confirmByToken({
-          confirmToken: prepared.confirmToken
+          confirmToken: prepared.confirmToken,
         });
         (connectionsSection.invites as Record<string, unknown>[]).push({
           target_profile: invite.targetProfile,
           ...(invite.note ? { note: invite.note } : {}),
-          ...summarizeConfirmedAction(confirmed)
+          ...summarizeConfirmedAction(confirmed),
         });
         pendingTargets.add(normalizedTarget);
         await maybeSleepSeedDelay(input.delayMs);
@@ -6976,13 +7429,13 @@ async function runSeedActivity(input: {
       const mediaPath = resolveActivitySeedPostMediaPath(
         post,
         resolvedSpecPath,
-        generatedImages?.postImages ?? []
+        generatedImages?.postImages ?? [],
       );
       const visibility = post.visibility ?? "connections";
       const operatorNote = createActivitySeedOperatorNote(
         resolvedSpecPath,
         `post ${index + 1}`,
-        post.operatorNote
+        post.operatorNote,
       );
 
       const prepared = mediaPath
@@ -6991,16 +7444,16 @@ async function runSeedActivity(input: {
             text: post.text,
             mediaPaths: [mediaPath],
             visibility,
-            operatorNote
+            operatorNote,
           })
         : await runtime.posts.prepareCreate({
             profileName: input.profileName,
             text: post.text,
             visibility,
-            operatorNote
+            operatorNote,
           });
       const confirmed = await runtime.twoPhaseCommit.confirmByToken({
-        confirmToken: prepared.confirmToken
+        confirmToken: prepared.confirmToken,
       });
       const publishedPostUrl =
         typeof confirmed.result.published_post_url === "string" &&
@@ -7010,7 +7463,7 @@ async function runSeedActivity(input: {
       const verification = publishedPostUrl
         ? await runtime.feed.viewPost({
             profileName: input.profileName,
-            postUrl: publishedPostUrl
+            postUrl: publishedPostUrl,
           })
         : undefined;
 
@@ -7019,7 +7472,7 @@ async function runSeedActivity(input: {
         visibility,
         ...(mediaPath ? { media_path: mediaPath } : {}),
         ...summarizeConfirmedAction(confirmed),
-        ...(verification ? { verification } : {})
+        ...(verification ? { verification } : {}),
       });
       await maybeSleepSeedDelay(input.delayMs);
     }
@@ -7027,7 +7480,7 @@ async function runSeedActivity(input: {
 
     const feedSection: Record<string, unknown> = {
       liked: [] as Record<string, unknown>[],
-      commented: [] as Record<string, unknown>[]
+      commented: [] as Record<string, unknown>[],
     };
     if (
       spec.feed.discoveryLimit ||
@@ -7039,7 +7492,7 @@ async function runSeedActivity(input: {
         Math.max(10, spec.feed.likes.length + spec.feed.comments.length + 3);
       feedSection.feed_snapshot = await runtime.feed.viewFeed({
         profileName: input.profileName,
-        limit: discoveryLimit
+        limit: discoveryLimit,
       });
     }
 
@@ -7051,16 +7504,16 @@ async function runSeedActivity(input: {
         operatorNote: createActivitySeedOperatorNote(
           resolvedSpecPath,
           `feed like ${index + 1}`,
-          like.operatorNote
-        )
+          like.operatorNote,
+        ),
       });
       const confirmed = await runtime.twoPhaseCommit.confirmByToken({
-        confirmToken: prepared.confirmToken
+        confirmToken: prepared.confirmToken,
       });
       (feedSection.liked as Record<string, unknown>[]).push({
         post_url: like.postUrl,
         ...(like.reaction ? { reaction: like.reaction } : {}),
-        ...summarizeConfirmedAction(confirmed)
+        ...summarizeConfirmedAction(confirmed),
       });
       await maybeSleepSeedDelay(input.delayMs);
     }
@@ -7073,16 +7526,16 @@ async function runSeedActivity(input: {
         operatorNote: createActivitySeedOperatorNote(
           resolvedSpecPath,
           `feed comment ${index + 1}`,
-          comment.operatorNote
-        )
+          comment.operatorNote,
+        ),
       });
       const confirmed = await runtime.twoPhaseCommit.confirmByToken({
-        confirmToken: prepared.confirmToken
+        confirmToken: prepared.confirmToken,
       });
       (feedSection.commented as Record<string, unknown>[]).push({
         post_url: comment.postUrl,
         text: comment.text,
-        ...summarizeConfirmedAction(confirmed)
+        ...summarizeConfirmedAction(confirmed),
       });
       await maybeSleepSeedDelay(input.delayMs);
     }
@@ -7092,19 +7545,22 @@ async function runSeedActivity(input: {
     const jobsSection: Record<string, unknown>[] = [];
     for (const search of spec.jobs.searches) {
       jobsSection.push(
-        await runActivitySeedJobSearch(runtime, input.profileName, search)
+        await runActivitySeedJobSearch(runtime, input.profileName, search),
       );
     }
     report.jobs = jobsSection;
 
     const messagingSection: Record<string, unknown> = {
       new_threads: [] as Record<string, unknown>[],
-      replies: [] as Record<string, unknown>[]
+      replies: [] as Record<string, unknown>[],
     };
-    if (spec.messaging.newThreads.length > 0 || spec.messaging.replies.length > 0) {
+    if (
+      spec.messaging.newThreads.length > 0 ||
+      spec.messaging.replies.length > 0
+    ) {
       messagingSection.threads_before = await runtime.inbox.listThreads({
         profileName: input.profileName,
-        limit: 10
+        limit: 10,
       });
     }
 
@@ -7116,11 +7572,11 @@ async function runSeedActivity(input: {
         operatorNote: createActivitySeedOperatorNote(
           resolvedSpecPath,
           `new thread ${index + 1}`,
-          thread.operatorNote
-        )
+          thread.operatorNote,
+        ),
       });
       const confirmed = await runtime.twoPhaseCommit.confirmByToken({
-        confirmToken: prepared.confirmToken
+        confirmToken: prepared.confirmToken,
       });
       const threadUrl =
         typeof confirmed.result.thread_url === "string" &&
@@ -7131,14 +7587,14 @@ async function runSeedActivity(input: {
         ? await runtime.inbox.getThread({
             profileName: input.profileName,
             thread: threadUrl,
-            limit: 10
+            limit: 10,
           })
         : undefined;
       (messagingSection.new_threads as Record<string, unknown>[]).push({
         recipients: thread.recipients,
         text: thread.text,
         ...summarizeConfirmedAction(confirmed),
-        ...(verification ? { verification } : {})
+        ...(verification ? { verification } : {}),
       });
       await maybeSleepSeedDelay(input.delayMs);
     }
@@ -7151,11 +7607,11 @@ async function runSeedActivity(input: {
         operatorNote: createActivitySeedOperatorNote(
           resolvedSpecPath,
           `reply ${index + 1}`,
-          reply.operatorNote
-        )
+          reply.operatorNote,
+        ),
       });
       const confirmed = await runtime.twoPhaseCommit.confirmByToken({
-        confirmToken: prepared.confirmToken
+        confirmToken: prepared.confirmToken,
       });
       const threadUrl =
         typeof confirmed.result.thread_url === "string" &&
@@ -7165,13 +7621,13 @@ async function runSeedActivity(input: {
       const verification = await runtime.inbox.getThread({
         profileName: input.profileName,
         thread: threadUrl,
-        limit: 10
+        limit: 10,
       });
       (messagingSection.replies as Record<string, unknown>[]).push({
         thread: reply.thread,
         text: reply.text,
         ...summarizeConfirmedAction(confirmed),
-        verification
+        verification,
       });
       await maybeSleepSeedDelay(input.delayMs);
     }
@@ -7183,23 +7639,23 @@ async function runSeedActivity(input: {
         profileName: input.profileName,
         ...(typeof spec.notifications.limit === "number"
           ? { limit: spec.notifications.limit }
-          : {})
+          : {}),
       });
     }
 
     report.verification = {
       connections: await runtime.connections.listConnections({
         profileName: input.profileName,
-        limit: Math.max(20, spec.connections.invites.length + 10)
+        limit: Math.max(20, spec.connections.invites.length + 10),
       }),
       feed: await runtime.feed.viewFeed({
         profileName: input.profileName,
-        limit: Math.max(10, spec.posts.length + 5)
+        limit: Math.max(10, spec.posts.length + 5),
       }),
       inbox_threads: await runtime.inbox.listThreads({
         profileName: input.profileName,
-        limit: 10
-      })
+        limit: 10,
+      }),
     };
 
     if (input.outputPath) {
@@ -7210,7 +7666,7 @@ async function runSeedActivity(input: {
       profileName: input.profileName,
       specPath: resolvedSpecPath,
       totalWriteActions: planSummary.totalWriteActions,
-      totalReadSteps: planSummary.totalReadSteps
+      totalReadSteps: planSummary.totalReadSteps,
     });
 
     printJson(report);
@@ -7219,17 +7675,23 @@ async function runSeedActivity(input: {
   }
 }
 
-async function runAssetsGenerateProfileImages(input: {
-  profileName: string;
-  specPath: string;
-  postImageCount: number;
-  uploadProfileMedia: boolean;
-  uploadDelayMs: number;
-  model?: string;
-  outputPath?: string;
-}, cdpUrl?: string): Promise<void> {
+async function runAssetsGenerateProfileImages(
+  input: {
+    profileName: string;
+    specPath: string;
+    postImageCount: number;
+    uploadProfileMedia: boolean;
+    uploadDelayMs: number;
+    model?: string;
+    outputPath?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const resolvedSpecPath = path.resolve(input.specPath);
-  const rawSpec = await readJsonInputFile(resolvedSpecPath, "image persona spec");
+  const rawSpec = await readJsonInputFile(
+    resolvedSpecPath,
+    "image persona spec",
+  );
   const persona = buildLinkedInImagePersonaFromProfileSeed(rawSpec);
   const runtime = createRuntime(cdpUrl);
 
@@ -7239,22 +7701,22 @@ async function runAssetsGenerateProfileImages(input: {
       specPath: resolvedSpecPath,
       postImageCount: input.postImageCount,
       uploadProfileMedia: input.uploadProfileMedia,
-      model: input.model ?? null
+      model: input.model ?? null,
     });
 
     const report: Record<string, unknown> = {
       run_id: runtime.runId,
       profile_name: input.profileName,
       spec_path: resolvedSpecPath,
-      ...await runtime.imageAssets.generatePersonaImageSet({
+      ...(await runtime.imageAssets.generatePersonaImageSet({
         persona,
         postImageCount: input.postImageCount,
         uploadProfileMedia: input.uploadProfileMedia,
         profileName: input.profileName,
         uploadDelayMs: input.uploadDelayMs,
         operatorNote: `issue-211 persona images: ${path.basename(resolvedSpecPath)}`,
-        ...(input.model ? { model: input.model } : {})
-      })
+        ...(input.model ? { model: input.model } : {}),
+      })),
     };
 
     if (input.outputPath) {
@@ -7265,7 +7727,7 @@ async function runAssetsGenerateProfileImages(input: {
       profileName: input.profileName,
       specPath: resolvedSpecPath,
       postImageCount: input.postImageCount,
-      uploadProfileMedia: input.uploadProfileMedia
+      uploadProfileMedia: input.uploadProfileMedia,
     });
 
     printJson(report);
@@ -7274,12 +7736,15 @@ async function runAssetsGenerateProfileImages(input: {
   }
 }
 
-async function runSearch(input: {
-  profileName: string;
-  query: string;
-  category?: SearchCategory;
-  limit?: number;
-}, cdpUrl?: string): Promise<void> {
+async function runSearch(
+  input: {
+    profileName: string;
+    query: string;
+    category?: SearchCategory;
+    limit?: number;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
@@ -7290,71 +7755,77 @@ async function runSearch(input: {
       profileName: input.profileName,
       query: input.query,
       category,
-      limit
+      limit,
     });
 
     const result = await runtime.search.search({
       profileName: input.profileName,
       query: input.query,
       ...(input.category ? { category: input.category } : {}),
-      ...(typeof input.limit === "number" ? { limit: input.limit } : {})
+      ...(typeof input.limit === "number" ? { limit: input.limit } : {}),
     });
 
     runtime.logger.log("info", "cli.search.done", {
       profileName: input.profileName,
       category: result.category,
-      count: result.count
+      count: result.count,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...result
+      ...result,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runNotificationsList(input: {
-  profileName: string;
-  limit: number;
-}, cdpUrl?: string): Promise<void> {
+async function runNotificationsList(
+  input: {
+    profileName: string;
+    limit: number;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.notifications.list.start", {
       profileName: input.profileName,
-      limit: input.limit
+      limit: input.limit,
     });
 
     const notifications = await runtime.notifications.listNotifications({
       profileName: input.profileName,
-      limit: input.limit
+      limit: input.limit,
     });
 
     runtime.logger.log("info", "cli.notifications.list.done", {
       profileName: input.profileName,
-      count: notifications.length
+      count: notifications.length,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
       count: notifications.length,
-      notifications
+      notifications,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runJobsSearch(input: {
-  profileName: string;
-  query: string;
-  location?: string;
-  limit: number;
-}, cdpUrl?: string): Promise<void> {
+async function runJobsSearch(
+  input: {
+    profileName: string;
+    query: string;
+    location?: string;
+    limit: number;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
@@ -7362,57 +7833,60 @@ async function runJobsSearch(input: {
       profileName: input.profileName,
       query: input.query,
       location: input.location ?? "",
-      limit: input.limit
+      limit: input.limit,
     });
 
     const result = await runtime.jobs.searchJobs({
       profileName: input.profileName,
       query: input.query,
       ...(input.location ? { location: input.location } : {}),
-      limit: input.limit
+      limit: input.limit,
     });
 
     runtime.logger.log("info", "cli.jobs.search.done", {
       profileName: input.profileName,
-      count: result.count
+      count: result.count,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...result
+      ...result,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runJobsView(input: {
-  profileName: string;
-  jobId: string;
-}, cdpUrl?: string): Promise<void> {
+async function runJobsView(
+  input: {
+    profileName: string;
+    jobId: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.jobs.view.start", {
       profileName: input.profileName,
-      jobId: input.jobId
+      jobId: input.jobId,
     });
 
     const job = await runtime.jobs.viewJob({
       profileName: input.profileName,
-      jobId: input.jobId
+      jobId: input.jobId,
     });
 
     runtime.logger.log("info", "cli.jobs.view.done", {
       profileName: input.profileName,
-      jobId: job.job_id
+      jobId: job.job_id,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      job
+      job,
     });
   } finally {
     runtime.close();
@@ -7420,7 +7894,7 @@ async function runJobsView(input: {
 }
 
 async function readEasyApplyAnswersFile(
-  filePath: string | undefined
+  filePath: string | undefined,
 ): Promise<Record<string, unknown> | undefined> {
   if (!filePath) {
     return undefined;
@@ -7430,158 +7904,173 @@ async function readEasyApplyAnswersFile(
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "Easy Apply answers file must contain a JSON object."
+      "Easy Apply answers file must contain a JSON object.",
     );
   }
 
   return raw as Record<string, unknown>;
 }
 
-async function runJobsSave(input: {
-  profileName: string;
-  jobId: string;
-  operatorNote?: string;
-}, cdpUrl?: string): Promise<void> {
+async function runJobsSave(
+  input: {
+    profileName: string;
+    jobId: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.jobs.save.start", {
       profileName: input.profileName,
-      jobId: input.jobId
+      jobId: input.jobId,
     });
 
     const prepared = runtime.jobs.prepareSaveJob({
       profileName: input.profileName,
       jobId: input.jobId,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
 
     runtime.logger.log("info", "cli.jobs.save.done", {
       profileName: input.profileName,
-      preparedActionId: prepared.preparedActionId
+      preparedActionId: prepared.preparedActionId,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...prepared
+      ...prepared,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runJobsUnsave(input: {
-  profileName: string;
-  jobId: string;
-  operatorNote?: string;
-}, cdpUrl?: string): Promise<void> {
+async function runJobsUnsave(
+  input: {
+    profileName: string;
+    jobId: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.jobs.unsave.start", {
       profileName: input.profileName,
-      jobId: input.jobId
+      jobId: input.jobId,
     });
 
     const prepared = runtime.jobs.prepareUnsaveJob({
       profileName: input.profileName,
       jobId: input.jobId,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
 
     runtime.logger.log("info", "cli.jobs.unsave.done", {
       profileName: input.profileName,
-      preparedActionId: prepared.preparedActionId
+      preparedActionId: prepared.preparedActionId,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...prepared
+      ...prepared,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runJobAlertsList(input: {
-  profileName: string;
-  limit: number;
-}, cdpUrl?: string): Promise<void> {
+async function runJobAlertsList(
+  input: {
+    profileName: string;
+    limit: number;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.jobs.alerts.list.start", {
       profileName: input.profileName,
-      limit: input.limit
+      limit: input.limit,
     });
 
     const result = await runtime.jobs.listJobAlerts({
       profileName: input.profileName,
-      limit: input.limit
+      limit: input.limit,
     });
 
     runtime.logger.log("info", "cli.jobs.alerts.list.done", {
       profileName: input.profileName,
-      count: result.count
+      count: result.count,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...result
+      ...result,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runJobAlertsCreate(input: {
-  profileName: string;
-  query: string;
-  location?: string;
-  operatorNote?: string;
-}, cdpUrl?: string): Promise<void> {
+async function runJobAlertsCreate(
+  input: {
+    profileName: string;
+    query: string;
+    location?: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.jobs.alerts.create.start", {
       profileName: input.profileName,
       query: input.query,
-      location: input.location ?? ""
+      location: input.location ?? "",
     });
 
     const prepared = runtime.jobs.prepareCreateJobAlert({
       profileName: input.profileName,
       query: input.query,
       ...(input.location ? { location: input.location } : {}),
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
 
     runtime.logger.log("info", "cli.jobs.alerts.create.done", {
       profileName: input.profileName,
-      preparedActionId: prepared.preparedActionId
+      preparedActionId: prepared.preparedActionId,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...prepared
+      ...prepared,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runJobAlertsRemove(input: {
-  profileName: string;
-  alertId?: string;
-  searchUrl?: string;
-  query?: string;
-  location?: string;
-  operatorNote?: string;
-}, cdpUrl?: string): Promise<void> {
+async function runJobAlertsRemove(
+  input: {
+    profileName: string;
+    alertId?: string;
+    searchUrl?: string;
+    query?: string;
+    location?: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
@@ -7589,7 +8078,7 @@ async function runJobAlertsRemove(input: {
       profileName: input.profileName,
       hasAlertId: Boolean(input.alertId),
       hasSearchUrl: Boolean(input.searchUrl),
-      hasQuery: Boolean(input.query)
+      hasQuery: Boolean(input.query),
     });
 
     const prepared = await runtime.jobs.prepareRemoveJobAlert({
@@ -7598,35 +8087,38 @@ async function runJobAlertsRemove(input: {
       ...(input.searchUrl ? { searchUrl: input.searchUrl } : {}),
       ...(input.query ? { query: input.query } : {}),
       ...(input.location ? { location: input.location } : {}),
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
 
     runtime.logger.log("info", "cli.jobs.alerts.remove.done", {
       profileName: input.profileName,
-      preparedActionId: prepared.preparedActionId
+      preparedActionId: prepared.preparedActionId,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...prepared
+      ...prepared,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runJobsEasyApplyPrepare(input: {
-  profileName: string;
-  jobId: string;
-  phone?: string;
-  email?: string;
-  city?: string;
-  resume?: string;
-  coverLetter?: string;
-  answersFile?: string;
-  operatorNote?: string;
-}, cdpUrl?: string): Promise<void> {
+async function runJobsEasyApplyPrepare(
+  input: {
+    profileName: string;
+    jobId: string;
+    phone?: string;
+    email?: string;
+    city?: string;
+    resume?: string;
+    coverLetter?: string;
+    answersFile?: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
@@ -7634,7 +8126,7 @@ async function runJobsEasyApplyPrepare(input: {
       profileName: input.profileName,
       jobId: input.jobId,
       hasResumePath: Boolean(input.resume),
-      hasAnswersFile: Boolean(input.answersFile)
+      hasAnswersFile: Boolean(input.answersFile),
     });
 
     const answers = await readEasyApplyAnswersFile(input.answersFile);
@@ -7647,39 +8139,40 @@ async function runJobsEasyApplyPrepare(input: {
       ...(input.resume ? { resumePath: input.resume } : {}),
       ...(input.coverLetter ? { coverLetter: input.coverLetter } : {}),
       ...(answers ? { answers } : {}),
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
 
     runtime.logger.log("info", "cli.jobs.easy_apply.done", {
       profileName: input.profileName,
-      preparedActionId: prepared.preparedActionId
+      preparedActionId: prepared.preparedActionId,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...prepared
+      ...prepared,
     });
   } finally {
     runtime.close();
   }
 }
 
-async function runSelectorAudit(input: {
-  profileName: string;
-  json: boolean;
-  progress: boolean;
-  verbose: boolean;
-}, cdpUrl?: string): Promise<void> {
+async function runSelectorAudit(
+  input: {
+    profileName: string;
+    json: boolean;
+    progress: boolean;
+    verbose: boolean;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const outputMode = resolveSelectorAuditOutputMode(
     { json: input.json },
-    Boolean(stdout.isTTY)
+    Boolean(stdout.isTTY),
   );
   const progressReporter = new SelectorAuditProgressReporter({
     enabled:
-      outputMode === "human" &&
-      input.progress &&
-      Boolean(process.stderr.isTTY)
+      outputMode === "human" && input.progress && Boolean(process.stderr.isTTY),
   });
   let profileName = input.profileName;
   let runtime: ReturnType<typeof createRuntime> | undefined;
@@ -7690,7 +8183,9 @@ async function runSelectorAudit(input: {
     runtime = createRuntime(cdpUrl);
     const selectorAuditRuntime = runtime;
 
-    const originalLog = selectorAuditRuntime.logger.log.bind(selectorAuditRuntime.logger);
+    const originalLog = selectorAuditRuntime.logger.log.bind(
+      selectorAuditRuntime.logger,
+    );
     // Mirror stable selector-audit lifecycle logs into the optional progress
     // reporter without changing the core service API surface.
     selectorAuditRuntime.logger.log = ((level, event, payload = {}) => {
@@ -7706,10 +8201,12 @@ async function runSelectorAudit(input: {
       profileName,
       outputMode,
       verbose: input.verbose,
-      progress: outputMode === "human" && input.progress
+      progress: outputMode === "human" && input.progress,
     });
 
-    const report = await selectorAuditRuntime.selectorAudit.auditSelectors({ profileName });
+    const report = await selectorAuditRuntime.selectorAudit.auditSelectors({
+      profileName,
+    });
 
     selectorAuditRuntime.logger.log("info", "cli.audit.selectors.done", {
       profileName,
@@ -7717,7 +8214,7 @@ async function runSelectorAudit(input: {
       passCount: report.pass_count,
       failCount: report.fail_count,
       fallbackCount: report.fallback_count,
-      reportPath: report.report_path
+      reportPath: report.report_path,
     });
 
     if (outputMode === "json") {
@@ -7726,13 +8223,13 @@ async function runSelectorAudit(input: {
       const redactedReport = redactStructuredValue(
         report,
         cliPrivacyConfig,
-        "cli"
+        "cli",
       ) as SelectorAuditReport;
 
       console.log(
         formatSelectorAuditReport(redactedReport, {
-          verbose: input.verbose
-        })
+          verbose: input.verbose,
+        }),
       );
     }
 
@@ -7744,7 +8241,7 @@ async function runSelectorAudit(input: {
 
     runtime?.logger.log("error", "cli.audit.selectors.failed", {
       profileName,
-      error: errorPayload
+      error: errorPayload,
     });
 
     if (outputMode === "json") {
@@ -7769,12 +8266,12 @@ async function runDraftQualityAudit(input: {
 }): Promise<void> {
   const outputMode = resolveDraftQualityOutputMode(
     { json: input.json },
-    Boolean(stdout.isTTY)
+    Boolean(stdout.isTTY),
   );
   const progressEnabled =
     outputMode === "human" && input.progress && Boolean(process.stderr.isTTY);
   const progressReporter = new DraftQualityProgressReporter({
-    enabled: progressEnabled
+    enabled: progressEnabled,
   });
   const logger = progressEnabled
     ? createDraftQualityProgressLogger((entry) => {
@@ -7785,14 +8282,17 @@ async function runDraftQualityAudit(input: {
   try {
     const datasetPath = path.resolve(input.datasetPath);
     const dataset = parseDraftQualityDataset(
-      await readJsonInputFile(datasetPath, "draft-quality dataset")
+      await readJsonInputFile(datasetPath, "draft-quality dataset"),
     );
     const candidatesPath = input.candidatesPath
       ? path.resolve(input.candidatesPath)
       : undefined;
     const candidates = candidatesPath
       ? parseDraftQualityCandidateSet(
-          await readJsonInputFile(candidatesPath, "draft-quality candidates file")
+          await readJsonInputFile(
+            candidatesPath,
+            "draft-quality candidates file",
+          ),
         )
       : undefined;
     const report = await evaluateDraftQuality({
@@ -7800,7 +8300,7 @@ async function runDraftQualityAudit(input: {
       ...(candidates ? { candidates } : {}),
       ...(logger ? { logger } : {}),
       dataset_path: datasetPath,
-      ...(candidatesPath ? { candidates_path: candidatesPath } : {})
+      ...(candidatesPath ? { candidates_path: candidatesPath } : {}),
     });
     const writtenReportPath = input.outputPath
       ? await writeOutputJsonFile(input.outputPath, report)
@@ -7812,11 +8312,11 @@ async function runDraftQualityAudit(input: {
       const redactedReport = redactStructuredValue(
         report,
         cliPrivacyConfig,
-        "cli"
+        "cli",
       ) as DraftQualityReport;
       const output = formatDraftQualityReport(redactedReport, {
         verbose: input.verbose,
-        ...(writtenReportPath ? { reportPath: writtenReportPath } : {})
+        ...(writtenReportPath ? { reportPath: writtenReportPath } : {}),
       });
 
       console.log(output);
@@ -7836,7 +8336,9 @@ async function runDraftQualityAudit(input: {
   }
 }
 
-function readTargetProfileName(target: Record<string, unknown>): string | undefined {
+function readTargetProfileName(
+  target: Record<string, unknown>,
+): string | undefined {
   const value = target.profile_name;
   if (typeof value === "string" && value.trim().length > 0) {
     return value.trim();
@@ -7844,20 +8346,23 @@ function readTargetProfileName(target: Record<string, unknown>): string | undefi
   return undefined;
 }
 
-async function runConfirmAction(input: {
-  profileName: string;
-  token: string;
-  yes: boolean;
-}, cdpUrl?: string): Promise<void> {
+async function runConfirmAction(
+  input: {
+    profileName: string;
+    token: string;
+    yes: boolean;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const runtime = createRuntime(cdpUrl);
 
   try {
     runtime.logger.log("info", "cli.actions.confirm.start", {
-      profileName: input.profileName
+      profileName: input.profileName,
     });
 
     const preview = runtime.twoPhaseCommit.getPreparedActionPreviewByToken({
-      confirmToken: input.token
+      confirmToken: input.token,
     });
 
     const preparedProfileName = readTargetProfileName(preview.target);
@@ -7867,8 +8372,8 @@ async function runConfirmAction(input: {
         `Prepared action belongs to profile "${preparedProfileName}", but "${input.profileName}" was requested.`,
         {
           expected_profile_name: preparedProfileName,
-          provided_profile_name: input.profileName
-        }
+          provided_profile_name: input.profileName,
+        },
       );
     }
 
@@ -7879,7 +8384,7 @@ async function runConfirmAction(input: {
     const summaryPayload = redactStructuredValue(
       { summary },
       cliPrivacyConfig,
-      "cli"
+      "cli",
     );
 
     console.log(`Preview summary: ${summaryPayload.summary}`);
@@ -7888,14 +8393,14 @@ async function runConfirmAction(input: {
       action_type: preview.actionType,
       status: preview.status,
       expires_at_ms: preview.expiresAtMs,
-      preview: preview.preview
+      preview: preview.preview,
     });
 
     if (!input.yes) {
       if (!stdin.isTTY || !stdout.isTTY) {
         throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
-          "Refusing to confirm action without --yes in non-interactive mode."
+          "Refusing to confirm action without --yes in non-interactive mode.",
         );
       }
 
@@ -7903,25 +8408,25 @@ async function runConfirmAction(input: {
       if (!confirmed) {
         throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
-          "Operator declined action confirmation."
+          "Operator declined action confirmation.",
         );
       }
     }
 
     const result = await runtime.twoPhaseCommit.confirmByToken({
-      confirmToken: input.token
+      confirmToken: input.token,
     });
 
     runtime.logger.log("info", "cli.actions.confirm.done", {
       profileName: input.profileName,
       preparedActionId: result.preparedActionId,
-      status: result.status
+      status: result.status,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
-      ...result
+      ...result,
     });
   } finally {
     runtime.close();
@@ -7938,17 +8443,17 @@ export function createCliProgram(): Command {
     .version(packageJson.version)
     .option(
       "--cdp-url <url>",
-      "Connect to existing browser via CDP endpoint (e.g., http://127.0.0.1:18800)"
+      "Connect to existing browser via CDP endpoint (e.g., http://127.0.0.1:18800)",
     )
     .option(
       "--selector-locale <locale>",
       `Prefer localized LinkedIn UI text first (${LINKEDIN_SELECTOR_LOCALES.join(
-        ", "
-      )}; region tags like da-DK normalize to da)`
+        ", ",
+      )}; region tags like da-DK normalize to da)`,
     )
     .option(
       "--evasion-level <level>",
-      "Override anti-bot evasion level for this command (minimal, moderate, paranoid)"
+      "Override anti-bot evasion level for this command (minimal, moderate, paranoid)",
     )
     .option("--no-evasion", "Disable anti-bot evasion for this command")
     .addHelpText(
@@ -7963,13 +8468,14 @@ export function createCliProgram(): Command {
         "Diagnostics:",
         "  linkedin audit selectors --help",
         "  linkedin audit draft-quality --help",
-        `  ${SELECTOR_AUDIT_DOC_REFERENCE}`
-      ].join("\n")
+        `  ${SELECTOR_AUDIT_DOC_REFERENCE}`,
+      ].join("\n"),
     );
 
   const readCdpUrl = (): string | undefined => {
     const options = program.opts<{ cdpUrl?: string }>();
-    return typeof options.cdpUrl === "string" && options.cdpUrl.trim().length > 0
+    return typeof options.cdpUrl === "string" &&
+      options.cdpUrl.trim().length > 0
       ? options.cdpUrl.trim()
       : undefined;
   };
@@ -8002,7 +8508,7 @@ export function createCliProgram(): Command {
     const profileName = readCommandProfileName(actionCommand);
     activeCliInvocation = {
       commandName: describeCliCommand(actionCommand),
-      ...(profileName ? { profileName } : {})
+      ...(profileName ? { profileName } : {}),
     };
   });
 
@@ -8012,7 +8518,9 @@ export function createCliProgram(): Command {
 
   program
     .command("status")
-    .description("Check whether the persistent LinkedIn profile is authenticated")
+    .description(
+      "Check whether the persistent LinkedIn profile is authenticated",
+    )
     .option("-p, --profile <profile>", "Profile name", "default")
     .addHelpText(
       "after",
@@ -8021,8 +8529,8 @@ export function createCliProgram(): Command {
         "Diagnostics:",
         "  - output includes an evasion block with the resolved level, enabled features, and diagnostics flag",
         `  - ${LINKEDIN_BUDDY_EVASION_LEVEL_ENV}=minimal|moderate|paranoid sets the default anti-bot profile`,
-        `  - ${LINKEDIN_BUDDY_EVASION_DIAGNOSTICS_ENV}=true records debug evasion events in the run log`
-      ].join("\n")
+        `  - ${LINKEDIN_BUDDY_EVASION_DIAGNOSTICS_ENV}=true records debug evasion events in the run log`,
+      ].join("\n"),
     )
     .action(async (options: { profile: string }) => {
       await runStatus(options.profile, readCdpUrl());
@@ -8042,12 +8550,14 @@ export function createCliProgram(): Command {
 
   const configureAuthSessionCommand = (command: Command): void => {
     command
-      .description("Capture an encrypted LinkedIn session from a manual browser login")
+      .description(
+        "Capture an encrypted LinkedIn session from a manual browser login",
+      )
       .option("-s, --session <session>", "Stored session name", "default")
       .option(
         "-t, --timeout-minutes <minutes>",
         "How long to wait for the manual login to finish",
-        "10"
+        "10",
       )
       .addHelpText(
         "after",
@@ -8062,27 +8572,61 @@ export function createCliProgram(): Command {
           "Examples:",
           "  linkedin auth session",
           "  linkedin auth session --session smoke --timeout-minutes 15",
-          "  linkedin auth session --session smoke"
-        ].join("\n")
+          "  linkedin auth session --session smoke",
+        ].join("\n"),
       )
-      .action(
-        async (options: { session: string; timeoutMinutes: string }) => {
-          await runAuthSessionCapture(
-            {
-              sessionName: coerceProfileName(options.session, "session"),
-              timeoutMinutes: coercePositiveInt(
-                options.timeoutMinutes,
-                "timeout-minutes"
-              )
-            },
-            readCdpUrl()
-          );
-        }
-      );
+      .action(async (options: { session: string; timeoutMinutes: string }) => {
+        await runAuthSessionCapture(
+          {
+            sessionName: coerceProfileName(options.session, "session"),
+            timeoutMinutes: coercePositiveInt(
+              options.timeoutMinutes,
+              "timeout-minutes",
+            ),
+          },
+          readCdpUrl(),
+        );
+      });
   };
 
   configureAuthSessionCommand(authCommand.command("session"));
-  configureAuthSessionCommand(program.command("auth:session", { hidden: true }));
+  configureAuthSessionCommand(
+    program.command("auth:session", { hidden: true }),
+  );
+
+  authCommand
+    .command("export-cookies")
+    .description(
+      "Export the current browser profile session (cookies + localStorage) to a JSON file",
+    )
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-o, --output <path>", "Output file path", "linkedin-session.json")
+    .action(async (options: { profile: string; output: string }) => {
+      await runExportCookies(
+        {
+          profileName: coerceProfileName(options.profile, "profile"),
+          outputPath: options.output,
+        },
+        readCdpUrl(),
+      );
+    });
+
+  authCommand
+    .command("import-cookies")
+    .description(
+      "Import session cookies from a JSON file into a browser profile",
+    )
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .requiredOption("-f, --file <path>", "Session state JSON file to import")
+    .action(async (options: { profile: string; file: string }) => {
+      await runImportCookies(
+        {
+          profileName: coerceProfileName(options.profile, "profile"),
+          inputPath: options.file,
+        },
+        readCdpUrl(),
+      );
+    });
 
   const accountsCommand = program
     .command("accounts")
@@ -8094,41 +8638,48 @@ export function createCliProgram(): Command {
       .description("Register or update a write-validation account")
       .requiredOption(
         "--designation <designation>",
-        "Whether the account is primary or secondary"
+        "Whether the account is primary or secondary",
       )
       .option("--label <label>", "Human-friendly account label")
       .option("--profile <profile>", "Profile name used for local DB state")
       .option(
         "--session <session>",
-        "Stored session name captured with linkedin auth session"
+        "Stored session name captured with linkedin auth session",
       )
       .option(
         "--message-thread <thread>",
-        "Approved thread id or URL for send_message"
+        "Approved thread id or URL for send_message",
       )
       .option(
         "--message-participant-pattern <pattern>",
-        "Optional regex used to double-check the approved thread participant"
+        "Optional regex used to double-check the approved thread participant",
       )
       .option(
         "--invite-profile <profile>",
-        "Approved profile URL or slug for connections.send_invitation"
+        "Approved profile URL or slug for connections.send_invitation",
       )
-      .option("--invite-note <note>", "Optional note for the approved invitation target")
+      .option(
+        "--invite-note <note>",
+        "Optional note for the approved invitation target",
+      )
       .option(
         "--followup-profile <profile>",
-        "Accepted connection profile URL or slug for network.followup_after_accept"
+        "Accepted connection profile URL or slug for network.followup_after_accept",
       )
       .option("--reaction-post <post>", "Approved post URL for feed.like_post")
       .option(
         "--reaction <reaction>",
-        `Reaction to use for feed.like_post (${LINKEDIN_FEED_REACTION_TYPES.join(", ")})`
+        `Reaction to use for feed.like_post (${LINKEDIN_FEED_REACTION_TYPES.join(", ")})`,
       )
       .option(
         "--post-visibility <visibility>",
-        `Visibility for post.create (${LINKEDIN_POST_VISIBILITY_TYPES.join(", ")})`
+        `Visibility for post.create (${LINKEDIN_POST_VISIBILITY_TYPES.join(", ")})`,
       )
-      .option("--force", "Overwrite an existing account with the same id", false)
+      .option(
+        "--force",
+        "Overwrite an existing account with the same id",
+        false,
+      )
       .addHelpText(
         "after",
         [
@@ -8140,8 +8691,8 @@ export function createCliProgram(): Command {
           "Notes:",
           "  - write validation refuses to run against accounts marked primary",
           "  - approved targets are stored in config.json under writeValidation.accounts",
-          "  - you can rerun with --force to replace an existing account definition"
-        ].join("\n")
+          "  - you can rerun with --force to replace an existing account definition",
+        ].join("\n"),
       )
       .action(
         async (
@@ -8160,7 +8711,7 @@ export function createCliProgram(): Command {
             reaction?: string;
             reactionPost?: string;
             session?: string;
-          }
+          },
         ) => {
           await runAccountsAdd({
             accountId,
@@ -8176,14 +8727,16 @@ export function createCliProgram(): Command {
             profileName: options.profile,
             reaction: options.reaction,
             reactionPost: options.reactionPost,
-            sessionName: options.session
+            sessionName: options.session,
           });
-        }
+        },
       );
   };
 
   configureAccountsAddCommand(accountsCommand.command("add"));
-  configureAccountsAddCommand(program.command("accounts:add", { hidden: true }));
+  configureAccountsAddCommand(
+    program.command("accounts:add", { hidden: true }),
+  );
 
   const testCommand = program
     .command("test")
@@ -8195,70 +8748,70 @@ export function createCliProgram(): Command {
       .option(
         "--read-only",
         "Confirm that the live validation should run in strictly read-only mode",
-        false
+        false,
       )
       .option(
         "--write-validation",
         "Run the Tier 3 real-action validation harness against a registered secondary account",
-        false
+        false,
       )
       .option(
         "--account <account>",
-        "Registered write-validation account id (required with --write-validation)"
+        "Registered write-validation account id (required with --write-validation)",
       )
       .option(
         "--cooldown-seconds <seconds>",
         "Cooldown between write-validation actions in seconds",
-        "10"
+        "10",
       )
       .option(
         "-s, --session <session>",
         "Stored session name captured by linkedin auth session",
-        "default"
+        "default",
       )
       .option(
         "--timeout-seconds <seconds>",
         "Navigation and selector timeout per validation step",
-        "30"
+        "30",
       )
       .option(
         "--max-requests <count>",
         "Maximum live page requests allowed before the run stops (retries included)",
-        "20"
+        "20",
       )
       .option(
         "--min-interval-ms <ms>",
         "Minimum delay between live page requests in milliseconds",
-        "5000"
+        "5000",
       )
       .option(
         "--max-retries <count>",
         "Retry transient timeout or network failures this many times per step",
-        "2"
+        "2",
       )
       .option(
         "--retry-base-delay-ms <ms>",
         "Initial exponential backoff delay for transient retries",
-        "1000"
+        "1000",
       )
       .option(
         "--retry-max-delay-ms <ms>",
         "Maximum exponential backoff delay for transient retries",
-        "10000"
+        "10000",
       )
       .option(
         "--no-progress",
-        "Hide per-step progress updates in human-readable output (stderr)"
+        "Hide per-step progress updates in human-readable output (stderr)",
       )
       .option(
         "-y, --yes",
         "Skip per-step confirmation prompts; read-only guardrails still apply",
-        false
+        false,
       )
       .option(
         "--json",
         "Print the structured report JSON to stdout (recommended for CI/scripts)",
-        false
+        false,
       )
       .addHelpText(
         "after",
@@ -8319,8 +8872,8 @@ export function createCliProgram(): Command {
           "Docs:",
           "  - docs/live-validation.md",
           "  - docs/live-validation-architecture.md",
-          `  - ${WRITE_VALIDATION_DOC_PATH}`
-        ].join("\n")
+          `  - ${WRITE_VALIDATION_DOC_PATH}`,
+        ].join("\n"),
       )
       .action(
         async (options: {
@@ -8345,7 +8898,7 @@ export function createCliProgram(): Command {
                 accountId: options.account,
                 cooldownSeconds: coerceNonNegativeInt(
                   options.cooldownSeconds,
-                  "cooldown-seconds"
+                  "cooldown-seconds",
                 ),
                 json: options.json,
                 progress: options.progress,
@@ -8353,11 +8906,11 @@ export function createCliProgram(): Command {
                 session: options.session,
                 timeoutSeconds: coercePositiveInt(
                   options.timeoutSeconds,
-                  "timeout-seconds"
+                  "timeout-seconds",
                 ),
-                yes: options.yes
+                yes: options.yes,
               },
-              readCdpUrl()
+              readCdpUrl(),
             );
             return;
           }
@@ -8365,37 +8918,45 @@ export function createCliProgram(): Command {
           await runLiveReadOnlyValidation(
             {
               json: options.json,
-              maxRequests: coercePositiveInt(options.maxRequests, "max-requests"),
-              maxRetries: coerceNonNegativeInt(options.maxRetries, "max-retries"),
+              maxRequests: coercePositiveInt(
+                options.maxRequests,
+                "max-requests",
+              ),
+              maxRetries: coerceNonNegativeInt(
+                options.maxRetries,
+                "max-retries",
+              ),
               minIntervalMs: coercePositiveInt(
                 options.minIntervalMs,
-                "min-interval-ms"
+                "min-interval-ms",
               ),
               progress: options.progress,
               readOnly: options.readOnly,
               retryBaseDelayMs: coercePositiveInt(
                 options.retryBaseDelayMs,
-                "retry-base-delay-ms"
+                "retry-base-delay-ms",
               ),
               retryMaxDelayMs: coercePositiveInt(
                 options.retryMaxDelayMs,
-                "retry-max-delay-ms"
+                "retry-max-delay-ms",
               ),
               sessionName: coerceProfileName(options.session, "session"),
               timeoutSeconds: coercePositiveInt(
                 options.timeoutSeconds,
-                "timeout-seconds"
+                "timeout-seconds",
               ),
-              yes: options.yes
+              yes: options.yes,
             },
-            readCdpUrl()
+            readCdpUrl(),
           );
-        }
+        },
       );
   };
 
   configureLiveValidationCommand(testCommand.command("live"));
-  configureLiveValidationCommand(program.command("test:live", { hidden: true }));
+  configureLiveValidationCommand(
+    program.command("test:live", { hidden: true }),
+  );
 
   const dataCommand = program
     .command("data")
@@ -8407,19 +8968,19 @@ export function createCliProgram(): Command {
       [
         "Preview local runtime data deletion; rerun with --confirm in an interactive terminal to delete.",
         "Default behavior is a dry-run preview of the shared local database, artifacts, keepalive state, and auth cooldown files. --include-profile expands the scope to all tool-owned browser profiles and adds a second confirmation before removing saved sessions and cookies.",
-        "Answering anything other than \"yes\" cancels safely. If some paths fail, the command reports failed_paths with recovery guidance after deleting what it can.",
-        "config.json is preserved by design. Stop keepalive daemons first. Data from external browsers attached with --cdp-url is never deleted."
-      ].join("\n\n")
+        'Answering anything other than "yes" cancels safely. If some paths fail, the command reports failed_paths with recovery guidance after deleting what it can.',
+        "config.json is preserved by design. Stop keepalive daemons first. Data from external browsers attached with --cdp-url is never deleted.",
+      ].join("\n\n"),
     )
     .option(
       "--confirm",
       "Permanently delete the listed tool-owned local data after interactive confirmation prompts",
-      false
+      false,
     )
     .option(
       "--include-profile",
       "Also preview/delete tool-owned browser profile data; destructive mode adds a second confirmation",
-      false
+      false,
     )
     .addHelpText(
       "after",
@@ -8440,39 +9001,38 @@ export function createCliProgram(): Command {
         "",
         "Interactive flow:",
         "  - --confirm requires an interactive terminal",
-        "  - answering anything other than \"yes\" cancels without deleting files",
+        '  - answering anything other than "yes" cancels without deleting files',
         "  - --include-profile adds a second prompt for browser sessions and cookies",
         "",
         "Partial failures:",
         "  - the command keeps deleting other targets when possible",
         "  - failed_paths reports path, code, message, and recoveryHint",
-        "  - fix the reported issue and rerun the same command"
-      ].join("\n")
+        "  - fix the reported issue and rerun the same command",
+      ].join("\n"),
     )
     .action(async (options: { confirm: boolean; includeProfile: boolean }) => {
       await runDataDelete({
         confirm: options.confirm,
         includeProfile: options.includeProfile,
-        cdpUrl: readCdpUrl()
+        cdpUrl: readCdpUrl(),
       });
     });
 
   program
     .command("feedback")
-    .description("File agent feedback as a GitHub issue or submit saved feedback")
-    .option(
-      "--type <type>",
-      `Feedback type (${FEEDBACK_TYPES.join(", ")})`
+    .description(
+      "File agent feedback as a GitHub issue or submit saved feedback",
     )
+    .option("--type <type>", `Feedback type (${FEEDBACK_TYPES.join(", ")})`)
     .option("--title <title>", "Short summary for the feedback issue")
     .option(
       "--description <description>",
-      "Detailed explanation. Omit to enter a multiline prompt interactively."
+      "Detailed explanation. Omit to enter a multiline prompt interactively.",
     )
     .option(
       "--submit-pending",
       "Submit all locally saved feedback files after authenticating with gh",
-      false
+      false,
     )
     .option("--json", "Print the structured feedback result as JSON", false)
     .addHelpText(
@@ -8491,8 +9051,8 @@ export function createCliProgram(): Command {
         "  - if `gh auth status` is not authenticated, feedback is saved under `.linkedin-buddy/pending-feedback/`",
         "  - later submit saved files with `gh auth login` then `linkedin-buddy feedback --submit-pending`",
         "",
-        `Encouragement hints appear once per active session, every ${DEFAULT_FEEDBACK_HINT_EVERY_N} invocations, and after errors.`
-      ].join("\n")
+        `Encouragement hints appear once per active session, every ${DEFAULT_FEEDBACK_HINT_EVERY_N} invocations, and after errors.`,
+      ].join("\n"),
     )
     .action(
       async (options: {
@@ -8507,15 +9067,15 @@ export function createCliProgram(): Command {
           submitPending: options.submitPending,
           ...(options.description ? { description: options.description } : {}),
           ...(options.title ? { title: options.title } : {}),
-          ...(options.type ? { type: options.type } : {})
+          ...(options.type ? { type: options.type } : {}),
         });
-      }
+      },
     );
 
   const keepAliveCommand = program
     .command("keepalive")
     .description(
-      "Manage the local session keepalive daemon that records background LinkedIn health checks to disk"
+      "Manage the local session keepalive daemon that records background LinkedIn health checks to disk",
     )
     .addHelpText(
       "after",
@@ -8531,33 +9091,37 @@ export function createCliProgram(): Command {
         "  linkedin keepalive start --profile default",
         "  linkedin keepalive status --profile default --verbose",
         "  linkedin keepalive stop --profile default",
-        "  linkedin keepalive status --profile smoke --json"
-      ].join("\n")
+        "  linkedin keepalive status --profile smoke --json",
+      ].join("\n"),
     );
 
   keepAliveCommand
     .command("start")
     .description(
-      "Start the local keepalive daemon for a profile and begin background session health checks"
+      "Start the local keepalive daemon for a profile and begin background session health checks",
     )
     .option("-p, --profile <profile>", "Profile name", "default")
     .option(
       "--interval-seconds <seconds>",
       "Health/refresh check interval in seconds",
-      "300"
+      "300",
     )
     .option(
       "--jitter-seconds <seconds>",
       "Random +/- jitter per interval in seconds",
-      "30"
+      "30",
     )
     .option(
       "--max-consecutive-failures <count>",
       "Mark daemon degraded after this many consecutive failures",
-      "5"
+      "5",
     )
     .option("--json", "Print the structured keepalive payload", false)
-    .option("--verbose", "Show extra diagnostics in human-readable output", false)
+    .option(
+      "--verbose",
+      "Show extra diagnostics in human-readable output",
+      false,
+    )
     .option("--quiet", "Print a concise human-readable summary", false)
     .addHelpText(
       "after",
@@ -8567,8 +9131,8 @@ export function createCliProgram(): Command {
         "Checks continue on the configured interval/jitter cadence and the saved state becomes degraded after the configured failure threshold.",
         "If a stale PID file already exists for this profile, start removes it before launching the new daemon.",
         "Human output shows a startup summary and reminds you how to inspect the first background health checks.",
-        "Use --quiet if you only need a compact confirmation message."
-      ].join("\n")
+        "Use --quiet if you only need a compact confirmation message.",
+      ].join("\n"),
     )
     .action(
       async (options: {
@@ -8586,30 +9150,36 @@ export function createCliProgram(): Command {
               profileName: options.profile,
               intervalSeconds: coercePositiveInt(
                 options.intervalSeconds,
-                "interval-seconds"
+                "interval-seconds",
               ),
               jitterSeconds: coerceNonNegativeInt(
                 options.jitterSeconds,
-                "jitter-seconds"
+                "jitter-seconds",
               ),
               maxConsecutiveFailures: coercePositiveInt(
                 options.maxConsecutiveFailures,
-                "max-consecutive-failures"
-              )
+                "max-consecutive-failures",
+              ),
             },
             outputOptions,
-            readCdpUrl()
+            readCdpUrl(),
           );
         });
-      }
+      },
     );
 
   keepAliveCommand
     .command("status")
-    .description("Show daemon health, the latest saved session check, and recovery guidance")
+    .description(
+      "Show daemon health, the latest saved session check, and recovery guidance",
+    )
     .option("-p, --profile <profile>", "Profile name", "default")
     .option("--json", "Print the structured keepalive payload", false)
-    .option("--verbose", "Show recent daemon events and extra diagnostics", false)
+    .option(
+      "--verbose",
+      "Show recent daemon events and extra diagnostics",
+      false,
+    )
     .option("--quiet", "Print a concise human-readable summary", false)
     .addHelpText(
       "after",
@@ -8618,8 +9188,8 @@ export function createCliProgram(): Command {
         "Status reads the daemon state and recent keepalive events saved for the selected profile.",
         "Interactive terminals show a human summary with Next Steps and Action Needed guidance when recovery is needed.",
         "Use --verbose to include recent daemon events, timestamps, and extra session detail.",
-        "Use --json for automation or to inspect the raw saved state."
-      ].join("\n")
+        "Use --json for automation or to inspect the raw saved state.",
+      ].join("\n"),
     )
     .action(
       async (options: {
@@ -8631,17 +9201,21 @@ export function createCliProgram(): Command {
         await runKeepAliveCliAction(options, async (outputOptions) => {
           await runKeepAliveStatus(options.profile, outputOptions);
         });
-      }
+      },
     );
 
   keepAliveCommand
     .command("stop")
     .description(
-      "Stop the local keepalive daemon and preserve the last saved health state"
+      "Stop the local keepalive daemon and preserve the last saved health state",
     )
     .option("-p, --profile <profile>", "Profile name", "default")
     .option("--json", "Print the structured keepalive payload", false)
-    .option("--verbose", "Show extra diagnostics in human-readable output", false)
+    .option(
+      "--verbose",
+      "Show extra diagnostics in human-readable output",
+      false,
+    )
     .option("--quiet", "Print a concise human-readable summary", false)
     .addHelpText(
       "after",
@@ -8649,8 +9223,8 @@ export function createCliProgram(): Command {
         "",
         "Stopping the daemon preserves the last saved state file and event log for later inspection.",
         "Use status after stopping if you want to confirm the daemon is idle or review the last recorded failure.",
-        "If the daemon ignores SIGTERM for 5 seconds, stop force-kills it and records that in the saved state."
-      ].join("\n")
+        "If the daemon ignores SIGTERM for 5 seconds, stop force-kills it and records that in the saved state.",
+      ].join("\n"),
     )
     .action(
       async (options: {
@@ -8662,7 +9236,7 @@ export function createCliProgram(): Command {
         await runKeepAliveCliAction(options, async (outputOptions) => {
           await runKeepAliveStop(options.profile, outputOptions);
         });
-      }
+      },
     );
 
   keepAliveCommand
@@ -8673,7 +9247,7 @@ export function createCliProgram(): Command {
     .requiredOption("--jitter-seconds <seconds>", "Interval jitter in seconds")
     .requiredOption(
       "--max-consecutive-failures <count>",
-      "Maximum failures before degraded status"
+      "Maximum failures before degraded status",
     )
     .action(
       async (options: {
@@ -8687,26 +9261,26 @@ export function createCliProgram(): Command {
             profileName: options.profile,
             intervalSeconds: coercePositiveInt(
               options.intervalSeconds,
-              "interval-seconds"
+              "interval-seconds",
             ),
             jitterSeconds: coerceNonNegativeInt(
               options.jitterSeconds,
-              "jitter-seconds"
+              "jitter-seconds",
             ),
             maxConsecutiveFailures: coercePositiveInt(
               options.maxConsecutiveFailures,
-              "max-consecutive-failures"
-            )
+              "max-consecutive-failures",
+            ),
           },
-          readCdpUrl()
+          readCdpUrl(),
         );
-      }
+      },
     );
 
   const schedulerCommand = program
     .command("scheduler")
     .description(
-      "Manage the local follow-up scheduler daemon. The scheduler only prepares follow-ups near their due time, and prepared actions still require manual confirmation."
+      "Manage the local follow-up scheduler daemon. The scheduler only prepares follow-ups near their due time, and prepared actions still require manual confirmation.",
     )
     .addHelpText(
       "afterAll",
@@ -8720,14 +9294,14 @@ export function createCliProgram(): Command {
         "  linkedin scheduler start --profile default",
         "  linkedin scheduler status --profile default --jobs 10",
         "  linkedin scheduler run-once --profile default --json",
-        "  linkedin scheduler stop --profile default"
-      ].join("\n")
+        "  linkedin scheduler stop --profile default",
+      ].join("\n"),
     );
 
   schedulerCommand
     .command("start")
     .description(
-      "Start the local scheduler daemon for a profile using the current poll interval and business-hours settings"
+      "Start the local scheduler daemon for a profile using the current poll interval and business-hours settings",
     )
     .option("-p, --profile <profile>", "Profile name", "default")
     .option("--json", "Print the structured scheduler payload", false)
@@ -8737,8 +9311,8 @@ export function createCliProgram(): Command {
         "",
         "The daemon wakes up on the configured poll interval and respects scheduler business hours.",
         "It only prepares due follow-ups; confirmation always remains manual.",
-        "Use `linkedin scheduler status` to inspect queue counts, recent history, and state/log paths."
-      ].join("\n")
+        "Use `linkedin scheduler status` to inspect queue counts, recent history, and state/log paths.",
+      ].join("\n"),
     )
     .action(async (options: { profile: string; json: boolean }) => {
       await runSchedulerCliAction(options, async (outputMode) => {
@@ -8748,12 +9322,14 @@ export function createCliProgram(): Command {
 
   schedulerCommand
     .command("status")
-    .description("Show daemon health, queue summary, and recent scheduler history")
+    .description(
+      "Show daemon health, queue summary, and recent scheduler history",
+    )
     .option("-p, --profile <profile>", "Profile name", "default")
     .option(
       "--jobs <count>",
       "Show up to this many queued and recent jobs in the status output",
-      String(DEFAULT_SCHEDULER_STATUS_JOB_LIMIT)
+      String(DEFAULT_SCHEDULER_STATUS_JOB_LIMIT),
     )
     .option("--json", "Print the structured scheduler payload", false)
     .addHelpText(
@@ -8762,23 +9338,25 @@ export function createCliProgram(): Command {
         "",
         "Status output previews queued jobs and recent history for the selected profile.",
         "Use --jobs <count> to control how many queued and recent jobs are shown.",
-        "Use --json for automation or to inspect the full structured scheduler payload."
-      ].join("\n")
+        "Use --json for automation or to inspect the full structured scheduler payload.",
+      ].join("\n"),
     )
-    .action(async (options: { profile: string; jobs: string; json: boolean }) => {
-      await runSchedulerCliAction(options, async (outputMode) => {
-        await runSchedulerStatus(
-          options.profile,
-          outputMode,
-          coercePositiveInt(options.jobs, "jobs")
-        );
-      });
-    });
+    .action(
+      async (options: { profile: string; jobs: string; json: boolean }) => {
+        await runSchedulerCliAction(options, async (outputMode) => {
+          await runSchedulerStatus(
+            options.profile,
+            outputMode,
+            coercePositiveInt(options.jobs, "jobs"),
+          );
+        });
+      },
+    );
 
   schedulerCommand
     .command("stop")
     .description(
-      "Stop the local scheduler daemon and clean up stale state without deleting queued jobs"
+      "Stop the local scheduler daemon and clean up stale state without deleting queued jobs",
     )
     .option("-p, --profile <profile>", "Profile name", "default")
     .option("--json", "Print the structured scheduler payload", false)
@@ -8787,8 +9365,8 @@ export function createCliProgram(): Command {
       [
         "",
         "Stopping the daemon does not delete queued jobs or prepared follow-up actions.",
-        "Use `linkedin scheduler status` after stopping if you want to confirm the daemon is idle."
-      ].join("\n")
+        "Use `linkedin scheduler status` after stopping if you want to confirm the daemon is idle.",
+      ].join("\n"),
     )
     .action(async (options: { profile: string; json: boolean }) => {
       await runSchedulerCliAction(options, async (outputMode) => {
@@ -8800,7 +9378,7 @@ export function createCliProgram(): Command {
     .command("run-once")
     .alias("tick")
     .description(
-      "Run one scheduler tick immediately, refresh queue state, and summarize the result"
+      "Run one scheduler tick immediately, refresh queue state, and summarize the result",
     )
     .option("-p, --profile <profile>", "Profile name", "default")
     .option("--json", "Print the structured scheduler payload", false)
@@ -8810,8 +9388,8 @@ export function createCliProgram(): Command {
         "",
         "A tick refreshes accepted invitations, syncs queue state, and prepares any due follow-ups.",
         "Prepared actions still require manual confirmation after a successful tick.",
-        "Use this command when you want an immediate scheduler pass without starting the daemon."
-      ].join("\n")
+        "Use this command when you want an immediate scheduler pass without starting the daemon.",
+      ].join("\n"),
     )
     .action(async (options: { profile: string; json: boolean }) => {
       await runSchedulerCliAction(options, async (outputMode) => {
@@ -8830,7 +9408,7 @@ export function createCliProgram(): Command {
   const activityCommand = program
     .command("activity")
     .description(
-      "Use human-readable activity summaries by default in interactive terminals. Manage poll-based LinkedIn activity watches, webhook subscriptions, and the local activity daemon."
+      "Use human-readable activity summaries by default in interactive terminals. Manage poll-based LinkedIn activity watches, webhook subscriptions, and the local activity daemon.",
     )
     .addHelpText(
       "after",
@@ -8846,8 +9424,8 @@ export function createCliProgram(): Command {
         "  linkedin activity run-once --profile default --json",
         "  linkedin activity start --profile default",
         "  linkedin activity status --profile default",
-        "  linkedin activity stop --profile default"
-      ].join("\n")
+        "  linkedin activity stop --profile default",
+      ].join("\n"),
     );
 
   const activityWatchCommand = activityCommand
@@ -8857,7 +9435,10 @@ export function createCliProgram(): Command {
   activityWatchCommand
     .command("add")
     .description("Create a new activity watch")
-    .requiredOption("--kind <kind>", `Watch kind: ${ACTIVITY_WATCH_KINDS.join(", ")}`)
+    .requiredOption(
+      "--kind <kind>",
+      `Watch kind: ${ACTIVITY_WATCH_KINDS.join(", ")}`,
+    )
     .option("-p, --profile <profile>", "Profile name", "default")
     .option("--interval-seconds <seconds>", "Poll interval in seconds")
     .option("--cron <expression>", "Cron schedule expression")
@@ -8884,18 +9465,18 @@ export function createCliProgram(): Command {
                 ? {
                     intervalSeconds: coercePositiveInt(
                       options.intervalSeconds,
-                      "interval-seconds"
-                    )
+                      "interval-seconds",
+                    ),
                   }
                 : {}),
               ...(options.cron ? { cron: options.cron } : {}),
-              ...(target ? { target } : {})
+              ...(target ? { target } : {}),
             },
             outputMode,
-            readCdpUrl()
+            readCdpUrl(),
           );
         });
-      }
+      },
     );
 
   activityWatchCommand
@@ -8904,23 +9485,25 @@ export function createCliProgram(): Command {
     .option("-p, --profile <profile>", "Profile name", "default")
     .option(
       "--status <status>",
-      `Filter by status: ${ACTIVITY_WATCH_STATUSES.join(", ")}`
+      `Filter by status: ${ACTIVITY_WATCH_STATUSES.join(", ")}`,
     )
     .option("--json", "Print the structured activity payload", false)
-    .action(async (options: { profile: string; status?: string; json: boolean }) => {
-      await runActivityCliAction(options, async (outputMode) => {
-        await runActivityWatchList(
-          {
-            profileName: options.profile,
-            ...(options.status
-              ? { status: coerceActivityWatchStatusValue(options.status) }
-              : {})
-          },
-          outputMode,
-          readCdpUrl()
-        );
-      });
-    });
+    .action(
+      async (options: { profile: string; status?: string; json: boolean }) => {
+        await runActivityCliAction(options, async (outputMode) => {
+          await runActivityWatchList(
+            {
+              profileName: options.profile,
+              ...(options.status
+                ? { status: coerceActivityWatchStatusValue(options.status) }
+                : {}),
+            },
+            outputMode,
+            readCdpUrl(),
+          );
+        });
+      },
+    );
 
   activityWatchCommand
     .command("pause")
@@ -8964,7 +9547,10 @@ export function createCliProgram(): Command {
     .description("Register a webhook subscription for one watch")
     .requiredOption("--watch <watchId>", "Activity watch id")
     .requiredOption("--url <deliveryUrl>", "Webhook delivery URL")
-    .option("-e, --event <eventType...>", `Event filters: ${ACTIVITY_EVENT_TYPES.join(", ")}`)
+    .option(
+      "-e, --event <eventType...>",
+      `Event filters: ${ACTIVITY_EVENT_TYPES.join(", ")}`,
+    )
     .option("--secret <secret>", "Webhook signing secret")
     .option("--max-attempts <count>", "Maximum delivery attempts")
     .option("--json", "Print the structured activity payload", false)
@@ -8990,16 +9576,16 @@ export function createCliProgram(): Command {
                 ? {
                     maxAttempts: coercePositiveInt(
                       options.maxAttempts,
-                      "max-attempts"
-                    )
+                      "max-attempts",
+                    ),
                   }
-                : {})
+                : {}),
             },
             outputMode,
-            readCdpUrl()
+            readCdpUrl(),
           );
         });
-      }
+      },
     );
 
   activityWebhookCommand
@@ -9009,25 +9595,34 @@ export function createCliProgram(): Command {
     .option("--watch <watchId>", "Filter by watch id")
     .option(
       "--status <status>",
-      `Filter by status: ${WEBHOOK_SUBSCRIPTION_STATUSES.join(", ")}`
+      `Filter by status: ${WEBHOOK_SUBSCRIPTION_STATUSES.join(", ")}`,
     )
     .option("--json", "Print the structured activity payload", false)
     .action(
-      async (options: { profile: string; watch?: string; status?: string; json: boolean }) => {
+      async (options: {
+        profile: string;
+        watch?: string;
+        status?: string;
+        json: boolean;
+      }) => {
         await runActivityCliAction(options, async (outputMode) => {
           await runActivityWebhookList(
             {
               profileName: options.profile,
               ...(options.watch ? { watchId: options.watch } : {}),
               ...(options.status
-                ? { status: coerceWebhookSubscriptionStatusValue(options.status) }
-                : {})
+                ? {
+                    status: coerceWebhookSubscriptionStatusValue(
+                      options.status,
+                    ),
+                  }
+                : {}),
             },
             outputMode,
-            readCdpUrl()
+            readCdpUrl(),
           );
         });
-      }
+      },
     );
 
   activityWebhookCommand
@@ -9048,7 +9643,11 @@ export function createCliProgram(): Command {
     .option("--json", "Print the structured activity payload", false)
     .action(async (subscriptionId: string, options: { json: boolean }) => {
       await runActivityCliAction(options, async (outputMode) => {
-        await runActivityWebhookResume(subscriptionId, outputMode, readCdpUrl());
+        await runActivityWebhookResume(
+          subscriptionId,
+          outputMode,
+          readCdpUrl(),
+        );
       });
     });
 
@@ -9059,7 +9658,11 @@ export function createCliProgram(): Command {
     .option("--json", "Print the structured activity payload", false)
     .action(async (subscriptionId: string, options: { json: boolean }) => {
       await runActivityCliAction(options, async (outputMode) => {
-        await runActivityWebhookRemove(subscriptionId, outputMode, readCdpUrl());
+        await runActivityWebhookRemove(
+          subscriptionId,
+          outputMode,
+          readCdpUrl(),
+        );
       });
     });
 
@@ -9070,29 +9673,39 @@ export function createCliProgram(): Command {
     .option("--watch <watchId>", "Filter by watch id")
     .option("-l, --limit <limit>", "Maximum events to return", "20")
     .option("--json", "Print the structured activity payload", false)
-    .action(async (options: { profile: string; watch?: string; limit: string; json: boolean }) => {
-      await runActivityCliAction(options, async (outputMode) => {
-        await runActivityEventsList(
-          {
-            profileName: options.profile,
-            ...(options.watch ? { watchId: options.watch } : {}),
-            limit: coercePositiveInt(options.limit, "limit")
-          },
-          outputMode,
-          readCdpUrl()
-        );
-      });
-    });
+    .action(
+      async (options: {
+        profile: string;
+        watch?: string;
+        limit: string;
+        json: boolean;
+      }) => {
+        await runActivityCliAction(options, async (outputMode) => {
+          await runActivityEventsList(
+            {
+              profileName: options.profile,
+              ...(options.watch ? { watchId: options.watch } : {}),
+              limit: coercePositiveInt(options.limit, "limit"),
+            },
+            outputMode,
+            readCdpUrl(),
+          );
+        });
+      },
+    );
 
   activityCommand
     .command("deliveries")
     .description("List recent webhook delivery attempts")
     .option("-p, --profile <profile>", "Profile name", "default")
     .option("--watch <watchId>", "Filter by watch id")
-    .option("--subscription <subscriptionId>", "Filter by webhook subscription id")
+    .option(
+      "--subscription <subscriptionId>",
+      "Filter by webhook subscription id",
+    )
     .option(
       "--status <status>",
-      `Filter by status: ${WEBHOOK_DELIVERY_ATTEMPT_STATUSES.join(", ")}`
+      `Filter by status: ${WEBHOOK_DELIVERY_ATTEMPT_STATUSES.join(", ")}`,
     )
     .option("-l, --limit <limit>", "Maximum deliveries to return", "20")
     .option("--json", "Print the structured activity payload", false)
@@ -9110,17 +9723,19 @@ export function createCliProgram(): Command {
             {
               profileName: options.profile,
               ...(options.watch ? { watchId: options.watch } : {}),
-              ...(options.subscription ? { subscriptionId: options.subscription } : {}),
+              ...(options.subscription
+                ? { subscriptionId: options.subscription }
+                : {}),
               ...(options.status
                 ? { status: coerceWebhookDeliveryStatusValue(options.status) }
                 : {}),
-              limit: coercePositiveInt(options.limit, "limit")
+              limit: coercePositiveInt(options.limit, "limit"),
             },
             outputMode,
-            readCdpUrl()
+            readCdpUrl(),
           );
         });
-      }
+      },
     );
 
   activityCommand
@@ -9176,7 +9791,6 @@ export function createCliProgram(): Command {
       await runActivityDaemon(options.profile, readCdpUrl());
     });
 
-
   program
     .command("login")
     .description("Open LinkedIn login in a persistent Playwright profile")
@@ -9184,24 +9798,50 @@ export function createCliProgram(): Command {
     .option(
       "-t, --timeout-minutes <minutes>",
       "How long to wait for successful login",
-      "10"
+      "10",
     )
-    .option("--headless", "Authenticate headlessly with email and password", false)
+    .option(
+      "--headless",
+      "Authenticate headlessly with email and password",
+      false,
+    )
+    .option(
+      "--headed",
+      "Force headed (non-headless) mode for headless login",
+      false,
+    )
+    .option(
+      "--headed-fallback",
+      "Retry in headed mode if CAPTCHA is detected during headless login",
+      false,
+    )
+    .option(
+      "--warm-profile",
+      "Browse LinkedIn organically before login to reduce CAPTCHA risk",
+      false,
+    )
     .option("--email <email>", "LinkedIn email (or set LINKEDIN_EMAIL env var)")
     .option(
       "--password <password>",
-      "LinkedIn password (or set LINKEDIN_PASSWORD env var)"
+      "LinkedIn password (or set LINKEDIN_PASSWORD env var)",
     )
     .option(
       "--mfa-code <code>",
-      "MFA verification code (or set LINKEDIN_MFA_CODE env var)"
+      "MFA verification code (or set LINKEDIN_MFA_CODE env var)",
     )
-    .option("--mfa-interactive", "Prompt for MFA code interactively via stdin", false)
+    .option(
+      "--mfa-interactive",
+      "Prompt for MFA code interactively via stdin",
+      false,
+    )
     .action(
       async (options: {
         profile: string;
         timeoutMinutes: string;
         headless: boolean;
+        headed: boolean;
+        headedFallback: boolean;
+        warmProfile: boolean;
         email?: string;
         password?: string;
         mfaCode?: string;
@@ -9209,7 +9849,7 @@ export function createCliProgram(): Command {
       }) => {
         const timeoutMinutes = coercePositiveInt(
           options.timeoutMinutes,
-          "timeout-minutes"
+          "timeout-minutes",
         );
 
         if (options.headless) {
@@ -9220,7 +9860,10 @@ export function createCliProgram(): Command {
           let mfaCallback: (() => Promise<string | undefined>) | undefined;
           if (options.mfaInteractive && !mfaCode) {
             mfaCallback = async () => {
-              const rl = createInterface({ input: stdin, output: process.stderr });
+              const rl = createInterface({
+                input: stdin,
+                output: process.stderr,
+              });
               try {
                 const code = await rl.question("LinkedIn verification code: ");
                 return code.trim() || undefined;
@@ -9233,14 +9876,14 @@ export function createCliProgram(): Command {
           if (!email) {
             throw new LinkedInBuddyError(
               "ACTION_PRECONDITION_FAILED",
-              "Headless login requires --email or LINKEDIN_EMAIL environment variable."
+              "Headless login requires --email or LINKEDIN_EMAIL environment variable.",
             );
           }
 
           if (!password) {
             throw new LinkedInBuddyError(
               "ACTION_PRECONDITION_FAILED",
-              "Headless login requires --password or LINKEDIN_PASSWORD environment variable."
+              "Headless login requires --password or LINKEDIN_PASSWORD environment variable.",
             );
           }
 
@@ -9251,14 +9894,17 @@ export function createCliProgram(): Command {
               password,
               ...(typeof mfaCode === "string" ? { mfaCode } : {}),
               ...(mfaCallback ? { mfaCallback } : {}),
-              timeoutMinutes
+              timeoutMinutes,
+              headed: options.headed,
+              headedFallback: options.headedFallback,
+              warmProfile: options.warmProfile,
             },
-            readCdpUrl()
+            readCdpUrl(),
           );
         } else {
           await runLogin(options.profile, timeoutMinutes, readCdpUrl());
         }
-      }
+      },
     );
 
   const runFixtureRecordCommand = async (options: {
@@ -9271,7 +9917,7 @@ export function createCliProgram(): Command {
     width: string;
   }) => {
     const pageTypes = uniqueFixtureReplayPageTypes(
-      options.page.length > 0 ? options.page : [...LINKEDIN_REPLAY_PAGE_TYPES]
+      options.page.length > 0 ? options.page : [...LINKEDIN_REPLAY_PAGE_TYPES],
     );
 
     await runFixturesRecord({
@@ -9281,7 +9927,7 @@ export function createCliProgram(): Command {
       pageTypes,
       profileName: coerceProfileName(options.profile),
       setName: coerceProfileName(options.set, "set"),
-      width: coercePositiveInt(options.width, "width")
+      width: coercePositiveInt(options.width, "width"),
     });
   };
 
@@ -9293,46 +9939,51 @@ export function createCliProgram(): Command {
     await runFixturesCheck({
       ...(options.manifest ? { manifestPath: options.manifest } : {}),
       maxAgeDays: coercePositiveInt(options.maxAgeDays, "max-age-days"),
-      ...(options.set ? { setName: coerceProfileName(options.set, "set") } : {})
+      ...(options.set
+        ? { setName: coerceProfileName(options.set, "set") }
+        : {}),
     });
   };
 
   const configureFixtureRecordCommand = (command: Command): Command =>
     command
       .description(
-        "Launch a manual Playwright capture flow and update a LinkedIn replay fixture set"
+        "Launch a manual Playwright capture flow and update a LinkedIn replay fixture set",
       )
       .option(
         "-p, --profile <profile>",
         "Profile name used for the manual LinkedIn browser session",
-        DEFAULT_FIXTURE_RECORD_PROFILE
+        DEFAULT_FIXTURE_RECORD_PROFILE,
       )
       .option(
         "-s, --set <name>",
         "Fixture set name stored under test/fixtures/",
-        DEFAULT_FIXTURE_RECORD_SET
+        DEFAULT_FIXTURE_RECORD_SET,
       )
       .option(
         "--page <type>",
         `Repeat or comma-separate page types (${LINKEDIN_REPLAY_PAGE_TYPES.join(", ")})`,
         collectFixtureReplayPageTypes,
-        [] as LinkedInReplayPageType[]
+        [] as LinkedInReplayPageType[],
       )
       .option(
         "--manifest <path>",
-        `Fixture manifest path (default: ${resolveFixtureManifestPath()})`
+        `Fixture manifest path (default: ${resolveFixtureManifestPath()})`,
       )
       .option(
         "--width <px>",
         "Viewport width in pixels",
-        String(DEFAULT_FIXTURE_VIEWPORT.width)
+        String(DEFAULT_FIXTURE_VIEWPORT.width),
       )
       .option(
         "--height <px>",
         "Viewport height in pixels",
-        String(DEFAULT_FIXTURE_VIEWPORT.height)
+        String(DEFAULT_FIXTURE_VIEWPORT.height),
       )
-      .option("--no-har", "Skip HAR capture and only save HTML snapshots + replay routes")
+      .option(
+        "--no-har",
+        "Skip HAR capture and only save HTML snapshots + replay routes",
+      )
       .addHelpText(
         "after",
         [
@@ -9348,26 +9999,28 @@ export function createCliProgram(): Command {
           "",
           "Next steps:",
           "  linkedin fixtures check --set <name>",
-          "  LINKEDIN_E2E_FIXTURE_SET=<name> npm run test:e2e:fixtures -- packages/core/src/__tests__/e2e/inbox.e2e.test.ts"
-        ].join("\n")
+          "  LINKEDIN_E2E_FIXTURE_SET=<name> npm run test:e2e:fixtures -- packages/core/src/__tests__/e2e/inbox.e2e.test.ts",
+        ].join("\n"),
       )
       .action(runFixtureRecordCommand);
 
   const configureFixtureCheckCommand = (command: Command): Command =>
     command
-      .description("Validate replay fixture freshness and print staleness warnings")
+      .description(
+        "Validate replay fixture freshness and print staleness warnings",
+      )
       .option(
         "-s, --set <name>",
-        "Only validate one fixture set from the manifest"
+        "Only validate one fixture set from the manifest",
       )
       .option(
         "--manifest <path>",
-        `Fixture manifest path (default: ${resolveFixtureManifestPath()})`
+        `Fixture manifest path (default: ${resolveFixtureManifestPath()})`,
       )
       .option(
         "--max-age-days <days>",
         "Warn when captured pages are older than this many days",
-        String(DEFAULT_FIXTURE_STALENESS_DAYS)
+        String(DEFAULT_FIXTURE_STALENESS_DAYS),
       )
       .addHelpText(
         "after",
@@ -9379,8 +10032,8 @@ export function createCliProgram(): Command {
           "",
           "Follow-up:",
           "  Re-record stale pages with linkedin fixtures record --set <name> --page <type>",
-          "  Replay a checked set with LINKEDIN_E2E_FIXTURE_SET=<name> npm run test:e2e:fixtures"
-        ].join("\n")
+          "  Replay a checked set with LINKEDIN_E2E_FIXTURE_SET=<name> npm run test:e2e:fixtures",
+        ].join("\n"),
       )
       .action(runFixtureCheckCommand);
 
@@ -9390,8 +10043,12 @@ export function createCliProgram(): Command {
 
   configureFixtureRecordCommand(fixturesCommand.command("record"));
   configureFixtureCheckCommand(fixturesCommand.command("check"));
-  configureFixtureRecordCommand(program.command("fixtures:record", { hidden: true }));
-  configureFixtureCheckCommand(program.command("fixtures:check", { hidden: true }));
+  configureFixtureRecordCommand(
+    program.command("fixtures:record", { hidden: true }),
+  );
+  configureFixtureCheckCommand(
+    program.command("fixtures:check", { hidden: true }),
+  );
 
   program
     .command("search")
@@ -9401,21 +10058,24 @@ export function createCliProgram(): Command {
     .option(
       "-c, --category <category>",
       `Search category: ${SEARCH_CATEGORIES.join(", ")}`,
-      "people"
+      "people",
     )
     .option("-l, --limit <limit>", "Max results", "10")
     .action(
       async (
         query: string,
-        options: { profile: string; category: string; limit: string }
+        options: { profile: string; category: string; limit: string },
       ) => {
-        await runSearch({
-          profileName: options.profile,
-          query,
-          category: coerceSearchCategory(options.category),
-          limit: coercePositiveInt(options.limit, "limit")
-        }, readCdpUrl());
-      }
+        await runSearch(
+          {
+            profileName: options.profile,
+            query,
+            category: coerceSearchCategory(options.category),
+            limit: coercePositiveInt(options.limit, "limit"),
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   const inboxCommand = program
@@ -9430,12 +10090,15 @@ export function createCliProgram(): Command {
     .option("-l, --limit <limit>", "Max recipients", "10")
     .action(
       async (options: { profile: string; query: string; limit: string }) => {
-        await runInboxSearchRecipients({
-          profileName: options.profile,
-          query: options.query,
-          limit: coercePositiveInt(options.limit, "limit")
-        }, readCdpUrl());
-      }
+        await runInboxSearchRecipients(
+          {
+            profileName: options.profile,
+            query: options.query,
+            limit: coercePositiveInt(options.limit, "limit"),
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   inboxCommand
@@ -9446,12 +10109,15 @@ export function createCliProgram(): Command {
     .option("-l, --limit <limit>", "Max threads", "20")
     .action(
       async (options: { profile: string; unread: boolean; limit: string }) => {
-        await runInboxList({
-          profileName: options.profile,
-          unreadOnly: options.unread,
-          limit: coercePositiveInt(options.limit, "limit")
-        }, readCdpUrl());
-      }
+        await runInboxList(
+          {
+            profileName: options.profile,
+            unreadOnly: options.unread,
+            limit: coercePositiveInt(options.limit, "limit"),
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   inboxCommand
@@ -9462,12 +10128,15 @@ export function createCliProgram(): Command {
     .option("-l, --limit <limit>", "Max messages to return", "20")
     .action(
       async (options: { profile: string; thread: string; limit: string }) => {
-        await runInboxShow({
-          profileName: options.profile,
-          thread: options.thread,
-          limit: coercePositiveInt(options.limit, "limit")
-        }, readCdpUrl());
-      }
+        await runInboxShow(
+          {
+            profileName: options.profile,
+            thread: options.thread,
+            limit: coercePositiveInt(options.limit, "limit"),
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   inboxCommand
@@ -9477,18 +10146,25 @@ export function createCliProgram(): Command {
       "-r, --recipient <recipient>",
       "LinkedIn profile URL, /in/ path, or vanity name",
       collectNonEmptyStrings,
-      [] as string[]
+      [] as string[],
     )
     .requiredOption("--text <text>", "First message text")
     .option("-p, --profile <profile>", "Profile name", "default")
     .action(
-      async (options: { profile: string; recipient: string[]; text: string }) => {
-        await runPrepareNewThread({
-          profileName: options.profile,
-          recipients: options.recipient,
-          text: options.text
-        }, readCdpUrl());
-      }
+      async (options: {
+        profile: string;
+        recipient: string[];
+        text: string;
+      }) => {
+        await runPrepareNewThread(
+          {
+            profileName: options.profile,
+            recipients: options.recipient,
+            text: options.text,
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   inboxCommand
@@ -9499,12 +10175,15 @@ export function createCliProgram(): Command {
     .option("-p, --profile <profile>", "Profile name", "default")
     .action(
       async (options: { profile: string; thread: string; text: string }) => {
-        await runPrepareReply({
-          profileName: options.profile,
-          thread: options.thread,
-          text: options.text
-        }, readCdpUrl());
-      }
+        await runPrepareReply(
+          {
+            profileName: options.profile,
+            thread: options.thread,
+            text: options.text,
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   inboxCommand
@@ -9515,17 +10194,24 @@ export function createCliProgram(): Command {
       "-r, --recipient <recipient>",
       "LinkedIn profile URL, /in/ path, or vanity name",
       collectNonEmptyStrings,
-      [] as string[]
+      [] as string[],
     )
     .option("-p, --profile <profile>", "Profile name", "default")
     .action(
-      async (options: { profile: string; recipient: string[]; thread: string }) => {
-        await runPrepareAddRecipients({
-          profileName: options.profile,
-          recipients: options.recipient,
-          thread: options.thread
-        }, readCdpUrl());
-      }
+      async (options: {
+        profile: string;
+        recipient: string[];
+        thread: string;
+      }) => {
+        await runPrepareAddRecipients(
+          {
+            profileName: options.profile,
+            recipients: options.recipient,
+            thread: options.thread,
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   const connectionsCommand = program
@@ -9537,39 +10223,37 @@ export function createCliProgram(): Command {
     .description("List your LinkedIn connections")
     .option("-p, --profile <profile>", "Profile name", "default")
     .option("-l, --limit <limit>", "Max connections to return", "40")
-    .action(
-      async (options: { profile: string; limit: string }) => {
-        await runConnectionsList({
+    .action(async (options: { profile: string; limit: string }) => {
+      await runConnectionsList(
+        {
           profileName: options.profile,
-          limit: coercePositiveInt(options.limit, "limit")
-        }, readCdpUrl());
-      }
-    );
+          limit: coercePositiveInt(options.limit, "limit"),
+        },
+        readCdpUrl(),
+      );
+    });
 
   connectionsCommand
     .command("pending")
     .description("List pending connection invitations")
     .option("-p, --profile <profile>", "Profile name", "default")
-    .option(
-      "-f, --filter <filter>",
-      "Filter: sent, received, or all",
-      "all"
-    )
-    .action(
-      async (options: { profile: string; filter: string }) => {
-        const filter = options.filter as "sent" | "received" | "all";
-        if (!["sent", "received", "all"].includes(filter)) {
-          throw new LinkedInBuddyError(
-            "ACTION_PRECONDITION_FAILED",
-            "Filter must be 'sent', 'received', or 'all'."
-          );
-        }
-        await runConnectionsPending({
-          profileName: options.profile,
-          filter
-        }, readCdpUrl());
+    .option("-f, --filter <filter>", "Filter: sent, received, or all", "all")
+    .action(async (options: { profile: string; filter: string }) => {
+      const filter = options.filter as "sent" | "received" | "all";
+      if (!["sent", "received", "all"].includes(filter)) {
+        throw new LinkedInBuddyError(
+          "ACTION_PRECONDITION_FAILED",
+          "Filter must be 'sent', 'received', or 'all'.",
+        );
       }
-    );
+      await runConnectionsPending(
+        {
+          profileName: options.profile,
+          filter,
+        },
+        readCdpUrl(),
+      );
+    });
 
   connectionsCommand
     .command("invite")
@@ -9579,12 +10263,15 @@ export function createCliProgram(): Command {
     .option("-n, --note <note>", "Optional invitation note")
     .action(
       async (target: string, options: { profile: string; note?: string }) => {
-        await runConnectionsInvite({
-          profileName: options.profile,
-          targetProfile: target,
-          ...(options.note ? { note: options.note } : {})
-        }, readCdpUrl());
-      }
+        await runConnectionsInvite(
+          {
+            profileName: options.profile,
+            targetProfile: target,
+            ...(options.note ? { note: options.note } : {}),
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   connectionsCommand
@@ -9593,10 +10280,13 @@ export function createCliProgram(): Command {
     .argument("<target>", "Vanity name or profile URL of the sender")
     .option("-p, --profile <profile>", "Profile name", "default")
     .action(async (target: string, options: { profile: string }) => {
-      await runConnectionsAccept({
-        profileName: options.profile,
-        targetProfile: target
-      }, readCdpUrl());
+      await runConnectionsAccept(
+        {
+          profileName: options.profile,
+          targetProfile: target,
+        },
+        readCdpUrl(),
+      );
     });
 
   connectionsCommand
@@ -9605,10 +10295,13 @@ export function createCliProgram(): Command {
     .argument("<target>", "Vanity name or profile URL")
     .option("-p, --profile <profile>", "Profile name", "default")
     .action(async (target: string, options: { profile: string }) => {
-      await runConnectionsWithdraw({
-        profileName: options.profile,
-        targetProfile: target
-      }, readCdpUrl());
+      await runConnectionsWithdraw(
+        {
+          profileName: options.profile,
+          targetProfile: target,
+        },
+        readCdpUrl(),
+      );
     });
 
   const membersCommand = program
@@ -9621,10 +10314,13 @@ export function createCliProgram(): Command {
     .argument("<target>", "Vanity name or profile URL")
     .option("-p, --profile <profile>", "Profile name", "default")
     .action(async (target: string, options: { profile: string }) => {
-      await runMembersPrepareBlock({
-        profileName: options.profile,
-        targetProfile: target
-      }, readCdpUrl());
+      await runMembersPrepareBlock(
+        {
+          profileName: options.profile,
+          targetProfile: target,
+        },
+        readCdpUrl(),
+      );
     });
 
   membersCommand
@@ -9633,10 +10329,13 @@ export function createCliProgram(): Command {
     .argument("<target>", "Vanity name or profile URL")
     .option("-p, --profile <profile>", "Profile name", "default")
     .action(async (target: string, options: { profile: string }) => {
-      await runMembersPrepareUnblock({
-        profileName: options.profile,
-        targetProfile: target
-      }, readCdpUrl());
+      await runMembersPrepareUnblock(
+        {
+          profileName: options.profile,
+          targetProfile: target,
+        },
+        readCdpUrl(),
+      );
     });
 
   membersCommand
@@ -9645,9 +10344,12 @@ export function createCliProgram(): Command {
     .argument("<target>", "Vanity name or profile URL")
     .requiredOption(
       "-r, --reason <reason>",
-      `Report reason (${LINKEDIN_MEMBER_REPORT_REASONS.join(", ")})`
+      `Report reason (${LINKEDIN_MEMBER_REPORT_REASONS.join(", ")})`,
     )
-    .option("-d, --details <details>", "Optional report details for free-text steps")
+    .option(
+      "-d, --details <details>",
+      "Optional report details for free-text steps",
+    )
     .option("-p, --profile <profile>", "Profile name", "default")
     .action(
       async (
@@ -9656,15 +10358,18 @@ export function createCliProgram(): Command {
           details?: string;
           profile: string;
           reason: string;
-        }
+        },
       ) => {
-        await runMembersPrepareReport({
-          profileName: options.profile,
-          targetProfile: target,
-          reason: options.reason,
-          ...(options.details ? { details: options.details } : {})
-        }, readCdpUrl());
-      }
+        await runMembersPrepareReport(
+          {
+            profileName: options.profile,
+            targetProfile: target,
+            reason: options.reason,
+            ...(options.details ? { details: options.details } : {}),
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   const privacyCommand = program
@@ -9676,29 +10381,38 @@ export function createCliProgram(): Command {
     .description("Read supported LinkedIn privacy settings")
     .option("-p, --profile <profile>", "Profile name", "default")
     .action(async (options: { profile: string }) => {
-      await runPrivacyGetSettings({
-        profileName: options.profile
-      }, readCdpUrl());
+      await runPrivacyGetSettings(
+        {
+          profileName: options.profile,
+        },
+        readCdpUrl(),
+      );
     });
 
   privacyCommand
     .command("update")
     .description("Prepare to update a LinkedIn privacy setting (two-phase)")
-    .argument("<settingKey>", `Setting key (${LINKEDIN_PRIVACY_SETTING_KEYS.join(", ")})`)
+    .argument(
+      "<settingKey>",
+      `Setting key (${LINKEDIN_PRIVACY_SETTING_KEYS.join(", ")})`,
+    )
     .argument("<value>", "Requested setting value")
     .option("-p, --profile <profile>", "Profile name", "default")
     .action(
       async (
         settingKey: string,
         value: string,
-        options: { profile: string }
+        options: { profile: string },
       ) => {
-        await runPrivacyPrepareUpdateSetting({
-          profileName: options.profile,
-          settingKey,
-          value
-        }, readCdpUrl());
-      }
+        await runPrivacyPrepareUpdateSetting(
+          {
+            profileName: options.profile,
+            settingKey,
+            value,
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   const followupsCommand = program
@@ -9707,36 +10421,44 @@ export function createCliProgram(): Command {
 
   followupsCommand
     .command("list")
-    .description("List recently accepted connections detected from sent invites")
+    .description(
+      "List recently accepted connections detected from sent invites",
+    )
     .option("-p, --profile <profile>", "Profile name", "default")
     .option(
       "-s, --since <window>",
       "Lookback window such as 30m, 12h, 7d, or 2w",
-      DEFAULT_FOLLOWUP_SINCE
+      DEFAULT_FOLLOWUP_SINCE,
     )
     .action(async (options: { profile: string; since: string }) => {
-      await runFollowupsList({
-        profileName: options.profile,
-        since: options.since
-      }, readCdpUrl());
+      await runFollowupsList(
+        {
+          profileName: options.profile,
+          since: options.since,
+        },
+        readCdpUrl(),
+      );
     });
 
   followupsCommand
     .command("prepare")
     .description(
-      "Prepare follow-up messages for newly accepted connections (two-phase)"
+      "Prepare follow-up messages for newly accepted connections (two-phase)",
     )
     .option("-p, --profile <profile>", "Profile name", "default")
     .option(
       "-s, --since <window>",
       "Lookback window such as 30m, 12h, 7d, or 2w",
-      DEFAULT_FOLLOWUP_SINCE
+      DEFAULT_FOLLOWUP_SINCE,
     )
     .action(async (options: { profile: string; since: string }) => {
-      await runFollowupsPrepare({
-        profileName: options.profile,
-        since: options.since
-      }, readCdpUrl());
+      await runFollowupsPrepare(
+        {
+          profileName: options.profile,
+          since: options.since,
+        },
+        readCdpUrl(),
+      );
     });
 
   const feedCommand = program
@@ -9748,14 +10470,15 @@ export function createCliProgram(): Command {
     .description("List posts from your LinkedIn feed")
     .option("-p, --profile <profile>", "Profile name", "default")
     .option("-l, --limit <limit>", "Max posts to return", "10")
-    .action(
-      async (options: { profile: string; limit: string }) => {
-        await runFeedList({
+    .action(async (options: { profile: string; limit: string }) => {
+      await runFeedList(
+        {
           profileName: options.profile,
-          limit: coercePositiveInt(options.limit, "limit")
-        }, readCdpUrl());
-      }
-    );
+          limit: coercePositiveInt(options.limit, "limit"),
+        },
+        readCdpUrl(),
+      );
+    });
 
   feedCommand
     .command("view")
@@ -9763,10 +10486,13 @@ export function createCliProgram(): Command {
     .argument("<post>", "Post URL, URN, or activity id")
     .option("-p, --profile <profile>", "Profile name", "default")
     .action(async (post: string, options: { profile: string }) => {
-      await runFeedView({
-        profileName: options.profile,
-        postUrl: post
-      }, readCdpUrl());
+      await runFeedView(
+        {
+          profileName: options.profile,
+          postUrl: post,
+        },
+        readCdpUrl(),
+      );
     });
 
   feedCommand
@@ -9778,21 +10504,26 @@ export function createCliProgram(): Command {
     .option(
       "-r, --reaction <reaction>",
       `Reaction type (${LINKEDIN_FEED_REACTION_TYPES.join(", ")})`,
-      "like"
+      "like",
     )
     .option("-o, --operator-note <note>", "Optional operator note")
     .action(
       async (
         post: string,
-        options: { profile: string; reaction: string; operatorNote?: string }
+        options: { profile: string; reaction: string; operatorNote?: string },
       ) => {
-        await runFeedLike({
-          profileName: options.profile,
-          postUrl: post,
-          reaction: options.reaction,
-          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
-        }, readCdpUrl());
-      }
+        await runFeedLike(
+          {
+            profileName: options.profile,
+            postUrl: post,
+            reaction: options.reaction,
+            ...(options.operatorNote
+              ? { operatorNote: options.operatorNote }
+              : {}),
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   feedCommand
@@ -9805,15 +10536,20 @@ export function createCliProgram(): Command {
     .action(
       async (
         post: string,
-        options: { profile: string; text: string; operatorNote?: string }
+        options: { profile: string; text: string; operatorNote?: string },
       ) => {
-        await runFeedComment({
-          profileName: options.profile,
-          postUrl: post,
-          text: options.text,
-          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
-        }, readCdpUrl());
-      }
+        await runFeedComment(
+          {
+            profileName: options.profile,
+            postUrl: post,
+            text: options.text,
+            ...(options.operatorNote
+              ? { operatorNote: options.operatorNote }
+              : {}),
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   feedCommand
@@ -9825,19 +10561,26 @@ export function createCliProgram(): Command {
     .action(
       async (
         post: string,
-        options: { profile: string; operatorNote?: string }
+        options: { profile: string; operatorNote?: string },
       ) => {
-        await runFeedRepost({
-          profileName: options.profile,
-          postUrl: post,
-          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
-        }, readCdpUrl());
-      }
+        await runFeedRepost(
+          {
+            profileName: options.profile,
+            postUrl: post,
+            ...(options.operatorNote
+              ? { operatorNote: options.operatorNote }
+              : {}),
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   feedCommand
     .command("share")
-    .description("Prepare to share a LinkedIn post with your own text (two-phase)")
+    .description(
+      "Prepare to share a LinkedIn post with your own text (two-phase)",
+    )
     .argument("<post>", "Post URL, URN, or activity id")
     .requiredOption("--text <text>", "Share text")
     .option("-p, --profile <profile>", "Profile name", "default")
@@ -9845,15 +10588,20 @@ export function createCliProgram(): Command {
     .action(
       async (
         post: string,
-        options: { profile: string; text: string; operatorNote?: string }
+        options: { profile: string; text: string; operatorNote?: string },
       ) => {
-        await runFeedShare({
-          profileName: options.profile,
-          postUrl: post,
-          text: options.text,
-          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
-        }, readCdpUrl());
-      }
+        await runFeedShare(
+          {
+            profileName: options.profile,
+            postUrl: post,
+            text: options.text,
+            ...(options.operatorNote
+              ? { operatorNote: options.operatorNote }
+              : {}),
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   feedCommand
@@ -9865,52 +10613,71 @@ export function createCliProgram(): Command {
     .action(
       async (
         post: string,
-        options: { profile: string; operatorNote?: string }
+        options: { profile: string; operatorNote?: string },
       ) => {
-        await runFeedSave({
-          profileName: options.profile,
-          postUrl: post,
-          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
-        }, readCdpUrl());
-      }
+        await runFeedSave(
+          {
+            profileName: options.profile,
+            postUrl: post,
+            ...(options.operatorNote
+              ? { operatorNote: options.operatorNote }
+              : {}),
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   feedCommand
     .command("unsave")
-    .description("Prepare to remove a LinkedIn post from saved items (two-phase)")
+    .description(
+      "Prepare to remove a LinkedIn post from saved items (two-phase)",
+    )
     .argument("<post>", "Post URL, URN, or activity id")
     .option("-p, --profile <profile>", "Profile name", "default")
     .option("-o, --operator-note <note>", "Optional operator note")
     .action(
       async (
         post: string,
-        options: { profile: string; operatorNote?: string }
+        options: { profile: string; operatorNote?: string },
       ) => {
-        await runFeedUnsave({
-          profileName: options.profile,
-          postUrl: post,
-          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
-        }, readCdpUrl());
-      }
+        await runFeedUnsave(
+          {
+            profileName: options.profile,
+            postUrl: post,
+            ...(options.operatorNote
+              ? { operatorNote: options.operatorNote }
+              : {}),
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   feedCommand
     .command("remove-reaction")
-    .description("Prepare to remove your current reaction from a LinkedIn post (two-phase)")
+    .description(
+      "Prepare to remove your current reaction from a LinkedIn post (two-phase)",
+    )
     .argument("<post>", "Post URL, URN, or activity id")
     .option("-p, --profile <profile>", "Profile name", "default")
     .option("-o, --operator-note <note>", "Optional operator note")
     .action(
       async (
         post: string,
-        options: { profile: string; operatorNote?: string }
+        options: { profile: string; operatorNote?: string },
       ) => {
-        await runFeedRemoveReaction({
-          profileName: options.profile,
-          postUrl: post,
-          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
-        }, readCdpUrl());
-      }
+        await runFeedRemoveReaction(
+          {
+            profileName: options.profile,
+            postUrl: post,
+            ...(options.operatorNote
+              ? { operatorNote: options.operatorNote }
+              : {}),
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   const postCommand = program
@@ -9924,7 +10691,7 @@ export function createCliProgram(): Command {
     .option(
       "-v, --visibility <visibility>",
       `Visibility (${LINKEDIN_POST_VISIBILITY_TYPES.join(", ")})`,
-      "public"
+      "public",
     )
     .option("-p, --profile <profile>", "Profile name", "default")
     .option("-o, --operator-note <note>", "Optional operator note")
@@ -9935,13 +10702,18 @@ export function createCliProgram(): Command {
         visibility: string;
         operatorNote?: string;
       }) => {
-        await runPostPrepare({
-          profileName: options.profile,
-          text: options.text,
-          visibility: options.visibility,
-          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
-        }, readCdpUrl());
-      }
+        await runPostPrepare(
+          {
+            profileName: options.profile,
+            text: options.text,
+            visibility: options.visibility,
+            ...(options.operatorNote
+              ? { operatorNote: options.operatorNote }
+              : {}),
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   postCommand
@@ -9952,17 +10724,22 @@ export function createCliProgram(): Command {
     .option("-y, --yes", "Skip interactive confirmation prompt", false)
     .action(
       async (options: { profile: string; token: string; yes: boolean }) => {
-        await runConfirmAction({
-          profileName: options.profile,
-          token: options.token,
-          yes: options.yes
-        }, readCdpUrl());
-      }
+        await runConfirmAction(
+          {
+            profileName: options.profile,
+            token: options.token,
+            yes: options.yes,
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   const articleCommand = program
     .command("article")
-    .description("Prepare and confirm LinkedIn article creation and publishing");
+    .description(
+      "Prepare and confirm LinkedIn article creation and publishing",
+    );
 
   articleCommand
     .command("prepare-create")
@@ -9997,7 +10774,9 @@ export function createCliProgram(): Command {
 
   articleCommand
     .command("prepare-publish")
-    .description("Prepare to publish an existing LinkedIn article draft (two-phase)")
+    .description(
+      "Prepare to publish an existing LinkedIn article draft (two-phase)",
+    )
     .requiredOption("--draft-url <url>", "LinkedIn article draft URL")
     .option("-p, --profile <profile>", "Profile name", "default")
     .option("-o, --operator-note <note>", "Optional operator note")
@@ -10104,16 +10883,14 @@ export function createCliProgram(): Command {
       "List newsletter series available in the LinkedIn publishing editor",
     )
     .option("-p, --profile <profile>", "Profile name", "default")
-    .action(
-      async (options: { profile: string }) => {
-        await runNewsletterList(
-          {
-            profileName: options.profile,
-          },
-          readCdpUrl(),
-        );
-      },
-    );
+    .action(async (options: { profile: string }) => {
+      await runNewsletterList(
+        {
+          profileName: options.profile,
+        },
+        readCdpUrl(),
+      );
+    });
 
   const notificationsCommand = program
     .command("notifications")
@@ -10124,14 +10901,15 @@ export function createCliProgram(): Command {
     .description("List your LinkedIn notifications")
     .option("-p, --profile <profile>", "Profile name", "default")
     .option("-l, --limit <limit>", "Max notifications to return", "20")
-    .action(
-      async (options: { profile: string; limit: string }) => {
-        await runNotificationsList({
+    .action(async (options: { profile: string; limit: string }) => {
+      await runNotificationsList(
+        {
           profileName: options.profile,
-          limit: coercePositiveInt(options.limit, "limit")
-        }, readCdpUrl());
-      }
-    );
+          limit: coercePositiveInt(options.limit, "limit"),
+        },
+        readCdpUrl(),
+      );
+    });
 
   const jobsCommand = program
     .command("jobs")
@@ -10147,15 +10925,18 @@ export function createCliProgram(): Command {
     .action(
       async (
         query: string,
-        options: { profile: string; location?: string; limit: string }
+        options: { profile: string; location?: string; limit: string },
       ) => {
-        await runJobsSearch({
-          profileName: options.profile,
-          query,
-          ...(options.location ? { location: options.location } : {}),
-          limit: coercePositiveInt(options.limit, "limit")
-        }, readCdpUrl());
-      }
+        await runJobsSearch(
+          {
+            profileName: options.profile,
+            query,
+            ...(options.location ? { location: options.location } : {}),
+            limit: coercePositiveInt(options.limit, "limit"),
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   jobsCommand
@@ -10164,10 +10945,13 @@ export function createCliProgram(): Command {
     .argument("<jobId>", "LinkedIn job ID")
     .option("-p, --profile <profile>", "Profile name", "default")
     .action(async (jobId: string, options: { profile: string }) => {
-      await runJobsView({
-        profileName: options.profile,
-        jobId
-      }, readCdpUrl());
+      await runJobsView(
+        {
+          profileName: options.profile,
+          jobId,
+        },
+        readCdpUrl(),
+      );
     });
 
   jobsCommand
@@ -10175,18 +10959,26 @@ export function createCliProgram(): Command {
     .description("Prepare to save a LinkedIn job for later (two-phase)")
     .argument("<jobId>", "LinkedIn job ID")
     .option("-p, --profile <profile>", "Profile name", "default")
-    .option("--operator-note <note>", "Optional note attached to the prepared action")
+    .option(
+      "--operator-note <note>",
+      "Optional note attached to the prepared action",
+    )
     .action(
       async (
         jobId: string,
-        options: { operatorNote?: string; profile: string }
+        options: { operatorNote?: string; profile: string },
       ) => {
-        await runJobsSave({
-          profileName: options.profile,
-          jobId,
-          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
-        }, readCdpUrl());
-      }
+        await runJobsSave(
+          {
+            profileName: options.profile,
+            jobId,
+            ...(options.operatorNote
+              ? { operatorNote: options.operatorNote }
+              : {}),
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   jobsCommand
@@ -10194,18 +10986,26 @@ export function createCliProgram(): Command {
     .description("Prepare to unsave a LinkedIn job (two-phase)")
     .argument("<jobId>", "LinkedIn job ID")
     .option("-p, --profile <profile>", "Profile name", "default")
-    .option("--operator-note <note>", "Optional note attached to the prepared action")
+    .option(
+      "--operator-note <note>",
+      "Optional note attached to the prepared action",
+    )
     .action(
       async (
         jobId: string,
-        options: { operatorNote?: string; profile: string }
+        options: { operatorNote?: string; profile: string },
       ) => {
-        await runJobsUnsave({
-          profileName: options.profile,
-          jobId,
-          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
-        }, readCdpUrl());
-      }
+        await runJobsUnsave(
+          {
+            profileName: options.profile,
+            jobId,
+            ...(options.operatorNote
+              ? { operatorNote: options.operatorNote }
+              : {}),
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   const jobsAlertsCommand = jobsCommand
@@ -10217,14 +11017,15 @@ export function createCliProgram(): Command {
     .description("List your LinkedIn job alerts")
     .option("-p, --profile <profile>", "Profile name", "default")
     .option("-l, --limit <limit>", "Max alerts to return", "20")
-    .action(
-      async (options: { profile: string; limit: string }) => {
-        await runJobAlertsList({
+    .action(async (options: { profile: string; limit: string }) => {
+      await runJobAlertsList(
+        {
           profileName: options.profile,
-          limit: coercePositiveInt(options.limit, "limit")
-        }, readCdpUrl());
-      }
-    );
+          limit: coercePositiveInt(options.limit, "limit"),
+        },
+        readCdpUrl(),
+      );
+    });
 
   jobsAlertsCommand
     .command("create")
@@ -10232,7 +11033,10 @@ export function createCliProgram(): Command {
     .argument("<query>", "Search keywords")
     .option("-p, --profile <profile>", "Profile name", "default")
     .option("--location <location>", "Location filter")
-    .option("--operator-note <note>", "Optional note attached to the prepared action")
+    .option(
+      "--operator-note <note>",
+      "Optional note attached to the prepared action",
+    )
     .action(
       async (
         query: string,
@@ -10240,15 +11044,20 @@ export function createCliProgram(): Command {
           location?: string;
           operatorNote?: string;
           profile: string;
-        }
+        },
       ) => {
-        await runJobAlertsCreate({
-          profileName: options.profile,
-          query,
-          ...(options.location ? { location: options.location } : {}),
-          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
-        }, readCdpUrl());
-      }
+        await runJobAlertsCreate(
+          {
+            profileName: options.profile,
+            query,
+            ...(options.location ? { location: options.location } : {}),
+            ...(options.operatorNote
+              ? { operatorNote: options.operatorNote }
+              : {}),
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   jobsAlertsCommand
@@ -10256,10 +11065,19 @@ export function createCliProgram(): Command {
     .description("Prepare to remove a LinkedIn job alert (two-phase)")
     .option("-p, --profile <profile>", "Profile name", "default")
     .option("--alert-id <alertId>", "Alert id returned by jobs alerts list")
-    .option("--search-url <searchUrl>", "LinkedIn jobs search URL for the alert")
-    .option("--query <query>", "Alert query if no alert id or search URL is available")
+    .option(
+      "--search-url <searchUrl>",
+      "LinkedIn jobs search URL for the alert",
+    )
+    .option(
+      "--query <query>",
+      "Alert query if no alert id or search URL is available",
+    )
     .option("--location <location>", "Alert location filter")
-    .option("--operator-note <note>", "Optional note attached to the prepared action")
+    .option(
+      "--operator-note <note>",
+      "Optional note attached to the prepared action",
+    )
     .action(
       async (options: {
         alertId?: string;
@@ -10269,15 +11087,20 @@ export function createCliProgram(): Command {
         query?: string;
         searchUrl?: string;
       }) => {
-        await runJobAlertsRemove({
-          profileName: options.profile,
-          ...(options.alertId ? { alertId: options.alertId } : {}),
-          ...(options.searchUrl ? { searchUrl: options.searchUrl } : {}),
-          ...(options.query ? { query: options.query } : {}),
-          ...(options.location ? { location: options.location } : {}),
-          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
-        }, readCdpUrl());
-      }
+        await runJobAlertsRemove(
+          {
+            profileName: options.profile,
+            ...(options.alertId ? { alertId: options.alertId } : {}),
+            ...(options.searchUrl ? { searchUrl: options.searchUrl } : {}),
+            ...(options.query ? { query: options.query } : {}),
+            ...(options.location ? { location: options.location } : {}),
+            ...(options.operatorNote
+              ? { operatorNote: options.operatorNote }
+              : {}),
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   jobsCommand
@@ -10290,8 +11113,14 @@ export function createCliProgram(): Command {
     .option("--city <city>", "City field value for the application")
     .option("--resume <resumePath>", "Resume file to upload")
     .option("--cover-letter <coverLetter>", "Cover letter text")
-    .option("--answers-file <path>", "JSON object file with extra Easy Apply answers")
-    .option("--operator-note <note>", "Optional note attached to the prepared action")
+    .option(
+      "--answers-file <path>",
+      "JSON object file with extra Easy Apply answers",
+    )
+    .option(
+      "--operator-note <note>",
+      "Optional note attached to the prepared action",
+    )
     .action(
       async (
         jobId: string,
@@ -10304,20 +11133,29 @@ export function createCliProgram(): Command {
           phone?: string;
           profile: string;
           resume?: string;
-        }
+        },
       ) => {
-        await runJobsEasyApplyPrepare({
-          profileName: options.profile,
-          jobId,
-          ...(options.phone ? { phone: options.phone } : {}),
-          ...(options.email ? { email: options.email } : {}),
-          ...(options.city ? { city: options.city } : {}),
-          ...(options.resume ? { resume: options.resume } : {}),
-          ...(options.coverLetter ? { coverLetter: options.coverLetter } : {}),
-          ...(options.answersFile ? { answersFile: options.answersFile } : {}),
-          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
-        }, readCdpUrl());
-      }
+        await runJobsEasyApplyPrepare(
+          {
+            profileName: options.profile,
+            jobId,
+            ...(options.phone ? { phone: options.phone } : {}),
+            ...(options.email ? { email: options.email } : {}),
+            ...(options.city ? { city: options.city } : {}),
+            ...(options.resume ? { resume: options.resume } : {}),
+            ...(options.coverLetter
+              ? { coverLetter: options.coverLetter }
+              : {}),
+            ...(options.answersFile
+              ? { answersFile: options.answersFile }
+              : {}),
+            ...(options.operatorNote
+              ? { operatorNote: options.operatorNote }
+              : {}),
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   const profileCommand = program
@@ -10330,14 +11168,17 @@ export function createCliProgram(): Command {
     .argument(
       "[target]",
       "Vanity name, profile URL, or 'me' for own profile",
-      "me"
+      "me",
     )
     .option("-p, --profile <profile>", "Profile name", "default")
     .action(async (target: string, options: { profile: string }) => {
-      await runProfileView({
-        profileName: options.profile,
-        target
-      }, readCdpUrl());
+      await runProfileView(
+        {
+          profileName: options.profile,
+          target,
+        },
+        readCdpUrl(),
+      );
     });
 
   const companyCommand = program
@@ -10350,10 +11191,13 @@ export function createCliProgram(): Command {
     .argument("<target>", "Company slug, /company/ path, or company URL")
     .option("-p, --profile <profile>", "Profile name", "default")
     .action(async (target: string, options: { profile: string }) => {
-      await runCompanyPageView({
-        profileName: options.profile,
-        target
-      }, readCdpUrl());
+      await runCompanyPageView(
+        {
+          profileName: options.profile,
+          target,
+        },
+        readCdpUrl(),
+      );
     });
 
   companyCommand
@@ -10361,18 +11205,26 @@ export function createCliProgram(): Command {
     .description("Prepare to follow a LinkedIn company page (two-phase)")
     .argument("<target>", "Company slug, /company/ path, or company URL")
     .option("-p, --profile <profile>", "Profile name", "default")
-    .option("--operator-note <note>", "Optional note attached to the prepared action")
+    .option(
+      "--operator-note <note>",
+      "Optional note attached to the prepared action",
+    )
     .action(
       async (
         target: string,
-        options: { operatorNote?: string; profile: string }
+        options: { operatorNote?: string; profile: string },
       ) => {
-        await runCompanyPrepareFollow({
-          profileName: options.profile,
-          targetCompany: target,
-          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
-        }, readCdpUrl());
-      }
+        await runCompanyPrepareFollow(
+          {
+            profileName: options.profile,
+            targetCompany: target,
+            ...(options.operatorNote
+              ? { operatorNote: options.operatorNote }
+              : {}),
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   companyCommand
@@ -10380,90 +11232,129 @@ export function createCliProgram(): Command {
     .description("Prepare to unfollow a LinkedIn company page (two-phase)")
     .argument("<target>", "Company slug, /company/ path, or company URL")
     .option("-p, --profile <profile>", "Profile name", "default")
-    .option("--operator-note <note>", "Optional note attached to the prepared action")
+    .option(
+      "--operator-note <note>",
+      "Optional note attached to the prepared action",
+    )
     .action(
       async (
         target: string,
-        options: { operatorNote?: string; profile: string }
+        options: { operatorNote?: string; profile: string },
       ) => {
-        await runCompanyPrepareUnfollow({
-          profileName: options.profile,
-          targetCompany: target,
-          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
-        }, readCdpUrl());
-      }
+        await runCompanyPrepareUnfollow(
+          {
+            profileName: options.profile,
+            targetCompany: target,
+            ...(options.operatorNote
+              ? { operatorNote: options.operatorNote }
+              : {}),
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   profileCommand
     .command("editable")
-    .description("Inspect the logged-in member's editable LinkedIn profile surface")
+    .description(
+      "Inspect the logged-in member's editable LinkedIn profile surface",
+    )
     .option("-p, --profile <profile>", "Profile name", "default")
     .action(async (options: { profile: string }) => {
-      await runProfileViewEditable({
-        profileName: options.profile
-      }, readCdpUrl());
+      await runProfileViewEditable(
+        {
+          profileName: options.profile,
+        },
+        readCdpUrl(),
+      );
     });
 
   profileCommand
     .command("update-settings")
-    .description("Prepare to update LinkedIn profile-level settings (two-phase)")
-    .requiredOption("--industry <industry>", "Primary professional category / industry")
+    .description(
+      "Prepare to update LinkedIn profile-level settings (two-phase)",
+    )
+    .requiredOption(
+      "--industry <industry>",
+      "Primary professional category / industry",
+    )
     .option("-p, --profile <profile>", "Profile name", "default")
-    .option("--operator-note <note>", "Optional note attached to the prepared action")
+    .option(
+      "--operator-note <note>",
+      "Optional note attached to the prepared action",
+    )
     .action(
-      async (
-        options: {
-          industry: string;
-          operatorNote?: string;
-          profile: string;
-        }
-      ) => {
-        await runProfilePrepareUpdateSettings({
-          profileName: options.profile,
-          industry: options.industry,
-          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
-        }, readCdpUrl());
-      }
+      async (options: {
+        industry: string;
+        operatorNote?: string;
+        profile: string;
+      }) => {
+        await runProfilePrepareUpdateSettings(
+          {
+            profileName: options.profile,
+            industry: options.industry,
+            ...(options.operatorNote
+              ? { operatorNote: options.operatorNote }
+              : {}),
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   profileCommand
     .command("update-public-profile")
-    .description("Prepare to update the LinkedIn custom public profile URL (two-phase)")
-    .argument("<vanityName>", "Custom public profile vanity name or linkedin.com/in/ URL")
+    .description(
+      "Prepare to update the LinkedIn custom public profile URL (two-phase)",
+    )
+    .argument(
+      "<vanityName>",
+      "Custom public profile vanity name or linkedin.com/in/ URL",
+    )
     .option("-p, --profile <profile>", "Profile name", "default")
-    .option("--operator-note <note>", "Optional note attached to the prepared action")
+    .option(
+      "--operator-note <note>",
+      "Optional note attached to the prepared action",
+    )
     .action(
       async (
         vanityName: string,
-        options: { operatorNote?: string; profile: string }
+        options: { operatorNote?: string; profile: string },
       ) => {
-        await runProfilePrepareUpdatePublicProfile({
-          profileName: options.profile,
-          vanityName,
-          ...(options.operatorNote ? { operatorNote: options.operatorNote } : {})
-        }, readCdpUrl());
-      }
+        await runProfilePrepareUpdatePublicProfile(
+          {
+            profileName: options.profile,
+            vanityName,
+            ...(options.operatorNote
+              ? { operatorNote: options.operatorNote }
+              : {}),
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   profileCommand
     .command("apply-spec")
-    .description("Apply a JSON profile seed spec with paced LinkedIn profile edits")
+    .description(
+      "Apply a JSON profile seed spec with paced LinkedIn profile edits",
+    )
     .requiredOption("--spec <path>", "Path to a JSON profile seed spec")
     .option("-p, --profile <profile>", "Profile name", "default")
     .option(
       "--replace",
       "Remove unmatched supported section items for sections included in the spec",
-      false
+      false,
     )
     .option(
       "--allow-partial",
       "Continue when the spec includes unsupported fields such as skills",
-      false
+      false,
     )
     .option(
       "--delay-ms <ms>",
       "Base delay between confirmed profile edits",
-      "3500"
+      "3500",
     )
     .option("-y, --yes", "Skip the interactive confirmation prompt", false)
     .option("--output <path>", "Write the final JSON report to a file")
@@ -10475,8 +11366,8 @@ export function createCliProgram(): Command {
         "  - uses the existing two-phase profile edit actions under the hood and confirms them one by one",
         "  - paces edits with a randomized delay so large profile updates do not fire back-to-back",
         "  - unsupported fields currently include skills (#228)",
-        "  - run \"linkedin profile editable\" first if you want to inspect the current section structure"
-      ].join("\n")
+        '  - run "linkedin profile editable" first if you want to inspect the current section structure',
+      ].join("\n"),
     )
     .action(
       async (options: {
@@ -10488,16 +11379,19 @@ export function createCliProgram(): Command {
         yes: boolean;
         output?: string;
       }) => {
-        await runProfileApplySpec({
-          profileName: options.profile,
-          specPath: options.spec,
-          replace: options.replace,
-          allowPartial: options.allowPartial,
-          delayMs: coerceNonNegativeInt(options.delayMs, "delay-ms"),
-          yes: options.yes,
-          ...(options.output ? { outputPath: options.output } : {})
-        }, readCdpUrl());
-      }
+        await runProfileApplySpec(
+          {
+            profileName: options.profile,
+            specPath: options.spec,
+            replace: options.replace,
+            allowPartial: options.allowPartial,
+            delayMs: coerceNonNegativeInt(options.delayMs, "delay-ms"),
+            yes: options.yes,
+            ...(options.output ? { outputPath: options.output } : {}),
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   const assetsCommand = program
@@ -10506,7 +11400,9 @@ export function createCliProgram(): Command {
 
   assetsCommand
     .command("generate-profile-images")
-    .description("Generate a profile photo, banner, and post images from a persona spec")
+    .description(
+      "Generate a profile photo, banner, and post images from a persona spec",
+    )
     .requiredOption("--spec <path>", "Path to a JSON persona/profile seed spec")
     .option("-p, --profile <profile>", "Profile name", "default")
     .option("--post-count <count>", "Number of post images to generate", "6")
@@ -10514,12 +11410,12 @@ export function createCliProgram(): Command {
     .option(
       "--upload-profile-media",
       "Upload the generated photo and banner through the existing LinkedIn profile flow",
-      false
+      false,
     )
     .option(
       "--upload-delay-ms <ms>",
       "Base delay between the photo and banner upload when --upload-profile-media is enabled",
-      "4500"
+      "4500",
     )
     .option("--output <path>", "Write the final JSON report to a file")
     .addHelpText(
@@ -10530,8 +11426,8 @@ export function createCliProgram(): Command {
         "  - requires OPENAI_API_KEY in the environment",
         "  - generated assets are stored in the run artifacts directory under linkedin-ai-assets/",
         "  - --upload-profile-media reuses the existing profile photo/banner upload actions and paces the two uploads",
-        "  - the issue-210 persona spec is a good default source for the test account"
-      ].join("\n")
+        "  - the issue-210 persona spec is a good default source for the test account",
+      ].join("\n"),
     )
     .action(
       async (options: {
@@ -10543,31 +11439,41 @@ export function createCliProgram(): Command {
         uploadDelayMs: string;
         output?: string;
       }) => {
-        await runAssetsGenerateProfileImages({
-          profileName: options.profile,
-          specPath: options.spec,
-          postImageCount: coercePositiveInt(options.postCount, "post-count"),
-          uploadProfileMedia: options.uploadProfileMedia,
-          uploadDelayMs: coerceNonNegativeInt(options.uploadDelayMs, "upload-delay-ms"),
-          ...(options.model ? { model: options.model } : {}),
-          ...(options.output ? { outputPath: options.output } : {})
-        }, readCdpUrl());
-      }
+        await runAssetsGenerateProfileImages(
+          {
+            profileName: options.profile,
+            specPath: options.spec,
+            postImageCount: coercePositiveInt(options.postCount, "post-count"),
+            uploadProfileMedia: options.uploadProfileMedia,
+            uploadDelayMs: coerceNonNegativeInt(
+              options.uploadDelayMs,
+              "upload-delay-ms",
+            ),
+            ...(options.model ? { model: options.model } : {}),
+            ...(options.output ? { outputPath: options.output } : {}),
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   const seedCommand = program
     .command("seed")
-    .description("Run reusable LinkedIn profile and activity seeding workflows");
+    .description(
+      "Run reusable LinkedIn profile and activity seeding workflows",
+    );
 
   seedCommand
     .command("activity")
-    .description("Apply a paced activity seed spec for connections, posts, engagement, jobs, messaging, and notifications")
+    .description(
+      "Apply a paced activity seed spec for connections, posts, engagement, jobs, messaging, and notifications",
+    )
     .requiredOption("--spec <path>", "Path to a JSON activity seed spec")
     .option("-p, --profile <profile>", "Profile name", "default")
     .option(
       "--delay-ms <ms>",
       "Base delay between confirmed write actions",
-      "4500"
+      "4500",
     )
     .option("-y, --yes", "Skip the interactive confirmation prompt", false)
     .option("--output <path>", "Write the final JSON report to a file")
@@ -10580,8 +11486,8 @@ export function createCliProgram(): Command {
         "  - start `linkedin keepalive start` first for longer seeding sessions",
         "  - posts default to `connections` visibility when the spec omits visibility",
         "  - generated-image posts can reuse the issue-211 image manifest via assets.generatedImageManifestPath",
-        "  - verification re-reads connections, feed, and inbox state at the end of the run"
-      ].join("\n")
+        "  - verification re-reads connections, feed, and inbox state at the end of the run",
+      ].join("\n"),
     )
     .action(
       async (options: {
@@ -10591,14 +11497,17 @@ export function createCliProgram(): Command {
         yes: boolean;
         output?: string;
       }) => {
-        await runSeedActivity({
-          profileName: options.profile,
-          specPath: options.spec,
-          delayMs: coerceNonNegativeInt(options.delayMs, "delay-ms"),
-          yes: options.yes,
-          ...(options.output ? { outputPath: options.output } : {})
-        }, readCdpUrl());
-      }
+        await runSeedActivity(
+          {
+            profileName: options.profile,
+            specPath: options.spec,
+            delayMs: coerceNonNegativeInt(options.delayMs, "delay-ms"),
+            yes: options.yes,
+            ...(options.output ? { outputPath: options.output } : {}),
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   const auditCommand = program
@@ -10607,56 +11516,79 @@ export function createCliProgram(): Command {
 
   auditCommand
     .command("selectors")
-    .description("Audit selector groups across key LinkedIn pages and capture failure artifacts")
+    .description(
+      "Audit selector groups across key LinkedIn pages and capture failure artifacts",
+    )
     .option("-p, --profile <profile>", "Profile name", "default")
-    .option("--json", "Print the full JSON report (recommended for automation)", false)
+    .option(
+      "--json",
+      "Print the full JSON report (recommended for automation)",
+      false,
+    )
     .option(
       "--verbose",
       "Show selector-by-selector details in human-readable output",
-      false
+      false,
     )
-    .option("--no-progress", "Hide per-page progress updates in human-readable output")
+    .option(
+      "--no-progress",
+      "Hide per-page progress updates in human-readable output",
+    )
     .addHelpText(
       "after",
       [
         "",
         "Interactive terminals default to a human-readable summary with per-page progress.",
         "Use --json for automation, piping, or other agent workflows.",
-        SELECTOR_AUDIT_DOC_REFERENCE
-      ].join("\n")
+        SELECTOR_AUDIT_DOC_REFERENCE,
+      ].join("\n"),
     )
-    .action(async (options: {
-      profile: string;
-      json: boolean;
-      progress: boolean;
-      verbose: boolean;
-    }) => {
-      await runSelectorAudit({
-        profileName: options.profile,
-        json: options.json,
-        progress: options.progress,
-        verbose: options.verbose
-      }, readCdpUrl());
-    });
+    .action(
+      async (options: {
+        profile: string;
+        json: boolean;
+        progress: boolean;
+        verbose: boolean;
+      }) => {
+        await runSelectorAudit(
+          {
+            profileName: options.profile,
+            json: options.json,
+            progress: options.progress,
+            verbose: options.verbose,
+          },
+          readCdpUrl(),
+        );
+      },
+    );
 
   auditCommand
     .command("draft-quality")
-    .description("Evaluate draft replies against case-specific quality expectations")
+    .description(
+      "Evaluate draft replies against case-specific quality expectations",
+    )
     .requiredOption(
       "--dataset <path>",
-      "Path to the draft-quality dataset JSON file (cases + expectations)"
+      "Path to the draft-quality dataset JSON file (cases + expectations)",
     )
     .option(
       "--candidates <path>",
-      "Optional JSON file with candidate drafts keyed by case_id/draft_id"
+      "Optional JSON file with candidate drafts keyed by case_id/draft_id",
     )
-    .option("--json", "Print the full JSON report (recommended for automation)", false)
+    .option(
+      "--json",
+      "Print the full JSON report (recommended for automation)",
+      false,
+    )
     .option(
       "--verbose",
       "Show per-draft metric details in human-readable output",
-      false
+      false,
     )
-    .option("--no-progress", "Hide per-case progress updates in human-readable output")
+    .option(
+      "--no-progress",
+      "Hide per-case progress updates in human-readable output",
+    )
     .option("--output <path>", "Write the JSON report to a file")
     .addHelpText(
       "after",
@@ -10669,26 +11601,28 @@ export function createCliProgram(): Command {
         "Examples:",
         "  linkedin audit draft-quality --dataset dataset.json",
         "  linkedin audit draft-quality --dataset dataset.json --candidates candidates.json --verbose",
-        "  linkedin audit draft-quality --dataset dataset.json --json --output reports/draft-quality.json"
-      ].join("\n")
+        "  linkedin audit draft-quality --dataset dataset.json --json --output reports/draft-quality.json",
+      ].join("\n"),
     )
-    .action(async (options: {
-      dataset: string;
-      candidates?: string;
-      json: boolean;
-      progress: boolean;
-      verbose: boolean;
-      output?: string;
-    }) => {
-      await runDraftQualityAudit({
-        datasetPath: options.dataset,
-        json: options.json,
-        progress: options.progress,
-        verbose: options.verbose,
-        ...(options.candidates ? { candidatesPath: options.candidates } : {}),
-        ...(options.output ? { outputPath: options.output } : {})
-      });
-    });
+    .action(
+      async (options: {
+        dataset: string;
+        candidates?: string;
+        json: boolean;
+        progress: boolean;
+        verbose: boolean;
+        output?: string;
+      }) => {
+        await runDraftQualityAudit({
+          datasetPath: options.dataset,
+          json: options.json,
+          progress: options.progress,
+          verbose: options.verbose,
+          ...(options.candidates ? { candidatesPath: options.candidates } : {}),
+          ...(options.output ? { outputPath: options.output } : {}),
+        });
+      },
+    );
 
   const actionsCommand = program
     .command("actions")
@@ -10702,12 +11636,15 @@ export function createCliProgram(): Command {
     .option("-y, --yes", "Skip interactive confirmation prompt", false)
     .action(
       async (options: { profile: string; token: string; yes: boolean }) => {
-        await runConfirmAction({
-          profileName: options.profile,
-          token: options.token,
-          yes: options.yes
-        }, readCdpUrl());
-      }
+        await runConfirmAction(
+          {
+            profileName: options.profile,
+            token: options.token,
+            yes: options.yes,
+          },
+          readCdpUrl(),
+        );
+      },
     );
 
   program
@@ -10721,24 +11658,31 @@ export function createCliProgram(): Command {
         "Diagnostics:",
         "  - output includes session.evasion with the resolved anti-bot profile and diagnostics status",
         `  - ${LINKEDIN_BUDDY_EVASION_LEVEL_ENV}=minimal|moderate|paranoid selects the default anti-bot profile`,
-        `  - ${LINKEDIN_BUDDY_EVASION_DIAGNOSTICS_ENV}=true records debug evasion events in the run log`
-      ].join("\n")
+        `  - ${LINKEDIN_BUDDY_EVASION_DIAGNOSTICS_ENV}=true records debug evasion events in the run log`,
+      ].join("\n"),
     )
     .action(async (options: { profile: string }) => {
       const runtime = createRuntime(readCdpUrl());
       try {
         runtime.logger.log("info", "cli.health.start", {
-          profileName: options.profile
+          profileName: options.profile,
         });
-        const health = await runtime.healthCheck({ profileName: options.profile });
+        const health = await runtime.healthCheck({
+          profileName: options.profile,
+        });
         runtime.logger.log("info", "cli.health.done", {
           profileName: options.profile,
           browser_healthy: health.browser.healthy,
           authenticated: health.session.authenticated,
           evasion_level: health.session.evasion.level,
-          evasion_diagnostics_enabled: health.session.evasion.diagnosticsEnabled
+          evasion_diagnostics_enabled:
+            health.session.evasion.diagnosticsEnabled,
         });
-        printJson({ run_id: runtime.runId, profile_name: options.profile, ...health });
+        printJson({
+          run_id: runtime.runId,
+          profile_name: options.profile,
+          ...health,
+        });
         if (!health.browser.healthy || !health.session.authenticated) {
           process.exitCode = 1;
         }
@@ -10773,14 +11717,15 @@ export async function runCli(argv: string[] = process.argv): Promise<void> {
 
 export function isDirectExecution(
   moduleUrl: string,
-  entrypoint: string | undefined = process.argv[1]
+  entrypoint: string | undefined = process.argv[1],
 ): boolean {
   if (!entrypoint) {
     return false;
   }
 
-  return resolveCliEntrypointPath(entrypoint) === resolveCliEntrypointPath(
-    fileURLToPath(moduleUrl)
+  return (
+    resolveCliEntrypointPath(entrypoint) ===
+    resolveCliEntrypointPath(fileURLToPath(moduleUrl))
   );
 }
 
@@ -10803,7 +11748,7 @@ if (isDirectExecution(import.meta.url)) {
 }
 
 function coerceWriteValidationDesignation(
-  value: string
+  value: string,
 ): "primary" | "secondary" {
   const normalized = value.trim().toLowerCase();
   if (normalized === "primary" || normalized === "secondary") {
@@ -10812,7 +11757,7 @@ function coerceWriteValidationDesignation(
 
   throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
-    'designation must be either "primary" or "secondary".'
+    'designation must be either "primary" or "secondary".',
   );
 }
 
@@ -10835,22 +11780,20 @@ function buildWriteValidationAccountTargets(input: {
       thread: input.messageThread,
       ...(messageParticipantPattern
         ? { participantPattern: messageParticipantPattern }
-        : {})
+        : {}),
     };
   }
 
   if (input.inviteProfile) {
     targets["connections.send_invitation"] = {
       targetProfile: input.inviteProfile,
-      ...(inviteNote
-        ? { note: inviteNote }
-        : {})
+      ...(inviteNote ? { note: inviteNote } : {}),
     };
   }
 
   if (input.followupProfile) {
     targets["network.followup_after_accept"] = {
-      profileUrlKey: input.followupProfile
+      profileUrlKey: input.followupProfile,
     };
   }
 
@@ -10859,13 +11802,16 @@ function buildWriteValidationAccountTargets(input: {
       postUrl: input.reactionPost,
       ...(input.reaction
         ? { reaction: normalizeLinkedInFeedReaction(input.reaction) }
-        : {})
+        : {}),
     };
   }
 
   if (input.postVisibility) {
     targets["post.create"] = {
-      visibility: normalizeLinkedInPostVisibility(input.postVisibility, "connections")
+      visibility: normalizeLinkedInPostVisibility(
+        input.postVisibility,
+        "connections",
+      ),
     };
   }
 
@@ -10880,21 +11826,21 @@ function resolveLiveWriteValidationAccountId(input: {
   if (input.readOnly) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      'Choose either "--read-only" or "--write-validation", not both.'
+      'Choose either "--read-only" or "--write-validation", not both.',
     );
   }
 
   if (!input.account) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      'Write validation requires "--account <id>".'
+      'Write validation requires "--account <id>".',
     );
   }
 
   if (input.session !== "default") {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      'Write validation resolves stored sessions through the account registry. Remove "--session" and rerun.'
+      'Write validation resolves stored sessions through the account registry. Remove "--session" and rerun.',
     );
   }
 
@@ -10903,7 +11849,7 @@ function resolveLiveWriteValidationAccountId(input: {
 
 function formatWriteValidationPrompt(
   preview: WriteValidationActionPreview,
-  actionIndex: number
+  actionIndex: number,
 ): string[] {
   return [
     `Action ${actionIndex}/${TOTAL_WRITE_VALIDATION_ACTIONS}: ${preview.action_type}`,
@@ -10911,12 +11857,12 @@ function formatWriteValidationPrompt(
     `Risk: ${preview.risk_class}`,
     `Target: ${JSON.stringify(preview.target)}`,
     `Payload: ${JSON.stringify(preview.outbound)}`,
-    `Expected: ${preview.expected_outcome}`
+    `Expected: ${preview.expected_outcome}`,
   ];
 }
 
 function createWriteValidationPrompter(
-  output: typeof stdout | typeof process.stderr
+  output: typeof stdout | typeof process.stderr,
 ): (preview: WriteValidationActionPreview) => Promise<boolean> {
   let nextActionIndex = 1;
   let firstPrompt = true;
@@ -10938,7 +11884,7 @@ function createWriteValidationPrompter(
 
 function emitWriteValidationResult(
   report: WriteValidationReport,
-  outputMode: WriteValidationOutputMode
+  outputMode: WriteValidationOutputMode,
 ): void {
   if (outputMode === "json") {
     printJson(report);
@@ -10946,12 +11892,12 @@ function emitWriteValidationResult(
     const redactedReport = redactStructuredValue(
       report,
       cliPrivacyConfig,
-      "cli"
+      "cli",
     ) as WriteValidationReport;
     console.log(
       formatWriteValidationReport(redactedReport, {
-        color: shouldUseAnsiColor(stdout)
-      })
+        color: shouldUseAnsiColor(stdout),
+      }),
     );
   }
 
@@ -10962,7 +11908,7 @@ function emitWriteValidationResult(
 
 function emitWriteValidationFailure(
   error: unknown,
-  outputMode: WriteValidationOutputMode
+  outputMode: WriteValidationOutputMode,
 ): void {
   process.exitCode = LIVE_VALIDATION_ERROR_EXIT_CODE;
 
@@ -10974,14 +11920,14 @@ function emitWriteValidationFailure(
   process.stderr.write(
     `${formatWriteValidationError(errorPayload, {
       color: shouldUseAnsiColor(process.stderr),
-      helpCommand: LIVE_VALIDATION_HELP_COMMAND
-    })}\n`
+      helpCommand: LIVE_VALIDATION_HELP_COMMAND,
+    })}\n`,
   );
 }
 
 function assertWriteValidationExecutionPreconditions(
   input: { yes: boolean },
-  cdpUrl?: string
+  cdpUrl?: string,
 ): void {
   assertNoExternalSessionOverrideForStoredSession(cdpUrl);
   assertInteractiveTerminal("run write validation");
@@ -10989,47 +11935,50 @@ function assertWriteValidationExecutionPreconditions(
   if (input.yes) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      'Write validation requires typing "yes" for every action. Remove "--yes" and rerun.'
+      'Write validation requires typing "yes" for every action. Remove "--yes" and rerun.',
     );
   }
 }
 
-async function runLiveWriteValidation(input: {
-  accountId?: string | undefined;
-  cooldownSeconds: number;
-  json: boolean;
-  progress: boolean;
-  readOnly: boolean;
-  session: string;
-  timeoutSeconds: number;
-  yes: boolean;
-}, cdpUrl?: string): Promise<void> {
+async function runLiveWriteValidation(
+  input: {
+    accountId?: string | undefined;
+    cooldownSeconds: number;
+    json: boolean;
+    progress: boolean;
+    readOnly: boolean;
+    session: string;
+    timeoutSeconds: number;
+    yes: boolean;
+  },
+  cdpUrl?: string,
+): Promise<void> {
   const outputMode = resolveWriteValidationOutputMode(
     { json: input.json },
-    Boolean(stdout.isTTY)
+    Boolean(stdout.isTTY),
   );
   const promptOutput = outputMode === "json" ? process.stderr : stdout;
   const progressEnabled =
     outputMode === "human" && input.progress && Boolean(process.stderr.isTTY);
   const progressReporter = new WriteValidationProgressReporter({
-    enabled: progressEnabled
+    enabled: progressEnabled,
   });
 
   try {
     const accountId = resolveLiveWriteValidationAccountId({
       account: input.accountId,
       readOnly: input.readOnly,
-      session: input.session
+      session: input.session,
     });
 
     assertWriteValidationExecutionPreconditions(input, cdpUrl);
 
     writeCliWarning(`${WRITE_VALIDATION_WARNING}.`);
     writeCliNotice(
-      `Running write validation against account "${accountId}". See ${WRITE_VALIDATION_DOC_PATH} for account setup and approved targets.`
+      `Running write validation against account "${accountId}". See ${WRITE_VALIDATION_DOC_PATH} for account setup and approved targets.`,
     );
     writeCliNotice(
-      "Preparing the stored session, validating approved targets, and opening the interactive harness."
+      "Preparing the stored session, validating approved targets, and opening the interactive harness.",
     );
 
     const report = await runLinkedInWriteValidation({
@@ -11040,11 +11989,11 @@ async function runLiveWriteValidation(input: {
         ? {
             onLog: (entry) => {
               progressReporter.handleLog(entry);
-            }
+            },
           }
         : {}),
       onBeforeAction: createWriteValidationPrompter(promptOutput),
-      timeoutMs: input.timeoutSeconds * 1_000
+      timeoutMs: input.timeoutSeconds * 1_000,
     });
 
     emitWriteValidationResult(report, outputMode);
@@ -11089,13 +12038,13 @@ async function runAccountsAdd(input: {
       messageThread: input.messageThread,
       postVisibility: input.postVisibility,
       reaction: input.reaction,
-      reactionPost: input.reactionPost
-    })
+      reactionPost: input.reactionPost,
+    }),
   });
 
   printJson({
     account: registry.accounts[accountId],
     config_path: registry.configPath,
-    saved: true
+    saved: true,
   });
 }
