@@ -1198,12 +1198,12 @@ export function createFeedbackTechnicalContext(input: {
   const mcpToolName = input.mcpToolName ?? snapshot.lastMcpToolName;
 
   return {
-    activeProfileName: snapshot.activeProfileName,
+    activeProfileName: snapshot.activeProfileName ?? null,
     architecture: input.architecture ?? os.arch(),
     cliVersion: input.cliVersion,
-    errorStack: snapshot.lastErrorStack,
-    lastInvocationName: snapshot.lastInvocationName,
-    mcpToolName: mcpToolName ?? undefined,
+    errorStack: snapshot.lastErrorStack ?? null,
+    lastInvocationName: snapshot.lastInvocationName ?? null,
+    mcpToolName: mcpToolName ?? null,
     nodeVersion: input.nodeVersion ?? process.version,
     os: input.os ?? `${os.platform()} ${os.release()}`,
     sessionDurationMs: snapshot.sessionDurationMs,
