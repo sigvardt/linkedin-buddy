@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import type { Page } from "playwright-core";
+import { describe, expect, it, vi } from "vitest";
 import {
   CAPTCHA_SELECTORS,
   CHARS_PER_WORD,
@@ -14,8 +15,9 @@ import {
   MIN_BLUR_DURATION_MS,
   MIN_DRIFT_COUNT,
   MIN_SCROLL_STEPS,
-  clamp
+  clamp,
 } from "../evasion/shared.js";
+import { detectCaptcha } from "../evasion/browser.js";
 
 describe("shared evasion constants", () => {
   it("clamps values into inclusive bounds", () => {
@@ -42,5 +44,17 @@ describe("shared evasion constants", () => {
     expect(new Set(HONEYPOT_SELECTORS).size).toBe(HONEYPOT_SELECTORS.length);
     expect(CAPTCHA_SELECTORS).toContain("[data-sitekey]");
     expect(HONEYPOT_SELECTORS).toContain("input[tabindex='-1']");
+  });
+
+  it("detects CAPTCHA when a shared selector matches", async () => {
+    const page = {
+      locator: vi.fn((selector: string) => ({
+        count: vi.fn(async () =>
+          selector === "iframe[src*='hcaptcha']" ? 1 : 0,
+        ),
+      })),
+    } as unknown as Page;
+
+    await expect(detectCaptcha(page)).resolves.toBe(true);
   });
 });

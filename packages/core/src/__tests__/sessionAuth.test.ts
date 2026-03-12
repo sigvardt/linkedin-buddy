@@ -1,11 +1,30 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { BrowserContext, Locator, Page } from "playwright-core";
 import { LinkedInAuthService } from "../auth/session.js";
+import {
+  LINKEDIN_LOGIN_EMAIL_INPUT_SELECTOR,
+  LINKEDIN_LOGIN_PASSWORD_INPUT_SELECTOR,
+} from "../auth/loginSelectors.js";
+import { CAPTCHA_SELECTORS } from "../evasion/shared.js";
 import type { ProfileManager } from "../profileManager.js";
+
+type RateLimitCooldownResult = {
+  active: boolean;
+  state: {
+    rateLimitedUntil: string;
+    detectedAt: string;
+    consecutiveRateLimits: number;
+  } | null;
+};
 
 const rateLimitStateMocks = vi.hoisted(() => ({
   clearRateLimitState: vi.fn(async () => undefined),
-  isInRateLimitCooldown: vi.fn(async () => ({ active: false, state: null })),
+  isInRateLimitCooldown: vi.fn(
+    async (): Promise<RateLimitCooldownResult> => ({
+      active: false,
+      state: null,
+    }),
+  ),
   recordRateLimit: vi.fn(async () => ({
     rateLimitedUntil: "2026-02-23T12:00:00.000Z",
     detectedAt: "2026-02-23T10:00:00.000Z",
@@ -45,7 +64,12 @@ function createMockPage(options: {
   selfProfileGotoUrl?: string;
   textContent?: (selector: string, currentUrl: string) => string | null;
   waitForUrlResult?: string;
-}): { page: Page; gotoCalls: string[]; setUrl: (url: string) => void } {
+}): {
+  page: Page;
+  gotoCalls: string[];
+  typeCalls: Array<{ selector: string; value: string }>;
+  setUrl: (url: string) => void;
+} {
   let currentUrl = options.initialUrl;
   const gotoCalls: string[] = [];
 
@@ -398,7 +422,63 @@ describe("LinkedInAuthService auth flow", () => {
     expect(result.currentUrl).toBe(checkpointUrl);
     expect(rateLimitStateMocks.recordRateLimit).not.toHaveBeenCalled();
     expect(typeCalls).toHaveLength(2);
-    expect(page.type as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(2);
+  });
+
+  it("headlessLogin classifies checkpoints as CAPTCHA when an iframe marker is present", async () => {
+    let waitCount = 0;
+    const checkpointUrl =
+      "https://www.linkedin.com/checkpoint/challenge/AgRecaptcha";
+
+    const { page, setUrl } = createMockPage({
+      initialUrl: "https://www.linkedin.com/login",
+      onWait: () => {
+        waitCount += 1;
+        if (waitCount === 1) {
+          setUrl(checkpointUrl);
+        }
+      },
+      isVisible: (selector, currentUrl) => {
+        if (selector.includes("username")) {
+          return currentUrl.includes("/login");
+        }
+
+        if (
+          selector.includes("session_password") ||
+          selector.includes("password")
+        ) {
+          return currentUrl.includes("/login");
+        }
+
+        if (selector === "form[action*='checkpoint']") {
+          return currentUrl.includes("/checkpoint");
+        }
+
+        if (selector === "iframe[src*='recaptcha']") {
+          return currentUrl.includes("/checkpoint");
+        }
+
+        return false;
+      },
+    });
+
+    const context = createContextWithPage(page);
+    const profileManager = {
+      runWithContext: vi.fn(async (_options, callback) => callback(context)),
+    } as const;
+    const auth = new LinkedInAuthService(
+      profileManager as unknown as ProfileManager,
+    );
+
+    const result = await auth.headlessLogin({
+      email: "test@example.com",
+      password: "secret",
+      pollIntervalMs: 1,
+      timeoutMs: 100,
+    });
+
+    expect(result.checkpoint).toBe(true);
+    expect(result.checkpointType).toBe("captcha");
+    expect(result.currentUrl).toBe(checkpointUrl);
   });
 
   it("headlessLogin targets nameless login inputs when legacy names are absent", async () => {
@@ -452,7 +532,38 @@ describe("LinkedInAuthService auth flow", () => {
     expect(result.authenticated).toBe(true);
     expect(result.checkpoint).toBe(false);
     expect(typeCalls).toHaveLength(2);
+    expect(typeCalls[0]?.selector).toBe(LINKEDIN_LOGIN_EMAIL_INPUT_SELECTOR);
+    expect(typeCalls[1]?.selector).toBe(LINKEDIN_LOGIN_PASSWORD_INPUT_SELECTOR);
     expect(typeCalls[0]!.value).toBe("test@example.com");
     expect(typeCalls[1]!.value).toBe("secret");
+  });
+});
+
+describe("login selector fallbacks", () => {
+  it("keeps semantic email/password selector fallbacks for nameless inputs", () => {
+    expect(LINKEDIN_LOGIN_EMAIL_INPUT_SELECTOR).toContain(
+      "input[autocomplete~='username' i]",
+    );
+    expect(LINKEDIN_LOGIN_EMAIL_INPUT_SELECTOR).toContain(
+      "input[inputmode='email' i]",
+    );
+    expect(LINKEDIN_LOGIN_EMAIL_INPUT_SELECTOR).toContain(
+      "input[aria-label*='email' i]",
+    );
+    expect(LINKEDIN_LOGIN_PASSWORD_INPUT_SELECTOR).toContain(
+      "input[type='password']",
+    );
+    expect(LINKEDIN_LOGIN_PASSWORD_INPUT_SELECTOR).toContain(
+      "input[autocomplete~='current-password' i]",
+    );
+    expect(LINKEDIN_LOGIN_PASSWORD_INPUT_SELECTOR).toContain(
+      "input[aria-label*='password' i]",
+    );
+  });
+
+  it("keeps CAPTCHA detection selectors populated for checkpoint classification", () => {
+    expect(CAPTCHA_SELECTORS).toContain("[data-sitekey]");
+    expect(CAPTCHA_SELECTORS).toContain("iframe[src*='recaptcha']");
+    expect(CAPTCHA_SELECTORS).toContain("iframe[src*='hcaptcha']");
   });
 });

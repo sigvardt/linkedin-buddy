@@ -1,7 +1,11 @@
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { errors as playwrightErrors, type Locator, type Page } from "playwright-core";
+import {
+  errors as playwrightErrors,
+  type Locator,
+  type Page,
+} from "playwright-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AssistantDatabase } from "../db/database.js";
 import {
@@ -37,7 +41,7 @@ import {
   resolveFirstVisibleLocator,
   resolveProfileUrl,
   splitProfileIntroLocationValue,
-  type LinkedInProfileRuntime
+  type LinkedInProfileRuntime,
 } from "../linkedinProfile.js";
 import { TwoPhaseCommitService } from "../twoPhaseCommit.js";
 import { createAllowedRateLimiterStub } from "./rateLimiterTestUtils.js";
@@ -58,7 +62,7 @@ function createFeaturedItemId(
     title?: string;
     subtitle?: string;
     rawText?: string;
-  }
+  },
 ): string {
   return `pfi_${Buffer.from(
     JSON.stringify({
@@ -68,46 +72,49 @@ function createFeaturedItemId(
       url: data.url ?? "",
       title: data.title ?? "",
       subtitle: data.subtitle ?? "",
-      rawText: data.rawText ?? ""
-    })
+      rawText: data.rawText ?? "",
+    }),
   ).toString("base64url")}`;
 }
 
 function createTestRuntime(
   db: AssistantDatabase,
-  artifactsRoot: string = createTempArtifactsDir()
+  artifactsRoot: string = createTempArtifactsDir(),
 ): LinkedInProfileRuntime {
   const rateLimiter = createAllowedRateLimiterStub();
 
   return {
     auth: {
-      ensureAuthenticated: vi.fn(async () => undefined)
+      ensureAuthenticated: vi.fn(async () => undefined),
     },
     cdpUrl: undefined,
     selectorLocale: "en",
     profileManager: {
-      runWithContext: vi.fn()
+      runWithContext: vi.fn(),
     },
-    rateLimiter: rateLimiter as unknown as LinkedInProfileRuntime["rateLimiter"],
+    rateLimiter:
+      rateLimiter as unknown as LinkedInProfileRuntime["rateLimiter"],
     logger: {
-      log: vi.fn()
+      log: vi.fn(),
     },
     artifacts: {
-      resolve: vi.fn((relativePath: string) => path.join(artifactsRoot, relativePath)),
+      resolve: vi.fn((relativePath: string) =>
+        path.join(artifactsRoot, relativePath),
+      ),
       registerArtifact: vi.fn(),
-      getRunDir: vi.fn(() => artifactsRoot)
+      getRunDir: vi.fn(() => artifactsRoot),
     },
     confirmFailureArtifacts: {
-      traceMaxBytes: 2 * 1024 * 1024
+      traceMaxBytes: 2 * 1024 * 1024,
     },
-    twoPhaseCommit: new TwoPhaseCommitService(db)
+    twoPhaseCommit: new TwoPhaseCommitService(db),
   } as unknown as LinkedInProfileRuntime;
 }
 
 class MockLocator {
   constructor(
     private readonly visibility: readonly boolean[],
-    readonly resolvedIndex: number | null = null
+    readonly resolvedIndex: number | null = null,
   ) {}
 
   async count(): Promise<number> {
@@ -131,14 +138,14 @@ class MockLocator {
 class MockDialogFieldLocator {
   constructor(
     readonly label: string,
-    readonly visible: boolean = true
+    readonly visible: boolean = true,
   ) {}
 }
 
 class MockDialogQueryLocator {
   constructor(
     readonly fields: readonly MockDialogFieldLocator[],
-    readonly resolvedIndex: number | null = null
+    readonly resolvedIndex: number | null = null,
   ) {}
 
   get resolvedLabel(): string | null {
@@ -179,21 +186,24 @@ class MockDialogLocator {
 
   getByLabel(labelMatcher: RegExp): MockDialogQueryLocator {
     return new MockDialogQueryLocator(
-      this.fields.filter((field) => labelMatcher.test(field.label))
+      this.fields.filter((field) => labelMatcher.test(field.label)),
     );
   }
 
-  getByRole(_role: string, options: { name?: RegExp } = {}): MockDialogQueryLocator {
+  getByRole(
+    _role: string,
+    options: { name?: RegExp } = {},
+  ): MockDialogQueryLocator {
     const labelMatcher = options.name ?? /.*/;
 
     return new MockDialogQueryLocator(
-      this.fields.filter((field) => labelMatcher.test(field.label))
+      this.fields.filter((field) => labelMatcher.test(field.label)),
     );
   }
 
   getByText(labelMatcher: RegExp): MockDialogQueryLocator {
     return new MockDialogQueryLocator(
-      this.fields.filter((field) => labelMatcher.test(field.label))
+      this.fields.filter((field) => labelMatcher.test(field.label)),
     );
   }
 
@@ -203,7 +213,9 @@ class MockDialogLocator {
     const normalizedAlias = rawAlias.toLowerCase();
 
     return new MockDialogQueryLocator(
-      this.fields.filter((field) => field.label.toLowerCase().includes(normalizedAlias))
+      this.fields.filter((field) =>
+        field.label.toLowerCase().includes(normalizedAlias),
+      ),
     );
   }
 }
@@ -215,8 +227,11 @@ interface MockTextLocatorItem {
 
 class MockTextLocator {
   constructor(
-    private readonly selectorMap: Record<string, readonly MockTextLocatorItem[]> = {},
-    private readonly items: readonly MockTextLocatorItem[] = []
+    private readonly selectorMap: Record<
+      string,
+      readonly MockTextLocatorItem[]
+    > = {},
+    private readonly items: readonly MockTextLocatorItem[] = [],
   ) {}
 
   locator(selector: string): MockTextLocator {
@@ -228,7 +243,10 @@ class MockTextLocator {
   }
 
   nth(index: number): MockTextLocator {
-    return new MockTextLocator({}, this.items[index] ? [this.items[index]!] : []);
+    return new MockTextLocator(
+      {},
+      this.items[index] ? [this.items[index]!] : [],
+    );
   }
 
   async isVisible(): Promise<boolean> {
@@ -271,7 +289,7 @@ class MockFieldElement {
     this.nestedControl = input.nestedControl ?? null;
     if (input.selectedOptions) {
       this.selectedOptions = Object.assign([...input.selectedOptions], {
-        length: input.selectedOptions.length
+        length: input.selectedOptions.length,
       }) as {
         length?: number;
         [index: number]: MockFieldOption;
@@ -293,7 +311,7 @@ class MockEditableFieldLocator {
   constructor(private readonly element: MockFieldElement) {}
 
   async evaluate<TResult>(
-    pageFunction: (element: MockFieldElement) => TResult | Promise<TResult>
+    pageFunction: (element: MockFieldElement) => TResult | Promise<TResult>,
   ): Promise<TResult> {
     return await pageFunction(this.element);
   }
@@ -323,19 +341,22 @@ function createNavigationMockPage(options: {
     }),
     locator: vi.fn((selector: string) => {
       const isIntroEditSelector =
-        selector.includes("/edit/intro/") || selector.includes("/edit/forms/intro/");
-      const isHeadingSelector = selector.includes("h1") || selector.includes("h2");
+        selector.includes("/edit/intro/") ||
+        selector.includes("/edit/forms/intro/");
+      const isHeadingSelector =
+        selector.includes("h1") || selector.includes("h2");
       const introEditCount =
-        isIntroEditSelector && (options.introEditVisible || options.introEditPresent)
+        isIntroEditSelector &&
+        (options.introEditVisible || options.introEditPresent)
           ? 1
           : 0;
-      const headingCount = isHeadingSelector && (options.headingVisible ?? false) ? 1 : 0;
-      const visible =
-        isHeadingSelector
-          ? (options.headingVisible ?? false)
-          : isIntroEditSelector
-            ? (options.introEditVisible ?? false)
-            : false;
+      const headingCount =
+        isHeadingSelector && (options.headingVisible ?? false) ? 1 : 0;
+      const visible = isHeadingSelector
+        ? (options.headingVisible ?? false)
+        : isIntroEditSelector
+          ? (options.introEditVisible ?? false)
+          : false;
       const attributeValue =
         selector === "a[data-control-name='nav.settings_view_profile']"
           ? options.menuProfileUrl
@@ -345,7 +366,9 @@ function createNavigationMockPage(options: {
               ? options.ogProfileUrl
               : null;
 
-      const count = vi.fn(async () => (isHeadingSelector ? headingCount : introEditCount));
+      const count = vi.fn(async () =>
+        isHeadingSelector ? headingCount : introEditCount,
+      );
       const isVisible = vi.fn(async () => visible);
       const getAttribute = vi.fn(async () => attributeValue ?? null);
       const nth = vi.fn();
@@ -357,7 +380,7 @@ function createNavigationMockPage(options: {
         getAttribute,
         isVisible,
         nth,
-        waitFor
+        waitFor,
       } as unknown as Locator;
       first.mockReturnValue(mockLocator);
       nth.mockReturnValue(mockLocator);
@@ -369,7 +392,7 @@ function createNavigationMockPage(options: {
       if (options.networkIdleError) {
         throw options.networkIdleError;
       }
-    })
+    }),
   } as unknown as Page;
 }
 
@@ -388,7 +411,9 @@ afterEach(() => {
 
 describe("resolveProfileUrl", () => {
   it("defaults to /in/me/ for undefined input", () => {
-    expect(resolveProfileUrl(undefined)).toBe("https://www.linkedin.com/in/me/");
+    expect(resolveProfileUrl(undefined)).toBe(
+      "https://www.linkedin.com/in/me/",
+    );
   });
 
   it("defaults to /in/me/ for empty string", () => {
@@ -401,25 +426,25 @@ describe("resolveProfileUrl", () => {
 
   it("passes through a full linkedin URL", () => {
     expect(resolveProfileUrl("https://www.linkedin.com/in/johndoe/")).toBe(
-      "https://www.linkedin.com/in/johndoe/"
+      "https://www.linkedin.com/in/johndoe/",
     );
   });
 
   it("prepends origin for /in/ path", () => {
     expect(resolveProfileUrl("/in/johndoe")).toBe(
-      "https://www.linkedin.com/in/johndoe"
+      "https://www.linkedin.com/in/johndoe",
     );
   });
 
   it("treats plain string as vanity name", () => {
     expect(resolveProfileUrl("johndoe")).toBe(
-      "https://www.linkedin.com/in/johndoe/"
+      "https://www.linkedin.com/in/johndoe/",
     );
   });
 
   it("encodes special characters in vanity name", () => {
     expect(resolveProfileUrl("john doe")).toBe(
-      "https://www.linkedin.com/in/john%20doe/"
+      "https://www.linkedin.com/in/john%20doe/",
     );
   });
 });
@@ -427,31 +452,33 @@ describe("resolveProfileUrl", () => {
 describe("isProfileIntroEditHref", () => {
   it("accepts the classic intro editor URL", () => {
     expect(
-      isProfileIntroEditHref("/in/me/edit/intro/?profileFormEntryPoint=PROFILE_SECTION")
+      isProfileIntroEditHref(
+        "/in/me/edit/intro/?profileFormEntryPoint=PROFILE_SECTION",
+      ),
     ).toBe(true);
   });
 
   it("accepts the live self-profile intro editor page URL", () => {
     expect(
       isProfileIntroEditHref(
-        "https://www.linkedin.com/in/joi-ascend-a534b73b6/edit/intro/"
-      )
+        "https://www.linkedin.com/in/joi-ascend-a534b73b6/edit/intro/",
+      ),
     ).toBe(true);
   });
 
   it("accepts the current intro form URL", () => {
     expect(
       isProfileIntroEditHref(
-        "https://www.linkedin.com/in/me/edit/forms/intro/new/?profileFormEntryPoint=PROFILE_SECTION"
-      )
+        "https://www.linkedin.com/in/me/edit/forms/intro/new/?profileFormEntryPoint=PROFILE_SECTION",
+      ),
     ).toBe(true);
   });
 
   it("rejects the job opportunities edit URL", () => {
     expect(
       isProfileIntroEditHref(
-        "https://www.linkedin.com/in/me/opportunities/job-opportunities/edit/?jobOpportunitiesOrigin=PROFILE_TOP_CARD"
-      )
+        "https://www.linkedin.com/in/me/opportunities/job-opportunities/edit/?jobOpportunitiesOrigin=PROFILE_TOP_CARD",
+      ),
     ).toBe(false);
   });
 
@@ -466,7 +493,9 @@ describe("resolveFirstVisibleLocator", () => {
   it("returns the first visible match even when the first locator match is hidden", async () => {
     const locator = new MockLocator([false, true, true]);
 
-    const resolved = await resolveFirstVisibleLocator(locator as unknown as Locator);
+    const resolved = await resolveFirstVisibleLocator(
+      locator as unknown as Locator,
+    );
 
     expect(resolved).not.toBeNull();
     expect((resolved as unknown as MockLocator).resolvedIndex).toBe(1);
@@ -482,10 +511,12 @@ describe("resolveFirstVisibleLocator", () => {
       false,
       false,
       false,
-      true
+      true,
     ]);
 
-    const resolved = await resolveFirstVisibleLocator(locator as unknown as Locator);
+    const resolved = await resolveFirstVisibleLocator(
+      locator as unknown as Locator,
+    );
 
     expect(resolved).not.toBeNull();
     expect((resolved as unknown as MockLocator).resolvedIndex).toBe(8);
@@ -495,7 +526,7 @@ describe("resolveFirstVisibleLocator", () => {
     const locator = new MockLocator([false, false]);
 
     await expect(
-      resolveFirstVisibleLocator(locator as unknown as Locator)
+      resolveFirstVisibleLocator(locator as unknown as Locator),
     ).resolves.toBeNull();
   });
 });
@@ -504,22 +535,32 @@ describe("findIntroLocationFieldLocator", () => {
   it("prefers the live split city field over the country field", async () => {
     const dialog = new MockDialogLocator([
       new MockDialogFieldLocator("Country/Region*"),
-      new MockDialogFieldLocator("City")
+      new MockDialogFieldLocator("City"),
     ]);
 
-    const locator = await findIntroLocationFieldLocator(dialog as unknown as Locator);
+    const locator = await findIntroLocationFieldLocator(
+      dialog as unknown as Locator,
+    );
 
     expect(locator).not.toBeNull();
-    expect((locator as unknown as MockDialogQueryLocator).resolvedLabel).toBe("City");
+    expect((locator as unknown as MockDialogQueryLocator).resolvedLabel).toBe(
+      "City",
+    );
   });
 
   it("falls back to the classic single location label", async () => {
-    const dialog = new MockDialogLocator([new MockDialogFieldLocator("Location")]);
+    const dialog = new MockDialogLocator([
+      new MockDialogFieldLocator("Location"),
+    ]);
 
-    const locator = await findIntroLocationFieldLocator(dialog as unknown as Locator);
+    const locator = await findIntroLocationFieldLocator(
+      dialog as unknown as Locator,
+    );
 
     expect(locator).not.toBeNull();
-    expect((locator as unknown as MockDialogQueryLocator).resolvedLabel).toBe("Location");
+    expect((locator as unknown as MockDialogQueryLocator).resolvedLabel).toBe(
+      "Location",
+    );
   });
 });
 
@@ -527,54 +568,111 @@ describe("splitProfileIntroLocationValue", () => {
   it("splits country and city for the current intro editor layout", () => {
     expect(splitProfileIntroLocationValue("Copenhagen, Denmark")).toEqual({
       city: "Copenhagen",
-      countryOrRegion: "Denmark"
+      countryOrRegion: "Denmark",
     });
   });
 
   it("keeps detailed locality text while peeling off the country", () => {
     expect(
       splitProfileIntroLocationValue(
-        "2800, Copenhagen, Capital Region of Denmark, Denmark"
-      )
+        "2800, Copenhagen, Capital Region of Denmark, Denmark",
+      ),
     ).toEqual({
       city: "2800, Copenhagen, Capital Region of Denmark",
-      countryOrRegion: "Denmark"
+      countryOrRegion: "Denmark",
     });
   });
 
   it("leaves single-part locations untouched", () => {
     expect(splitProfileIntroLocationValue("Copenhagen")).toEqual({
       city: "Copenhagen",
-      countryOrRegion: null
+      countryOrRegion: null,
+    });
+  });
+
+  it("ignores trailing separators when splitting city and country", () => {
+    expect(splitProfileIntroLocationValue("Copenhagen, Denmark, ")).toEqual({
+      city: "Copenhagen",
+      countryOrRegion: "Denmark",
     });
   });
 });
 
 describe("extractVisibleTopCardSummaryFromRoot", () => {
+  it("extracts heading/headline/location from structural top-card selectors", async () => {
+    const root = new MockTextLocator({
+      "h1.text-heading-xlarge, h1[class*='text-heading'], h2, h1": [
+        { text: "Taylor Rivera", visible: true },
+      ],
+      ".text-body-medium[data-anonymize='headline'], .text-body-medium": [
+        { text: "Staff Product Designer", visible: true },
+      ],
+      "span.text-body-small[data-anonymize='location'], .text-body-small.inline":
+        [{ text: "Lisbon, Portugal", visible: true }],
+      ".dist-value, .distance-badge, [class*='distance']": [
+        { text: "2nd", visible: true },
+      ],
+      p: [],
+    });
+
+    await expect(
+      extractVisibleTopCardSummaryFromRoot(root as unknown as Locator),
+    ).resolves.toEqual({
+      full_name: "Taylor Rivera",
+      headline: "Staff Product Designer",
+      location: "Lisbon, Portugal",
+      connection_degree: "2nd",
+    });
+  });
+
   it("falls back to visible paragraph text on the current self-profile layout", async () => {
     const root = new MockTextLocator({
       "h1.text-heading-xlarge, h1[class*='text-heading'], h2, h1": [
-        { text: "Joi Ascend", visible: true }
+        { text: "Joi Ascend", visible: true },
       ],
       ".text-body-medium[data-anonymize='headline'], .text-body-medium": [],
-      "span.text-body-small[data-anonymize='location'], .text-body-small.inline": [],
+      "span.text-body-small[data-anonymize='location'], .text-body-small.inline":
+        [],
       ".dist-value, .distance-badge, [class*='distance']": [],
       p: [
         { text: "Personal Assistant to Director at Signikant", visible: true },
         { text: "Signikant", visible: false },
-        { text: "Copenhagen, Capital Region of Denmark, Denmark", visible: true },
+        {
+          text: "Copenhagen, Capital Region of Denmark, Denmark",
+          visible: true,
+        },
         { text: "Contact info", visible: true },
-        { text: "Get started", visible: true }
-      ]
+        { text: "Get started", visible: true },
+      ],
     });
 
     await expect(
-      extractVisibleTopCardSummaryFromRoot(root as unknown as Locator)
+      extractVisibleTopCardSummaryFromRoot(root as unknown as Locator),
     ).resolves.toEqual({
       full_name: "Joi Ascend",
       headline: "Personal Assistant to Director at Signikant",
       location: "Copenhagen, Capital Region of Denmark, Denmark",
-      connection_degree: ""
+      connection_degree: "",
+    });
+  });
+
+  it("returns blank top-card fields when no visible intro data exists", async () => {
+    const root = new MockTextLocator({
+      "h1.text-heading-xlarge, h1[class*='text-heading'], h2, h1": [],
+      ".text-body-medium[data-anonymize='headline'], .text-body-medium": [],
+      "span.text-body-small[data-anonymize='location'], .text-body-small.inline":
+        [],
+      ".dist-value, .distance-badge, [class*='distance']": [],
+      p: [],
+    });
+
+    await expect(
+      extractVisibleTopCardSummaryFromRoot(root as unknown as Locator),
+    ).resolves.toEqual({
+      full_name: "",
+      headline: "",
+      location: "",
+      connection_degree: "",
     });
   });
 });
@@ -585,13 +683,13 @@ describe("readEditableFieldValue", () => {
       new MockFieldElement({
         tagName: "SELECT",
         value: "2863822437",
-        selectedOptions: [{ textContent: "Software Development" }]
-      })
+        selectedOptions: [{ textContent: "Software Development" }],
+      }),
     );
 
-    await expect(readEditableFieldValue(locator as unknown as Locator)).resolves.toBe(
-      "Software Development"
-    );
+    await expect(
+      readEditableFieldValue(locator as unknown as Locator),
+    ).resolves.toBe("Software Development");
   });
 
   it("falls back to nested combobox value metadata", async () => {
@@ -602,105 +700,134 @@ describe("readEditableFieldValue", () => {
           tagName: "DIV",
           attributes: {
             "aria-valuetext": "Software Development",
-            role: "combobox"
-          }
-        })
-      })
+            role: "combobox",
+          },
+        }),
+      }),
     );
 
-    await expect(readEditableFieldValue(locator as unknown as Locator)).resolves.toBe(
-      "Software Development"
-    );
+    await expect(
+      readEditableFieldValue(locator as unknown as Locator),
+    ).resolves.toBe("Software Development");
   });
 });
 
 describe("navigateToOwnProfile", () => {
   it("recovers from /in/me/ navigation timeouts once self-only edit controls are present", async () => {
-    const timeoutError = new playwrightErrors.TimeoutError("Navigation timeout");
+    const timeoutError = new playwrightErrors.TimeoutError(
+      "Navigation timeout",
+    );
     const page = createNavigationMockPage({
       gotoError: timeoutError,
       headingVisible: true,
       introEditPresent: true,
-      urlAfterGoto: "https://www.linkedin.com/in/me/"
+      urlAfterGoto: "https://www.linkedin.com/in/me/",
     });
 
     await expect(navigateToOwnProfile(page)).resolves.toBeUndefined();
     expect(page.goto).toHaveBeenCalledWith("https://www.linkedin.com/in/me/", {
-      waitUntil: "domcontentloaded"
+      waitUntil: "domcontentloaded",
     });
     expect(page.waitForLoadState).toHaveBeenCalledWith("networkidle", {
-      timeout: 5_000
+      timeout: 5_000,
     });
   });
 
   it("recovers when LinkedIn resolves /in/me/ to the authenticated member vanity URL", async () => {
-    const timeoutError = new playwrightErrors.TimeoutError("Navigation timeout");
+    const timeoutError = new playwrightErrors.TimeoutError(
+      "Navigation timeout",
+    );
     const page = createNavigationMockPage({
       canonicalUrl: "https://www.linkedin.com/in/joi-ascend/",
       gotoError: timeoutError,
       headingVisible: true,
       menuProfileUrl: "https://www.linkedin.com/in/joi-ascend/",
-      urlAfterGoto: "https://www.linkedin.com/in/joi-ascend/"
+      urlAfterGoto: "https://www.linkedin.com/in/joi-ascend/",
     });
 
     await expect(navigateToOwnProfile(page)).resolves.toBeUndefined();
   });
 
   it("recovers on a resolved vanity URL when a self-only edit control is already visible", async () => {
-    const timeoutError = new playwrightErrors.TimeoutError("Navigation timeout");
+    const timeoutError = new playwrightErrors.TimeoutError(
+      "Navigation timeout",
+    );
     const page = createNavigationMockPage({
       gotoError: timeoutError,
       introEditVisible: true,
-      urlAfterGoto: "https://www.linkedin.com/in/joi-ascend/"
+      urlAfterGoto: "https://www.linkedin.com/in/joi-ascend/",
     });
 
     await expect(navigateToOwnProfile(page)).resolves.toBeUndefined();
   });
 
   it("rethrows /in/me/ timeouts when no self-profile signals are available", async () => {
-    const timeoutError = new playwrightErrors.TimeoutError("Navigation timeout");
+    const timeoutError = new playwrightErrors.TimeoutError(
+      "Navigation timeout",
+    );
     const page = createNavigationMockPage({
       gotoError: timeoutError,
       title: "Feed | LinkedIn",
-      urlAfterGoto: "https://www.linkedin.com/in/me/"
+      urlAfterGoto: "https://www.linkedin.com/in/me/",
     });
 
     await expect(navigateToOwnProfile(page)).rejects.toBe(timeoutError);
   });
 
   it("rethrows /in/me/ timeouts when the profile metadata points to another member", async () => {
-    const timeoutError = new playwrightErrors.TimeoutError("Navigation timeout");
+    const timeoutError = new playwrightErrors.TimeoutError(
+      "Navigation timeout",
+    );
     const page = createNavigationMockPage({
       canonicalUrl: "https://www.linkedin.com/in/someone-else/",
       gotoError: timeoutError,
-      urlAfterGoto: "https://www.linkedin.com/in/me/"
+      urlAfterGoto: "https://www.linkedin.com/in/me/",
     });
 
     await expect(navigateToOwnProfile(page)).rejects.toBe(timeoutError);
   });
 
   it("rethrows timeouts when the current page is another member profile", async () => {
-    const timeoutError = new playwrightErrors.TimeoutError("Navigation timeout");
+    const timeoutError = new playwrightErrors.TimeoutError(
+      "Navigation timeout",
+    );
     const page = createNavigationMockPage({
       canonicalUrl: "https://www.linkedin.com/in/someone-else/",
       gotoError: timeoutError,
       menuProfileUrl: "https://www.linkedin.com/in/joi-ascend/",
       title: "Someone Else | LinkedIn",
-      urlAfterGoto: "https://www.linkedin.com/in/someone-else/"
+      urlAfterGoto: "https://www.linkedin.com/in/someone-else/",
     });
 
     await expect(navigateToOwnProfile(page)).rejects.toBe(timeoutError);
   });
 
   it("rethrows timeouts when only hidden edit-control DOM is present on another page", async () => {
-    const timeoutError = new playwrightErrors.TimeoutError("Navigation timeout");
+    const timeoutError = new playwrightErrors.TimeoutError(
+      "Navigation timeout",
+    );
     const page = createNavigationMockPage({
       gotoError: timeoutError,
       introEditPresent: true,
-      urlAfterGoto: "https://www.linkedin.com/in/someone-else/"
+      urlAfterGoto: "https://www.linkedin.com/in/someone-else/",
     });
 
     await expect(navigateToOwnProfile(page)).rejects.toBe(timeoutError);
+  });
+
+  it("recovers from timeout when og:url resolves to the authenticated member profile", async () => {
+    const timeoutError = new playwrightErrors.TimeoutError(
+      "Navigation timeout",
+    );
+    const page = createNavigationMockPage({
+      gotoError: timeoutError,
+      headingVisible: true,
+      menuProfileUrl: "https://www.linkedin.com/in/joi-ascend/",
+      ogProfileUrl: "https://www.linkedin.com/in/joi-ascend/",
+      urlAfterGoto: "https://www.linkedin.com/in/joi-ascend/",
+    });
+
+    await expect(navigateToOwnProfile(page)).resolves.toBeUndefined();
   });
 });
 
@@ -709,27 +836,29 @@ describe("profile action type constants", () => {
     expect(UPDATE_PROFILE_INTRO_ACTION_TYPE).toBe("profile.update_intro");
     expect(UPDATE_PROFILE_SETTINGS_ACTION_TYPE).toBe("profile.update_settings");
     expect(UPDATE_PROFILE_PUBLIC_PROFILE_ACTION_TYPE).toBe(
-      "profile.update_public_profile"
+      "profile.update_public_profile",
     );
     expect(UPSERT_PROFILE_SECTION_ITEM_ACTION_TYPE).toBe(
-      "profile.upsert_section_item"
+      "profile.upsert_section_item",
     );
     expect(REMOVE_PROFILE_SECTION_ITEM_ACTION_TYPE).toBe(
-      "profile.remove_section_item"
+      "profile.remove_section_item",
     );
     expect(UPLOAD_PROFILE_PHOTO_ACTION_TYPE).toBe("profile.upload_photo");
     expect(UPLOAD_PROFILE_BANNER_ACTION_TYPE).toBe("profile.upload_banner");
     expect(ADD_PROFILE_FEATURED_ACTION_TYPE).toBe("profile.featured_add");
     expect(REMOVE_PROFILE_FEATURED_ACTION_TYPE).toBe("profile.featured_remove");
-    expect(REORDER_PROFILE_FEATURED_ACTION_TYPE).toBe("profile.featured_reorder");
+    expect(REORDER_PROFILE_FEATURED_ACTION_TYPE).toBe(
+      "profile.featured_reorder",
+    );
     expect(ADD_PROFILE_SKILL_ACTION_TYPE).toBe("profile.skill_add");
     expect(REORDER_PROFILE_SKILLS_ACTION_TYPE).toBe("profile.skills_reorder");
     expect(ENDORSE_PROFILE_SKILL_ACTION_TYPE).toBe("profile.skill_endorse");
     expect(REQUEST_PROFILE_RECOMMENDATION_ACTION_TYPE).toBe(
-      "profile.recommendation_request"
+      "profile.recommendation_request",
     );
     expect(WRITE_PROFILE_RECOMMENDATION_ACTION_TYPE).toBe(
-      "profile.recommendation_write"
+      "profile.recommendation_write",
     );
   });
 
@@ -742,10 +871,14 @@ describe("profile action type constants", () => {
       "languages",
       "projects",
       "volunteer_experience",
-      "honors_awards"
+      "honors_awards",
     ]);
     expect(LINKEDIN_PROFILE_SECTION_TYPES).not.toContain("featured");
-    expect(LINKEDIN_PROFILE_FEATURED_ITEM_KINDS).toEqual(["link", "media", "post"]);
+    expect(LINKEDIN_PROFILE_FEATURED_ITEM_KINDS).toEqual([
+      "link",
+      "media",
+      "post",
+    ]);
   });
 });
 
@@ -780,40 +913,54 @@ describe("createProfileActionExecutors", () => {
 
   it("keeps structural fallbacks for the current profile media edit controls", () => {
     expect(PROFILE_MEDIA_STRUCTURAL_SELECTORS.photo).toContain(
-      "button.profile-photo-edit__edit-btn"
+      "button.profile-photo-edit__edit-btn",
     );
-    expect(PROFILE_MEDIA_STRUCTURAL_SELECTORS.photo).toContain(".profile-photo-edit button");
+    expect(PROFILE_MEDIA_STRUCTURAL_SELECTORS.photo).toContain(
+      ".profile-photo-edit button",
+    );
     expect(PROFILE_MEDIA_STRUCTURAL_SELECTORS.banner).toContain(
-      "[id^='cover-photo-dropdown-button-trigger-']"
+      "[id^='cover-photo-dropdown-button-trigger-']",
     );
   });
 
   it("keeps selector fallbacks for the current self-profile top card", () => {
     expect(PROFILE_TOP_CARD_HEADING_SELECTORS).toContain("h2");
-    expect(PROFILE_TOP_CARD_STRUCTURAL_SELECTORS).toContain(
-      "section[componentkey*='topcard' i]"
+    expect(PROFILE_TOP_CARD_HEADING_SELECTORS).toContain(
+      "[role='heading'][aria-level='1']",
     );
     expect(PROFILE_TOP_CARD_STRUCTURAL_SELECTORS).toContain(
-      "div[componentkey*='topcard' i]"
+      "section[componentkey*='topcard' i]",
     );
+    expect(PROFILE_TOP_CARD_STRUCTURAL_SELECTORS).toContain(
+      "div[componentkey*='topcard' i]",
+    );
+    expect(
+      PROFILE_TOP_CARD_HEADING_SELECTORS.every((selector) =>
+        /(h1|h2|\[role='heading')/.test(selector),
+      ),
+    ).toBe(true);
   });
 
   it("keeps selector fallbacks for the current self-profile add section control", () => {
     expect(PROFILE_GLOBAL_ADD_SECTION_CONTROL.labels.en).toContain(
-      "Add profile section"
+      "Add profile section",
     );
-    expect(PROFILE_GLOBAL_ADD_SECTION_CONTROL.labels.en).toContain("Add section");
+    expect(PROFILE_GLOBAL_ADD_SECTION_CONTROL.labels.en).toContain(
+      "Add section",
+    );
     expect(PROFILE_GLOBAL_ADD_SECTION_CONTROL.roles).toContain("button");
     expect(PROFILE_GLOBAL_ADD_SECTION_CONTROL.roles).toContain("link");
   });
 
   it("keeps selector fallbacks for the current intro editor surfaces", () => {
-    expect(PROFILE_INTRO_EDITOR_SURFACE_SELECTORS.topCardHeadings).toContain("h2");
+    expect(PROFILE_INTRO_EDITOR_SURFACE_SELECTORS.topCardHeadings).toContain(
+      "h2",
+    );
     expect(PROFILE_INTRO_EDITOR_SURFACE_SELECTORS.dialogRootSelector).toContain(
-      "dialog[data-testid='dialog']"
+      "dialog[data-testid='dialog']",
     );
     expect(PROFILE_INTRO_EDITOR_SURFACE_SELECTORS.pageRootSelectors).toContain(
-      "[data-testid='lazy-column']"
+      "[data-testid='lazy-column']",
     );
   });
 });
@@ -827,7 +974,7 @@ describe("LinkedInProfileService prepare helpers", () => {
       const prepared = service.prepareUpdateIntro({
         profileName: "default",
         headline: "Automation Engineer",
-        location: "Copenhagen"
+        location: "Copenhagen",
       });
 
       expect(prepared).toMatchObject({
@@ -837,12 +984,12 @@ describe("LinkedInProfileService prepare helpers", () => {
           summary: "Update LinkedIn profile intro (headline, location)",
           intro_updates: {
             headline: "Automation Engineer",
-            location: "Copenhagen"
+            location: "Copenhagen",
           },
           rate_limit: {
-            counter_key: "linkedin.profile.update_intro"
-          }
-        }
+            counter_key: "linkedin.profile.update_intro",
+          },
+        },
       });
     } finally {
       db.close();
@@ -856,7 +1003,7 @@ describe("LinkedInProfileService prepare helpers", () => {
       const service = new LinkedInProfileService(createTestRuntime(db));
       const prepared = service.prepareUpdateSettings({
         profileName: "default",
-        industry: "Software Development"
+        industry: "Software Development",
       });
 
       expect(prepared).toMatchObject({
@@ -865,9 +1012,9 @@ describe("LinkedInProfileService prepare helpers", () => {
         preview: {
           summary: "Update LinkedIn profile settings (industry)",
           settings_updates: {
-            industry: "Software Development"
-          }
-        }
+            industry: "Software Development",
+          },
+        },
       });
     } finally {
       db.close();
@@ -881,7 +1028,7 @@ describe("LinkedInProfileService prepare helpers", () => {
       const service = new LinkedInProfileService(createTestRuntime(db));
       const prepared = service.prepareUpdatePublicProfile({
         profileName: "default",
-        vanityName: "avery-cole-example"
+        vanityName: "avery-cole-example",
       });
 
       expect(prepared).toMatchObject({
@@ -890,8 +1037,8 @@ describe("LinkedInProfileService prepare helpers", () => {
         preview: {
           summary: "Update LinkedIn public profile URL",
           vanity_name: "avery-cole-example",
-          public_profile_url: "https://www.linkedin.com/in/avery-cole-example/"
-        }
+          public_profile_url: "https://www.linkedin.com/in/avery-cole-example/",
+        },
       });
     } finally {
       db.close();
@@ -905,12 +1052,12 @@ describe("LinkedInProfileService prepare helpers", () => {
       const service = new LinkedInProfileService(createTestRuntime(db));
       const prepared = service.prepareUpdatePublicProfile({
         profileName: "default",
-        publicProfileUrl: "https://www.linkedin.com/in/avery-cole-example/"
+        publicProfileUrl: "https://www.linkedin.com/in/avery-cole-example/",
       });
 
       expect(prepared.preview).toMatchObject({
         vanity_name: "avery-cole-example",
-        public_profile_url: "https://www.linkedin.com/in/avery-cole-example/"
+        public_profile_url: "https://www.linkedin.com/in/avery-cole-example/",
       });
     } finally {
       db.close();
@@ -924,12 +1071,12 @@ describe("LinkedInProfileService prepare helpers", () => {
       const service = new LinkedInProfileService(createTestRuntime(db));
       const prepared = service.prepareUpdatePublicProfile({
         profileName: "default",
-        customProfileUrl: "https://www.linkedin.com/in/avery-cole-example/"
+        customProfileUrl: "https://www.linkedin.com/in/avery-cole-example/",
       });
 
       expect(prepared.preview).toMatchObject({
         vanity_name: "avery-cole-example",
-        public_profile_url: "https://www.linkedin.com/in/avery-cole-example/"
+        public_profile_url: "https://www.linkedin.com/in/avery-cole-example/",
       });
     } finally {
       db.close();
@@ -946,8 +1093,8 @@ describe("LinkedInProfileService prepare helpers", () => {
         section: "certification",
         values: {
           name: "AWS Certified Developer",
-          issuingOrganization: "Amazon Web Services"
-        }
+          issuingOrganization: "Amazon Web Services",
+        },
       });
 
       expect(prepared).toMatchObject({
@@ -959,9 +1106,35 @@ describe("LinkedInProfileService prepare helpers", () => {
           mode: "create",
           values: {
             name: "AWS Certified Developer",
-            issuingOrganization: "Amazon Web Services"
-          }
-        }
+            issuingOrganization: "Amazon Web Services",
+          },
+        },
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("marks section upserts as update mode when itemId is provided", () => {
+    const db = new AssistantDatabase(":memory:");
+
+    try {
+      const service = new LinkedInProfileService(createTestRuntime(db));
+      const prepared = service.prepareUpsertSectionItem({
+        profileName: "default",
+        section: "experience",
+        itemId: "item-123",
+        values: {
+          title: "Senior Engineer",
+        },
+      });
+
+      expect(prepared.preview).toMatchObject({
+        section: "experience",
+        mode: "update",
+        values: {
+          title: "Senior Engineer",
+        },
       });
     } finally {
       db.close();
@@ -975,12 +1148,12 @@ describe("LinkedInProfileService prepare helpers", () => {
       const service = new LinkedInProfileService(createTestRuntime(db));
       const prepared = service.prepareRemoveSectionItem({
         profileName: "default",
-        section: "about"
+        section: "about",
       });
 
       expect(prepared.preview).toMatchObject({
         summary: "Clear LinkedIn about summary",
-        section: "about"
+        section: "about",
       });
     } finally {
       db.close();
@@ -996,8 +1169,8 @@ describe("LinkedInProfileService prepare helpers", () => {
       expect(() =>
         service.prepareRemoveSectionItem({
           profileName: "default",
-          section: "experience"
-        })
+          section: "experience",
+        }),
       ).toThrow("requires itemId or match details");
     } finally {
       db.close();
@@ -1011,10 +1184,12 @@ describe("LinkedInProfileService prepare helpers", () => {
     writeFileSync(sourcePath, "fake-image-bytes", "utf8");
 
     try {
-      const service = new LinkedInProfileService(createTestRuntime(db, artifactsRoot));
+      const service = new LinkedInProfileService(
+        createTestRuntime(db, artifactsRoot),
+      );
       const prepared = await service.prepareUploadPhoto({
         profileName: "default",
-        filePath: sourcePath
+        filePath: sourcePath,
       });
 
       const uploadPreview = prepared.preview.upload as Record<string, unknown>;
@@ -1025,8 +1200,8 @@ describe("LinkedInProfileService prepare helpers", () => {
         upload: {
           file_name: "photo.png",
           mime_type: "image/png",
-          size_bytes: "fake-image-bytes".length
-        }
+          size_bytes: "fake-image-bytes".length,
+        },
       });
       expect(artifactPath).toContain("linkedin/input-profile-photo-");
       expect(existsSync(path.join(artifactsRoot, artifactPath))).toBe(true);
@@ -1042,13 +1217,15 @@ describe("LinkedInProfileService prepare helpers", () => {
     writeFileSync(sourcePath, "not-an-image", "utf8");
 
     try {
-      const service = new LinkedInProfileService(createTestRuntime(db, artifactsRoot));
+      const service = new LinkedInProfileService(
+        createTestRuntime(db, artifactsRoot),
+      );
 
       await expect(
         service.prepareUploadPhoto({
           profileName: "default",
-          filePath: sourcePath
-        })
+          filePath: sourcePath,
+        }),
       ).rejects.toThrow("not supported");
     } finally {
       db.close();
@@ -1064,18 +1241,20 @@ describe("LinkedInProfileService prepare helpers", () => {
         profileName: "default",
         kind: "link",
         url: "https://example.com/launch",
-        title: "Launch page"
+        title: "Launch page",
       });
 
       expect(prepared.preview).toMatchObject({
         summary: "Add link item to LinkedIn Featured section",
         target: {
           profile_name: "default",
-          kind: "link"
+          kind: "link",
         },
-        title: "Launch page"
+        title: "Launch page",
       });
-      expect(String(prepared.preview.url ?? "")).toContain("https://example.com/launch");
+      expect(String(prepared.preview.url ?? "")).toContain(
+        "https://example.com/launch",
+      );
     } finally {
       db.close();
     }
@@ -1087,9 +1266,9 @@ describe("LinkedInProfileService prepare helpers", () => {
     try {
       const service = new LinkedInProfileService(createTestRuntime(db));
 
-      expect(() => service.prepareFeaturedRemove({ profileName: "default" })).toThrow(
-        "requires itemId or match details"
-      );
+      expect(() =>
+        service.prepareFeaturedRemove({ profileName: "default" }),
+      ).toThrow("requires itemId or match details");
     } finally {
       db.close();
     }
@@ -1100,7 +1279,7 @@ describe("LinkedInProfileService prepare helpers", () => {
     const featuredItemId = createFeaturedItemId("link", {
       url: "https://example.com/launch",
       title: "Launch page",
-      rawText: "Launch page"
+      rawText: "Launch page",
     });
 
     try {
@@ -1109,8 +1288,8 @@ describe("LinkedInProfileService prepare helpers", () => {
       expect(() =>
         service.prepareFeaturedReorder({
           profileName: "default",
-          itemIds: [featuredItemId, featuredItemId]
-        })
+          itemIds: [featuredItemId, featuredItemId],
+        }),
       ).toThrow("must be unique");
     } finally {
       db.close();
@@ -1126,8 +1305,8 @@ describe("LinkedInProfileService prepare helpers", () => {
       expect(() =>
         service.prepareFeaturedReorder({
           profileName: "default",
-          itemIds: ["not-a-featured-id"]
-        })
+          itemIds: ["not-a-featured-id"],
+        }),
       ).toThrow("view_editable.featured.items");
     } finally {
       db.close();
@@ -1141,15 +1320,15 @@ describe("LinkedInProfileService prepare helpers", () => {
       const service = new LinkedInProfileService(createTestRuntime(db));
       const prepared = service.prepareAddSkill({
         profileName: "default",
-        skillName: "TypeScript"
+        skillName: "TypeScript",
       });
 
       expect(prepared.preview).toMatchObject({
         summary: 'Add "TypeScript" to LinkedIn profile skills',
         target: {
-          profile_name: "default"
+          profile_name: "default",
         },
-        skill_name: "TypeScript"
+        skill_name: "TypeScript",
       });
     } finally {
       db.close();
@@ -1163,15 +1342,15 @@ describe("LinkedInProfileService prepare helpers", () => {
       const service = new LinkedInProfileService(createTestRuntime(db));
       const prepared = service.prepareReorderSkills({
         profileName: "default",
-        skillNames: ["TypeScript", "Playwright"]
+        skillNames: ["TypeScript", "Playwright"],
       });
 
       expect(prepared.preview).toMatchObject({
         summary: "Reorder LinkedIn skills (2)",
         target: {
-          profile_name: "default"
+          profile_name: "default",
         },
-        skill_names: ["TypeScript", "Playwright"]
+        skill_names: ["TypeScript", "Playwright"],
       });
     } finally {
       db.close();
@@ -1186,7 +1365,7 @@ describe("LinkedInProfileService prepare helpers", () => {
       const prepared = service.prepareEndorseSkill({
         profileName: "default",
         target: "realsimonmiller",
-        skillName: "JavaScript"
+        skillName: "JavaScript",
       });
 
       expect(prepared.preview).toMatchObject({
@@ -1194,9 +1373,9 @@ describe("LinkedInProfileService prepare helpers", () => {
         target: {
           profile_name: "default",
           target_profile: "realsimonmiller",
-          target_profile_url: "https://www.linkedin.com/in/realsimonmiller/"
+          target_profile_url: "https://www.linkedin.com/in/realsimonmiller/",
         },
-        skill_name: "JavaScript"
+        skill_name: "JavaScript",
       });
     } finally {
       db.close();
@@ -1212,7 +1391,7 @@ describe("LinkedInProfileService prepare helpers", () => {
         profileName: "default",
         target: "realsimonmiller",
         relationship: "colleague",
-        message: "Would love a short recommendation when you have time."
+        message: "Would love a short recommendation when you have time.",
       });
 
       expect(prepared.preview).toMatchObject({
@@ -1220,12 +1399,12 @@ describe("LinkedInProfileService prepare helpers", () => {
         target: {
           profile_name: "default",
           target_profile: "realsimonmiller",
-          target_profile_url: "https://www.linkedin.com/in/realsimonmiller/"
+          target_profile_url: "https://www.linkedin.com/in/realsimonmiller/",
         },
         fields: {
           relationship: "colleague",
-          message: "Would love a short recommendation when you have time."
-        }
+          message: "Would love a short recommendation when you have time.",
+        },
       });
     } finally {
       db.close();
@@ -1242,8 +1421,8 @@ describe("LinkedInProfileService prepare helpers", () => {
         service.prepareWriteRecommendation({
           profileName: "default",
           target: "realsimonmiller",
-          text: " "
-        })
+          text: " ",
+        }),
       ).toThrow("text is required");
     } finally {
       db.close();
@@ -1259,7 +1438,7 @@ describe("LinkedInProfileService prepare helpers", () => {
         profileName: "default",
         target: "realsimonmiller",
         relationship: "colleague",
-        text: "A thoughtful collaborator who consistently follows through."
+        text: "A thoughtful collaborator who consistently follows through.",
       });
 
       expect(prepared.preview).toMatchObject({
@@ -1267,15 +1446,15 @@ describe("LinkedInProfileService prepare helpers", () => {
         target: {
           profile_name: "default",
           target_profile: "realsimonmiller",
-          target_profile_url: "https://www.linkedin.com/in/realsimonmiller/"
+          target_profile_url: "https://www.linkedin.com/in/realsimonmiller/",
         },
         fields: {
           relationship: "colleague",
-          text: "A thoughtful collaborator who consistently follows through."
+          text: "A thoughtful collaborator who consistently follows through.",
         },
         rate_limit: {
-          counter_key: "linkedin.profile.recommendation_write"
-        }
+          counter_key: "linkedin.profile.recommendation_write",
+        },
       });
     } finally {
       db.close();
