@@ -46,8 +46,19 @@ jobs:
               echo "✅ PR #$number rebased successfully"
             else
               git rebase --abort
-              echo "⚠️ PR #$number has non-trivial conflicts, skipping"
-              gh pr comment "$number" --body "⚠️ Auto-rebase failed — this branch has conflicts with main that need manual resolution."
+              echo "⚠️ PR #$number has non-trivial conflicts"
+
+              # Get the linked issue number from the PR branch name (ai/issue-NNN-...)
+              issue_num=$(echo "$branch" | grep -oP 'issue-\K\d+' || true)
+
+              if [ -n "$issue_num" ]; then
+                # Relabel the issue so the orchestrator spawns a new session to resolve conflicts
+                gh issue edit "$issue_num" --remove-label "ai-in-progress" --add-label "ai-task" 2>/dev/null || true
+                gh issue comment "$issue_num" --body "⚠️ Auto-rebase of branch \`$branch\` failed due to non-trivial merge conflicts with main. Relabeled to \`ai-task\` so the orchestrator can spawn a fresh session to resolve them."
+                echo "Relabeled issue #$issue_num back to ai-task"
+              fi
+
+              gh pr comment "$number" --body "⚠️ Auto-rebase failed — this branch has merge conflicts that couldn't be resolved automatically. The linked issue has been relabeled for the orchestrator to retry with a fresh worktree from main."
             fi
 
             echo "::endgroup::"
