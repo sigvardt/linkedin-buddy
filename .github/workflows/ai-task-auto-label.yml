@@ -9,6 +9,7 @@ permissions:
 
 jobs:
   auto-label:
+    if: github.event.issue.user.login == 'sigvardt'
     runs-on: ubuntu-latest
     steps:
       - name: Auto-manage ai-task label
@@ -18,23 +19,20 @@ jobs:
             const issue = context.payload.issue;
             const labels = issue.labels.map(l => l.name);
             
-            // Labels that exclude ai-task (ai-debugging is NOT here — it coexists with ai-task for retry flows)
             const excludeLabels = ['backlog', 'ai-in-progress', 'ai-blocked', 'ai-review-ready', 'wontfix', 'duplicate', 'invalid'];
             
             const hasExclude = labels.some(l => excludeLabels.includes(l));
             const hasAiTask = labels.includes('ai-task');
             
             if (hasExclude && hasAiTask) {
-              // Remove ai-task if an exclude label is present
               await github.rest.issues.removeLabel({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: issue.number,
                 name: 'ai-task'
               });
-              console.log(`Removed ai-task from #${issue.number} (has exclude label: ${labels.filter(l => excludeLabels.includes(l)).join(', ')})`);
+              console.log(`Removed ai-task from #${issue.number} (has exclude label)`);
             } else if (!hasExclude && !hasAiTask) {
-              // Add ai-task if no exclude label and no ai-task
               await github.rest.issues.addLabels({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
