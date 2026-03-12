@@ -7817,6 +7817,166 @@ async function runNotificationsList(
   }
 }
 
+async function runNotificationsMarkRead(
+  input: {
+    profileName: string;
+    notificationId: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.notifications.mark_read.start", {
+      profileName: input.profileName,
+      notificationId: input.notificationId,
+    });
+
+    const result = await runtime.notifications.markRead({
+      profileName: input.profileName,
+      notificationId: input.notificationId,
+    });
+
+    runtime.logger.log("info", "cli.notifications.mark_read.done", {
+      profileName: input.profileName,
+      notificationId: input.notificationId,
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...result,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runNotificationsDismiss(
+  input: {
+    profileName: string;
+    notificationId: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.notifications.dismiss.start", {
+      profileName: input.profileName,
+      notificationId: input.notificationId,
+    });
+
+    const prepared = await runtime.notifications.prepareDismissNotification({
+      profileName: input.profileName,
+      notificationId: input.notificationId,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
+    });
+
+    runtime.logger.log("info", "cli.notifications.dismiss.done", {
+      profileName: input.profileName,
+      notificationId: input.notificationId,
+      preparedActionId: prepared.preparedActionId,
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runNotificationsPreferencesGet(
+  input: {
+    profileName: string;
+    preferenceUrl?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.notifications.preferences.get.start", {
+      profileName: input.profileName,
+      preferenceUrl: input.preferenceUrl ?? null,
+    });
+
+    const preferences = await runtime.notifications.getPreferences({
+      profileName: input.profileName,
+      ...(input.preferenceUrl ? { preferenceUrl: input.preferenceUrl } : {}),
+    });
+
+    runtime.logger.log("info", "cli.notifications.preferences.get.done", {
+      profileName: input.profileName,
+      viewType: preferences.view_type,
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      preferences,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runNotificationsPreferencesPrepareUpdate(
+  input: {
+    profileName: string;
+    preferenceUrl: string;
+    enabled: boolean;
+    channel?: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log(
+      "info",
+      "cli.notifications.preferences.prepare_update.start",
+      {
+        profileName: input.profileName,
+        preferenceUrl: input.preferenceUrl,
+        enabled: input.enabled,
+        channel: input.channel ?? null,
+      },
+    );
+
+    const prepared = await runtime.notifications.prepareUpdatePreference({
+      profileName: input.profileName,
+      preferenceUrl: input.preferenceUrl,
+      enabled: input.enabled,
+      ...(input.channel ? { channel: input.channel } : {}),
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
+    });
+
+    runtime.logger.log(
+      "info",
+      "cli.notifications.preferences.prepare_update.done",
+      {
+        profileName: input.profileName,
+        preferenceUrl: input.preferenceUrl,
+        preparedActionId: prepared.preparedActionId,
+      },
+    );
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 async function runJobsSearch(
   input: {
     profileName: string;
@@ -10910,6 +11070,101 @@ export function createCliProgram(): Command {
         readCdpUrl(),
       );
     });
+
+  notificationsCommand
+    .command("mark-read")
+    .description("Mark a LinkedIn notification as read")
+    .argument("<notificationId>", "Notification ID from notifications list")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(async (notificationId: string, options: { profile: string }) => {
+      await runNotificationsMarkRead(
+        { profileName: options.profile, notificationId },
+        readCdpUrl(),
+      );
+    });
+
+  notificationsCommand
+    .command("dismiss")
+    .description("Prepare to dismiss a LinkedIn notification (two-phase)")
+    .argument("<notificationId>", "Notification ID from notifications list")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-o, --operator-note <note>", "Internal note for audit")
+    .action(
+      async (
+        notificationId: string,
+        options: { profile: string; operatorNote?: string },
+      ) => {
+        await runNotificationsDismiss(
+          {
+            profileName: options.profile,
+            notificationId,
+            ...(options.operatorNote
+              ? { operatorNote: options.operatorNote }
+              : {}),
+          },
+          readCdpUrl(),
+        );
+      },
+    );
+
+  const notificationPreferencesCommand = notificationsCommand
+    .command("preferences")
+    .description("Manage LinkedIn notification preferences");
+
+  notificationPreferencesCommand
+    .command("get")
+    .description("View LinkedIn notification preferences")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("--preference-url <url>", "Specific preference page URL")
+    .action(async (options: { profile: string; preferenceUrl?: string }) => {
+      await runNotificationsPreferencesGet(
+        {
+          profileName: options.profile,
+          ...(options.preferenceUrl
+            ? { preferenceUrl: options.preferenceUrl }
+            : {}),
+        },
+        readCdpUrl(),
+      );
+    });
+
+  notificationPreferencesCommand
+    .command("prepare-update")
+    .description("Prepare a notification preference update (two-phase)")
+    .requiredOption(
+      "--preference-url <url>",
+      "Preference page URL from preferences get",
+    )
+    .requiredOption("--enabled <enabled>", "Enable or disable (true/false)")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option(
+      "--channel <channel>",
+      "Channel: in_app, push, or email (required for subcategories)",
+    )
+    .option("-o, --operator-note <note>", "Internal note for audit")
+    .action(
+      async (options: {
+        profile: string;
+        preferenceUrl: string;
+        enabled: string;
+        channel?: string;
+        operatorNote?: string;
+      }) => {
+        const enabled = options.enabled === "true";
+        await runNotificationsPreferencesPrepareUpdate(
+          {
+            profileName: options.profile,
+            preferenceUrl: options.preferenceUrl,
+            enabled,
+            ...(options.channel ? { channel: options.channel } : {}),
+            ...(options.operatorNote
+              ? { operatorNote: options.operatorNote }
+              : {}),
+          },
+          readCdpUrl(),
+        );
+      },
+    );
 
   const jobsCommand = program
     .command("jobs")
