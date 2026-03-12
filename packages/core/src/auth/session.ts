@@ -269,7 +269,7 @@ export class LinkedInAuthService {
           : "AUTH_REQUIRED";
       const guidance = status.rateLimitActive
         ? `Wait for cooldown expiry (${status.rateLimitUntil}) or clear it with "linkedin rate-limit --clear".`
-        : `Run "linkedin login --profile ${options.profileName ?? "default"}" first.`;
+        : `Run "linkedin login --manual --session ${options.profileName ?? "default"}" to capture a fresh session, or "linkedin login --profile ${options.profileName ?? "default"}" for interactive login.`;
       this.logger?.log("warn", "auth.session.ensure_authenticated.failed", {
         code,
         current_url: status.currentUrl,
