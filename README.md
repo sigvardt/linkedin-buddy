@@ -241,6 +241,7 @@ See [`docs/repository-seo.md`](./docs/repository-seo.md) for the keyword targets
 | Brand and social preview assets | [`docs/brand-guidelines.md`](./docs/brand-guidelines.md) |
 | README media research | [`docs/readme-media-research.md`](./docs/readme-media-research.md) |
 | README media inventory | [`assets/media/README.md`](./assets/media/README.md) |
+| Articles and newsletters | [`docs/articles-newsletters.md`](./docs/articles-newsletters.md) |
 
 ## Contributing
 
