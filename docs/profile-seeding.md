@@ -27,6 +27,27 @@ npm exec -w @linkedin-buddy/cli -- linkedin profile apply-spec --profile <profil
    npm exec -w @linkedin-buddy/cli -- linkedin profile view me --profile <profile>
    ```
 
+## Individual settings commands
+
+### Update industry
+
+```bash
+npm exec -w @linkedin-buddy/cli -- linkedin profile update-settings --industry "Software Development" --profile <profile>
+```
+
+### Update custom public profile URL
+
+```bash
+npm exec -w @linkedin-buddy/cli -- linkedin profile update-public-profile avery-cole --profile <profile>
+```
+
+The vanity name must be 3–100 characters using only letters, digits, and hyphens.
+You can also pass a full LinkedIn profile URL instead of the slug:
+
+```bash
+npm exec -w @linkedin-buddy/cli -- linkedin profile update-public-profile "https://www.linkedin.com/in/avery-cole/" --profile <profile>
+```
+
 ## Current blockers
 
 - Skills are still unsupported by the MCP/CLI profile editing surface: #228.
