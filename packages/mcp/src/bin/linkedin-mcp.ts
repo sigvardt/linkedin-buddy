@@ -7019,7 +7019,7 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
         name: LINKEDIN_JOBS_SEARCH_TOOL,
         description:
           withSelectorAuditHint(
-            "Search for LinkedIn job postings by keyword and optional location."
+            "Search for LinkedIn job postings by keyword and optional location. Returns { results: [{ job_id, title, company, location, posted_at, job_url, salary_range, employment_type }], count }. Use linkedin.jobs.view for full details on a specific result."
           ),
         inputSchema: {
           type: "object",
@@ -7050,7 +7050,7 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
         name: LINKEDIN_JOBS_VIEW_TOOL,
         description:
           withSelectorAuditHint(
-            "View details of a specific LinkedIn job posting by job ID."
+            "View details of a specific LinkedIn job posting by job ID. Returns { job_id, title, company, company_url, location, description, salary_range, employment_type, seniority_level, applicant_count, is_remote }. Use linkedin.jobs.save or linkedin.jobs.prepare_easy_apply to act on the result."
           ),
         inputSchema: {
           type: "object",
@@ -7072,7 +7072,7 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
       {
         name: LINKEDIN_JOBS_SAVE_TOOL,
         description:
-          "Prepare to save a LinkedIn job for later (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+          "Prepare to save a LinkedIn job for later (two-phase: returns confirm token, low risk). Use linkedin.actions.confirm to execute. Use linkedin.jobs.unsave to reverse.",
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -7097,7 +7097,7 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
       {
         name: LINKEDIN_JOBS_UNSAVE_TOOL,
         description:
-          "Prepare to unsave a LinkedIn job (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+          "Prepare to unsave a previously saved LinkedIn job (two-phase: returns confirm token, low risk). Use linkedin.actions.confirm to execute.",
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -7122,7 +7122,7 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
       {
         name: LINKEDIN_JOBS_ALERTS_LIST_TOOL,
         description:
-          withSelectorAuditHint("List LinkedIn job alerts for the current account."),
+          withSelectorAuditHint("List LinkedIn job alerts for the current account. Returns { alerts: [{ alert_id, query, location, frequency, search_url, enabled }], count }. Use alert_id with linkedin.jobs.alerts.remove to manage alerts."),
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -7142,7 +7142,7 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
       {
         name: LINKEDIN_JOBS_ALERTS_CREATE_TOOL,
         description:
-          "Prepare to create a LinkedIn job alert from a search query (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+          "Prepare to create a LinkedIn job alert from a search query (two-phase: returns confirm token, low risk). Use linkedin.actions.confirm to execute. Use linkedin.jobs.alerts.list to view existing alerts.",
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -7171,7 +7171,7 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
       {
         name: LINKEDIN_JOBS_ALERTS_REMOVE_TOOL,
         description:
-          "Prepare to remove a LinkedIn job alert (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+          "Prepare to remove a LinkedIn job alert by alertId, searchUrl, or query (two-phase: returns confirm token, low risk). Use linkedin.actions.confirm to execute. Use linkedin.jobs.alerts.list to find the alertId.",
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -7207,7 +7207,7 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
       {
         name: LINKEDIN_JOBS_PREPARE_EASY_APPLY_TOOL,
         description:
-          "Prepare a LinkedIn Easy Apply submission (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+          "Prepare a LinkedIn Easy Apply submission (two-phase: returns confirm token, high risk). Fills multi-step application forms with supplied answers. Use linkedin.jobs.view to check if a job supports Easy Apply before calling. Use linkedin.actions.confirm to execute.",
         inputSchema: {
           type: "object",
           additionalProperties: false,

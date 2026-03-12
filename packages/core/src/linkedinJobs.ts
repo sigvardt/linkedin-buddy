@@ -5,20 +5,17 @@ import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
 import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
 import type { ConfirmFailureArtifactConfig } from "./config.js";
-import {
-  LinkedInBuddyError,
-  asLinkedInBuddyError
-} from "./errors.js";
+import { LinkedInBuddyError, asLinkedInBuddyError } from "./errors.js";
 import { scrollLinkedInPageToBottom } from "./linkedinPage.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
-import type { RateLimiter, RateLimiterState } from "./rateLimiter.js";
+import { formatRateLimitState, type RateLimiter } from "./rateLimiter.js";
 import type {
   ActionExecutor,
   ActionExecutorInput,
   ActionExecutorResult,
-  TwoPhaseCommitService
+  TwoPhaseCommitService,
 } from "./twoPhaseCommit.js";
 
 export interface LinkedInJobSearchResult {
@@ -139,7 +136,10 @@ export interface LinkedInJobsExecutorRuntime {
 }
 
 export interface LinkedInJobsRuntime extends LinkedInJobsExecutorRuntime {
-  twoPhaseCommit: Pick<TwoPhaseCommitService<LinkedInJobsExecutorRuntime>, "prepare">;
+  twoPhaseCommit: Pick<
+    TwoPhaseCommitService<LinkedInJobsExecutorRuntime>,
+    "prepare"
+  >;
 }
 
 export const SAVE_JOB_ACTION_TYPE = "jobs.save";
@@ -151,32 +151,40 @@ export const EASY_APPLY_JOB_ACTION_TYPE = "jobs.easy_apply";
 const SAVE_JOB_RATE_LIMIT_CONFIG = {
   counterKey: "linkedin.jobs.save",
   windowSizeMs: 60 * 60 * 1000,
-  limit: 40
+  limit: 40,
 } as const;
 
 const UNSAVE_JOB_RATE_LIMIT_CONFIG = {
   counterKey: "linkedin.jobs.unsave",
   windowSizeMs: 60 * 60 * 1000,
-  limit: 40
+  limit: 40,
 } as const;
 
 const CREATE_JOB_ALERT_RATE_LIMIT_CONFIG = {
   counterKey: "linkedin.jobs.alerts.create",
   windowSizeMs: 60 * 60 * 1000,
-  limit: 30
+  limit: 30,
 } as const;
 
 const REMOVE_JOB_ALERT_RATE_LIMIT_CONFIG = {
   counterKey: "linkedin.jobs.alerts.remove",
   windowSizeMs: 60 * 60 * 1000,
-  limit: 30
+  limit: 30,
 } as const;
 
 const EASY_APPLY_RATE_LIMIT_CONFIG = {
   counterKey: "linkedin.jobs.easy_apply",
   windowSizeMs: 60 * 60 * 1000,
-  limit: 6
+  limit: 6,
 } as const;
+
+export const JOB_SEARCH_QUERY_MAX_LENGTH = 400;
+export const JOB_SEARCH_LIMIT_MAX = 100;
+export const JOB_ALERTS_LIMIT_MAX = 100;
+export const EASY_APPLY_COVER_LETTER_MAX_LENGTH = 4000;
+export const EASY_APPLY_PHONE_MAX_LENGTH = 30;
+export const EASY_APPLY_CITY_MAX_LENGTH = 200;
+export const EASY_APPLY_EMAIL_MAX_LENGTH = 254;
 
 const JOB_ALERTS_URL = "https://www.linkedin.com/jobs/job-alerts/";
 export const LINKEDIN_JOB_ALERTS_URL = JOB_ALERTS_URL;
@@ -185,42 +193,6 @@ const EASY_APPLY_DIALOG_SELECTOR =
 const EASY_APPLY_FIELD_ATTR = "data-linkedin-assistant-easy-apply-field";
 const EASY_APPLY_GROUP_ATTR = "data-linkedin-assistant-easy-apply-group";
 const EASY_APPLY_OPTION_ATTR = "data-linkedin-assistant-easy-apply-option";
-
-interface JobSearchSnapshot {
-  job_id: string;
-  title: string;
-  company: string;
-  location: string;
-  posted_at: string;
-  job_url: string;
-  salary_range: string;
-  employment_type: string;
-}
-
-interface JobDetailSnapshot {
-  job_id: string;
-  title: string;
-  company: string;
-  company_url: string;
-  location: string;
-  posted_at: string;
-  description: string;
-  salary_range: string;
-  employment_type: string;
-  job_url: string;
-  applicant_count: string;
-  seniority_level: string;
-  is_remote: boolean;
-}
-
-interface JobAlertSnapshot {
-  alert_id: string;
-  query: string;
-  location: string;
-  frequency: string;
-  search_url: string;
-  enabled: boolean;
-}
 
 type EasyApplyFieldKind =
   | "text"
@@ -273,34 +245,16 @@ function normalizeLabelKey(value: string): string {
     .trim();
 }
 
-function formatRateLimitState(
-  state: RateLimiterState
-): Record<string, number | boolean | string> {
-  return {
-    counter_key: state.counterKey,
-    window_start_ms: state.windowStartMs,
-    window_size_ms: state.windowSizeMs,
-    count: state.count,
-    limit: state.limit,
-    remaining: state.remaining,
-    allowed: state.allowed
-  };
-}
-
-function readJobsLimit(value: number | undefined): number {
+function readLimit(
+  value: number | undefined,
+  defaultLimit: number,
+  maxLimit: number,
+): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    return 10;
+    return defaultLimit;
   }
 
-  return Math.max(1, Math.floor(value));
-}
-
-function readJobAlertsLimit(value: number | undefined): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return 20;
-  }
-
-  return Math.max(1, Math.floor(value));
+  return Math.max(1, Math.min(Math.floor(value), maxLimit));
 }
 
 function getProfileName(target: Record<string, unknown>): string {
@@ -316,7 +270,7 @@ function getRequiredStringField(
   source: Record<string, unknown>,
   key: string,
   actionId: string,
-  location: "target" | "payload"
+  location: "target" | "payload",
 ): string {
   const value = source[key];
   if (typeof value === "string" && value.trim().length > 0) {
@@ -329,14 +283,14 @@ function getRequiredStringField(
     {
       action_id: actionId,
       location,
-      key
-    }
+      key,
+    },
   );
 }
 
 function getOptionalStringField(
   source: Record<string, unknown>,
-  key: string
+  key: string,
 ): string | undefined {
   const value = source[key];
   return typeof value === "string" && value.trim().length > 0
@@ -348,7 +302,7 @@ function getOptionalAnswersField(
   source: Record<string, unknown>,
   key: string,
   actionId: string,
-  location: "target" | "payload"
+  location: "target" | "payload",
 ): Record<string, LinkedInEasyApplyAnswerValue> {
   const value = source[key];
   if (value === undefined) {
@@ -362,8 +316,8 @@ function getOptionalAnswersField(
       {
         action_id: actionId,
         location,
-        key
-      }
+        key,
+      },
     );
   }
 
@@ -394,8 +348,8 @@ function getOptionalAnswersField(
         action_id: actionId,
         location,
         key,
-        answer_key: answerKey
-      }
+        answer_key: answerKey,
+      },
     );
   }
 
@@ -405,11 +359,13 @@ function getOptionalAnswersField(
 function buildJobAlertIdentifier(
   searchUrl: string,
   query: string,
-  location: string
+  location: string,
 ): string {
   return (
     normalizeText(searchUrl) ||
-    [normalizeText(query), normalizeText(location)].filter(Boolean).join("::") ||
+    [normalizeText(query), normalizeText(location)]
+      .filter(Boolean)
+      .join("::") ||
     "job-alert"
   );
 }
@@ -439,7 +395,7 @@ function parseJobSearchUrl(value: string): {
     return {
       normalizedUrl: "",
       query: "",
-      location: ""
+      location: "",
     };
   }
 
@@ -448,27 +404,27 @@ function parseJobSearchUrl(value: string): {
     return {
       normalizedUrl: parsed.toString(),
       query: normalizeText(parsed.searchParams.get("keywords")),
-      location: normalizeText(parsed.searchParams.get("location"))
+      location: normalizeText(parsed.searchParams.get("location")),
     };
   } catch {
     return {
       normalizedUrl,
       query: "",
-      location: ""
+      location: "",
     };
   }
 }
 
 function normalizeEasyApplyAnswerValue(
   value: unknown,
-  key: string
+  key: string,
 ): LinkedInEasyApplyAnswerValue {
   if (typeof value === "string") {
     const normalized = normalizeText(value);
     if (!normalized) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        `answers.${key} must not be empty when provided.`
+        `answers.${key} must not be empty when provided.`,
       );
     }
     return normalized;
@@ -478,7 +434,7 @@ function normalizeEasyApplyAnswerValue(
     if (typeof value === "number" && !Number.isFinite(value)) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        `answers.${key} must be a finite number.`
+        `answers.${key} must be a finite number.`,
       );
     }
     return value;
@@ -490,10 +446,13 @@ function normalizeEasyApplyAnswerValue(
       .map((item) => normalizeText(item))
       .filter((item) => item.length > 0);
 
-    if (normalizedValues.length === 0 || normalizedValues.length !== value.length) {
+    if (
+      normalizedValues.length === 0 ||
+      normalizedValues.length !== value.length
+    ) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        `answers.${key} must be a non-empty array of strings.`
+        `answers.${key} must be a non-empty array of strings.`,
       );
     }
 
@@ -502,12 +461,12 @@ function normalizeEasyApplyAnswerValue(
 
   throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
-    `answers.${key} must be a string, boolean, number, or string array.`
+    `answers.${key} must be a string, boolean, number, or string array.`,
   );
 }
 
 function normalizeEasyApplyAnswers(
-  input: Record<string, unknown> | undefined
+  input: Record<string, unknown> | undefined,
 ): Record<string, LinkedInEasyApplyAnswerValue> {
   if (!input) {
     return {};
@@ -519,11 +478,14 @@ function normalizeEasyApplyAnswers(
     if (!normalizedKey) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        "answers contains an empty field name."
+        "answers contains an empty field name.",
       );
     }
 
-    normalized[normalizedKey] = normalizeEasyApplyAnswerValue(value, normalizedKey);
+    normalized[normalizedKey] = normalizeEasyApplyAnswerValue(
+      value,
+      normalizedKey,
+    );
   }
 
   return normalized;
@@ -542,7 +504,7 @@ function validateEmail(value: string | undefined): string | undefined {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(normalized)) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "email must look like a valid email address."
+      "email must look like a valid email address.",
     );
   }
 
@@ -563,7 +525,7 @@ function validateResumePath(value: string | undefined): string | undefined {
   if (!existsSync(resolvedPath)) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      `resumePath does not exist: ${resolvedPath}`
+      `resumePath does not exist: ${resolvedPath}`,
     );
   }
 
@@ -571,7 +533,7 @@ function validateResumePath(value: string | undefined): string | undefined {
   if (!stats.isFile()) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      `resumePath must point to a file: ${resolvedPath}`
+      `resumePath must point to a file: ${resolvedPath}`,
     );
   }
 
@@ -579,7 +541,7 @@ function validateResumePath(value: string | undefined): string | undefined {
 }
 
 function validateEasyApplyInput(
-  input: PrepareEasyApplyInput
+  input: PrepareEasyApplyInput,
 ): ValidatedEasyApplyInput {
   const profileName = input.profileName ?? "default";
   const jobId = normalizeText(input.jobId);
@@ -587,14 +549,42 @@ function validateEasyApplyInput(
   if (!jobId) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "jobId is required."
+      "jobId is required.",
     );
   }
 
   const phoneNumber = normalizeText(input.phoneNumber);
+  if (phoneNumber && phoneNumber.length > EASY_APPLY_PHONE_MAX_LENGTH) {
+    throw new LinkedInBuddyError(
+      "ACTION_PRECONDITION_FAILED",
+      `phoneNumber must not exceed ${EASY_APPLY_PHONE_MAX_LENGTH} characters.`,
+    );
+  }
+
   const city = normalizeText(input.city);
+  if (city && city.length > EASY_APPLY_CITY_MAX_LENGTH) {
+    throw new LinkedInBuddyError(
+      "ACTION_PRECONDITION_FAILED",
+      `city must not exceed ${EASY_APPLY_CITY_MAX_LENGTH} characters.`,
+    );
+  }
+
   const coverLetter = normalizeText(input.coverLetter);
+  if (coverLetter && coverLetter.length > EASY_APPLY_COVER_LETTER_MAX_LENGTH) {
+    throw new LinkedInBuddyError(
+      "ACTION_PRECONDITION_FAILED",
+      `coverLetter must not exceed ${EASY_APPLY_COVER_LETTER_MAX_LENGTH} characters.`,
+    );
+  }
+
   const email = validateEmail(input.email);
+  if (email && email.length > EASY_APPLY_EMAIL_MAX_LENGTH) {
+    throw new LinkedInBuddyError(
+      "ACTION_PRECONDITION_FAILED",
+      `email must not exceed ${EASY_APPLY_EMAIL_MAX_LENGTH} characters.`,
+    );
+  }
+
   const resumePath = validateResumePath(input.resumePath);
 
   return {
@@ -606,7 +596,7 @@ function validateEasyApplyInput(
     ...(city ? { city } : {}),
     ...(resumePath ? { resumePath } : {}),
     ...(coverLetter ? { coverLetter } : {}),
-    answers: normalizeEasyApplyAnswers(input.answers)
+    answers: normalizeEasyApplyAnswers(input.answers),
   };
 }
 
@@ -619,10 +609,7 @@ async function getOrCreatePage(context: BrowserContext): Promise<Page> {
   return context.newPage();
 }
 
-export function buildJobSearchUrl(
-  query: string,
-  location?: string
-): string {
+export function buildJobSearchUrl(query: string, location?: string): string {
   const encodedQuery = encodeURIComponent(query);
   let url = `https://www.linkedin.com/jobs/search/?keywords=${encodedQuery}`;
   if (location && location.trim().length > 0) {
@@ -643,7 +630,7 @@ async function captureScreenshotArtifact(
   runtime: LinkedInJobsExecutorRuntime,
   page: Page,
   relativePath: string,
-  metadata: Record<string, unknown> = {}
+  metadata: Record<string, unknown> = {},
 ): Promise<string> {
   const absolutePath = runtime.artifacts.resolve(relativePath);
   mkdirSync(path.dirname(absolutePath), { recursive: true });
@@ -655,7 +642,7 @@ async function captureScreenshotArtifact(
 async function waitForCondition(
   condition: () => Promise<boolean>,
   timeoutMs: number,
-  intervalMs = 250
+  intervalMs = 250,
 ): Promise<boolean> {
   const deadline = Date.now() + Math.max(0, timeoutMs);
   while (Date.now() < deadline) {
@@ -676,14 +663,14 @@ async function waitForJobSearchSurface(page: Page): Promise<void> {
     ".job-card-container",
     ".base-search-card",
     ".jobs-search-results-list",
-    "main"
+    "main",
   ];
 
   for (const selector of selectors) {
     try {
       await page.locator(selector).first().waitFor({
         state: "visible",
-        timeout: 5_000
+        timeout: 5_000,
       });
       return;
     } catch {
@@ -696,8 +683,8 @@ async function waitForJobSearchSurface(page: Page): Promise<void> {
     "Could not locate LinkedIn job search content.",
     {
       current_url: page.url(),
-      attempted_selectors: selectors
-    }
+      attempted_selectors: selectors,
+    },
   );
 }
 
@@ -707,14 +694,14 @@ async function waitForJobDetailSurface(page: Page): Promise<void> {
     ".jobs-details",
     ".jobs-unified-top-card",
     ".job-view-layout",
-    "main"
+    "main",
   ];
 
   for (const selector of selectors) {
     try {
       await page.locator(selector).first().waitFor({
         state: "visible",
-        timeout: 5_000
+        timeout: 5_000,
       });
       return;
     } catch {
@@ -727,8 +714,8 @@ async function waitForJobDetailSurface(page: Page): Promise<void> {
     "Could not locate LinkedIn job detail content.",
     {
       current_url: page.url(),
-      attempted_selectors: selectors
-    }
+      attempted_selectors: selectors,
+    },
   );
 }
 
@@ -739,14 +726,14 @@ async function waitForJobAlertsSurface(page: Page): Promise<void> {
     ".jobs-alert-card",
     ".job-alert-card",
     "a[href*='/jobs/search/']",
-    "main"
+    "main",
   ];
 
   for (const selector of selectors) {
     try {
       await page.locator(selector).first().waitFor({
         state: "visible",
-        timeout: 5_000
+        timeout: 5_000,
       });
       return;
     } catch {
@@ -759,149 +746,155 @@ async function waitForJobAlertsSurface(page: Page): Promise<void> {
     "Could not locate LinkedIn job alerts content.",
     {
       current_url: page.url(),
-      attempted_selectors: selectors
-    }
+      attempted_selectors: selectors,
+    },
   );
 }
 
 /* eslint-disable no-undef -- DOM types are valid inside page.evaluate() */
 async function extractJobSearchResults(
   page: Page,
-  limit: number
+  limit: number,
 ): Promise<LinkedInJobSearchResult[]> {
-  const snapshots = await page.evaluate((maxJobs: number) => {
-    const normalize = (value: string | null | undefined): string =>
-      (value ?? "").replace(/\s+/g, " ").trim();
+  const snapshots = await page.evaluate(
+    (maxJobs: number) => {
+      const normalize = (value: string | null | undefined): string =>
+        (value ?? "").replace(/\s+/g, " ").trim();
 
-    const origin = globalThis.window.location.origin;
+      const origin = globalThis.window.location.origin;
 
-    const pickText = (root: ParentNode, selectors: string[]): string => {
-      for (const selector of selectors) {
-        const text = normalize(root.querySelector(selector)?.textContent);
-        if (text) {
-          return text;
+      const pickText = (root: ParentNode, selectors: string[]): string => {
+        for (const selector of selectors) {
+          const text = normalize(root.querySelector(selector)?.textContent);
+          if (text) {
+            return text;
+          }
         }
-      }
-      return "";
-    };
-
-    const toAbsoluteHref = (value: string): string => {
-      if (!value) {
         return "";
-      }
-      if (/^https?:\/\//i.test(value)) {
-        return value;
-      }
-      return value.startsWith("/") ? `${origin}${value}` : `${origin}/${value}`;
-    };
+      };
 
-    const pickHref = (root: ParentNode, selectors: string[]): string => {
-      for (const selector of selectors) {
-        const linkElement = root.querySelector(
-          selector
-        ) as HTMLAnchorElement | null;
-        const href = toAbsoluteHref(
-          normalize(linkElement?.getAttribute("href")) ||
-            normalize(linkElement?.href)
-        );
-        if (href) {
-          return href;
+      const toAbsoluteHref = (value: string): string => {
+        if (!value) {
+          return "";
         }
-      }
-      return "";
-    };
-
-    const extractJobId = (jobUrl: string, root: Element): string => {
-      const urlMatch = /\/jobs\/view\/(\d+)/i.exec(jobUrl);
-      if (urlMatch?.[1]) {
-        return urlMatch[1];
-      }
-
-      const idCandidates = [
-        normalize(root.getAttribute("data-job-id")),
-        normalize(root.getAttribute("data-entity-urn")),
-        normalize(root.getAttribute("data-occludable-job-id")),
-        normalize(root.querySelector("[data-job-id]")?.getAttribute("data-job-id"))
-      ];
-
-      for (const candidate of idCandidates) {
-        if (candidate) {
-          const urnMatch = /(\d+)$/.exec(candidate);
-          return urnMatch?.[1] ?? candidate;
+        if (/^https?:\/\//i.test(value)) {
+          return value;
         }
-      }
+        return value.startsWith("/")
+          ? `${origin}${value}`
+          : `${origin}/${value}`;
+      };
 
-      return "";
-    };
-
-    const pickEmploymentType = (root: ParentNode): string => {
-      const signal = pickText(root, [
-        ".job-card-container__metadata-item",
-        ".job-card-container__job-insight",
-        ".base-search-card__metadata"
-      ]);
-      if (!signal) {
+      const pickHref = (root: ParentNode, selectors: string[]): string => {
+        for (const selector of selectors) {
+          const linkElement = root.querySelector(
+            selector,
+          ) as HTMLAnchorElement | null;
+          const href = toAbsoluteHref(
+            normalize(linkElement?.getAttribute("href")) ||
+              normalize(linkElement?.href),
+          );
+          if (href) {
+            return href;
+          }
+        }
         return "";
-      }
+      };
 
-      const match = /(Full-time|Part-time|Contract|Temporary|Internship)/i.exec(
-        signal
-      );
-      return normalize(match?.[1] ?? "");
-    };
+      const extractJobId = (jobUrl: string, root: Element): string => {
+        const urlMatch = /\/jobs\/view\/(\d+)/i.exec(jobUrl);
+        if (urlMatch?.[1]) {
+          return urlMatch[1];
+        }
 
-    const cards = Array.from(
-      globalThis.document.querySelectorAll(
-        ".job-card-container, .base-search-card, .job-card-list__entity-lockup"
-      )
-    ).slice(0, maxJobs);
+        const idCandidates = [
+          normalize(root.getAttribute("data-job-id")),
+          normalize(root.getAttribute("data-entity-urn")),
+          normalize(root.getAttribute("data-occludable-job-id")),
+          normalize(
+            root.querySelector("[data-job-id]")?.getAttribute("data-job-id"),
+          ),
+        ];
 
-    const results: JobSearchSnapshot[] = [];
-    for (const card of cards) {
-      const jobUrl = pickHref(card, [
-        "a[href*='/jobs/view/']",
-        ".job-card-container__link",
-        ".base-search-card__full-link",
-        "a"
-      ]);
+        for (const candidate of idCandidates) {
+          if (candidate) {
+            const urnMatch = /(\d+)$/.exec(candidate);
+            return urnMatch?.[1] ?? candidate;
+          }
+        }
 
-      results.push({
-        job_id: extractJobId(jobUrl, card),
-        title: pickText(card, [
+        return "";
+      };
+
+      const pickEmploymentType = (root: ParentNode): string => {
+        const signal = pickText(root, [
+          ".job-card-container__metadata-item",
+          ".job-card-container__job-insight",
+          ".base-search-card__metadata",
+        ]);
+        if (!signal) {
+          return "";
+        }
+
+        const match =
+          /(Full-time|Part-time|Contract|Temporary|Internship)/i.exec(signal);
+        return normalize(match?.[1] ?? "");
+      };
+
+      const cards = Array.from(
+        globalThis.document.querySelectorAll(
+          ".job-card-container, .base-search-card, .job-card-list__entity-lockup",
+        ),
+      ).slice(0, maxJobs);
+
+      const results: LinkedInJobSearchResult[] = [];
+      for (const card of cards) {
+        const jobUrl = pickHref(card, [
+          "a[href*='/jobs/view/']",
           ".job-card-container__link",
-          ".base-search-card__title",
-          ".job-card-list__title"
-        ]),
-        company: pickText(card, [
-          ".job-card-container__company-name",
-          ".base-search-card__subtitle",
-          ".job-card-container__primary-description"
-        ]),
-        location: pickText(card, [
-          ".job-card-container__metadata-wrapper",
-          ".job-search-card__location",
-          ".job-card-container__metadata-item"
-        ]),
-        posted_at: pickText(card, [
-          "time",
-          ".job-card-container__footer",
-          ".job-card-container__listed-time"
-        ]),
-        job_url: jobUrl,
-        salary_range: pickText(card, [
-          ".job-card-container__salary-info",
-          ".salary-main-rail__compensation-text"
-        ]),
-        employment_type: pickEmploymentType(card)
-      });
+          ".base-search-card__full-link",
+          "a",
+        ]);
 
-      if (results.length >= maxJobs) {
-        break;
+        results.push({
+          job_id: extractJobId(jobUrl, card),
+          title: pickText(card, [
+            ".job-card-container__link",
+            ".base-search-card__title",
+            ".job-card-list__title",
+          ]),
+          company: pickText(card, [
+            ".job-card-container__company-name",
+            ".base-search-card__subtitle",
+            ".job-card-container__primary-description",
+          ]),
+          location: pickText(card, [
+            ".job-card-container__metadata-wrapper",
+            ".job-search-card__location",
+            ".job-card-container__metadata-item",
+          ]),
+          posted_at: pickText(card, [
+            "time",
+            ".job-card-container__footer",
+            ".job-card-container__listed-time",
+          ]),
+          job_url: jobUrl,
+          salary_range: pickText(card, [
+            ".job-card-container__salary-info",
+            ".salary-main-rail__compensation-text",
+          ]),
+          employment_type: pickEmploymentType(card),
+        });
+
+        if (results.length >= maxJobs) {
+          break;
+        }
       }
-    }
 
-    return results;
-  }, Math.max(1, limit));
+      return results;
+    },
+    Math.max(1, limit),
+  );
 
   return snapshots
     .map((snapshot) => ({
@@ -912,7 +905,7 @@ async function extractJobSearchResults(
       posted_at: normalizeText(snapshot.posted_at),
       job_url: normalizeText(snapshot.job_url),
       salary_range: normalizeText(snapshot.salary_range),
-      employment_type: normalizeText(snapshot.employment_type)
+      employment_type: normalizeText(snapshot.employment_type),
     }))
     .filter((result) => result.title.length > 0 || result.job_url.length > 0)
     .slice(0, limit);
@@ -920,7 +913,7 @@ async function extractJobSearchResults(
 
 async function extractJobDetail(
   page: Page,
-  jobId: string
+  jobId: string,
 ): Promise<LinkedInJobPosting> {
   const snapshot = await page.evaluate((passedJobId: string) => {
     const normalize = (value: string | null | undefined): string =>
@@ -952,40 +945,40 @@ async function extractJobDetail(
     const main = doc.querySelector("main") ?? doc.body;
 
     const companyLinkElement = main.querySelector(
-      "a[href*='/company/']"
+      "a[href*='/company/']",
     ) as HTMLAnchorElement | null;
 
     const title = pickText(main, [
       ".job-details-jobs-unified-top-card__job-title",
       ".jobs-unified-top-card__job-title",
       ".top-card-layout__title",
-      "h1"
+      "h1",
     ]);
 
     const company = pickText(main, [
       ".job-details-jobs-unified-top-card__company-name",
       ".jobs-unified-top-card__company-name",
       ".top-card-layout__card-link",
-      "a[href*='/company/']"
+      "a[href*='/company/']",
     ]);
 
     const companyUrl = toAbsoluteHref(
       normalize(companyLinkElement?.getAttribute("href")) ||
-        normalize(companyLinkElement?.href)
+        normalize(companyLinkElement?.href),
     );
 
     const location = pickText(main, [
       ".job-details-jobs-unified-top-card__bullet",
       ".jobs-unified-top-card__subtitle-primary-grouping .jobs-unified-top-card__bullet",
       ".top-card-layout__second-subline .topcard__flavor--bullet",
-      ".jobs-unified-top-card__workplace-type"
+      ".jobs-unified-top-card__workplace-type",
     ]);
 
     const postedAt = pickText(main, [
       ".job-details-jobs-unified-top-card__posted-date",
       ".jobs-unified-top-card__posted-date",
       "time",
-      ".posted-time-ago__text"
+      ".posted-time-ago__text",
     ]);
 
     const description = pickText(main, [
@@ -993,13 +986,13 @@ async function extractJobDetail(
       ".jobs-description-content__text",
       ".jobs-box__html-content",
       ".description__text",
-      "#job-details"
+      "#job-details",
     ]);
 
     const insightTexts = Array.from(
       main.querySelectorAll(
-        ".job-details-jobs-unified-top-card__job-insight, .jobs-unified-top-card__job-insight, .description__job-criteria-item, .job-criteria__item"
-      )
+        ".job-details-jobs-unified-top-card__job-insight, .jobs-unified-top-card__job-insight, .description__job-criteria-item, .job-criteria__item",
+      ),
     ).map((el) => normalize(el.textContent));
 
     const allInsights = insightTexts.join(" ");
@@ -1008,12 +1001,12 @@ async function extractJobDetail(
       pickText(main, [
         ".salary-main-rail__compensation-text",
         ".job-details-jobs-unified-top-card__salary-info",
-        ".compensation__salary"
+        ".compensation__salary",
       ]) ||
       (() => {
         const salaryMatch =
           /(\$[\d,]+\s*[-–]\s*\$[\d,]+|€[\d,]+\s*[-–]\s*€[\d,]+|£[\d,]+\s*[-–]\s*£[\d,]+|[\d,]+\s*[-–]\s*[\d,]+\s*(?:kr|DKK|USD|EUR|GBP))/i.exec(
-            allInsights
+            allInsights,
           );
         return normalize(salaryMatch?.[1] ?? "");
       })();
@@ -1024,21 +1017,22 @@ async function extractJobDetail(
 
     const seniorityMatch =
       /(Entry level|Associate|Mid-Senior level|Director|Executive|Internship|Not Applicable)/i.exec(
-        allInsights
+        allInsights,
       );
     const seniorityLevel = normalize(seniorityMatch?.[1] ?? "");
 
     const applicantCount = pickText(main, [
       ".jobs-unified-top-card__applicant-count",
       ".job-details-jobs-unified-top-card__applicant-count",
-      ".num-applicants__caption"
+      ".num-applicants__caption",
     ]);
 
-    const isRemote = /\bremote\b/i.test(location) || /\bremote\b/i.test(allInsights);
+    const isRemote =
+      /\bremote\b/i.test(location) || /\bremote\b/i.test(allInsights);
 
     const jobUrl = globalThis.window.location.href;
 
-    const result: JobDetailSnapshot = {
+    const result: LinkedInJobPosting = {
       job_id: passedJobId,
       title,
       company,
@@ -1051,7 +1045,7 @@ async function extractJobDetail(
       job_url: jobUrl,
       applicant_count: applicantCount,
       seniority_level: seniorityLevel,
-      is_remote: isRemote
+      is_remote: isRemote,
     };
 
     return result;
@@ -1070,141 +1064,147 @@ async function extractJobDetail(
     job_url: normalizeText(snapshot.job_url),
     applicant_count: normalizeText(snapshot.applicant_count),
     seniority_level: normalizeText(snapshot.seniority_level),
-    is_remote: Boolean(snapshot.is_remote)
+    is_remote: Boolean(snapshot.is_remote),
   };
 }
 
 async function extractJobAlerts(
   page: Page,
-  limit: number
+  limit: number,
 ): Promise<LinkedInJobAlert[]> {
-  const snapshots = await page.evaluate((maxAlerts: number) => {
-    const normalize = (value: string | null | undefined): string =>
-      (value ?? "").replace(/\s+/g, " ").trim();
+  const snapshots = await page.evaluate(
+    (maxAlerts: number) => {
+      const normalize = (value: string | null | undefined): string =>
+        (value ?? "").replace(/\s+/g, " ").trim();
 
-    const origin = globalThis.window.location.origin;
+      const origin = globalThis.window.location.origin;
 
-    const isVisible = (element: Element): boolean => {
-      const htmlElement = element as HTMLElement;
-      const style = globalThis.window.getComputedStyle(htmlElement);
-      const rect = htmlElement.getBoundingClientRect();
-      return (
-        style.visibility !== "hidden" &&
-        style.display !== "none" &&
-        rect.width > 0 &&
-        rect.height > 0
-      );
-    };
+      const isVisible = (element: Element): boolean => {
+        const htmlElement = element as HTMLElement;
+        const style = globalThis.window.getComputedStyle(htmlElement);
+        const rect = htmlElement.getBoundingClientRect();
+        return (
+          style.visibility !== "hidden" &&
+          style.display !== "none" &&
+          rect.width > 0 &&
+          rect.height > 0
+        );
+      };
 
-    const toAbsoluteHref = (value: string): string => {
-      if (!value) {
+      const toAbsoluteHref = (value: string): string => {
+        if (!value) {
+          return "";
+        }
+        if (/^https?:\/\//i.test(value)) {
+          return value;
+        }
+        return value.startsWith("/")
+          ? `${origin}${value}`
+          : `${origin}/${value}`;
+      };
+
+      const parseSearchUrl = (
+        value: string,
+      ): { normalizedUrl: string; query: string; location: string } => {
+        const absolute = toAbsoluteHref(value);
+        if (!absolute) {
+          return { normalizedUrl: "", query: "", location: "" };
+        }
+
+        try {
+          const parsed = new URL(absolute);
+          return {
+            normalizedUrl: parsed.toString(),
+            query: normalize(parsed.searchParams.get("keywords")),
+            location: normalize(parsed.searchParams.get("location")),
+          };
+        } catch {
+          return { normalizedUrl: absolute, query: "", location: "" };
+        }
+      };
+
+      const pickText = (root: ParentNode, selectors: string[]): string => {
+        for (const selector of selectors) {
+          const text = normalize(root.querySelector(selector)?.textContent);
+          if (text) {
+            return text;
+          }
+        }
+
         return "";
-      }
-      if (/^https?:\/\//i.test(value)) {
-        return value;
-      }
-      return value.startsWith("/") ? `${origin}${value}` : `${origin}/${value}`;
-    };
+      };
 
-    const parseSearchUrl = (
-      value: string
-    ): { normalizedUrl: string; query: string; location: string } => {
-      const absolute = toAbsoluteHref(value);
-      if (!absolute) {
-        return { normalizedUrl: "", query: "", location: "" };
-      }
+      const cards = Array.from(
+        globalThis.document.querySelectorAll(
+          "[data-job-alert-id], [data-alert-id], .jobs-alert-card, .job-alert-card, article, li",
+        ),
+      ).filter((element) => isVisible(element));
 
-      try {
-        const parsed = new URL(absolute);
-        return {
-          normalizedUrl: parsed.toString(),
-          query: normalize(parsed.searchParams.get("keywords")),
-          location: normalize(parsed.searchParams.get("location"))
-        };
-      } catch {
-        return { normalizedUrl: absolute, query: "", location: "" };
-      }
-    };
+      const results: LinkedInJobAlert[] = [];
+      const seen = new Set<string>();
+      for (const card of cards) {
+        const text = normalize(card.textContent);
+        const searchAnchor = card.querySelector(
+          "a[href*='/jobs/search/']",
+        ) as HTMLAnchorElement | null;
 
-    const pickText = (root: ParentNode, selectors: string[]): string => {
-      for (const selector of selectors) {
-        const text = normalize(root.querySelector(selector)?.textContent);
-        if (text) {
-          return text;
+        if (!searchAnchor && !/alert/i.test(text)) {
+          continue;
+        }
+
+        const parsedSearch = parseSearchUrl(
+          normalize(searchAnchor?.getAttribute("href")) ||
+            normalize(searchAnchor?.href),
+        );
+        const query =
+          pickText(card, [
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            ".job-alert-card__title",
+            ".jobs-alert-card__title",
+            "a[href*='/jobs/search/']",
+          ]) || parsedSearch.query;
+        const location =
+          pickText(card, [
+            ".job-alert-card__location",
+            ".jobs-alert-card__location",
+            ".t-14",
+            ".t-12",
+          ]) || parsedSearch.location;
+        const frequencyMatch = /(Daily|Weekly|Instant|Immediate)/i.exec(text);
+        const frequency = normalize(frequencyMatch?.[1] ?? "");
+        const alertId =
+          normalize(card.getAttribute("data-job-alert-id")) ||
+          normalize(card.getAttribute("data-alert-id")) ||
+          normalize(card.getAttribute("id")) ||
+          parsedSearch.normalizedUrl ||
+          `${query}::${location}`;
+
+        if (!alertId || seen.has(alertId)) {
+          continue;
+        }
+
+        seen.add(alertId);
+        results.push({
+          alert_id: alertId,
+          query,
+          location,
+          frequency,
+          search_url: parsedSearch.normalizedUrl,
+          enabled: !/\b(paused|off|disabled|muted)\b/i.test(text),
+        });
+
+        if (results.length >= maxAlerts) {
+          break;
         }
       }
 
-      return "";
-    };
-
-    const cards = Array.from(
-      globalThis.document.querySelectorAll(
-        "[data-job-alert-id], [data-alert-id], .jobs-alert-card, .job-alert-card, article, li"
-      )
-    ).filter((element) => isVisible(element));
-
-    const results: JobAlertSnapshot[] = [];
-    const seen = new Set<string>();
-    for (const card of cards) {
-      const text = normalize(card.textContent);
-      const searchAnchor = card.querySelector(
-        "a[href*='/jobs/search/']"
-      ) as HTMLAnchorElement | null;
-
-      if (!searchAnchor && !/alert/i.test(text)) {
-        continue;
-      }
-
-      const parsedSearch = parseSearchUrl(
-        normalize(searchAnchor?.getAttribute("href")) || normalize(searchAnchor?.href)
-      );
-      const query =
-        pickText(card, [
-          "h1",
-          "h2",
-          "h3",
-          "h4",
-          ".job-alert-card__title",
-          ".jobs-alert-card__title",
-          "a[href*='/jobs/search/']"
-        ]) || parsedSearch.query;
-      const location =
-        pickText(card, [
-          ".job-alert-card__location",
-          ".jobs-alert-card__location",
-          ".t-14",
-          ".t-12"
-        ]) || parsedSearch.location;
-      const frequencyMatch = /(Daily|Weekly|Instant|Immediate)/i.exec(text);
-      const frequency = normalize(frequencyMatch?.[1] ?? "");
-      const alertId =
-        normalize(card.getAttribute("data-job-alert-id")) ||
-        normalize(card.getAttribute("data-alert-id")) ||
-        normalize(card.getAttribute("id")) ||
-        parsedSearch.normalizedUrl ||
-        `${query}::${location}`;
-
-      if (!alertId || seen.has(alertId)) {
-        continue;
-      }
-
-      seen.add(alertId);
-      results.push({
-        alert_id: alertId,
-        query,
-        location,
-        frequency,
-        search_url: parsedSearch.normalizedUrl,
-        enabled: !/\b(paused|off|disabled|muted)\b/i.test(text)
-      });
-
-      if (results.length >= maxAlerts) {
-        break;
-      }
-    }
-
-    return results;
-  }, Math.max(1, limit));
+      return results;
+    },
+    Math.max(1, limit),
+  );
 
   return snapshots.map((snapshot) => ({
     alert_id: normalizeText(snapshot.alert_id),
@@ -1212,13 +1212,13 @@ async function extractJobAlerts(
     location: normalizeText(snapshot.location),
     frequency: normalizeText(snapshot.frequency),
     search_url: normalizeText(snapshot.search_url),
-    enabled: Boolean(snapshot.enabled)
+    enabled: Boolean(snapshot.enabled),
   }));
 }
 
 async function loadJobSearchResults(
   page: Page,
-  limit: number
+  limit: number,
 ): Promise<LinkedInJobSearchResult[]> {
   let results = await extractJobSearchResults(page, limit);
 
@@ -1233,7 +1233,7 @@ async function loadJobSearchResults(
 
 async function markJobsButton(
   page: Page,
-  kind: "save" | "easy-apply" | "alert-toggle"
+  kind: "save" | "easy-apply" | "alert-toggle",
 ): Promise<Locator> {
   const attributeName = `data-linkedin-assistant-jobs-${kind}`;
   const markerValue = `marked-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -1242,7 +1242,7 @@ async function markJobsButton(
     ({
       attributeName: buttonAttributeName,
       markerValue: buttonMarkerValue,
-      kind: buttonKind
+      kind: buttonKind,
     }) => {
       const normalize = (value: string | null | undefined): string =>
         (value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
@@ -1262,7 +1262,7 @@ async function markJobsButton(
       const buttons = Array.from(
         (
           globalThis.document.querySelector("main") ?? globalThis.document.body
-        ).querySelectorAll("button, a[role='button']")
+        ).querySelectorAll("button, a[role='button']"),
       ).filter((element) => isVisible(element));
 
       const getScore = (element: Element): number => {
@@ -1272,7 +1272,9 @@ async function markJobsButton(
         const ariaLabel = normalize(htmlElement.getAttribute("aria-label"));
         const title = normalize(htmlElement.getAttribute("title"));
         const className = normalize(htmlElement.getAttribute("class"));
-        const controlName = normalize(htmlElement.getAttribute("data-control-name"));
+        const controlName = normalize(
+          htmlElement.getAttribute("data-control-name"),
+        );
         const haystack = [text, ariaLabel, title, className, controlName]
           .filter(Boolean)
           .join(" ");
@@ -1315,14 +1317,16 @@ async function markJobsButton(
         if (
           buttonKind !== "alert-toggle" &&
           htmlElement.closest(
-            ".jobs-unified-top-card, .job-details-jobs-unified-top-card, .top-card-layout"
+            ".jobs-unified-top-card, .job-details-jobs-unified-top-card, .top-card-layout",
           )
         ) {
           score += 40;
         }
         if (
           buttonKind === "alert-toggle" &&
-          htmlElement.closest(".jobs-search-two-pane, .jobs-search-results-list")
+          htmlElement.closest(
+            ".jobs-search-two-pane, .jobs-search-results-list",
+          )
         ) {
           score += 20;
         }
@@ -1333,7 +1337,7 @@ async function markJobsButton(
       const sorted = buttons
         .map((element) => ({
           element,
-          score: getScore(element)
+          score: getScore(element),
         }))
         .filter((candidate) => candidate.score > 0)
         .sort((left, right) => right.score - left.score);
@@ -1349,8 +1353,8 @@ async function markJobsButton(
     {
       attributeName,
       markerValue,
-      kind
-    }
+      kind,
+    },
   );
 
   if (!marked) {
@@ -1363,7 +1367,7 @@ async function markJobsButton(
 
     throw new LinkedInBuddyError("UI_CHANGED_SELECTOR_FAILED", message, {
       current_url: page.url(),
-      button_kind: kind
+      button_kind: kind,
     });
   }
 
@@ -1372,7 +1376,7 @@ async function markJobsButton(
 
 async function readJobsToggleState(
   page: Page,
-  kind: "save" | "alert-toggle"
+  kind: "save" | "alert-toggle",
 ): Promise<boolean | null> {
   const button = await markJobsButton(page, kind);
   const state = await button.evaluate((element, buttonKind) => {
@@ -1404,7 +1408,9 @@ async function readJobsToggleState(
       return null;
     }
 
-    if (/\b(job alert set|remove alert|manage alert|alert on)\b/.test(combined)) {
+    if (
+      /\b(job alert set|remove alert|manage alert|alert on)\b/.test(combined)
+    ) {
       return true;
     }
     if (/\b(set alert|create alert|alert off)\b/.test(combined)) {
@@ -1418,7 +1424,7 @@ async function readJobsToggleState(
 }
 
 function classifyEasyApplyActionLabel(
-  value: string
+  value: string,
 ): "submit" | "review" | "next" | "unknown" {
   const normalized = normalizeLabelKey(value);
   if (!normalized) {
@@ -1449,15 +1455,10 @@ function classifyEasyApplyActionLabel(
 }
 
 async function readEasyApplyDialogSnapshot(
-  page: Page
+  page: Page,
 ): Promise<EasyApplyDialogSnapshot> {
   const snapshot = await page.evaluate(
-    ({
-      dialogSelector,
-      fieldAttribute,
-      groupAttribute,
-      optionAttribute
-    }) => {
+    ({ dialogSelector, fieldAttribute, groupAttribute, optionAttribute }) => {
       const normalize = (value: string | null | undefined): string =>
         (value ?? "").replace(/\s+/g, " ").trim();
       const normalizeKey = (value: string): string =>
@@ -1480,7 +1481,7 @@ async function readEasyApplyDialogSnapshot(
       };
 
       const dialog = Array.from(
-        globalThis.document.querySelectorAll(dialogSelector)
+        globalThis.document.querySelectorAll(dialogSelector),
       ).find((element) => isVisible(element));
 
       if (!dialog || !isVisible(dialog)) {
@@ -1489,36 +1490,42 @@ async function readEasyApplyDialogSnapshot(
           title: "",
           primaryActionLabel: "",
           success: false,
-          fields: []
+          fields: [],
         };
       }
 
       const readAssociatedLabel = (element: HTMLElement): string => {
         const htmlInput = element as HTMLInputElement;
         if (htmlInput.id) {
-          const explicitLabel = dialog.querySelector(`label[for="${htmlInput.id}"]`);
+          const explicitLabel = dialog.querySelector(
+            `label[for="${htmlInput.id}"]`,
+          );
           const explicitLabelText = normalize(explicitLabel?.textContent);
           if (explicitLabelText) {
             return explicitLabelText;
           }
         }
 
-        const wrappedLabelText = normalize(element.closest("label")?.textContent);
+        const wrappedLabelText = normalize(
+          element.closest("label")?.textContent,
+        );
         if (wrappedLabelText) {
           return wrappedLabelText;
         }
 
         const fieldsetText = normalize(
-          element.closest("fieldset")?.querySelector("legend")?.textContent
+          element.closest("fieldset")?.querySelector("legend")?.textContent,
         );
         if (fieldsetText) {
           return fieldsetText;
         }
 
         const formElement = element.closest(
-          ".fb-dash-form-element, .jobs-easy-apply-form-element"
+          ".fb-dash-form-element, .jobs-easy-apply-form-element",
         );
-        const formElementLabel = normalize(formElement?.querySelector("label")?.textContent);
+        const formElementLabel = normalize(
+          formElement?.querySelector("label")?.textContent,
+        );
         if (formElementLabel) {
           return formElementLabel;
         }
@@ -1536,8 +1543,8 @@ async function readEasyApplyDialogSnapshot(
         const ariaRequired = normalize(element.getAttribute("aria-required"));
         return Boolean(
           htmlInput.required ||
-            ariaRequired === "true" ||
-            labelText.includes("*")
+          ariaRequired === "true" ||
+          labelText.includes("*"),
         );
       };
 
@@ -1548,7 +1555,7 @@ async function readEasyApplyDialogSnapshot(
       const createFieldId = (): string => `field-${counter++}`;
 
       const inputs = Array.from(
-        dialog.querySelectorAll("input, textarea, select")
+        dialog.querySelectorAll("input, textarea, select"),
       ).filter((element) => isVisible(element));
 
       for (const element of inputs) {
@@ -1566,7 +1573,10 @@ async function readEasyApplyDialogSnapshot(
           continue;
         }
 
-        if ((inputType === "radio" || inputType === "checkbox") && inputElement.name) {
+        if (
+          (inputType === "radio" || inputType === "checkbox") &&
+          inputElement.name
+        ) {
           const groupKey = `${inputType}:${inputElement.name}`;
           if (handledGroups.has(groupKey)) {
             continue;
@@ -1586,7 +1596,10 @@ async function readEasyApplyDialogSnapshot(
             .map((candidate) => {
               const optionLabel = readAssociatedLabel(candidate);
               candidate.setAttribute(groupAttribute, fieldId);
-              candidate.setAttribute(optionAttribute, normalizeKey(optionLabel));
+              candidate.setAttribute(
+                optionAttribute,
+                normalizeKey(optionLabel),
+              );
               return optionLabel;
             })
             .map((candidate) => normalize(candidate))
@@ -1598,11 +1611,13 @@ async function readEasyApplyDialogSnapshot(
             label,
             labelKey: normalizeKey(label),
             kind: inputType as "radio" | "checkbox",
-            required: groupInputs.some((candidate) => isRequiredElement(candidate)),
+            required: groupInputs.some((candidate) =>
+              isRequiredElement(candidate),
+            ),
             filled: groupInputs.some((candidate) => candidate.checked),
             options,
             multiple: inputType === "checkbox" && groupInputs.length > 1,
-            accept: ""
+            accept: "",
           });
           continue;
         }
@@ -1647,17 +1662,17 @@ async function readEasyApplyDialogSnapshot(
               : tagName === "select"
                 ? (element as HTMLSelectElement).multiple
                 : false,
-          accept: normalize(inputElement.accept)
+          accept: normalize(inputElement.accept),
         });
       }
 
-      const buttons = Array.from(dialog.querySelectorAll("button")).filter((element) =>
-        isVisible(element)
+      const buttons = Array.from(dialog.querySelectorAll("button")).filter(
+        (element) => isVisible(element),
       );
       const primaryButton = buttons
         .map((button) => {
           const label = normalize(
-            button.getAttribute("aria-label") || button.textContent
+            button.getAttribute("aria-label") || button.textContent,
           );
           const key = normalizeKey(label);
           let score = 0;
@@ -1678,7 +1693,7 @@ async function readEasyApplyDialogSnapshot(
           }
           return {
             label,
-            score
+            score,
           };
         })
         .sort((left, right) => right.score - left.score)[0];
@@ -1688,17 +1703,17 @@ async function readEasyApplyDialogSnapshot(
         title: normalize(dialog.querySelector("h1, h2, h3")?.textContent),
         primaryActionLabel: primaryButton?.label ?? "",
         success: /application (submitted|sent)|your application was sent/i.test(
-          normalize(dialog.textContent)
+          normalize(dialog.textContent),
         ),
-        fields
+        fields,
       };
     },
     {
       dialogSelector: EASY_APPLY_DIALOG_SELECTOR,
       fieldAttribute: EASY_APPLY_FIELD_ATTR,
       groupAttribute: EASY_APPLY_GROUP_ATTR,
-      optionAttribute: EASY_APPLY_OPTION_ATTR
-    }
+      optionAttribute: EASY_APPLY_OPTION_ATTR,
+    },
   );
 
   return snapshot;
@@ -1706,7 +1721,7 @@ async function readEasyApplyDialogSnapshot(
 
 function resolveEasyApplyFieldValue(
   field: EasyApplyFieldSnapshot,
-  input: ValidatedEasyApplyInput
+  input: ValidatedEasyApplyInput,
 ): LinkedInEasyApplyAnswerValue | string | undefined {
   const labelKey = field.labelKey;
   const answerEntries = Object.entries(input.answers);
@@ -1744,7 +1759,7 @@ function resolveEasyApplyFieldValue(
 async function applyEasyApplyFieldValue(
   page: Page,
   field: EasyApplyFieldSnapshot,
-  value: LinkedInEasyApplyAnswerValue | string
+  value: LinkedInEasyApplyAnswerValue | string,
 ): Promise<void> {
   if (field.kind === "text" || field.kind === "textarea") {
     await page
@@ -1786,12 +1801,14 @@ async function applyEasyApplyFieldValue(
             .trim();
         const inputs = Array.from(
           globalThis.document.querySelectorAll(
-            `[${groupAttribute}="${groupId}"]`
-          )
+            `[${groupAttribute}="${groupId}"]`,
+          ),
         ) as HTMLInputElement[];
 
         const match = inputs.find(
-          (input) => normalizeKey(input.getAttribute(optionAttribute) ?? "") === desiredOption
+          (input) =>
+            normalizeKey(input.getAttribute(optionAttribute) ?? "") ===
+            desiredOption,
         );
 
         if (!match) {
@@ -1800,13 +1817,13 @@ async function applyEasyApplyFieldValue(
 
         match.click();
         return true;
-    },
+      },
       {
         groupId: field.fieldId,
         desiredOption: optionKey,
         groupAttribute: EASY_APPLY_GROUP_ATTR,
-        optionAttribute: EASY_APPLY_OPTION_ATTR
-      }
+        optionAttribute: EASY_APPLY_OPTION_ATTR,
+      },
     );
 
     if (!clicked) {
@@ -1816,8 +1833,8 @@ async function applyEasyApplyFieldValue(
         {
           field_label: field.label,
           provided_value: String(value),
-          options: field.options
-        }
+          options: field.options,
+        },
       );
     }
     return;
@@ -1837,13 +1854,15 @@ async function applyEasyApplyFieldValue(
           .trim();
       const inputs = Array.from(
         globalThis.document.querySelectorAll(
-          `[${groupAttribute}="${groupId}"]`
-        )
+          `[${groupAttribute}="${groupId}"]`,
+        ),
       ) as HTMLInputElement[];
 
       const matchedOptions: string[] = [];
       for (const input of inputs) {
-        const optionKey = normalizeKey(input.getAttribute(optionAttribute) ?? "");
+        const optionKey = normalizeKey(
+          input.getAttribute(optionAttribute) ?? "",
+        );
         const shouldCheck = desiredOptions.includes(optionKey);
         if (shouldCheck !== input.checked) {
           input.click();
@@ -1859,8 +1878,8 @@ async function applyEasyApplyFieldValue(
       groupId: field.fieldId,
       desiredOptions: selectionKeys,
       groupAttribute: EASY_APPLY_GROUP_ATTR,
-      optionAttribute: EASY_APPLY_OPTION_ATTR
-    }
+      optionAttribute: EASY_APPLY_OPTION_ATTR,
+    },
   );
 
   if (selectionResult.length === 0 && values.length > 0) {
@@ -1870,8 +1889,8 @@ async function applyEasyApplyFieldValue(
       {
         field_label: field.label,
         provided_value: values,
-        options: field.options
-      }
+        options: field.options,
+      },
     );
   }
 }
@@ -1879,7 +1898,7 @@ async function applyEasyApplyFieldValue(
 async function fillEasyApplyStep(
   page: Page,
   snapshot: EasyApplyDialogSnapshot,
-  input: ValidatedEasyApplyInput
+  input: ValidatedEasyApplyInput,
 ): Promise<void> {
   const missingRequiredFields: string[] = [];
 
@@ -1900,15 +1919,15 @@ async function fillEasyApplyStep(
       "ACTION_PRECONDITION_FAILED",
       "Easy Apply requires additional answers before confirmation.",
       {
-        missing_fields: missingRequiredFields
-      }
+        missing_fields: missingRequiredFields,
+      },
     );
   }
 }
 
 async function clickEasyApplyPrimaryAction(page: Page): Promise<string> {
   const dialog = page.locator(EASY_APPLY_DIALOG_SELECTOR).filter({
-    has: page.locator("button")
+    has: page.locator("button"),
   });
 
   const buttons = dialog.locator("button");
@@ -1925,11 +1944,17 @@ async function clickEasyApplyPrimaryAction(page: Page): Promise<string> {
 
     const label = normalizeText(
       (await button.getAttribute("aria-label").catch(() => "")) ??
-        (await button.textContent().catch(() => ""))
+        (await button.textContent().catch(() => "")),
     );
     const actionKind = classifyEasyApplyActionLabel(label);
     const score =
-      actionKind === "submit" ? 300 : actionKind === "review" ? 200 : actionKind === "next" ? 100 : 0;
+      actionKind === "submit"
+        ? 300
+        : actionKind === "review"
+          ? 200
+          : actionKind === "next"
+            ? 100
+            : 0;
 
     if (score > bestScore) {
       bestScore = score;
@@ -1943,8 +1968,8 @@ async function clickEasyApplyPrimaryAction(page: Page): Promise<string> {
       "UI_CHANGED_SELECTOR_FAILED",
       "Could not determine the primary Easy Apply action button.",
       {
-        current_url: page.url()
-      }
+        current_url: page.url(),
+      },
     );
   }
 
@@ -1964,34 +1989,42 @@ async function waitForEasyApplySuccess(page: Page): Promise<boolean> {
       .textContent()
       .catch(() => "");
     return /application (submitted|sent)|your application was sent/i.test(
-      normalizeText(pageText)
+      normalizeText(pageText),
     );
   }, 12_000);
 }
 /* eslint-enable no-undef */
 
-export class SaveJobActionExecutor
-  implements ActionExecutor<LinkedInJobsExecutorRuntime>
-{
+export class SaveJobActionExecutor implements ActionExecutor<LinkedInJobsExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInJobsExecutorRuntime>
+    input: ActionExecutorInput<LinkedInJobsExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const runtime = input.runtime;
     const action = input.action;
     const profileName = getProfileName(action.target);
-    const jobId = getRequiredStringField(action.target, "job_id", action.id, "target");
-    const jobUrl = getRequiredStringField(action.target, "job_url", action.id, "target");
+    const jobId = getRequiredStringField(
+      action.target,
+      "job_id",
+      action.id,
+      "target",
+    );
+    const jobUrl = getRequiredStringField(
+      action.target,
+      "job_url",
+      action.id,
+      "target",
+    );
 
     await runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: runtime.cdpUrl
+      cdpUrl: runtime.cdpUrl,
     });
 
     return runtime.profileManager.runWithContext(
       {
         cdpUrl: runtime.cdpUrl,
         profileName,
-        headless: true
+        headless: true,
       },
       async (context) => {
         const page = await getOrCreatePage(context);
@@ -2006,21 +2039,21 @@ export class SaveJobActionExecutor
           targetUrl: jobUrl,
           metadata: {
             job_id: jobId,
-            job_url: jobUrl
+            job_url: jobUrl,
           },
           errorDetails: {
             job_id: jobId,
-            job_url: jobUrl
+            job_url: jobUrl,
           },
           mapError: (error) =>
             asLinkedInBuddyError(
               error,
               "UNKNOWN",
-              "Failed to execute LinkedIn save job action."
+              "Failed to execute LinkedIn save job action.",
             ),
           execute: async () => {
             const rateLimitState = runtime.rateLimiter.consume(
-              SAVE_JOB_RATE_LIMIT_CONFIG
+              SAVE_JOB_RATE_LIMIT_CONFIG,
             );
             if (!rateLimitState.allowed) {
               throw new LinkedInBuddyError(
@@ -2030,8 +2063,8 @@ export class SaveJobActionExecutor
                   action_id: action.id,
                   profile_name: profileName,
                   job_id: jobId,
-                  rate_limit: formatRateLimitState(rateLimitState)
-                }
+                  rate_limit: formatRateLimitState(rateLimitState),
+                },
               );
             }
 
@@ -2057,8 +2090,8 @@ export class SaveJobActionExecutor
                   action_id: action.id,
                   profile_name: profileName,
                   job_id: jobId,
-                  job_url: jobUrl
-                }
+                  job_url: jobUrl,
+                },
               );
             }
 
@@ -2068,7 +2101,7 @@ export class SaveJobActionExecutor
               action_id: action.id,
               profile_name: profileName,
               job_id: jobId,
-              job_url: jobUrl
+              job_url: jobUrl,
             });
 
             return {
@@ -2078,39 +2111,47 @@ export class SaveJobActionExecutor
                 already_saved: initialSavedState === true,
                 job_id: jobId,
                 job_url: jobUrl,
-                rate_limit: formatRateLimitState(rateLimitState)
+                rate_limit: formatRateLimitState(rateLimitState),
               },
-              artifacts: [screenshotPath]
+              artifacts: [screenshotPath],
             };
-          }
+          },
         });
-      }
+      },
     );
   }
 }
 
-export class UnsaveJobActionExecutor
-  implements ActionExecutor<LinkedInJobsExecutorRuntime>
-{
+export class UnsaveJobActionExecutor implements ActionExecutor<LinkedInJobsExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInJobsExecutorRuntime>
+    input: ActionExecutorInput<LinkedInJobsExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const runtime = input.runtime;
     const action = input.action;
     const profileName = getProfileName(action.target);
-    const jobId = getRequiredStringField(action.target, "job_id", action.id, "target");
-    const jobUrl = getRequiredStringField(action.target, "job_url", action.id, "target");
+    const jobId = getRequiredStringField(
+      action.target,
+      "job_id",
+      action.id,
+      "target",
+    );
+    const jobUrl = getRequiredStringField(
+      action.target,
+      "job_url",
+      action.id,
+      "target",
+    );
 
     await runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: runtime.cdpUrl
+      cdpUrl: runtime.cdpUrl,
     });
 
     return runtime.profileManager.runWithContext(
       {
         cdpUrl: runtime.cdpUrl,
         profileName,
-        headless: true
+        headless: true,
       },
       async (context) => {
         const page = await getOrCreatePage(context);
@@ -2125,21 +2166,21 @@ export class UnsaveJobActionExecutor
           targetUrl: jobUrl,
           metadata: {
             job_id: jobId,
-            job_url: jobUrl
+            job_url: jobUrl,
           },
           errorDetails: {
             job_id: jobId,
-            job_url: jobUrl
+            job_url: jobUrl,
           },
           mapError: (error) =>
             asLinkedInBuddyError(
               error,
               "UNKNOWN",
-              "Failed to execute LinkedIn unsave job action."
+              "Failed to execute LinkedIn unsave job action.",
             ),
           execute: async () => {
             const rateLimitState = runtime.rateLimiter.consume(
-              UNSAVE_JOB_RATE_LIMIT_CONFIG
+              UNSAVE_JOB_RATE_LIMIT_CONFIG,
             );
             if (!rateLimitState.allowed) {
               throw new LinkedInBuddyError(
@@ -2149,8 +2190,8 @@ export class UnsaveJobActionExecutor
                   action_id: action.id,
                   profile_name: profileName,
                   job_id: jobId,
-                  rate_limit: formatRateLimitState(rateLimitState)
-                }
+                  rate_limit: formatRateLimitState(rateLimitState),
+                },
               );
             }
 
@@ -2176,8 +2217,8 @@ export class UnsaveJobActionExecutor
                   action_id: action.id,
                   profile_name: profileName,
                   job_id: jobId,
-                  job_url: jobUrl
-                }
+                  job_url: jobUrl,
+                },
               );
             }
 
@@ -2187,7 +2228,7 @@ export class UnsaveJobActionExecutor
               action_id: action.id,
               profile_name: profileName,
               job_id: jobId,
-              job_url: jobUrl
+              job_url: jobUrl,
             });
 
             return {
@@ -2197,45 +2238,48 @@ export class UnsaveJobActionExecutor
                 already_unsaved: initialSavedState === false,
                 job_id: jobId,
                 job_url: jobUrl,
-                rate_limit: formatRateLimitState(rateLimitState)
+                rate_limit: formatRateLimitState(rateLimitState),
               },
-              artifacts: [screenshotPath]
+              artifacts: [screenshotPath],
             };
-          }
+          },
         });
-      }
+      },
     );
   }
 }
 
-export class CreateJobAlertActionExecutor
-  implements ActionExecutor<LinkedInJobsExecutorRuntime>
-{
+export class CreateJobAlertActionExecutor implements ActionExecutor<LinkedInJobsExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInJobsExecutorRuntime>
+    input: ActionExecutorInput<LinkedInJobsExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const runtime = input.runtime;
     const action = input.action;
     const profileName = getProfileName(action.target);
-    const query = getRequiredStringField(action.target, "query", action.id, "target");
+    const query = getRequiredStringField(
+      action.target,
+      "query",
+      action.id,
+      "target",
+    );
     const searchUrl = getRequiredStringField(
       action.target,
       "search_url",
       action.id,
-      "target"
+      "target",
     );
     const location = getOptionalStringField(action.target, "location") ?? "";
 
     await runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: runtime.cdpUrl
+      cdpUrl: runtime.cdpUrl,
     });
 
     return runtime.profileManager.runWithContext(
       {
         cdpUrl: runtime.cdpUrl,
         profileName,
-        headless: true
+        headless: true,
       },
       async (context) => {
         const page = await getOrCreatePage(context);
@@ -2251,22 +2295,22 @@ export class CreateJobAlertActionExecutor
           metadata: {
             query,
             location,
-            search_url: searchUrl
+            search_url: searchUrl,
           },
           errorDetails: {
             query,
             location,
-            search_url: searchUrl
+            search_url: searchUrl,
           },
           mapError: (error) =>
             asLinkedInBuddyError(
               error,
               "UNKNOWN",
-              "Failed to create a LinkedIn job alert."
+              "Failed to create a LinkedIn job alert.",
             ),
           execute: async () => {
             const rateLimitState = runtime.rateLimiter.consume(
-              CREATE_JOB_ALERT_RATE_LIMIT_CONFIG
+              CREATE_JOB_ALERT_RATE_LIMIT_CONFIG,
             );
             if (!rateLimitState.allowed) {
               throw new LinkedInBuddyError(
@@ -2276,8 +2320,8 @@ export class CreateJobAlertActionExecutor
                   action_id: action.id,
                   profile_name: profileName,
                   search_url: searchUrl,
-                  rate_limit: formatRateLimitState(rateLimitState)
-                }
+                  rate_limit: formatRateLimitState(rateLimitState),
+                },
               );
             }
 
@@ -2285,7 +2329,10 @@ export class CreateJobAlertActionExecutor
             await waitForNetworkIdleBestEffort(page);
             await waitForJobSearchSurface(page);
 
-            const initialAlertState = await readJobsToggleState(page, "alert-toggle");
+            const initialAlertState = await readJobsToggleState(
+              page,
+              "alert-toggle",
+            );
             if (initialAlertState !== true) {
               const button = await markJobsButton(page, "alert-toggle");
               await button.click();
@@ -2304,8 +2351,8 @@ export class CreateJobAlertActionExecutor
                   profile_name: profileName,
                   query,
                   location,
-                  search_url: searchUrl
-                }
+                  search_url: searchUrl,
+                },
               );
             }
 
@@ -2316,7 +2363,7 @@ export class CreateJobAlertActionExecutor
               profile_name: profileName,
               query,
               location,
-              search_url: searchUrl
+              search_url: searchUrl,
             });
 
             return {
@@ -2327,32 +2374,35 @@ export class CreateJobAlertActionExecutor
                 query,
                 location,
                 search_url: searchUrl,
-                rate_limit: formatRateLimitState(rateLimitState)
+                rate_limit: formatRateLimitState(rateLimitState),
               },
-              artifacts: [screenshotPath]
+              artifacts: [screenshotPath],
             };
-          }
+          },
         });
-      }
+      },
     );
   }
 }
 
-export class RemoveJobAlertActionExecutor
-  implements ActionExecutor<LinkedInJobsExecutorRuntime>
-{
+export class RemoveJobAlertActionExecutor implements ActionExecutor<LinkedInJobsExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInJobsExecutorRuntime>
+    input: ActionExecutorInput<LinkedInJobsExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const runtime = input.runtime;
     const action = input.action;
     const profileName = getProfileName(action.target);
-    const query = getRequiredStringField(action.target, "query", action.id, "target");
+    const query = getRequiredStringField(
+      action.target,
+      "query",
+      action.id,
+      "target",
+    );
     const searchUrl = getRequiredStringField(
       action.target,
       "search_url",
       action.id,
-      "target"
+      "target",
     );
     const location = getOptionalStringField(action.target, "location") ?? "";
     const alertId =
@@ -2361,14 +2411,14 @@ export class RemoveJobAlertActionExecutor
 
     await runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: runtime.cdpUrl
+      cdpUrl: runtime.cdpUrl,
     });
 
     return runtime.profileManager.runWithContext(
       {
         cdpUrl: runtime.cdpUrl,
         profileName,
-        headless: true
+        headless: true,
       },
       async (context) => {
         const page = await getOrCreatePage(context);
@@ -2385,23 +2435,23 @@ export class RemoveJobAlertActionExecutor
             alert_id: alertId,
             query,
             location,
-            search_url: searchUrl
+            search_url: searchUrl,
           },
           errorDetails: {
             alert_id: alertId,
             query,
             location,
-            search_url: searchUrl
+            search_url: searchUrl,
           },
           mapError: (error) =>
             asLinkedInBuddyError(
               error,
               "UNKNOWN",
-              "Failed to remove a LinkedIn job alert."
+              "Failed to remove a LinkedIn job alert.",
             ),
           execute: async () => {
             const rateLimitState = runtime.rateLimiter.consume(
-              REMOVE_JOB_ALERT_RATE_LIMIT_CONFIG
+              REMOVE_JOB_ALERT_RATE_LIMIT_CONFIG,
             );
             if (!rateLimitState.allowed) {
               throw new LinkedInBuddyError(
@@ -2411,8 +2461,8 @@ export class RemoveJobAlertActionExecutor
                   action_id: action.id,
                   profile_name: profileName,
                   search_url: searchUrl,
-                  rate_limit: formatRateLimitState(rateLimitState)
-                }
+                  rate_limit: formatRateLimitState(rateLimitState),
+                },
               );
             }
 
@@ -2420,14 +2470,19 @@ export class RemoveJobAlertActionExecutor
             await waitForNetworkIdleBestEffort(page);
             await waitForJobSearchSurface(page);
 
-            const initialAlertState = await readJobsToggleState(page, "alert-toggle");
+            const initialAlertState = await readJobsToggleState(
+              page,
+              "alert-toggle",
+            );
             if (initialAlertState !== false) {
               const button = await markJobsButton(page, "alert-toggle");
               await button.click();
             }
 
             const verified = await waitForCondition(async () => {
-              return (await readJobsToggleState(page, "alert-toggle")) === false;
+              return (
+                (await readJobsToggleState(page, "alert-toggle")) === false
+              );
             }, 8_000);
 
             if (!verified) {
@@ -2440,8 +2495,8 @@ export class RemoveJobAlertActionExecutor
                   alert_id: alertId,
                   query,
                   location,
-                  search_url: searchUrl
-                }
+                  search_url: searchUrl,
+                },
               );
             }
 
@@ -2453,7 +2508,7 @@ export class RemoveJobAlertActionExecutor
               alert_id: alertId,
               query,
               location,
-              search_url: searchUrl
+              search_url: searchUrl,
             });
 
             return {
@@ -2465,34 +2520,47 @@ export class RemoveJobAlertActionExecutor
                 query,
                 location,
                 search_url: searchUrl,
-                rate_limit: formatRateLimitState(rateLimitState)
+                rate_limit: formatRateLimitState(rateLimitState),
               },
-              artifacts: [screenshotPath]
+              artifacts: [screenshotPath],
             };
-          }
+          },
         });
-      }
+      },
     );
   }
 }
 
-export class EasyApplyJobActionExecutor
-  implements ActionExecutor<LinkedInJobsExecutorRuntime>
-{
+export class EasyApplyJobActionExecutor implements ActionExecutor<LinkedInJobsExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInJobsExecutorRuntime>
+    input: ActionExecutorInput<LinkedInJobsExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const runtime = input.runtime;
     const action = input.action;
     const profileName = getProfileName(action.target);
-    const jobId = getRequiredStringField(action.target, "job_id", action.id, "target");
-    const jobUrl = getRequiredStringField(action.target, "job_url", action.id, "target");
+    const jobId = getRequiredStringField(
+      action.target,
+      "job_id",
+      action.id,
+      "target",
+    );
+    const jobUrl = getRequiredStringField(
+      action.target,
+      "job_url",
+      action.id,
+      "target",
+    );
     const phoneNumber = getOptionalStringField(action.payload, "phone_number");
     const email = getOptionalStringField(action.payload, "email");
     const city = getOptionalStringField(action.payload, "city");
     const resumePath = getOptionalStringField(action.payload, "resume_path");
     const coverLetter = getOptionalStringField(action.payload, "cover_letter");
-    const answers = getOptionalAnswersField(action.payload, "answers", action.id, "payload");
+    const answers = getOptionalAnswersField(
+      action.payload,
+      "answers",
+      action.id,
+      "payload",
+    );
 
     const validatedInput: ValidatedEasyApplyInput = {
       profileName,
@@ -2503,19 +2571,19 @@ export class EasyApplyJobActionExecutor
       ...(city ? { city } : {}),
       ...(resumePath ? { resumePath } : {}),
       ...(coverLetter ? { coverLetter } : {}),
-      answers
+      answers,
     };
 
     await runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: runtime.cdpUrl
+      cdpUrl: runtime.cdpUrl,
     });
 
     return runtime.profileManager.runWithContext(
       {
         cdpUrl: runtime.cdpUrl,
         profileName,
-        headless: true
+        headless: true,
       },
       async (context) => {
         const page = await getOrCreatePage(context);
@@ -2530,20 +2598,22 @@ export class EasyApplyJobActionExecutor
           targetUrl: jobUrl,
           metadata: {
             job_id: jobId,
-            job_url: jobUrl
+            job_url: jobUrl,
           },
           errorDetails: {
             job_id: jobId,
-            job_url: jobUrl
+            job_url: jobUrl,
           },
           mapError: (error) =>
             asLinkedInBuddyError(
               error,
               "UNKNOWN",
-              "Failed to submit a LinkedIn Easy Apply application."
+              "Failed to submit a LinkedIn Easy Apply application.",
             ),
           execute: async () => {
-            const rateLimitState = runtime.rateLimiter.consume(EASY_APPLY_RATE_LIMIT_CONFIG);
+            const rateLimitState = runtime.rateLimiter.consume(
+              EASY_APPLY_RATE_LIMIT_CONFIG,
+            );
             if (!rateLimitState.allowed) {
               throw new LinkedInBuddyError(
                 "RATE_LIMITED",
@@ -2552,8 +2622,8 @@ export class EasyApplyJobActionExecutor
                   action_id: action.id,
                   profile_name: profileName,
                   job_id: jobId,
-                  rate_limit: formatRateLimitState(rateLimitState)
-                }
+                  rate_limit: formatRateLimitState(rateLimitState),
+                },
               );
             }
 
@@ -2577,8 +2647,8 @@ export class EasyApplyJobActionExecutor
                   action_id: action.id,
                   profile_name: profileName,
                   job_id: jobId,
-                  job_url: jobUrl
-                }
+                  job_url: jobUrl,
+                },
               );
             }
 
@@ -2604,7 +2674,8 @@ export class EasyApplyJobActionExecutor
               await fillEasyApplyStep(page, snapshot, validatedInput);
 
               currentActionLabel = snapshot.primaryActionLabel;
-              const actionKind = classifyEasyApplyActionLabel(currentActionLabel);
+              const actionKind =
+                classifyEasyApplyActionLabel(currentActionLabel);
               if (actionKind === "unknown") {
                 throw new LinkedInBuddyError(
                   "UI_CHANGED_SELECTOR_FAILED",
@@ -2613,8 +2684,8 @@ export class EasyApplyJobActionExecutor
                     action_id: action.id,
                     profile_name: profileName,
                     job_id: jobId,
-                    primary_action_label: currentActionLabel
-                  }
+                    primary_action_label: currentActionLabel,
+                  },
                 );
               }
 
@@ -2637,8 +2708,8 @@ export class EasyApplyJobActionExecutor
                   profile_name: profileName,
                   job_id: jobId,
                   last_primary_action_label: currentActionLabel,
-                  encountered_fields: [...encounteredFields]
-                }
+                  encountered_fields: [...encounteredFields],
+                },
               );
             }
 
@@ -2648,7 +2719,7 @@ export class EasyApplyJobActionExecutor
               action_id: action.id,
               profile_name: profileName,
               job_id: jobId,
-              job_url: jobUrl
+              job_url: jobUrl,
             });
 
             return {
@@ -2658,13 +2729,13 @@ export class EasyApplyJobActionExecutor
                 job_id: jobId,
                 job_url: jobUrl,
                 answered_fields: [...encounteredFields],
-                rate_limit: formatRateLimitState(rateLimitState)
+                rate_limit: formatRateLimitState(rateLimitState),
               },
-              artifacts: [screenshotPath]
+              artifacts: [screenshotPath],
             };
-          }
+          },
         });
-      }
+      },
     );
   }
 }
@@ -2678,7 +2749,7 @@ export function createJobActionExecutors(): Record<
     [UNSAVE_JOB_ACTION_TYPE]: new UnsaveJobActionExecutor(),
     [CREATE_JOB_ALERT_ACTION_TYPE]: new CreateJobAlertActionExecutor(),
     [REMOVE_JOB_ALERT_ACTION_TYPE]: new RemoveJobAlertActionExecutor(),
-    [EASY_APPLY_JOB_ACTION_TYPE]: new EasyApplyJobActionExecutor()
+    [EASY_APPLY_JOB_ACTION_TYPE]: new EasyApplyJobActionExecutor(),
   };
 }
 
@@ -2709,7 +2780,7 @@ export class LinkedInJobsService {
     if (!jobId) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        "jobId is required."
+        "jobId is required.",
       );
     }
 
@@ -2718,7 +2789,7 @@ export class LinkedInJobsService {
     const target = {
       profile_name: profileName,
       job_id: jobId,
-      job_url: jobUrl
+      job_url: jobUrl,
     };
 
     return this.runtime.twoPhaseCommit.prepare({
@@ -2729,12 +2800,12 @@ export class LinkedInJobsService {
         summary: input.summary,
         target,
         outbound: {
-          action: input.outboundAction
+          action: input.outboundAction,
         },
         risk_level: "low",
-        rate_limit: formatRateLimitState(rateLimitState)
+        rate_limit: formatRateLimitState(rateLimitState),
       },
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 
@@ -2742,18 +2813,25 @@ export class LinkedInJobsService {
     const profileName = input.profileName ?? "default";
     const query = normalizeText(input.query);
     const location = normalizeText(input.location);
-    const limit = readJobsLimit(input.limit);
+    const limit = readLimit(input.limit, 10, JOB_SEARCH_LIMIT_MAX);
 
     if (!query) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        "query is required."
+        "query is required.",
+      );
+    }
+
+    if (query.length > JOB_SEARCH_QUERY_MAX_LENGTH) {
+      throw new LinkedInBuddyError(
+        "ACTION_PRECONDITION_FAILED",
+        `query must not exceed ${JOB_SEARCH_QUERY_MAX_LENGTH} characters.`,
       );
     }
 
     await this.runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: this.runtime.cdpUrl
+      cdpUrl: this.runtime.cdpUrl,
     });
 
     try {
@@ -2761,24 +2839,24 @@ export class LinkedInJobsService {
         {
           cdpUrl: this.runtime.cdpUrl,
           profileName,
-          headless: true
+          headless: true,
         },
         async (context) => {
           const page = await getOrCreatePage(context);
           await page.goto(buildJobSearchUrl(query, location || undefined), {
-            waitUntil: "domcontentloaded"
+            waitUntil: "domcontentloaded",
           });
           await waitForNetworkIdleBestEffort(page);
           await waitForJobSearchSurface(page);
           return loadJobSearchResults(page, limit);
-        }
+        },
       );
 
       return {
         query,
         location,
         results,
-        count: results.length
+        count: results.length,
       };
     } catch (error) {
       if (error instanceof LinkedInBuddyError) {
@@ -2787,7 +2865,7 @@ export class LinkedInJobsService {
       throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
-        "Failed to search LinkedIn jobs."
+        "Failed to search LinkedIn jobs.",
       );
     }
   }
@@ -2799,13 +2877,13 @@ export class LinkedInJobsService {
     if (!jobId) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        "jobId is required."
+        "jobId is required.",
       );
     }
 
     await this.runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: this.runtime.cdpUrl
+      cdpUrl: this.runtime.cdpUrl,
     });
 
     try {
@@ -2813,17 +2891,17 @@ export class LinkedInJobsService {
         {
           cdpUrl: this.runtime.cdpUrl,
           profileName,
-          headless: true
+          headless: true,
         },
         async (context) => {
           const page = await getOrCreatePage(context);
           await page.goto(buildJobViewUrl(jobId), {
-            waitUntil: "domcontentloaded"
+            waitUntil: "domcontentloaded",
           });
           await waitForNetworkIdleBestEffort(page);
           await waitForJobDetailSurface(page);
           return extractJobDetail(page, jobId);
-        }
+        },
       );
     } catch (error) {
       if (error instanceof LinkedInBuddyError) {
@@ -2832,7 +2910,7 @@ export class LinkedInJobsService {
       throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
-        "Failed to view LinkedIn job posting."
+        "Failed to view LinkedIn job posting.",
       );
     }
   }
@@ -2851,7 +2929,7 @@ export class LinkedInJobsService {
       summary: `Save LinkedIn job ${buildJobViewUrl(jobId)} for later`,
       rateLimitConfig: SAVE_JOB_RATE_LIMIT_CONFIG,
       operatorNote: input.operatorNote,
-      outboundAction: "save"
+      outboundAction: "save",
     });
   }
 
@@ -2869,19 +2947,19 @@ export class LinkedInJobsService {
       summary: `Unsave LinkedIn job ${buildJobViewUrl(jobId)}`,
       rateLimitConfig: UNSAVE_JOB_RATE_LIMIT_CONFIG,
       operatorNote: input.operatorNote,
-      outboundAction: "unsave"
+      outboundAction: "unsave",
     });
   }
 
   async listJobAlerts(
-    input: ListJobAlertsInput = {}
+    input: ListJobAlertsInput = {},
   ): Promise<ListJobAlertsOutput> {
     const profileName = input.profileName ?? "default";
-    const limit = readJobAlertsLimit(input.limit);
+    const limit = readLimit(input.limit, 20, JOB_ALERTS_LIMIT_MAX);
 
     await this.runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: this.runtime.cdpUrl
+      cdpUrl: this.runtime.cdpUrl,
     });
 
     try {
@@ -2889,22 +2967,22 @@ export class LinkedInJobsService {
         {
           cdpUrl: this.runtime.cdpUrl,
           profileName,
-          headless: true
+          headless: true,
         },
         async (context) => {
           const page = await getOrCreatePage(context);
           await page.goto(buildJobAlertsUrl(), {
-            waitUntil: "domcontentloaded"
+            waitUntil: "domcontentloaded",
           });
           await waitForNetworkIdleBestEffort(page);
           await waitForJobAlertsSurface(page);
           return extractJobAlerts(page, limit);
-        }
+        },
       );
 
       return {
         alerts,
-        count: alerts.length
+        count: alerts.length,
       };
     } catch (error) {
       if (error instanceof LinkedInBuddyError) {
@@ -2913,7 +2991,7 @@ export class LinkedInJobsService {
       throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
-        "Failed to list LinkedIn job alerts."
+        "Failed to list LinkedIn job alerts.",
       );
     }
   }
@@ -2931,19 +3009,26 @@ export class LinkedInJobsService {
     if (!query) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        "query is required."
+        "query is required.",
+      );
+    }
+
+    if (query.length > JOB_SEARCH_QUERY_MAX_LENGTH) {
+      throw new LinkedInBuddyError(
+        "ACTION_PRECONDITION_FAILED",
+        `query must not exceed ${JOB_SEARCH_QUERY_MAX_LENGTH} characters.`,
       );
     }
 
     const searchUrl = buildJobSearchUrl(query, location || undefined);
     const rateLimitState = this.runtime.rateLimiter.peek(
-      CREATE_JOB_ALERT_RATE_LIMIT_CONFIG
+      CREATE_JOB_ALERT_RATE_LIMIT_CONFIG,
     );
     const target = {
       profile_name: profileName,
       query,
       location,
-      search_url: searchUrl
+      search_url: searchUrl,
     };
 
     return this.runtime.twoPhaseCommit.prepare({
@@ -2954,18 +3039,16 @@ export class LinkedInJobsService {
         summary: `Create a LinkedIn job alert for "${query}"${location ? ` in ${location}` : ""}`,
         target,
         outbound: {
-          action: "create_alert"
+          action: "create_alert",
         },
         risk_level: "low",
-        rate_limit: formatRateLimitState(rateLimitState)
+        rate_limit: formatRateLimitState(rateLimitState),
       },
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 
-  async prepareRemoveJobAlert(
-    input: PrepareRemoveJobAlertInput
-  ): Promise<{
+  async prepareRemoveJobAlert(input: PrepareRemoveJobAlertInput): Promise<{
     preparedActionId: string;
     confirmToken: string;
     expiresAtMs: number;
@@ -2975,6 +3058,13 @@ export class LinkedInJobsService {
     const providedAlertId = normalizeText(input.alertId);
     const providedSearch = parseJobSearchUrl(input.searchUrl ?? "");
     const query = normalizeText(input.query) || providedSearch.query;
+    if (query.length > JOB_SEARCH_QUERY_MAX_LENGTH) {
+      throw new LinkedInBuddyError(
+        "ACTION_PRECONDITION_FAILED",
+        `query must not exceed ${JOB_SEARCH_QUERY_MAX_LENGTH} characters.`,
+      );
+    }
+
     const location = normalizeText(input.location) || providedSearch.location;
     let searchUrl = providedSearch.normalizedUrl;
     let alertId = providedAlertId;
@@ -2986,18 +3076,18 @@ export class LinkedInJobsService {
     if (!searchUrl && providedAlertId) {
       const alerts = await this.listJobAlerts({
         profileName,
-        limit: 100
+        limit: 100,
       });
       const matchedAlert = alerts.alerts.find(
-        (alert) => normalizeText(alert.alert_id) === providedAlertId
+        (alert) => normalizeText(alert.alert_id) === providedAlertId,
       );
       if (!matchedAlert) {
         throw new LinkedInBuddyError(
           "TARGET_NOT_FOUND",
           `Could not find a LinkedIn job alert with id "${providedAlertId}".`,
           {
-            alert_id: providedAlertId
-          }
+            alert_id: providedAlertId,
+          },
         );
       }
 
@@ -3008,7 +3098,7 @@ export class LinkedInJobsService {
     if (!searchUrl) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        "Provide alertId, searchUrl, or query to remove a job alert."
+        "Provide alertId, searchUrl, or query to remove a job alert.",
       );
     }
 
@@ -3016,16 +3106,17 @@ export class LinkedInJobsService {
     const resolvedQuery = query || resolvedSearch.query;
     const resolvedLocation = location || resolvedSearch.location;
     const resolvedAlertId =
-      alertId || buildJobAlertIdentifier(searchUrl, resolvedQuery, resolvedLocation);
+      alertId ||
+      buildJobAlertIdentifier(searchUrl, resolvedQuery, resolvedLocation);
     const rateLimitState = this.runtime.rateLimiter.peek(
-      REMOVE_JOB_ALERT_RATE_LIMIT_CONFIG
+      REMOVE_JOB_ALERT_RATE_LIMIT_CONFIG,
     );
     const target = {
       profile_name: profileName,
       alert_id: resolvedAlertId,
       query: resolvedQuery,
       location: resolvedLocation,
-      search_url: resolvedSearch.normalizedUrl || searchUrl
+      search_url: resolvedSearch.normalizedUrl || searchUrl,
     };
 
     return this.runtime.twoPhaseCommit.prepare({
@@ -3036,12 +3127,12 @@ export class LinkedInJobsService {
         summary: `Remove LinkedIn job alert for "${resolvedQuery}"${resolvedLocation ? ` in ${resolvedLocation}` : ""}`,
         target,
         outbound: {
-          action: "remove_alert"
+          action: "remove_alert",
         },
         risk_level: "low",
-        rate_limit: formatRateLimitState(rateLimitState)
+        rate_limit: formatRateLimitState(rateLimitState),
       },
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 
@@ -3052,12 +3143,14 @@ export class LinkedInJobsService {
     preview: Record<string, unknown>;
   } {
     const validatedInput = validateEasyApplyInput(input);
-    const rateLimitState = this.runtime.rateLimiter.peek(EASY_APPLY_RATE_LIMIT_CONFIG);
+    const rateLimitState = this.runtime.rateLimiter.peek(
+      EASY_APPLY_RATE_LIMIT_CONFIG,
+    );
 
     const target = {
       profile_name: validatedInput.profileName,
       job_id: validatedInput.jobId,
-      job_url: validatedInput.jobUrl
+      job_url: validatedInput.jobUrl,
     };
 
     return this.runtime.twoPhaseCommit.prepare({
@@ -3077,7 +3170,7 @@ export class LinkedInJobsService {
           : {}),
         ...(Object.keys(validatedInput.answers).length > 0
           ? { answers: validatedInput.answers }
-          : {})
+          : {}),
       },
       preview: {
         summary: `Submit LinkedIn Easy Apply application for ${validatedInput.jobUrl}`,
@@ -3091,12 +3184,12 @@ export class LinkedInJobsService {
             ? path.basename(validatedInput.resumePath)
             : "",
           cover_letter_supplied: Boolean(validatedInput.coverLetter),
-          answer_keys: Object.keys(validatedInput.answers)
+          answer_keys: Object.keys(validatedInput.answers),
         },
         risk_level: "high",
-        rate_limit: formatRateLimitState(rateLimitState)
+        rate_limit: formatRateLimitState(rateLimitState),
       },
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 }

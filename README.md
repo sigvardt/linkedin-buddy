@@ -49,14 +49,14 @@ This project is **not** LinkedIn's official partner API. It is a local, Playwrig
 
 ## Feature Showcase
 
-| Surface | What it gives you |
-| --- | --- |
-| `linkedin` CLI | Search people, companies, jobs, groups, and events; inspect inbox, feed, notifications, profiles, and companies; run health checks and audits. |
-| `linkedin-mcp` | Expose LinkedIn tools to AI agents through Model Context Protocol, including search, inbox, jobs, feed, notifications, profile, company, and activity polling tools. |
-| `@linkedin-buddy/core` | Embed the runtime in TypeScript apps with shared services for search, inbox, feed, jobs, notifications, profile, analytics, and activity polling. |
-| Two-phase writes | Prepare, preview, and confirm real LinkedIn mutations such as replies, invites, comments, follows, profile edits, and posts. |
-| Local-first runtime | Persistent Playwright profiles, SQLite state, structured logs, screenshots, and trace artifacts stay on your machine. |
-| Activity + webhooks | Poll LinkedIn activity, manage watches, and fan out webhook deliveries from the shared local runtime. |
+| Surface                | What it gives you                                                                                                                                                    |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `linkedin` CLI         | Search people, companies, jobs, groups, and events; inspect inbox, feed, notifications, profiles, and companies; run health checks and audits.                       |
+| `linkedin-mcp`         | Expose LinkedIn tools to AI agents through Model Context Protocol, including search, inbox, jobs, feed, notifications, profile, company, and activity polling tools. |
+| `@linkedin-buddy/core` | Embed the runtime in TypeScript apps with shared services for search, inbox, feed, jobs, notifications, profile, analytics, and activity polling.                    |
+| Two-phase writes       | Prepare, preview, and confirm real LinkedIn mutations such as replies, invites, comments, follows, profile edits, and posts.                                         |
+| Local-first runtime    | Persistent Playwright profiles, SQLite state, structured logs, screenshots, and trace artifacts stay on your machine.                                                |
+| Activity + webhooks    | Poll LinkedIn activity, manage watches, and fan out webhook deliveries from the shared local runtime.                                                                |
 
 ## Quick Start
 
@@ -101,24 +101,24 @@ npm exec -w @linkedin-buddy/cli -- linkedin search "developer relations" --categ
 
 ## Visual Tour
 
-| Architecture | Workflow |
-| --- | --- |
+| Architecture                                                                                                                                                                                   | Workflow                                                                                                                               |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | ![System architecture diagram showing LinkedIn Buddy CLI, MCP server, shared runtime, persistent profile, SQLite state, and LinkedIn web app](./assets/media/diagrams/system-architecture.svg) | ![Workflow diagram showing install, build, login, read, prepare, and confirm stages](./assets/media/diagrams/install-to-daily-use.svg) |
 
-| Integrations |
-| --- |
+| Integrations                                                                                                                                                                                            |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | ![Integration diagram showing Claude Desktop, Cursor, Cline, GPT workflows, and local scripts connecting through linkedin-mcp to one local runtime](./assets/media/diagrams/mcp-client-integration.svg) |
 
 ### Feature illustrations
 
-| Search surface | Confirmed actions | Activity webhooks |
-| --- | --- | --- |
+| Search surface                                                                                                                                                      | Confirmed actions                                                                                                                              | Activity webhooks                                                                                                              |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | ![Annotated search illustration showing people and job search in the CLI with shared categories and structured results](./assets/media/features/search-surface.svg) | ![Prepare-and-confirm illustration showing preview, token, and confirm steps for write actions](./assets/media/features/confirmed-actions.svg) | ![Activity illustration showing watches, webhook delivery, and local artifacts](./assets/media/features/activity-webhooks.svg) |
 
 ### Terminal snapshots
 
-| Install and build | MCP quick connect | Confirm before write |
-| --- | --- | --- |
+| Install and build                                                                                                                            | MCP quick connect                                                                                                    | Confirm before write                                                                                                                |
+| -------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | ![Terminal screenshot showing git clone, npm install, Playwright install, and npm run build](./assets/media/terminals/install-and-build.svg) | ![Terminal screenshot showing MCP configuration JSON and next steps](./assets/media/terminals/mcp-quick-connect.svg) | ![Terminal screenshot showing prepare and confirm commands with preview details](./assets/media/terminals/confirm-before-write.svg) |
 
 See [`assets/media/README.md`](./assets/media/README.md) for the organized asset inventory and size budget, and [`docs/readme-media-research.md`](./docs/readme-media-research.md) for the research notes behind the chosen formats.
@@ -205,7 +205,7 @@ try {
     profileName: "default",
     category: "people",
     query: "developer relations",
-    limit: 5
+    limit: 5,
   });
 
   console.log(result.results.map((person) => person.name));
@@ -218,30 +218,31 @@ try {
 
 Quick positioning snapshot for people evaluating LinkedIn MCP, LinkedIn CLI, and LinkedIn API-style tools.
 
-| Tool | CLI | MCP server | Dev library / API | Confirm-before-write flow | Best fit |
-| --- | --- | --- | --- | --- | --- |
-| **LinkedIn Buddy** | Yes | Yes | Yes | Yes | Local-first LinkedIn workflows for operators and AI agents |
-| [`stickerdaniel/linkedin-mcp-server`](https://github.com/stickerdaniel/linkedin-mcp-server) | No advertised CLI | Yes | No advertised core package | No advertised confirm flow | MCP access focused on LinkedIn scraping and job search |
-| [`tigillo/linkedin-cli`](https://github.com/tigillo/linkedin-cli) | Yes | No | No advertised dev package | No advertised confirm flow | Terminal-oriented LinkedIn command usage |
-| [`alabarga/linkedin-api`](https://github.com/alabarga/linkedin-api) | No | No | Yes | No advertised confirm flow | Library-style LinkedIn integrations |
+| Tool                                                                                        | CLI               | MCP server | Dev library / API          | Confirm-before-write flow  | Best fit                                                   |
+| ------------------------------------------------------------------------------------------- | ----------------- | ---------- | -------------------------- | -------------------------- | ---------------------------------------------------------- |
+| **LinkedIn Buddy**                                                                          | Yes               | Yes        | Yes                        | Yes                        | Local-first LinkedIn workflows for operators and AI agents |
+| [`stickerdaniel/linkedin-mcp-server`](https://github.com/stickerdaniel/linkedin-mcp-server) | No advertised CLI | Yes        | No advertised core package | No advertised confirm flow | MCP access focused on LinkedIn scraping and job search     |
+| [`tigillo/linkedin-cli`](https://github.com/tigillo/linkedin-cli)                           | Yes               | No         | No advertised dev package  | No advertised confirm flow | Terminal-oriented LinkedIn command usage                   |
+| [`alabarga/linkedin-api`](https://github.com/alabarga/linkedin-api)                         | No                | No         | Yes                        | No advertised confirm flow | Library-style LinkedIn integrations                        |
 
 See [`docs/repository-seo.md`](./docs/repository-seo.md) for the keyword targets and the GitHub-search baseline captured for issue #245.
 
 ## Docs Map
 
-| Need | Doc |
-| --- | --- |
-| Repository SEO targets and metadata sync | [`docs/repository-seo.md`](./docs/repository-seo.md) |
-| Activity polling and webhooks | [`docs/activity-webhooks.md`](./docs/activity-webhooks.md) |
-| Anti-bot evasion profiles | [`docs/evasion.md`](./docs/evasion.md) |
-| E2E and replay testing | [`docs/e2e-testing.md`](./docs/e2e-testing.md) |
-| Live validation and account safety | [`docs/write-validation.md`](./docs/write-validation.md) |
-| Selector auditing | [`docs/selector-audit.md`](./docs/selector-audit.md) |
-| Draft quality evaluation | [`docs/draft-quality-evaluation.md`](./docs/draft-quality-evaluation.md) |
-| Brand and social preview assets | [`docs/brand-guidelines.md`](./docs/brand-guidelines.md) |
-| README media research | [`docs/readme-media-research.md`](./docs/readme-media-research.md) |
-| README media inventory | [`assets/media/README.md`](./assets/media/README.md) |
-| Articles and newsletters | [`docs/articles-newsletters.md`](./docs/articles-newsletters.md) |
+| Need                                     | Doc                                                                      |
+| ---------------------------------------- | ------------------------------------------------------------------------ |
+| Repository SEO targets and metadata sync | [`docs/repository-seo.md`](./docs/repository-seo.md)                     |
+| Activity polling and webhooks            | [`docs/activity-webhooks.md`](./docs/activity-webhooks.md)               |
+| Anti-bot evasion profiles                | [`docs/evasion.md`](./docs/evasion.md)                                   |
+| E2E and replay testing                   | [`docs/e2e-testing.md`](./docs/e2e-testing.md)                           |
+| Live validation and account safety       | [`docs/write-validation.md`](./docs/write-validation.md)                 |
+| Selector auditing                        | [`docs/selector-audit.md`](./docs/selector-audit.md)                     |
+| Draft quality evaluation                 | [`docs/draft-quality-evaluation.md`](./docs/draft-quality-evaluation.md) |
+| Brand and social preview assets          | [`docs/brand-guidelines.md`](./docs/brand-guidelines.md)                 |
+| README media research                    | [`docs/readme-media-research.md`](./docs/readme-media-research.md)       |
+| README media inventory                   | [`assets/media/README.md`](./assets/media/README.md)                     |
+| Articles and newsletters                 | [`docs/articles-newsletters.md`](./docs/articles-newsletters.md)         |
+| Jobs, alerts, and Easy Apply             | [`docs/jobs.md`](./docs/jobs.md)                                         |
 
 ## Contributing
 
