@@ -92,6 +92,10 @@ Local code:
 
 - `packages/mcp/src/index.ts`
 - `packages/mcp/src/bin/linkedin-mcp.ts`
+- `packages/mcp/src/toolArgs.ts` — arg-reading utilities (readString, readRequiredString, readBoundedString, readValidatedUrl, readValidatedFilePath, coerceEnumValue, etc.)
+- `packages/mcp/src/toolSchema.ts` — schema types and validation (LinkedInMcpInputSchema, validateToolArgValueAgainstSchema, etc.)
+- `packages/mcp/src/toolResults.ts` — result formatting, recovery hints, feedback (toToolResult, buildRecoveryHint, toErrorResult, addFeedbackHintToResult)
+- `packages/mcp/src/toolRuntime.ts` — runtime creation, CDP schema helpers, timeout enforcement (createRuntime, withRuntime, withCdpSchemaProperties)
 - `packages/core/src/linkedinProfile.ts`
 - `packages/core/src/linkedinInbox.ts`
 - `packages/core/src/linkedinConnections.ts`

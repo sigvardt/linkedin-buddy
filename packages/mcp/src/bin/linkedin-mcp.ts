@@ -1,13 +1,11 @@
 #!/usr/bin/env node
 import path from "node:path";
-import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import packageJson from "../../package.json" with { type: "json" };
 import {
   ACTIVITY_EVENT_TYPES,
   ACTIVITY_WATCH_KINDS,
   ACTIVITY_WATCH_STATUSES,
-  buildFeedbackHintMessage,
   DEFAULT_LINKEDIN_PERSONA_POST_IMAGE_COUNT,
   DEFAULT_FOLLOWUP_SINCE,
   createFeedbackTechnicalContext,
@@ -17,35 +15,22 @@ import {
   LINKEDIN_NEWSLETTER_CADENCE_TYPES,
   LINKEDIN_POST_VISIBILITY_TYPES,
   LINKEDIN_PRIVACY_SETTING_KEYS,
-  LINKEDIN_SELECTOR_LOCALES,
   LinkedInBuddyError,
   buildLinkedInImagePersonaFromProfileSeed,
-  createCoreRuntime,
-  isSearchCategory,
   normalizeFeedbackInputType,
   normalizeLinkedInFeedReaction,
   normalizeLinkedInInboxReaction,
-  normalizeLinkedInMemberReportReason,
   normalizeLinkedInNotificationPreferenceChannel,
   normalizeLinkedInPostVisibility,
-  normalizeLinkedInPrivacySettingKey,
   normalizeLinkedInPrivacySettingValue,
   readFeedbackStateSnapshot,
   recordFeedbackInvocation,
   resolveFollowupSinceWindow,
-  redactStructuredValue,
-  resolvePrivacyConfig,
   SEARCH_CATEGORIES,
   toLinkedInBuddyErrorPayload,
   submitFeedback,
   WEBHOOK_DELIVERY_ATTEMPT_STATUSES,
   WEBHOOK_SUBSCRIPTION_STATUSES,
-  type ActivityEventType,
-  type ActivityWatchKind,
-  type ActivityWatchStatus,
-  type SearchCategory,
-  type WebhookDeliveryAttemptStatus,
-  type WebhookSubscriptionStatus,
 } from "@linkedin-buddy/core";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -166,783 +151,62 @@ import {
   LINKEDIN_SESSION_OPEN_LOGIN_TOOL,
   LINKEDIN_SESSION_STATUS_TOOL,
 } from "../index.js";
+import {
+  type ToolArgs,
+  readString,
+  trimOrUndefined,
+  readRequiredString,
+  readBoundedString,
+  readValidatedUrl,
+  readValidatedFilePath,
+  readPositiveNumber,
+  readNonNegativeNumber,
+  readBoolean,
+  readRequiredBoolean,
+  readOptionalPositiveNumber,
+  readOptionalNonNegativeNumber,
+  readStringArray,
+  readRequiredStringArray,
+  readObject,
+  readJsonInputFile,
+  readActivityWatchKind,
+  readOptionalActivityWatchStatus,
+  readOptionalWebhookSubscriptionStatus,
+  readOptionalWebhookDeliveryStatus,
+  readActivityEventTypes,
+  readSearchCategory,
+  readMemberReportReason,
+  readPrivacySettingKey,
+  readTargetProfileName,
+} from "../toolArgs.js";
+import {
+  type LinkedInMcpToolDefinition,
+  validateToolArgValueAgainstSchema,
+} from "../toolSchema.js";
+import {
+  type ToolResult,
+  type ToolErrorResult,
+  type ToolHandler,
+  mcpPrivacyConfig,
+  toToolResult,
+  toErrorResult,
+  shouldTrackMcpFeedback,
+  addFeedbackHintToResult,
+} from "../toolResults.js";
+import { withCdpSchemaProperties, createRuntime } from "../toolRuntime.js";
 
-type ToolArgs = Record<string, unknown>;
-type ToolResult = { content: Array<{ type: "text"; text: string }> };
-type ToolErrorResult = {
-  isError: true;
-  content: Array<{ type: "text"; text: string }>;
-};
-type ToolHandler = (args: ToolArgs) => Promise<ToolResult>;
-type LinkedInMcpSchemaPrimitiveType =
-  | "array"
-  | "boolean"
-  | "integer"
-  | "number"
-  | "object"
-  | "string";
-type LinkedInMcpSchemaEnumValue = boolean | number | string;
+export {
+  readBoundedString,
+  readValidatedFilePath,
+  readValidatedUrl,
+} from "../toolArgs.js";
+export type { LinkedInMcpInputSchema } from "../toolSchema.js";
 
-export interface LinkedInMcpInputSchema {
-  type?: LinkedInMcpSchemaPrimitiveType;
-  description?: string;
-  properties?: Record<string, LinkedInMcpInputSchema>;
-  required?: string[];
-  additionalProperties?: boolean | LinkedInMcpInputSchema;
-  items?: LinkedInMcpInputSchema;
-  enum?: readonly LinkedInMcpSchemaEnumValue[];
-  anyOf?: readonly LinkedInMcpInputSchema[];
-}
-
-export interface LinkedInMcpToolDefinition {
-  name: string;
-  description: string;
-  inputSchema: LinkedInMcpInputSchema;
-}
-
-const mcpPrivacyConfig = resolvePrivacyConfig();
 const SELECTOR_AUDIT_DOC_PATH = "docs/selector-audit.md";
 const SELECTOR_AUDIT_MCP_HINT = `For broader UI-drift diagnostics, run the CLI selector audit ("linkedin audit selectors") and see ${SELECTOR_AUDIT_DOC_PATH}.`;
 
 function withSelectorAuditHint(description: string): string {
   return `${description} ${SELECTOR_AUDIT_MCP_HINT}`;
-}
-
-function readString(args: ToolArgs, key: string, fallback: string): string {
-  const value = args[key];
-  return typeof value === "string" && value.trim().length > 0
-    ? value.trim()
-    : fallback;
-}
-
-function trimOrUndefined(value: string | undefined): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-
-  const normalized = value.trim();
-  return normalized.length > 0 ? normalized : undefined;
-}
-
-function readRequiredString(args: ToolArgs, key: string): string {
-  const value = args[key];
-  if (typeof value === "string" && value.trim().length > 0) {
-    return value.trim();
-  }
-  throw new LinkedInBuddyError(
-    "ACTION_PRECONDITION_FAILED",
-    `${key} is required.`,
-  );
-}
-
-export function readBoundedString(
-  args: ToolArgs,
-  key: string,
-  maxLength = 5000,
-  fallback?: string,
-): string {
-  const value =
-    typeof fallback === "string"
-      ? readString(args, key, fallback)
-      : readRequiredString(args, key);
-
-  if (value.length > maxLength) {
-    throw new LinkedInBuddyError(
-      "ACTION_PRECONDITION_FAILED",
-      `${key} must be ${maxLength} characters or fewer.`,
-      {
-        path: `arguments.${key}`,
-        actual_length: value.length,
-        max_length: maxLength,
-      },
-    );
-  }
-
-  return value;
-}
-
-export function readValidatedUrl(args: ToolArgs, key: string): string {
-  const value = readRequiredString(args, key);
-
-  try {
-    return new URL(value).toString();
-  } catch (error) {
-    throw new LinkedInBuddyError(
-      "ACTION_PRECONDITION_FAILED",
-      `${key} must be a valid URL.`,
-      {
-        path: `arguments.${key}`,
-        cause: error instanceof Error ? error.message : String(error),
-      },
-    );
-  }
-}
-
-export function readValidatedFilePath(args: ToolArgs, key: string): string {
-  const value = readRequiredString(args, key);
-
-  if (value.includes("../") || value.includes("..\\")) {
-    throw new LinkedInBuddyError(
-      "ACTION_PRECONDITION_FAILED",
-      `${key} must not include path traversal segments.`,
-      {
-        path: `arguments.${key}`,
-      },
-    );
-  }
-
-  return value;
-}
-
-function readPositiveNumber(
-  args: ToolArgs,
-  key: string,
-  fallback: number,
-): number {
-  const value = args[key];
-  if (typeof value !== "number") {
-    return fallback;
-  }
-
-  if (!Number.isFinite(value) || value <= 0) {
-    throw new LinkedInBuddyError(
-      "ACTION_PRECONDITION_FAILED",
-      `${key} must be a positive number.`,
-    );
-  }
-
-  return value;
-}
-
-function readNonNegativeNumber(
-  args: ToolArgs,
-  key: string,
-  fallback: number,
-): number {
-  const value = args[key];
-  if (typeof value !== "number") {
-    return fallback;
-  }
-
-  if (!Number.isFinite(value) || value < 0) {
-    throw new LinkedInBuddyError(
-      "ACTION_PRECONDITION_FAILED",
-      `${key} must be zero or a positive number.`,
-    );
-  }
-
-  return value;
-}
-
-function readBoolean(args: ToolArgs, key: string, fallback: boolean): boolean {
-  const value = args[key];
-  return typeof value === "boolean" ? value : fallback;
-}
-
-function readRequiredBoolean(args: ToolArgs, key: string): boolean {
-  const value = args[key];
-  if (typeof value === "boolean") {
-    return value;
-  }
-
-  throw new LinkedInBuddyError(
-    "ACTION_PRECONDITION_FAILED",
-    `${key} is required.`,
-  );
-}
-
-function readOptionalPositiveNumber(
-  args: ToolArgs,
-  key: string,
-): number | undefined {
-  if (!(key in args) || args[key] === undefined) {
-    return undefined;
-  }
-
-  return readPositiveNumber(args, key, 1);
-}
-
-function readOptionalNonNegativeNumber(
-  args: ToolArgs,
-  key: string,
-): number | undefined {
-  if (!(key in args) || args[key] === undefined) {
-    return undefined;
-  }
-
-  const value = args[key];
-  if (
-    typeof value !== "number" ||
-    !Number.isFinite(value) ||
-    !Number.isInteger(value) ||
-    value < 0
-  ) {
-    throw new LinkedInBuddyError(
-      "ACTION_PRECONDITION_FAILED",
-      `${key} must be a non-negative integer.`,
-    );
-  }
-
-  return value;
-}
-
-function readStringArray(args: ToolArgs, key: string): string[] | undefined {
-  const value = args[key];
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (typeof value === "string" && value.trim().length > 0) {
-    return [value.trim()];
-  }
-
-  if (Array.isArray(value)) {
-    const items = value
-      .filter((item): item is string => typeof item === "string")
-      .map((item) => item.trim())
-      .filter((item) => item.length > 0);
-    return items.length > 0 ? items : undefined;
-  }
-
-  throw new LinkedInBuddyError(
-    "ACTION_PRECONDITION_FAILED",
-    `${key} must be a string or array of strings.`,
-  );
-}
-
-function readRequiredStringArray(args: ToolArgs, key: string): string[] {
-  const values = readStringArray(args, key);
-  if (values && values.length > 0) {
-    return values;
-  }
-
-  throw new LinkedInBuddyError(
-    "ACTION_PRECONDITION_FAILED",
-    `${key} is required.`,
-  );
-}
-
-function readObject(
-  args: ToolArgs,
-  key: string,
-): Record<string, unknown> | undefined {
-  const value = args[key];
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
-  }
-
-  throw new LinkedInBuddyError(
-    "ACTION_PRECONDITION_FAILED",
-    `${key} must be an object.`,
-  );
-}
-
-async function readJsonInputFile(
-  filePath: string,
-  label: string,
-): Promise<unknown> {
-  const resolvedPath = path.resolve(filePath);
-  let rawValue: string;
-
-  try {
-    rawValue = await readFile(resolvedPath, "utf8");
-  } catch (error) {
-    throw new LinkedInBuddyError(
-      "ACTION_PRECONDITION_FAILED",
-      `Could not read ${label}.`,
-      {
-        path: resolvedPath,
-        cause: error instanceof Error ? error.message : String(error),
-      },
-    );
-  }
-
-  try {
-    return JSON.parse(rawValue) as unknown;
-  } catch (error) {
-    throw new LinkedInBuddyError(
-      "ACTION_PRECONDITION_FAILED",
-      `${label} must contain valid JSON.`,
-      {
-        path: resolvedPath,
-        cause: error instanceof Error ? error.message : String(error),
-      },
-    );
-  }
-}
-
-function coerceEnumValue<T extends string>(
-  value: string,
-  allowed: readonly T[],
-  label: string,
-): T {
-  if ((allowed as readonly string[]).includes(value)) {
-    return value as T;
-  }
-
-  throw new LinkedInBuddyError(
-    "ACTION_PRECONDITION_FAILED",
-    `${label} must be one of: ${allowed.join(", ")}.`,
-  );
-}
-
-function readActivityWatchKind(args: ToolArgs, key: string): ActivityWatchKind {
-  return coerceEnumValue(
-    readRequiredString(args, key),
-    ACTIVITY_WATCH_KINDS,
-    key,
-  );
-}
-
-function readOptionalActivityWatchStatus(
-  args: ToolArgs,
-  key: string,
-): ActivityWatchStatus | undefined {
-  const value = args[key];
-  if (typeof value !== "string" || value.trim().length === 0) {
-    return undefined;
-  }
-
-  return coerceEnumValue(value.trim(), ACTIVITY_WATCH_STATUSES, key);
-}
-
-function readOptionalWebhookSubscriptionStatus(
-  args: ToolArgs,
-  key: string,
-): WebhookSubscriptionStatus | undefined {
-  const value = args[key];
-  if (typeof value !== "string" || value.trim().length === 0) {
-    return undefined;
-  }
-
-  return coerceEnumValue(value.trim(), WEBHOOK_SUBSCRIPTION_STATUSES, key);
-}
-
-function readOptionalWebhookDeliveryStatus(
-  args: ToolArgs,
-  key: string,
-): WebhookDeliveryAttemptStatus | undefined {
-  const value = args[key];
-  if (typeof value !== "string" || value.trim().length === 0) {
-    return undefined;
-  }
-
-  return coerceEnumValue(value.trim(), WEBHOOK_DELIVERY_ATTEMPT_STATUSES, key);
-}
-
-function readActivityEventTypes(
-  args: ToolArgs,
-  key: string,
-): ActivityEventType[] | undefined {
-  const values = readStringArray(args, key);
-  if (!values) {
-    return undefined;
-  }
-
-  return values.map((value) =>
-    coerceEnumValue(value, ACTIVITY_EVENT_TYPES, key),
-  );
-}
-
-function readSearchCategory(
-  args: ToolArgs,
-  key: string,
-  fallback: SearchCategory,
-): SearchCategory {
-  const value = args[key];
-  if (typeof value !== "string" || value.trim().length === 0) {
-    return fallback;
-  }
-
-  const category = value.trim();
-  if (isSearchCategory(category)) {
-    return category;
-  }
-
-  throw new LinkedInBuddyError(
-    "ACTION_PRECONDITION_FAILED",
-    `${key} must be one of: ${SEARCH_CATEGORIES.join(", ")}.`,
-  );
-}
-
-function readMemberReportReason(
-  args: ToolArgs,
-  key: string,
-): ReturnType<typeof normalizeLinkedInMemberReportReason> {
-  return normalizeLinkedInMemberReportReason(readRequiredString(args, key));
-}
-
-function readPrivacySettingKey(args: ToolArgs, key: string) {
-  return normalizeLinkedInPrivacySettingKey(readRequiredString(args, key));
-}
-
-function toToolResult(payload: unknown): ToolResult {
-  return {
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify(
-          redactStructuredValue(payload, mcpPrivacyConfig, "cli"),
-          null,
-          2,
-        ),
-      },
-    ],
-  };
-}
-
-function buildRecoveryHint(error: unknown): string | undefined {
-  if (!(error instanceof LinkedInBuddyError)) {
-    return "An unexpected error occurred. Check linkedin.session.status to verify your session is active.";
-  }
-
-  switch (error.code) {
-    case "AUTH_REQUIRED":
-      return "Your LinkedIn session has expired or is not authenticated. Run linkedin.session.open_login to start a new session, then retry.";
-    case "CAPTCHA_OR_CHALLENGE":
-      return "LinkedIn is showing a security challenge. Open your browser manually, complete the challenge, then retry the operation.";
-    case "RATE_LIMITED":
-      return "You have exceeded the rate limit for this action. Wait for the current rate-limit window to reset before retrying. Check the rate_limit details for timing.";
-    case "UI_CHANGED_SELECTOR_FAILED":
-      return "A LinkedIn page element could not be found — the page layout may have changed. Try running linkedin.session.health to check browser connectivity, then retry.";
-    case "NETWORK_ERROR":
-      return "A network error occurred. Verify your internet connection, then check linkedin.session.health. If the browser process is unresponsive, restart it with linkedin.session.open_login.";
-    case "TIMEOUT":
-      return "The operation timed out. The page may be loading slowly or the browser may be unresponsive. Try running linkedin.session.health, then retry with a simpler query if possible.";
-    case "TARGET_NOT_FOUND":
-      return "The requested target (profile, post, thread, job, etc.) was not found. Verify the URL or identifier is correct and the content still exists on LinkedIn.";
-    case "ACTION_PRECONDITION_FAILED":
-      return "A precondition for this action was not met. Check the error details for specifics — you may need to correct input parameters or complete a prerequisite step first.";
-    default:
-      return undefined;
-  }
-}
-
-function toErrorResult(error: unknown): ToolErrorResult {
-  const payload = toLinkedInBuddyErrorPayload(error, mcpPrivacyConfig);
-  const hint = buildRecoveryHint(error);
-  const enrichedPayload = hint ? { ...payload, recovery_hint: hint } : payload;
-
-  return {
-    isError: true,
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify(enrichedPayload, null, 2),
-      },
-    ],
-  };
-}
-
-function shouldTrackMcpFeedback(toolName: string): boolean {
-  return toolName !== SUBMIT_FEEDBACK_TOOL;
-}
-
-function addFeedbackHintToResult<T extends ToolResult | ToolErrorResult>(
-  result: T,
-  reason?: Parameters<typeof buildFeedbackHintMessage>[0],
-): T {
-  const firstContent = result.content[0];
-  if (!firstContent || firstContent.type !== "text") {
-    return result;
-  }
-
-  try {
-    const parsed = JSON.parse(firstContent.text) as Record<string, unknown>;
-    parsed.feedback_hint = buildFeedbackHintMessage(reason);
-
-    return {
-      ...result,
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(parsed, null, 2),
-        },
-      ],
-    };
-  } catch {
-    return result;
-  }
-}
-
-function readTargetProfileName(
-  target: Record<string, unknown>,
-): string | undefined {
-  const value = target.profile_name;
-  if (typeof value === "string" && value.trim().length > 0) {
-    return value.trim();
-  }
-  return undefined;
-}
-
-const cdpUrlInputSchemaProperty: LinkedInMcpInputSchema = {
-  type: "string",
-  description:
-    "Connect to an existing browser via CDP endpoint (for example http://127.0.0.1:18800).",
-};
-
-const selectorLocaleInputSchemaProperty: LinkedInMcpInputSchema = {
-  type: "string",
-  description: `Prefer localized LinkedIn UI text first (${LINKEDIN_SELECTOR_LOCALES.join(
-    ", ",
-  )}; region tags like da-DK normalize to da). Unsupported values fall back to en.`,
-};
-
-function withCdpSchemaProperties(
-  properties: Record<string, LinkedInMcpInputSchema>,
-): Record<string, LinkedInMcpInputSchema> {
-  return {
-    ...properties,
-    cdpUrl: cdpUrlInputSchemaProperty,
-    selectorLocale: selectorLocaleInputSchemaProperty,
-  };
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function describeToolArgValue(value: unknown): string {
-  if (Array.isArray(value)) {
-    return "array";
-  }
-
-  if (value === null) {
-    return "null";
-  }
-
-  if (typeof value === "number" && !Number.isFinite(value)) {
-    return "non-finite number";
-  }
-
-  return typeof value;
-}
-
-function appendToolSchemaPath(path: string, segment: string): string {
-  if (path.length === 0) {
-    return segment;
-  }
-
-  if (segment.startsWith("[")) {
-    return `${path}${segment}`;
-  }
-
-  return `${path}.${segment}`;
-}
-
-function formatToolSchemaPath(path: string): string {
-  return path.length > 0 ? path : "arguments";
-}
-
-function describeToolSchemaTypes(schema: LinkedInMcpInputSchema): string {
-  if (schema.anyOf && schema.anyOf.length > 0) {
-    return schema.anyOf
-      .map((entry) => describeToolSchemaTypes(entry))
-      .join(", ");
-  }
-
-  if (schema.enum && schema.enum.length > 0) {
-    return schema.enum.map((entry) => JSON.stringify(entry)).join(", ");
-  }
-
-  if (schema.type) {
-    return schema.type;
-  }
-
-  return "supported value";
-}
-
-function throwToolSchemaValidationError(
-  path: string,
-  message: string,
-  details: Record<string, unknown> = {},
-): never {
-  throw new LinkedInBuddyError(
-    "ACTION_PRECONDITION_FAILED",
-    `${formatToolSchemaPath(path)} ${message}`,
-    {
-      path: formatToolSchemaPath(path),
-      ...details,
-    },
-  );
-}
-
-function validateToolArgEnum(
-  schema: LinkedInMcpInputSchema,
-  value: unknown,
-  path: string,
-): void {
-  if (
-    schema.enum &&
-    !schema.enum.includes(value as LinkedInMcpSchemaEnumValue)
-  ) {
-    throwToolSchemaValidationError(
-      path,
-      `must be one of: ${schema.enum.map((entry) => JSON.stringify(entry)).join(", ")}.`,
-      {
-        actual_type: describeToolArgValue(value),
-        allowed_values: [...schema.enum],
-      },
-    );
-  }
-}
-
-function validateToolArgValueAgainstSchema(
-  schema: LinkedInMcpInputSchema,
-  value: unknown,
-  path: string,
-): void {
-  if (schema.anyOf && schema.anyOf.length > 0) {
-    for (const candidate of schema.anyOf) {
-      try {
-        validateToolArgValueAgainstSchema(candidate, value, path);
-        return;
-      } catch (error) {
-        if (!(error instanceof LinkedInBuddyError)) {
-          throw error;
-        }
-      }
-    }
-
-    throwToolSchemaValidationError(
-      path,
-      `must match one of: ${describeToolSchemaTypes(schema)}.`,
-      {
-        actual_type: describeToolArgValue(value),
-        expected: describeToolSchemaTypes(schema),
-      },
-    );
-  }
-
-  switch (schema.type) {
-    case "string":
-      if (typeof value !== "string") {
-        throwToolSchemaValidationError(path, "must be a string.", {
-          actual_type: describeToolArgValue(value),
-        });
-      }
-      validateToolArgEnum(schema, value, path);
-      return;
-    case "number":
-      if (typeof value !== "number" || !Number.isFinite(value)) {
-        throwToolSchemaValidationError(path, "must be a finite number.", {
-          actual_type: describeToolArgValue(value),
-        });
-      }
-      validateToolArgEnum(schema, value, path);
-      return;
-    case "integer":
-      if (
-        typeof value !== "number" ||
-        !Number.isFinite(value) ||
-        !Number.isInteger(value)
-      ) {
-        throwToolSchemaValidationError(path, "must be an integer.", {
-          actual_type: describeToolArgValue(value),
-        });
-      }
-      validateToolArgEnum(schema, value, path);
-      return;
-    case "boolean":
-      if (typeof value !== "boolean") {
-        throwToolSchemaValidationError(path, "must be a boolean.", {
-          actual_type: describeToolArgValue(value),
-        });
-      }
-      validateToolArgEnum(schema, value, path);
-      return;
-    case "array":
-      if (!Array.isArray(value)) {
-        throwToolSchemaValidationError(path, "must be an array.", {
-          actual_type: describeToolArgValue(value),
-        });
-      }
-
-      if (schema.items) {
-        value.forEach((entry, index) => {
-          validateToolArgValueAgainstSchema(
-            schema.items!,
-            entry,
-            appendToolSchemaPath(path, `[${index}]`),
-          );
-        });
-      }
-      return;
-    case "object": {
-      if (!isPlainObject(value)) {
-        throwToolSchemaValidationError(path, "must be an object.", {
-          actual_type: describeToolArgValue(value),
-        });
-      }
-
-      const properties = schema.properties ?? {};
-      const required = schema.required ?? [];
-      for (const requiredKey of required) {
-        if (!(requiredKey in value) || value[requiredKey] === undefined) {
-          throwToolSchemaValidationError(
-            appendToolSchemaPath(path, requiredKey),
-            "is required.",
-          );
-        }
-      }
-
-      for (const [key, entryValue] of Object.entries(value)) {
-        const propertyPath = appendToolSchemaPath(path, key);
-        const propertySchema = properties[key];
-
-        if (propertySchema) {
-          if (entryValue !== undefined) {
-            validateToolArgValueAgainstSchema(
-              propertySchema,
-              entryValue,
-              propertyPath,
-            );
-          }
-          continue;
-        }
-
-        if (schema.additionalProperties === false) {
-          throwToolSchemaValidationError(propertyPath, "is not allowed.");
-        }
-
-        if (
-          schema.additionalProperties &&
-          typeof schema.additionalProperties === "object"
-        ) {
-          validateToolArgValueAgainstSchema(
-            schema.additionalProperties,
-            entryValue,
-            propertyPath,
-          );
-        }
-      }
-      return;
-    }
-    default:
-      validateToolArgEnum(schema, value, path);
-      return;
-  }
-}
-
-function createRuntime(args: ToolArgs) {
-  const cdpUrl = readString(args, "cdpUrl", "");
-  const selectorLocale = readString(args, "selectorLocale", "");
-  return createCoreRuntime(
-    cdpUrl
-      ? {
-          cdpUrl,
-          privacy: mcpPrivacyConfig,
-          ...(selectorLocale ? { selectorLocale } : {}),
-        }
-      : {
-          privacy: mcpPrivacyConfig,
-          ...(selectorLocale ? { selectorLocale } : {}),
-        },
-  );
 }
 
 async function handleSessionStatus(args: ToolArgs): Promise<ToolResult> {
