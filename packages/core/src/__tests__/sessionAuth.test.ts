@@ -3,9 +3,20 @@ import type { BrowserContext, Locator, Page } from "playwright-core";
 import { LinkedInAuthService } from "../auth/session.js";
 import type { ProfileManager } from "../profileManager.js";
 
+type MockRateLimitCooldown = {
+  active: boolean;
+  state: {
+    rateLimitedUntil: string;
+    detectedAt: string;
+    consecutiveRateLimits: number;
+  } | null;
+};
+
 const rateLimitStateMocks = vi.hoisted(() => ({
   clearRateLimitState: vi.fn(async () => undefined),
-  isInRateLimitCooldown: vi.fn(async () => ({ active: false, state: null })),
+  isInRateLimitCooldown: vi.fn<() => Promise<MockRateLimitCooldown>>(
+    async () => ({ active: false, state: null }),
+  ),
   recordRateLimit: vi.fn(async () => ({
     rateLimitedUntil: "2026-02-23T12:00:00.000Z",
     detectedAt: "2026-02-23T10:00:00.000Z",
@@ -362,13 +373,17 @@ describe("LinkedInAuthService auth flow", () => {
         }
       },
       isVisible: (selector, currentUrl) => {
-        if (selector.includes("username")) {
+        if (
+          selector.includes("input") &&
+          (selector.includes("username") || selector.includes("session_key"))
+        ) {
           return currentUrl.includes("/login");
         }
 
         if (
-          selector.includes("session_password") ||
-          selector.includes("password")
+          selector.includes("input") &&
+          (selector.includes("session_password") ||
+            selector.includes("password"))
         ) {
           return currentUrl.includes("/login");
         }
@@ -655,5 +670,399 @@ describe("LinkedInAuthService auth flow", () => {
     expect(typeCalls).toHaveLength(2);
     expect(typeCalls[0]!.value).toBe("test@example.com");
     expect(typeCalls[1]!.value).toBe("secret");
+  });
+
+  it("headlessLogin prioritizes CAPTCHA over app approval markers", async () => {
+    let waitCount = 0;
+    const checkpointUrl =
+      "https://www.linkedin.com/checkpoint/challenge/AgCaptchaPriority";
+
+    const { page, setUrl } = createMockPage({
+      initialUrl: "https://www.linkedin.com/login",
+      onWait: () => {
+        waitCount += 1;
+        if (waitCount === 1) {
+          setUrl(checkpointUrl);
+        }
+      },
+      isVisible: (selector, currentUrl) => {
+        if (selector.includes("username")) {
+          return currentUrl.includes("/login");
+        }
+
+        if (
+          selector.includes("session_password") ||
+          selector.includes("password")
+        ) {
+          return currentUrl.includes("/login");
+        }
+
+        if (selector === "form[action*='checkpoint']") {
+          return currentUrl.includes("/checkpoint");
+        }
+
+        if (selector === "iframe[src*='recaptcha']") {
+          return currentUrl.includes("/checkpoint");
+        }
+
+        if (selector === "[data-test-id='auth-app-approval']") {
+          return currentUrl.includes("/checkpoint");
+        }
+
+        return false;
+      },
+    });
+
+    const context = createContextWithPage(page);
+    const profileManager = {
+      runWithContext: vi.fn(async (_options, callback) => callback(context)),
+    } as const;
+    const auth = new LinkedInAuthService(
+      profileManager as unknown as ProfileManager,
+    );
+
+    const result = await auth.headlessLogin({
+      email: "test@example.com",
+      password: "secret",
+      pollIntervalMs: 1,
+      timeoutMs: 100,
+    });
+
+    expect(result.authenticated).toBe(false);
+    expect(result.checkpoint).toBe(true);
+    expect(result.checkpointType).toBe("captcha");
+  });
+
+  it("headlessLogin classifies unknown checkpoints when no known marker exists", async () => {
+    let waitCount = 0;
+    const checkpointUrl =
+      "https://www.linkedin.com/checkpoint/challenge/AgUnknownCheckpoint";
+
+    const { page, setUrl } = createMockPage({
+      initialUrl: "https://www.linkedin.com/login",
+      onWait: () => {
+        waitCount += 1;
+        if (waitCount === 1) {
+          setUrl(checkpointUrl);
+        }
+      },
+      isVisible: (selector, currentUrl) => {
+        if (selector.includes("username")) {
+          return currentUrl.includes("/login");
+        }
+
+        if (
+          selector.includes("session_password") ||
+          selector.includes("password")
+        ) {
+          return currentUrl.includes("/login");
+        }
+
+        if (selector === "form[action*='checkpoint']") {
+          return currentUrl.includes("/checkpoint");
+        }
+
+        return false;
+      },
+    });
+
+    const context = createContextWithPage(page);
+    const profileManager = {
+      runWithContext: vi.fn(async (_options, callback) => callback(context)),
+    } as const;
+    const auth = new LinkedInAuthService(
+      profileManager as unknown as ProfileManager,
+    );
+
+    const result = await auth.headlessLogin({
+      email: "test@example.com",
+      password: "secret",
+      pollIntervalMs: 1,
+      timeoutMs: 100,
+    });
+
+    expect(result.authenticated).toBe(false);
+    expect(result.checkpoint).toBe(true);
+    expect(result.checkpointType).toBe("unknown");
+    expect(result.rateLimitActive).toBe(true);
+    expect(result.rateLimitUntil).toBe("2026-02-23T12:00:00.000Z");
+  });
+
+  it("headlessLogin handles login page transitioning to CAPTCHA checkpoint", async () => {
+    let waitCount = 0;
+    const checkpointUrl =
+      "https://www.linkedin.com/checkpoint/challenge/AgTransitionCaptcha";
+
+    const { page, setUrl } = createMockPage({
+      initialUrl: "https://www.linkedin.com/login",
+      onWait: () => {
+        waitCount += 1;
+        if (waitCount === 1) {
+          setUrl(checkpointUrl);
+        }
+      },
+      isVisible: (selector, currentUrl) => {
+        if (selector.includes("username")) {
+          return currentUrl.includes("/login");
+        }
+
+        if (
+          selector.includes("session_password") ||
+          selector.includes("password")
+        ) {
+          return currentUrl.includes("/login");
+        }
+
+        if (selector === "form[action*='checkpoint']") {
+          return currentUrl.includes("/checkpoint");
+        }
+
+        if (selector === "[class*='captcha' i]") {
+          return currentUrl.includes("/checkpoint");
+        }
+
+        return false;
+      },
+    });
+
+    const context = createContextWithPage(page);
+    const profileManager = {
+      runWithContext: vi.fn(async (_options, callback) => callback(context)),
+    } as const;
+    const auth = new LinkedInAuthService(
+      profileManager as unknown as ProfileManager,
+    );
+
+    const result = await auth.headlessLogin({
+      email: "test@example.com",
+      password: "secret",
+      pollIntervalMs: 1,
+      timeoutMs: 100,
+    });
+
+    expect(result.authenticated).toBe(false);
+    expect(result.checkpoint).toBe(true);
+    expect(result.checkpointType).toBe("captcha");
+  });
+
+  it("headlessLogin injects hidden email field for returning-user variant", async () => {
+    let waitCount = 0;
+    let navVisible = false;
+
+    const { page, typeCalls, setUrl } = createMockPage({
+      initialUrl: "https://www.linkedin.com/login",
+      onWait: () => {
+        waitCount += 1;
+        if (waitCount === 1) {
+          navVisible = true;
+          setUrl("https://www.linkedin.com/feed/");
+        }
+      },
+      isVisible: (selector, currentUrl) => {
+        if (selector.includes("username")) {
+          return false;
+        }
+
+        if (
+          selector.includes("session_password") ||
+          selector.includes("password")
+        ) {
+          return currentUrl.includes("/login");
+        }
+
+        if (selector === "nav.global-nav") {
+          return navVisible;
+        }
+
+        return false;
+      },
+    });
+
+    const evaluateFn = page.evaluate as ReturnType<typeof vi.fn>;
+    evaluateFn.mockImplementation(async (...args: unknown[]) => {
+      if (args[1] === "test@example.com") {
+        return undefined;
+      }
+
+      if (typeof args[0] === "function") {
+        return false;
+      }
+
+      return undefined;
+    });
+
+    const context = createContextWithPage(page);
+    const profileManager = {
+      runWithContext: vi.fn(async (_options, callback) => callback(context)),
+    } as const;
+    const auth = new LinkedInAuthService(
+      profileManager as unknown as ProfileManager,
+    );
+
+    const result = await auth.headlessLogin({
+      email: "test@example.com",
+      password: "secret",
+      pollIntervalMs: 1,
+      timeoutMs: 100,
+    });
+
+    expect(result.authenticated).toBe(true);
+    expect(typeCalls).toHaveLength(1);
+    expect(typeCalls[0]!.value).toBe("secret");
+    expect(
+      evaluateFn.mock.calls.some((call) => call[1] === "test@example.com"),
+    ).toBe(true);
+  });
+
+  it("headlessLogin surfaces password field timeout errors", async () => {
+    const { page } = createMockPage({
+      initialUrl: "https://www.linkedin.com/login",
+      isVisible: (selector, currentUrl) => {
+        if (selector.includes("username")) {
+          return currentUrl.includes("/login");
+        }
+
+        if (
+          selector.includes("session_password") ||
+          selector.includes("password")
+        ) {
+          return currentUrl.includes("/login");
+        }
+
+        return false;
+      },
+    });
+
+    const typeFn = page.type as ReturnType<typeof vi.fn>;
+    typeFn.mockImplementation(async (selector: string) => {
+      if (selector.includes("password")) {
+        throw new Error("Timeout waiting for password field");
+      }
+    });
+
+    const context = createContextWithPage(page);
+    const profileManager = {
+      runWithContext: vi.fn(async (_options, callback) => callback(context)),
+    } as const;
+    const auth = new LinkedInAuthService(
+      profileManager as unknown as ProfileManager,
+    );
+
+    await expect(
+      auth.headlessLogin({
+        email: "test@example.com",
+        password: "secret",
+        pollIntervalMs: 1,
+        timeoutMs: 100,
+      }),
+    ).rejects.toThrow("Timeout waiting for password field");
+  });
+
+  it("headlessLogin succeeds immediately when first post-submit check is authenticated", async () => {
+    let waitCount = 0;
+    let navVisible = false;
+
+    const { page, setUrl } = createMockPage({
+      initialUrl: "https://www.linkedin.com/login",
+      onWait: () => {
+        waitCount += 1;
+        if (waitCount === 1) {
+          navVisible = true;
+          setUrl("https://www.linkedin.com/feed/");
+        }
+      },
+      isVisible: (selector, currentUrl) => {
+        if (selector.includes("username")) {
+          return currentUrl.includes("/login");
+        }
+
+        if (
+          selector.includes("session_password") ||
+          selector.includes("password")
+        ) {
+          return currentUrl.includes("/login");
+        }
+
+        if (selector === "nav.global-nav") {
+          return navVisible;
+        }
+
+        return false;
+      },
+    });
+
+    const context = createContextWithPage(page);
+    const profileManager = {
+      runWithContext: vi.fn(async (_options, callback) => callback(context)),
+    } as const;
+    const auth = new LinkedInAuthService(
+      profileManager as unknown as ProfileManager,
+    );
+
+    const result = await auth.headlessLogin({
+      email: "test@example.com",
+      password: "secret",
+      pollIntervalMs: 1,
+      timeoutMs: 100,
+    });
+
+    expect(result.authenticated).toBe(true);
+    expect(result.checkpoint).toBe(false);
+    expect(rateLimitStateMocks.recordRateLimit).not.toHaveBeenCalled();
+  });
+
+  it("headlessLogin classifies challenge_global_internal_error as rate limited", async () => {
+    let waitCount = 0;
+    const rateLimitCheckpointUrl =
+      "https://www.linkedin.com/checkpoint/challenge/challenge_global_internal_error";
+
+    const { page, setUrl } = createMockPage({
+      initialUrl: "https://www.linkedin.com/login",
+      onWait: () => {
+        waitCount += 1;
+        if (waitCount === 1) {
+          setUrl(rateLimitCheckpointUrl);
+        }
+      },
+      isVisible: (selector, currentUrl) => {
+        if (selector.includes("username")) {
+          return currentUrl.includes("/login");
+        }
+
+        if (
+          selector.includes("session_password") ||
+          selector.includes("password")
+        ) {
+          return currentUrl.includes("/login");
+        }
+
+        if (selector === "form[action*='checkpoint']") {
+          return currentUrl.includes("/checkpoint");
+        }
+
+        return false;
+      },
+    });
+
+    const context = createContextWithPage(page);
+    const profileManager = {
+      runWithContext: vi.fn(async (_options, callback) => callback(context)),
+    } as const;
+    const auth = new LinkedInAuthService(
+      profileManager as unknown as ProfileManager,
+    );
+
+    const result = await auth.headlessLogin({
+      email: "test@example.com",
+      password: "secret",
+      pollIntervalMs: 1,
+      timeoutMs: 100,
+    });
+
+    expect(result.authenticated).toBe(false);
+    expect(result.checkpoint).toBe(true);
+    expect(result.checkpointType).toBe("rate_limited");
+    expect(result.rateLimitActive).toBe(true);
+    expect(result.rateLimitUntil).toBe("2026-02-23T12:00:00.000Z");
   });
 });
