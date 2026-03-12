@@ -10,6 +10,7 @@ import {
   type Route
 } from "playwright-core";
 import { ArtifactHelpers } from "./artifacts.js";
+import { getOrCreatePage } from "./shared.js";
 import {
   ensureConfigPaths,
   resolveConfigPaths,
@@ -656,12 +657,6 @@ function getOperationDefinition(
   }
 
   return definition;
-}
-
-async function getOrCreatePage(context: BrowserContext): Promise<Page> {
-  const existingPage = context.pages()[0];
-
-  return existingPage ?? context.newPage();
 }
 
 async function assertHealthyStoredSession(

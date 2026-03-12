@@ -1,4 +1,4 @@
-import { type BrowserContext, type Locator, type Page } from "playwright-core";
+import { type Locator, type Page } from "playwright-core";
 import type { LinkedInAuthService } from "./auth/session.js";
 import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
 import type { ConfirmFailureArtifactConfig } from "./config.js";
@@ -7,6 +7,11 @@ import { LinkedInBuddyError, asLinkedInBuddyError } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
+import {
+  normalizeText,
+  getOrCreatePage,
+  escapeCssAttributeValue
+} from "./shared.js";
 import {
   consumeRateLimitOrThrow,
   createConfirmRateLimitMessage,
@@ -167,10 +172,6 @@ const INVITATIONS_SENT_URL = "https://www.linkedin.com/mynetwork/invitation-mana
 /*  Helpers                                                           */
 /* ------------------------------------------------------------------ */
 
-function normalizeText(value: string | null | undefined): string {
-  return (value ?? "").replace(/\s+/g, " ").trim();
-}
-
 function getConnectionRateLimitConfig(
   actionType: string
 ): ConsumeRateLimitInput {
@@ -227,14 +228,6 @@ async function waitForCondition(
   return condition();
 }
 
-async function getOrCreatePage(context: BrowserContext): Promise<Page> {
-  const existing = context.pages()[0];
-  if (existing) {
-    return existing;
-  }
-  return context.newPage();
-}
-
 function extractVanityName(url: string): string | null {
   const match = /\/in\/([^/?#]+)/.exec(url);
   if (!match?.[1]) {
@@ -245,10 +238,6 @@ function extractVanityName(url: string): string | null {
   } catch {
     return match[1];
   }
-}
-
-function escapeCssAttributeValue(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
 function resolveProfileHrefFragment(targetProfile: string): string {

@@ -1,3 +1,5 @@
+import { escapeRegExp, escapeCssAttributeValue } from "./shared.js";
+
 const DEFAULT_SELECTOR_ATTRIBUTE_NAME = "aria-label";
 const MAX_SELECTOR_LOCALE_INPUT_LENGTH = 64;
 const SELECTOR_CACHE_KEY_SEPARATOR = "\u001f";
@@ -30,14 +32,6 @@ function normalizePhraseForComparison(value: string): string {
 
 function normalizeLocaleInput(value: string): string {
   return normalizeUnicode(value, "NFKC").trim().toLowerCase();
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function escapeCssAttributeValue(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
 function dedupePhrases(values: readonly unknown[]): string[] {

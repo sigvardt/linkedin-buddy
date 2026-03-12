@@ -589,6 +589,33 @@ describe("splitProfileIntroLocationValue", () => {
       countryOrRegion: null,
     });
   });
+
+  it("returns empty parts for empty and whitespace-only input", () => {
+    expect(splitProfileIntroLocationValue("")).toEqual({
+      city: "",
+      countryOrRegion: null,
+    });
+    expect(splitProfileIntroLocationValue("   \n\t  ")).toEqual({
+      city: "",
+      countryOrRegion: null,
+    });
+  });
+
+  it("handles unicode city and country names", () => {
+    expect(splitProfileIntroLocationValue("København, Danmark")).toEqual({
+      city: "København",
+      countryOrRegion: "Danmark",
+    });
+  });
+
+  it("uses the last comma segment as countryOrRegion", () => {
+    expect(
+      splitProfileIntroLocationValue("New York, NY, United States"),
+    ).toEqual({
+      city: "New York, NY",
+      countryOrRegion: "United States",
+    });
+  });
 });
 
 describe("extractVisibleTopCardSummaryFromRoot", () => {
@@ -619,6 +646,69 @@ describe("extractVisibleTopCardSummaryFromRoot", () => {
       full_name: "Joi Ascend",
       headline: "Personal Assistant to Director at Signikant",
       location: "Copenhagen, Capital Region of Denmark, Denmark",
+      connection_degree: "",
+    });
+  });
+
+  it("returns empty values when root has no matching visible elements", async () => {
+    const root = new MockTextLocator({});
+
+    await expect(
+      extractVisibleTopCardSummaryFromRoot(root as unknown as Locator),
+    ).resolves.toEqual({
+      full_name: "",
+      headline: "",
+      location: "",
+      connection_degree: "",
+    });
+  });
+
+  it("trims whitespace-only text down to empty values", async () => {
+    const root = new MockTextLocator({
+      "h1.text-heading-xlarge, h1[class*='text-heading'], h2, h1": [
+        { text: "   ", visible: true },
+      ],
+      ".text-body-medium[data-anonymize='headline'], .text-body-medium": [
+        { text: "\n\t  ", visible: true },
+      ],
+      "span.text-body-small[data-anonymize='location'], .text-body-small.inline": [
+        { text: "    ", visible: true },
+      ],
+      ".dist-value, .distance-badge, [class*='distance']": [
+        { text: "  ", visible: true },
+      ],
+      p: [{ text: "\n  \t", visible: true }],
+    });
+
+    await expect(
+      extractVisibleTopCardSummaryFromRoot(root as unknown as Locator),
+    ).resolves.toEqual({
+      full_name: "",
+      headline: "",
+      location: "",
+      connection_degree: "",
+    });
+  });
+
+  it("uses text from the visible heading when multiple headings exist", async () => {
+    const root = new MockTextLocator({
+      "h1.text-heading-xlarge, h1[class*='text-heading'], h2, h1": [
+        { text: "Hidden heading", visible: false },
+        { text: "Visible heading", visible: true },
+      ],
+      ".text-body-medium[data-anonymize='headline'], .text-body-medium": [],
+      "span.text-body-small[data-anonymize='location'], .text-body-small.inline":
+        [],
+      ".dist-value, .distance-badge, [class*='distance']": [],
+      p: [],
+    });
+
+    await expect(
+      extractVisibleTopCardSummaryFromRoot(root as unknown as Locator),
+    ).resolves.toEqual({
+      full_name: "Visible heading",
+      headline: "",
+      location: "",
       connection_degree: "",
     });
   });
@@ -656,6 +746,44 @@ describe("readEditableFieldValue", () => {
     await expect(
       readEditableFieldValue(locator as unknown as Locator),
     ).resolves.toBe("Software Development");
+  });
+
+  it("returns empty string for select controls without selected options", async () => {
+    const locator = new MockEditableFieldLocator(
+      new MockFieldElement({
+        tagName: "SELECT",
+      }),
+    );
+
+    await expect(
+      readEditableFieldValue(locator as unknown as Locator),
+    ).resolves.toBe("");
+  });
+
+  it("returns empty string for inputs with empty value", async () => {
+    const locator = new MockEditableFieldLocator(
+      new MockFieldElement({
+        tagName: "INPUT",
+        value: "",
+      }),
+    );
+
+    await expect(
+      readEditableFieldValue(locator as unknown as Locator),
+    ).resolves.toBe("");
+  });
+
+  it("reads textarea values", async () => {
+    const locator = new MockEditableFieldLocator(
+      new MockFieldElement({
+        tagName: "TEXTAREA",
+        value: "About me",
+      }),
+    );
+
+    await expect(
+      readEditableFieldValue(locator as unknown as Locator),
+    ).resolves.toBe("About me");
   });
 });
 

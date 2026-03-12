@@ -2,7 +2,6 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import {
   errors as playwrightErrors,
-  type BrowserContext,
   type Locator,
   type Page,
   type Response
@@ -18,6 +17,12 @@ import {
 } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
+import {
+  normalizeText,
+  getOrCreatePage,
+  escapeRegExp,
+  isAbsoluteUrl
+} from "./shared.js";
 import {
   normalizeLinkedInProfileUrl,
   resolveProfileUrl,
@@ -384,10 +389,6 @@ export interface LinkedInInboxRuntime extends LinkedInMessagingRuntime {
   twoPhaseCommit: Pick<TwoPhaseCommitService<LinkedInMessagingRuntime>, "prepare">;
 }
 
-function normalizeText(value: string | null | undefined): string {
-  return (value ?? "").replace(/\s+/g, " ").trim();
-}
-
 function parseThreadIdFromUrl(url: string): string | null {
   const match = /\/messaging\/thread\/([^/?#]+)/.exec(url);
   const encodedThreadId = match?.[1];
@@ -730,10 +731,6 @@ function findThreadSummary(
   return null;
 }
 
-function isAbsoluteUrl(value: string): boolean {
-  return /^https?:\/\//i.test(value);
-}
-
 function resolveThreadUrl(thread: string): string {
   const trimmedThread = thread.trim();
   if (!trimmedThread) {
@@ -790,10 +787,6 @@ function toThreadDetail(snapshot: ThreadDetailSnapshot): LinkedInThreadDetail {
       text: message.text
     }))
   };
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function getLocalizedInboxPhrases(
@@ -1244,14 +1237,6 @@ function toAutomationError(
   }
 
   return asLinkedInBuddyError(error, "UNKNOWN", message);
-}
-
-async function getOrCreatePage(context: BrowserContext): Promise<Page> {
-  const existing = context.pages()[0];
-  if (existing) {
-    return existing;
-  }
-  return context.newPage();
 }
 
 async function waitForThreadSurface(page: Page): Promise<void> {

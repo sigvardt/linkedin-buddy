@@ -30,6 +30,15 @@ import {
 } from "./rateLimiter.js";
 import type { LinkedInSelectorLocale } from "./selectorLocale.js";
 import { getLinkedInSelectorPhrases } from "./selectorLocale.js";
+import {
+  normalizeText,
+  isRecord,
+  getOrCreatePage,
+  escapeCssAttributeValue,
+  isAbsoluteUrl,
+  escapeRegExp,
+  buildTextRegex
+} from "./shared.js";
 import type {
   ActionExecutor,
   ActionExecutorInput,
@@ -1268,10 +1277,6 @@ async function extractEditableSettings(
   }
 }
 
-function normalizeText(value: string | null | undefined): string {
-  return (value ?? "").replace(/\s+/g, " ").trim();
-}
-
 export async function readEditableFieldValue(locator: Locator): Promise<string> {
   try {
     return normalizeText(
@@ -1376,10 +1381,6 @@ function createProfileRateLimitGuard(
         ...details
       }
     });
-}
-
-function isAbsoluteUrl(value: string): boolean {
-  return /^https?:\/\//i.test(value);
 }
 
 export function resolveProfileUrl(target: string | undefined): string {
@@ -2023,14 +2024,6 @@ function inferFeaturedItemKind(
   return /newsletter|article|post/i.test(rawText) ? "post" : "media";
 }
 
-async function getOrCreatePage(context: BrowserContext): Promise<Page> {
-  const existing = context.pages()[0];
-  if (existing) {
-    return existing;
-  }
-  return context.newPage();
-}
-
 /* eslint-disable no-undef -- DOM types (ParentNode, Element) are valid inside page.evaluate() */
 async function extractProfileData(
   page: Page,
@@ -2454,10 +2447,6 @@ interface LinkedInProfileTopCardSummary {
   connection_degree: string;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function dedupeStrings(values: readonly string[]): string[] {
   return [...new Set(values.map((value) => normalizeText(value)).filter(Boolean))];
 }
@@ -2583,14 +2572,6 @@ function normalizeFieldKey(value: string): string {
   return value.replace(/[^a-z0-9]+/gi, "").toLowerCase();
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function escapeCssAttributeValue(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-}
-
 export function isProfileIntroEditHref(href: string | null | undefined): boolean {
   if (typeof href !== "string") {
     return false;
@@ -2617,12 +2598,6 @@ function buildProfileIntroEditHrefSelector(): string {
   return PROFILE_INTRO_EDIT_HREF_PATTERNS.map(
     (pattern) => `a[href*="${escapeCssAttributeValue(pattern)}"]`
   ).join(", ");
-}
-
-function buildTextRegex(labels: readonly string[], exact = false): RegExp {
-  const normalizedLabels = dedupeStrings(labels);
-  const pattern = normalizedLabels.map((label) => escapeRegExp(label)).join("|");
-  return new RegExp(exact ? `^(?:${pattern})$` : `(?:${pattern})`, "i");
 }
 
 function buildAriaLabelContainsSelector(
@@ -3129,6 +3104,7 @@ function normalizeProfileFeaturedItemMatch(
 interface LocatorCandidate {
   key: string;
   locator: Locator;
+  selectorHint?: string;
 }
 
 interface ProfileEditorSurface {
@@ -3180,6 +3156,131 @@ async function findFirstVisibleLocator(
   return null;
 }
 
+function summarizeLocatorCandidates(candidates: readonly LocatorCandidate[]): {
+  selectorsTried: string[];
+  selectorHints: string[];
+} {
+  return {
+    selectorsTried: candidates.map((candidate) => candidate.key),
+    selectorHints: candidates.map(
+      (candidate) => candidate.selectorHint ?? "no selector hint"
+    )
+  };
+}
+
+async function getDialogStateSnapshot(page: Page): Promise<{
+  state: "open" | "closed" | "not_found";
+  dialogCount: number;
+  visibleDialogCount: number;
+}> {
+  const dialogs = page.locator(PROFILE_DIALOG_ROOT_SELECTOR);
+  const dialogCount = await dialogs.count().catch(() => 0);
+  let visibleDialogCount = 0;
+
+  for (let index = 0; index < dialogCount; index += 1) {
+    if (await dialogs.nth(index).isVisible().catch(() => false)) {
+      visibleDialogCount += 1;
+    }
+  }
+
+  return {
+    state:
+      visibleDialogCount > 0
+        ? "open"
+        : dialogCount > 0
+          ? "closed"
+          : "not_found",
+    dialogCount,
+    visibleDialogCount
+  };
+}
+
+function getEditableFieldSelectorDiagnostics(definition: EditableFieldDefinition): {
+  selectorsTried: string[];
+  selectorHints: string[];
+} {
+  const aliases = dedupeStrings(definition.aliases);
+  const selectorsTried = [
+    `editable-field-${definition.key}-by-label`,
+    `editable-field-${definition.key}-role-textbox`,
+    `editable-field-${definition.key}-role-combobox`,
+    `editable-field-${definition.key}-role-checkbox`,
+    ...buildEditableFieldAttributeSelectors(definition.aliases).map(
+      (_, index) => `editable-field-${definition.key}-attribute-${index + 1}`
+    ),
+    `editable-field-${definition.key}-text-following-control`,
+    ...aliases.map(
+      (_, index) => `editable-field-${definition.key}-typeahead-alias-${index + 1}`
+    ),
+    ...aliases.map(
+      (_, index) => `editable-field-${definition.key}-xpath-following-control-${index + 1}`
+    )
+  ];
+  const selectorHints = [
+    `getByLabel(${aliases.join(" | ")})`,
+    `getByRole(textbox, name=${aliases.join(" | ")})`,
+    `getByRole(combobox, name=${aliases.join(" | ")})`,
+    `getByRole(checkbox, name=${aliases.join(" | ")})`,
+    ...buildEditableFieldAttributeSelectors(definition.aliases),
+    `text node matching aliases then following editable control (${EDITABLE_FIELD_CONTROL_XPATH})`,
+    ...aliases.map(
+      (alias) =>
+        `xpath alias contains "${alias}" then following typeahead input`
+    ),
+    ...aliases.map(
+      (alias) =>
+        `xpath alias contains "${alias}" then following editable control (${EDITABLE_FIELD_CONTROL_XPATH})`
+    )
+  ];
+
+  return {
+    selectorsTried,
+    selectorHints
+  };
+}
+
+async function getIntroLocationFieldState(dialog: Locator): Promise<{
+  split_field_detected: boolean;
+  single_field_detected: boolean;
+  location_variant_attempted: "split_then_single";
+  location_variant_found: "split" | "single" | "none";
+  location_fields_found: string[];
+  location_fields_expected: string[];
+}> {
+  const cityField = await findDialogFieldLocatorByDefinition(
+    dialog,
+    PROFILE_INTRO_LOCATION_CITY_FIELD_DEFINITION
+  );
+  const countryField = await findDialogFieldLocatorByDefinition(
+    dialog,
+    PROFILE_INTRO_LOCATION_COUNTRY_FIELD_DEFINITION
+  );
+  const singleLocationField = await findDialogFieldLocatorByDefinition(
+    dialog,
+    PROFILE_INTRO_LOCATION_FIELD_DEFINITION
+  );
+  const locationFieldsFound = [
+    ...(cityField ? ["city"] : []),
+    ...(countryField ? ["countryOrRegion"] : []),
+    ...(singleLocationField ? ["location"] : [])
+  ];
+  const splitFieldDetected = Boolean(cityField || countryField);
+  const singleFieldDetected = Boolean(singleLocationField);
+
+  return {
+    split_field_detected: splitFieldDetected,
+    single_field_detected: singleFieldDetected,
+    location_variant_attempted: "split_then_single",
+    location_variant_found: splitFieldDetected
+      ? "split"
+      : singleFieldDetected
+        ? "single"
+        : "none",
+    location_fields_found: locationFieldsFound,
+    location_fields_expected: ["city", "countryOrRegion", "location"]
+  };
+}
+
 async function waitForFirstVisibleLocator(
   candidates: readonly LocatorCandidate[],
   timeoutMs: number
@@ -3213,21 +3314,25 @@ function createActionCandidates(
   return [
     {
       key: `${keyPrefix}-${role}-exact`,
-      locator: root.getByRole(role, { name: exactRegex })
+      locator: root.getByRole(role, { name: exactRegex }),
+      selectorHint: `getByRole(${role}, exact text ${labels.join(" | ")})`
     },
     {
       key: `${keyPrefix}-${role}-text`,
-      locator: root.getByRole(role, { name: textRegex })
+      locator: root.getByRole(role, { name: textRegex }),
+      selectorHint: `getByRole(${role}, text ${labels.join(" | ")})`
     },
     {
       key: `${keyPrefix}-${role}-aria`,
-      locator: root.locator(buildAriaLabelContainsSelector(tagName, labels))
+      locator: root.locator(buildAriaLabelContainsSelector(tagName, labels)),
+      selectorHint: buildAriaLabelContainsSelector(tagName, labels)
     },
     {
       key: `${keyPrefix}-generic-text`,
       locator: root
         .locator(`${tagName}, [role='${role}']`)
-        .filter({ hasText: textRegex })
+        .filter({ hasText: textRegex }),
+      selectorHint: `${tagName}, [role='${role}'] with text ${labels.join(" | ")}`
     }
   ];
 }
@@ -3240,7 +3345,8 @@ function createCssLocatorCandidates(
   return [...new Set(selectors.map((selector) => selector.trim()).filter(Boolean))].map(
     (selector, index) => ({
       key: `${keyPrefix}-css-${index + 1}`,
-      locator: root.locator(selector)
+      locator: root.locator(selector),
+      selectorHint: selector
     })
   );
 }
@@ -3542,14 +3648,30 @@ async function clickLocatorAndWaitForOverlay(
 }
 
 export async function navigateToOwnProfile(page: Page): Promise<void> {
+  const attemptedUrl = resolveProfileUrl("me");
   try {
-    await page.goto(resolveProfileUrl("me"), { waitUntil: "domcontentloaded" });
+    await page.goto(attemptedUrl, { waitUntil: "domcontentloaded" });
   } catch (error) {
-    if (
-      !(error instanceof playwrightErrors.TimeoutError) ||
-      !(await canRecoverOwnProfileNavigationTimeout(page))
-    ) {
+    if (!(error instanceof playwrightErrors.TimeoutError)) {
       throw error;
+    }
+
+    if (!(await canRecoverOwnProfileNavigationTimeout(page))) {
+      const recoveryHint =
+        "Verify the self-profile URL resolves correctly, confirm the session is still authenticated, and retry with your direct /in/<vanity>/ profile URL instead of /in/me/.";
+      const timeoutError = error as playwrightErrors.TimeoutError & {
+        details?: Record<string, unknown>;
+      };
+      const existingDetails = isRecord(timeoutError.details) ? timeoutError.details : {};
+
+      timeoutError.details = {
+        ...existingDetails,
+        attempted_url: attemptedUrl,
+        current_url: page.url(),
+        recovery_hint: recoveryHint
+      };
+      timeoutError.message = `${timeoutError.message} Recovery hint: ${recoveryHint}`;
+      throw timeoutError;
     }
   }
 
@@ -3945,38 +4067,53 @@ async function openIntroEditSurface(
   const editCandidates: LocatorCandidate[] = [
     {
       key: "intro-edit-link-href",
-      locator: topCardRoot.locator(buildProfileIntroEditHrefSelector())
+      locator: topCardRoot.locator(buildProfileIntroEditHrefSelector()),
+      selectorHint: buildProfileIntroEditHrefSelector()
     },
     {
       key: "intro-edit-button-aria",
       locator: topCardRoot.locator(
         buildAriaLabelContainsSelector("button", introEditLabels)
-      )
+      ),
+      selectorHint: buildAriaLabelContainsSelector("button", introEditLabels)
     },
     {
       key: "intro-edit-link-aria",
       locator: topCardRoot.locator(
         buildAriaLabelContainsSelector("a", introEditLabels)
-      )
+      ),
+      selectorHint: buildAriaLabelContainsSelector("a", introEditLabels)
     },
     {
       key: "intro-edit-button-role",
       locator: topCardRoot.getByRole("button", {
         name: buildTextRegex(introEditLabels)
-      })
+      }),
+      selectorHint: `getByRole(button, text ${introEditLabels.join(" | ")})`
     },
     {
       key: "intro-edit-link-role",
       locator: topCardRoot.getByRole("link", {
         name: buildTextRegex(introEditLabels)
-      })
+      }),
+      selectorHint: `getByRole(link, text ${introEditLabels.join(" | ")})`
     }
   ];
   const resolved = await findFirstVisibleLocator(editCandidates);
   if (!resolved) {
+    const selectorDiagnostics = summarizeLocatorCandidates(editCandidates);
+    const dialogSnapshot = await getDialogStateSnapshot(page);
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      "Could not find the intro edit control on the profile page."
+      "Could not find the intro edit control on the profile page.",
+      {
+        selectors_tried: selectorDiagnostics.selectorsTried,
+        selector_hints: selectorDiagnostics.selectorHints,
+        page_url: page.url(),
+        dialog_detected: dialogSnapshot.dialogCount > 0,
+        dialog_state: dialogSnapshot.state,
+        visible_dialog_count: dialogSnapshot.visibleDialogCount
+      }
     );
   }
 
@@ -3987,9 +4124,23 @@ async function openIntroEditSurface(
     return surface;
   }
 
+  const selectorDiagnostics = summarizeLocatorCandidates(editCandidates);
+  const dialogSnapshot = await getDialogStateSnapshot(page);
   throw new LinkedInBuddyError(
     "TARGET_NOT_FOUND",
-    "Could not open the intro editor after clicking the edit control."
+    "Could not open the intro editor after clicking the edit control.",
+    {
+      selectors_tried: selectorDiagnostics.selectorsTried,
+      selector_hints: selectorDiagnostics.selectorHints,
+      clicked_selector_key: resolved.key,
+      clicked_selector_hint: resolved.selectorHint ?? "no selector hint",
+      page_url: page.url(),
+      dialog_detected: dialogSnapshot.dialogCount > 0,
+      dialog_state: dialogSnapshot.state,
+      visible_dialog_count: dialogSnapshot.visibleDialogCount,
+      recovery_hint:
+        "Check if the intro editor now opens in a different container or route."
+    }
   );
 }
 
@@ -4380,9 +4531,24 @@ async function fillDialogField(
 ): Promise<void> {
   const locator = await waitForDialogFieldLocator(dialog, definition, 10_000);
   if (!locator) {
+    const selectorDiagnostics = getEditableFieldSelectorDiagnostics(definition);
+    const dialogSnapshot = await getDialogStateSnapshot(page);
+    const locationState =
+      definition.key === "location"
+        ? await getIntroLocationFieldState(dialog)
+        : undefined;
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      `Could not find the "${definition.key}" field in the profile editor.`
+      `Could not find the "${definition.key}" field in the profile editor.`,
+      {
+        field_name: definition.key,
+        selectors_tried: selectorDiagnostics.selectorsTried,
+        selector_hints: selectorDiagnostics.selectorHints,
+        dialog_state: dialogSnapshot.state,
+        dialog_detected: dialogSnapshot.dialogCount > 0,
+        visible_dialog_count: dialogSnapshot.visibleDialogCount,
+        ...(locationState ?? {})
+      }
     );
   }
 
@@ -6283,7 +6449,7 @@ async function executeAddProfileSkill(
       profileName,
       headless: true
     },
-    async (context) => {
+    async (context: BrowserContext) => {
       const page = await getOrCreatePage(context);
       return executeConfirmActionWithArtifacts({
         runtime,

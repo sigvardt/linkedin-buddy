@@ -1,10 +1,11 @@
-import { type BrowserContext, type Page } from "playwright-core";
+import { type Page } from "playwright-core";
 import type { LinkedInAuthService } from "./auth/session.js";
 import { LinkedInBuddyError, asLinkedInBuddyError } from "./errors.js";
 import type { LinkedInFeedService } from "./linkedinFeed.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
+import { normalizeText, getOrCreatePage, isAbsoluteUrl } from "./shared.js";
 
 export const LINKEDIN_ANALYTICS_SURFACES = [
   "profile_views",
@@ -118,10 +119,6 @@ const IGNORED_ANALYTICS_LINES = new Set([
   "only visible to you",
 ]);
 
-function normalizeText(value: string | null | undefined): string {
-  return (value ?? "").replace(/\s+/g, " ").trim();
-}
-
 export function readAnalyticsLimit(
   value: number | undefined,
   fallback: number,
@@ -131,10 +128,6 @@ export function readAnalyticsLimit(
   }
 
   return Math.max(1, Math.min(Math.floor(value), 50));
-}
-
-function isAbsoluteUrl(value: string): boolean {
-  return /^https?:\/\//i.test(value);
 }
 
 export function toAbsoluteLinkedInUrl(
@@ -390,14 +383,6 @@ export function matchesAnalyticsCard(
   }
 
   return keywords.some((keyword) => haystack.includes(keyword.toLowerCase()));
-}
-
-async function getOrCreatePage(context: BrowserContext): Promise<Page> {
-  const existing = context.pages()[0];
-  if (existing) {
-    return existing;
-  }
-  return context.newPage();
 }
 
 async function waitForAnalyticsSurface(page: Page): Promise<void> {

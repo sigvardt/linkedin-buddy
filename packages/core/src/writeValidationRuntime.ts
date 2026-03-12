@@ -1,5 +1,6 @@
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
+import { chromium, type Browser, type BrowserContext } from "playwright-core";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
+import { getOrCreatePage } from "./shared.js";
 import {
   LinkedInAuthService,
   type SessionStatus
@@ -25,11 +26,6 @@ import {
   WRITE_VALIDATION_REPORT_DIR,
   type LinkedInWriteValidationActionType
 } from "./writeValidationShared.js";
-
-function getOrCreatePage(context: BrowserContext): Promise<Page> {
-  const existing = context.pages()[0];
-  return existing ? Promise.resolve(existing) : context.newPage();
-}
 
 function createStoredSessionCdpError(): LinkedInBuddyError {
   return new LinkedInBuddyError(

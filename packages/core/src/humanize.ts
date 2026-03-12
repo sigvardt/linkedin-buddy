@@ -1,4 +1,5 @@
 import type { Locator, Page } from "playwright-core";
+import { isRecord } from "./shared.js";
 
 const QWERTY_KEYBOARD_ROWS = ["1234567890", "qwertyuiop", "asdfghjkl", "zxcvbnm"] as const;
 const QWERTY_ROW_OFFSETS = [0, 0.5, 0.85, 1.35] as const;
@@ -382,10 +383,6 @@ const TYPING_PROFILE_OVERRIDE_KEYS = [
   "whitespaceMultiplier",
   "wordBoundaryMultiplier"
 ] as const;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
 
 function computeLevenshteinDistance(left: string, right: string): number {
   if (left === right) {

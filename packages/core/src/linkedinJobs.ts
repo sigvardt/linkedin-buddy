@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import path from "node:path";
-import { type BrowserContext, type Locator, type Page } from "playwright-core";
+import { type Locator, type Page } from "playwright-core";
 import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
 import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
@@ -22,6 +22,7 @@ import type {
   ActionExecutorResult,
   TwoPhaseCommitService,
 } from "./twoPhaseCommit.js";
+import { normalizeText, getOrCreatePage } from "./shared.js";
 
 export interface LinkedInJobSearchResult {
   job_id: string;
@@ -237,10 +238,6 @@ interface ValidatedEasyApplyInput {
   resumePath?: string;
   coverLetter?: string;
   answers: Record<string, LinkedInEasyApplyAnswerValue>;
-}
-
-function normalizeText(value: string | null | undefined): string {
-  return (value ?? "").replace(/\s+/g, " ").trim();
 }
 
 function normalizeLabelKey(value: string): string {
@@ -607,15 +604,6 @@ function validateEasyApplyInput(
     ...(coverLetter ? { coverLetter } : {}),
     answers: normalizeEasyApplyAnswers(input.answers),
   };
-}
-
-async function getOrCreatePage(context: BrowserContext): Promise<Page> {
-  const existing = context.pages()[0];
-  if (existing) {
-    return existing;
-  }
-
-  return context.newPage();
 }
 
 export function buildJobSearchUrl(query: string, location?: string): string {

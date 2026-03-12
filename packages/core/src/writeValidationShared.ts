@@ -8,6 +8,7 @@ import {
 } from "./linkedinConnections.js";
 import { FOLLOWUP_AFTER_ACCEPT_ACTION_TYPE } from "./linkedinFollowups.js";
 import { CREATE_POST_ACTION_TYPE } from "./linkedinPosts.js";
+import { isRecord, normalizeText } from "./shared.js";
 import type { LinkedInBuddyErrorCode } from "./errors.js";
 import type { JsonLogEntry } from "./logging.js";
 import type { CoreRuntime } from "./runtime.js";
@@ -208,14 +209,10 @@ export interface WriteValidationScenarioDefinition
 }
 
 /** Returns whether a value is a plain object rather than `null` or an array. */
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+export { isRecord };
 
 /** Trims text and collapses internal whitespace for stable comparisons and output. */
-export function normalizeText(value: string | null | undefined): string {
-  return (value ?? "").replace(/\s+/gu, " ").trim();
-}
+export { normalizeText };
 
 /** Removes blank strings and duplicates while preserving the first-seen order. */
 export function dedupeStrings(values: readonly string[]): string[] {

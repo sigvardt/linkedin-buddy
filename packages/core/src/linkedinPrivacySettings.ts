@@ -1,4 +1,4 @@
-import { type BrowserContext, type Locator, type Page } from "playwright-core";
+import { type Locator, type Page } from "playwright-core";
 import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
 import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
@@ -24,6 +24,12 @@ import type {
   ActionExecutorResult,
   TwoPhaseCommitService
 } from "./twoPhaseCommit.js";
+import {
+  normalizeText,
+  getOrCreatePage,
+  escapeRegExp,
+  dedupePhrases
+} from "./shared.js";
 
 export const LINKEDIN_PRIVACY_SETTING_KEYS = [
   "profile_viewing_mode",
@@ -149,32 +155,6 @@ const TOGGLE_OFF_VALUE_MAP = {
   last_name_visibility: "last_initial"
 } as const;
 
-function normalizeText(value: string | null | undefined): string {
-  return (value ?? "").replace(/\s+/g, " ").trim();
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function dedupePhrases(values: readonly string[]): string[] {
-  const seen = new Set<string>();
-  const deduped: string[] = [];
-
-  for (const value of values) {
-    const normalized = normalizeText(value);
-    const key = normalized.toLowerCase();
-    if (!normalized || seen.has(key)) {
-      continue;
-    }
-
-    seen.add(key);
-    deduped.push(normalized);
-  }
-
-  return deduped;
-}
-
 function buildPhraseRegex(
   phrases: readonly string[],
   options: { exact?: boolean } = {}
@@ -230,15 +210,6 @@ async function waitForCondition(
   }
 
   return condition();
-}
-
-async function getOrCreatePage(context: BrowserContext): Promise<Page> {
-  const existing = context.pages()[0];
-  if (existing) {
-    return existing;
-  }
-
-  return context.newPage();
 }
 
 async function findVisibleLocator(

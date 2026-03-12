@@ -1,6 +1,5 @@
 import {
   errors as playwrightErrors,
-  type BrowserContext,
   type Locator,
   type Page,
 } from "playwright-core";
@@ -40,6 +39,7 @@ import type {
   PreparedAction,
   TwoPhaseCommitService,
 } from "./twoPhaseCommit.js";
+import { normalizeText, getOrCreatePage } from "./shared.js";
 
 export const FOLLOWUP_AFTER_ACCEPT_ACTION_TYPE =
   "network.followup_after_accept";
@@ -166,10 +166,6 @@ export interface LinkedInFollowupsRuntime extends LinkedInFollowupsExecutorRunti
     TwoPhaseCommitService<LinkedInMessagingRuntime>,
     "prepare"
   >;
-}
-
-function normalizeText(value: string | null | undefined): string {
-  return (value ?? "").replace(/\s+/g, " ").trim();
 }
 
 function extractVanityName(url: string): string | null {
@@ -424,15 +420,6 @@ function shouldPrepareAcceptedConnectionFollowup(
   return (
     status === "not_prepared" || status === "failed" || status === "expired"
   );
-}
-
-async function getOrCreatePage(context: BrowserContext): Promise<Page> {
-  const existing = context.pages()[0];
-  if (existing) {
-    return existing;
-  }
-
-  return context.newPage();
 }
 
 async function captureScreenshotArtifact(

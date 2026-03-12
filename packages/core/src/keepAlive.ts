@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import type { BrowserContext, Page } from "playwright-core";
+import type { Page } from "playwright-core";
 import type {
   LinkedInBrowserStorageState,
   LinkedInSessionStore
@@ -17,6 +17,7 @@ import type { ConnectionLease } from "./connectionPool.js";
 import { CDPConnectionPool } from "./connectionPool.js";
 import { LinkedInBuddyError } from "./errors.js";
 import { humanize } from "./humanize.js";
+import { isRecord, getOrCreatePage } from "./shared.js";
 
 const DEFAULT_NETWORK_GRACE_PERIOD_MS = 5 * 60_000;
 const DEFAULT_NETWORK_RETRY_INTERVAL_MS = 30_000;
@@ -220,10 +221,6 @@ export interface KeepAliveOptions {
   sessionName?: string;
   sessionRefreshEnabled?: boolean;
   sessionStore?: KeepAliveSessionStoreLike;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function describeValueType(value: unknown): string {
@@ -664,15 +661,6 @@ function isTimestampWithinWindow(
 ): boolean {
   const remainingMs = millisecondsUntil(isoTimestamp);
   return remainingMs !== null && remainingMs > 0 && remainingMs <= windowMs;
-}
-
-async function getOrCreatePage(context: BrowserContext): Promise<Page> {
-  const existingPage = context.pages()[0];
-  if (existingPage) {
-    return existingPage;
-  }
-
-  return context.newPage();
 }
 
 async function navigateToKeepAlivePage(page: Page, url: string): Promise<void> {

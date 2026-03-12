@@ -423,7 +423,12 @@ export class LinkedInAuthService {
         // (e.g. browser-level storage, cached service-worker responses).
         const isSduiPage = await page
           .evaluate(() => document.querySelector("[data-sdui-screen]") !== null)
-          .catch(() => false);
+          .catch((error: unknown) => {
+            this.logger?.log("debug", "auth.login.sdui_detection_failed", {
+              error: error instanceof Error ? error.message : String(error),
+            });
+            return false;
+          });
 
         if (isSduiPage) {
           await context.clearCookies();
@@ -438,7 +443,14 @@ export class LinkedInAuthService {
           .first()
           .waitFor({ state: "visible", timeout: 8_000 })
           .then(() => true)
-          .catch(() => false);
+          .catch((error: unknown) => {
+            this.logger?.log("debug", "auth.login.email_input_wait_failed", {
+              selector: "LINKEDIN_LOGIN_EMAIL_INPUT_SELECTOR",
+              timeout_ms: 8_000,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            return false;
+          });
 
         if (!emailInputVisible) {
           // LinkedIn "returning user" variant: the email field is a hidden
@@ -450,7 +462,14 @@ export class LinkedInAuthService {
             .locator(LINKEDIN_LOGIN_PASSWORD_INPUT_SELECTOR)
             .first()
             .isVisible({ timeout: 3_000 })
-            .catch(() => false);
+            .catch((error: unknown) => {
+              this.logger?.log("debug", "auth.login.password_input_check_failed", {
+                selector: "LINKEDIN_LOGIN_PASSWORD_INPUT_SELECTOR",
+                timeout_ms: 3_000,
+                error: error instanceof Error ? error.message : String(error),
+              });
+              return false;
+            });
 
           if (!passwordVisible) {
             await context.clearCookies();
@@ -473,7 +492,13 @@ export class LinkedInAuthService {
                 );
                 if (el) el.value = email;
               }, options.email)
-              .catch(() => undefined);
+              .catch((error: unknown) => {
+                this.logger?.log("debug", "auth.login.email_injection_failed", {
+                  selector: "input[name='session_key']",
+                  error: error instanceof Error ? error.message : String(error),
+                });
+                return undefined;
+              });
           }
         }
 
