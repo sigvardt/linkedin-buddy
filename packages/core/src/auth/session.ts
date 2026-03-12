@@ -383,6 +383,14 @@ export class LinkedInAuthService {
           await this.warmBrowserProfile(page);
         }
 
+        // Persistent profiles accumulate tracking cookies (bcookie, bscookie,
+        // JSESSIONID) from prior commands (status, health, etc.) that cause
+        // LinkedIn to serve an SDUI React-rendered login page.  The SDUI
+        // variant uses custom components instead of standard form inputs,
+        // breaking our selectors.  Clear cookies so the login navigation
+        // always receives the traditional server-rendered form.
+        await context.clearCookies();
+
         await page.goto("https://www.linkedin.com/login", {
           waitUntil: "domcontentloaded",
         });
@@ -411,7 +419,21 @@ export class LinkedInAuthService {
 
         await dismissCookieConsentBanner(page);
 
-        const emailInputVisible = await page
+        // Fallback: detect SDUI login variant that may survive cookie clearing
+        // (e.g. browser-level storage, cached service-worker responses).
+        const isSduiPage = await page
+          .evaluate(() => document.querySelector("[data-sdui-screen]") !== null)
+          .catch(() => false);
+
+        if (isSduiPage) {
+          await context.clearCookies();
+          await page.goto("https://www.linkedin.com/login", {
+            waitUntil: "domcontentloaded",
+          });
+          await dismissCookieConsentBanner(page);
+        }
+
+        let emailInputVisible = await page
           .locator(LINKEDIN_LOGIN_EMAIL_INPUT_SELECTOR)
           .first()
           .waitFor({ state: "visible", timeout: 8_000 })
@@ -431,7 +453,7 @@ export class LinkedInAuthService {
             .catch(() => false);
 
           if (!passwordVisible) {
-            await context.clearCookies({ domain: ".linkedin.com" });
+            await context.clearCookies();
             await page.goto("https://www.linkedin.com/login", {
               waitUntil: "domcontentloaded",
             });
@@ -440,6 +462,7 @@ export class LinkedInAuthService {
               .locator(LINKEDIN_LOGIN_EMAIL_INPUT_SELECTOR)
               .first()
               .waitFor({ state: "visible", timeout: 10_000 });
+            emailInputVisible = true;
           } else {
             // Inject the email into the hidden session_key field via JS so the
             // server receives the correct address on form submission.
