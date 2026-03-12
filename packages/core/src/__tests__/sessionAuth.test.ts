@@ -45,7 +45,12 @@ function createMockPage(options: {
   selfProfileGotoUrl?: string;
   textContent?: (selector: string, currentUrl: string) => string | null;
   waitForUrlResult?: string;
-}): { page: Page; gotoCalls: string[]; setUrl: (url: string) => void } {
+}): {
+  page: Page;
+  gotoCalls: string[];
+  typeCalls: Array<{ selector: string; value: string }>;
+  setUrl: (url: string) => void;
+} {
   let currentUrl = options.initialUrl;
   const gotoCalls: string[] = [];
 
@@ -135,6 +140,7 @@ function createMockPage(options: {
 
 function createContextWithPage(page: Page): BrowserContext {
   return {
+    clearCookies: vi.fn(async () => undefined),
     pages: vi.fn(() => [page]),
     newPage: vi.fn(async () => page),
   } as unknown as BrowserContext;
@@ -451,6 +457,197 @@ describe("LinkedInAuthService auth flow", () => {
 
     expect(result.authenticated).toBe(true);
     expect(result.checkpoint).toBe(false);
+    expect(typeCalls).toHaveLength(2);
+    expect(typeCalls[0]!.value).toBe("test@example.com");
+    expect(typeCalls[1]!.value).toBe("secret");
+  });
+
+  it("headlessLogin clears cookies before navigating to the login page", async () => {
+    let waitCount = 0;
+    let navVisible = false;
+
+    const { page, setUrl } = createMockPage({
+      initialUrl: "https://www.linkedin.com/login",
+      onWait: () => {
+        waitCount += 1;
+        if (waitCount === 1) {
+          navVisible = true;
+          setUrl("https://www.linkedin.com/feed/");
+        }
+      },
+      isVisible: (selector, currentUrl) => {
+        if (selector.includes("username")) {
+          return currentUrl.includes("/login");
+        }
+
+        if (
+          selector.includes("session_password") ||
+          selector.includes("password")
+        ) {
+          return currentUrl.includes("/login");
+        }
+
+        if (selector === "nav.global-nav") {
+          return navVisible;
+        }
+
+        return false;
+      },
+    });
+
+    const context = createContextWithPage(page);
+    const profileManager = {
+      runWithContext: vi.fn(async (_options, callback) => callback(context)),
+    } as const;
+    const auth = new LinkedInAuthService(
+      profileManager as unknown as ProfileManager,
+    );
+
+    await auth.headlessLogin({
+      email: "test@example.com",
+      password: "secret",
+      pollIntervalMs: 1,
+      timeoutMs: 100,
+    });
+
+    expect(context.clearCookies as ReturnType<typeof vi.fn>).toHaveBeenCalled();
+  });
+
+  it("headlessLogin detects SDUI page and retries after clearing cookies", async () => {
+    let waitCount = 0;
+    let navVisible = false;
+    let evaluateCallCount = 0;
+
+    const { page, gotoCalls, setUrl } = createMockPage({
+      initialUrl: "https://www.linkedin.com/login",
+      onWait: () => {
+        waitCount += 1;
+        if (waitCount === 1) {
+          navVisible = true;
+          setUrl("https://www.linkedin.com/feed/");
+        }
+      },
+      isVisible: (selector, currentUrl) => {
+        if (selector.includes("username")) {
+          return currentUrl.includes("/login");
+        }
+
+        if (
+          selector.includes("session_password") ||
+          selector.includes("password")
+        ) {
+          return currentUrl.includes("/login");
+        }
+
+        if (selector === "nav.global-nav") {
+          return navVisible;
+        }
+
+        return false;
+      },
+    });
+
+    const evaluateFn = page.evaluate as ReturnType<typeof vi.fn>;
+    evaluateFn.mockImplementation(async () => {
+      evaluateCallCount += 1;
+      // First evaluate call: dismissCookieConsentBanner → undefined
+      // Second evaluate call: SDUI detection → true (SDUI detected)
+      // Third evaluate call: dismissCookieConsentBanner after retry → undefined
+      if (evaluateCallCount === 2) return true;
+      return undefined;
+    });
+
+    const context = createContextWithPage(page);
+    const profileManager = {
+      runWithContext: vi.fn(async (_options, callback) => callback(context)),
+    } as const;
+    const auth = new LinkedInAuthService(
+      profileManager as unknown as ProfileManager,
+    );
+
+    const result = await auth.headlessLogin({
+      email: "test@example.com",
+      password: "secret",
+      pollIntervalMs: 1,
+      timeoutMs: 100,
+    });
+
+    expect(result.authenticated).toBe(true);
+
+    // Proactive clear + SDUI fallback clear = at least 2 calls
+    const clearCalls = (context.clearCookies as ReturnType<typeof vi.fn>).mock
+      .calls;
+    expect(clearCalls.length).toBeGreaterThanOrEqual(2);
+
+    // Login page navigated to at least twice (initial + SDUI retry)
+    const loginNavs = gotoCalls.filter((u) => u.includes("/login"));
+    expect(loginNavs.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("headlessLogin types email after cookie-clear fallback for returning user page", async () => {
+    let clearCount = 0;
+    let waitCount = 0;
+    let navVisible = false;
+
+    const { page, typeCalls, setUrl } = createMockPage({
+      initialUrl: "https://www.linkedin.com/login",
+      onWait: () => {
+        waitCount += 1;
+        if (waitCount === 1) {
+          navVisible = true;
+          setUrl("https://www.linkedin.com/feed/");
+        }
+      },
+      isVisible: (selector, currentUrl) => {
+        // Before the second cookie clear, nothing is visible (SDUI page)
+        // After the second clear (fallback path), standard form appears
+        if (clearCount < 2) return false;
+
+        if (selector.includes("username")) {
+          return currentUrl.includes("/login");
+        }
+
+        if (
+          selector.includes("session_password") ||
+          selector.includes("password")
+        ) {
+          return currentUrl.includes("/login");
+        }
+
+        if (selector === "nav.global-nav") {
+          return navVisible;
+        }
+
+        return false;
+      },
+    });
+
+    const clearCookies = vi.fn(async () => {
+      clearCount += 1;
+    });
+    const context = {
+      clearCookies,
+      pages: vi.fn(() => [page]),
+      newPage: vi.fn(async () => page),
+    } as unknown as BrowserContext;
+
+    const profileManager = {
+      runWithContext: vi.fn(async (_options, callback) => callback(context)),
+    } as const;
+    const auth = new LinkedInAuthService(
+      profileManager as unknown as ProfileManager,
+    );
+
+    const result = await auth.headlessLogin({
+      email: "test@example.com",
+      password: "secret",
+      pollIntervalMs: 1,
+      timeoutMs: 100,
+    });
+
+    expect(result.authenticated).toBe(true);
+
+    // Both email and password must be typed after cookie-clear retry
     expect(typeCalls).toHaveLength(2);
     expect(typeCalls[0]!.value).toBe("test@example.com");
     expect(typeCalls[1]!.value).toBe("secret");
