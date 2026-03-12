@@ -1,12 +1,9 @@
-import { type BrowserContext, type Locator, type Page } from "playwright-core";
+import { type Locator, type Page } from "playwright-core";
 import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
 import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
 import type { ConfirmFailureArtifactConfig } from "./config.js";
-import {
-  LinkedInBuddyError,
-  asLinkedInBuddyError
-} from "./errors.js";
+import { LinkedInBuddyError, asLinkedInBuddyError } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
@@ -15,23 +12,29 @@ import {
   createConfirmRateLimitMessage,
   peekRateLimitPreview,
   type ConsumeRateLimitInput,
-  type RateLimiter
+  type RateLimiter,
 } from "./rateLimiter.js";
 import {
   normalizeLinkedInProfileUrl,
-  resolveProfileUrl
+  resolveProfileUrl,
 } from "./linkedinProfile.js";
 import type { LinkedInSelectorLocale } from "./selectorLocale.js";
 import {
   buildLinkedInAriaLabelContainsSelector,
   buildLinkedInSelectorPhraseRegex,
-  formatLinkedInSelectorRegexHint
+  formatLinkedInSelectorRegexHint,
 } from "./selectorLocale.js";
+import {
+  escapeCssAttributeValue,
+  escapeRegExp,
+  getOrCreatePage,
+  normalizeText,
+} from "./shared.js";
 import type {
   ActionExecutor,
   ActionExecutorInput,
   ActionExecutorResult,
-  TwoPhaseCommitService
+  TwoPhaseCommitService,
 } from "./twoPhaseCommit.js";
 
 export const LINKEDIN_MEMBER_REPORT_REASONS = [
@@ -42,7 +45,7 @@ export const LINKEDIN_MEMBER_REPORT_REASONS = [
   "scam",
   "misinformation",
   "inappropriate_content",
-  "something_else"
+  "something_else",
 ] as const;
 
 export type LinkedInMemberReportReason =
@@ -80,7 +83,10 @@ export interface LinkedInMembersExecutorRuntime {
 }
 
 export interface LinkedInMembersRuntime extends LinkedInMembersExecutorRuntime {
-  twoPhaseCommit: Pick<TwoPhaseCommitService<LinkedInMembersExecutorRuntime>, "prepare">;
+  twoPhaseCommit: Pick<
+    TwoPhaseCommitService<LinkedInMembersExecutorRuntime>,
+    "prepare"
+  >;
 }
 
 export const BLOCK_MEMBER_ACTION_TYPE = "members.block_member";
@@ -91,33 +97,29 @@ const MEMBER_RATE_LIMIT_CONFIGS = {
   [BLOCK_MEMBER_ACTION_TYPE]: {
     counterKey: "linkedin.members.block_member",
     windowSizeMs: 24 * 60 * 60 * 1000,
-    limit: 10
+    limit: 10,
   },
   [UNBLOCK_MEMBER_ACTION_TYPE]: {
     counterKey: "linkedin.members.unblock_member",
     windowSizeMs: 24 * 60 * 60 * 1000,
-    limit: 10
+    limit: 10,
   },
   [REPORT_MEMBER_ACTION_TYPE]: {
     counterKey: "linkedin.members.report_member",
     windowSizeMs: 24 * 60 * 60 * 1000,
-    limit: 10
-  }
+    limit: 10,
+  },
 } as const satisfies Record<string, ConsumeRateLimitInput>;
 
 const BLOCKED_MEMBERS_URLS = [
   "https://www.linkedin.com/mypreferences/d/blocking",
-  "https://www.linkedin.com/mypreferences/d/visibility/blocking"
+  "https://www.linkedin.com/mypreferences/d/visibility/blocking",
 ] as const;
 
 interface VisibleLocatorCandidate {
   key: string;
   selectorHint: string;
   locatorFactory: (root: Page | Locator) => Locator;
-}
-
-function normalizeText(value: string | null | undefined): string {
-  return (value ?? "").replace(/\s+/g, " ").trim();
 }
 
 function getMemberRateLimitConfig(actionType: string): ConsumeRateLimitInput {
@@ -127,19 +129,11 @@ function getMemberRateLimitConfig(actionType: string): ConsumeRateLimitInput {
 
   if (!config) {
     throw new LinkedInBuddyError("UNKNOWN", "Missing rate limit policy.", {
-      action_type: actionType
+      action_type: actionType,
     });
   }
 
   return config;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function escapeCssAttributeValue(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
 function dedupePhrases(values: readonly string[]): string[] {
@@ -163,7 +157,7 @@ function dedupePhrases(values: readonly string[]): string[] {
 function buildLocalizedPhraseList(
   selectorLocale: LinkedInSelectorLocale,
   english: readonly string[],
-  danish: readonly string[] = english
+  danish: readonly string[] = english,
 ): string[] {
   return selectorLocale === "da"
     ? dedupePhrases([...danish, ...english])
@@ -174,7 +168,7 @@ function buildLocalizedRegex(
   selectorLocale: LinkedInSelectorLocale,
   english: readonly string[],
   danish: readonly string[] = english,
-  options: { exact?: boolean } = {}
+  options: { exact?: boolean } = {},
 ): RegExp {
   const phrases = buildLocalizedPhraseList(selectorLocale, english, danish);
   const body = phrases.map((phrase) => escapeRegExp(phrase)).join("|") || "^$";
@@ -185,7 +179,7 @@ function buildLocalizedRegex(
 async function waitForCondition(
   condition: () => Promise<boolean>,
   timeoutMs: number,
-  intervalMs = 250
+  intervalMs = 250,
 ): Promise<boolean> {
   const deadline = Date.now() + Math.max(0, timeoutMs);
 
@@ -202,25 +196,16 @@ async function waitForCondition(
   return condition();
 }
 
-async function getOrCreatePage(context: BrowserContext): Promise<Page> {
-  const existing = context.pages()[0];
-  if (existing) {
-    return existing;
-  }
-
-  return context.newPage();
-}
-
 async function findVisibleLocator(
   root: Page | Locator,
-  candidates: readonly VisibleLocatorCandidate[]
+  candidates: readonly VisibleLocatorCandidate[],
 ): Promise<{ locator: Locator; key: string } | null> {
   for (const candidate of candidates) {
     const locator = candidate.locatorFactory(root).first();
     if (await locator.isVisible().catch(() => false)) {
       return {
         locator,
-        key: candidate.key
+        key: candidate.key,
       };
     }
   }
@@ -242,22 +227,22 @@ function buildProfileTopCardRoot(page: Page): Locator {
 
 function buildProfileMoreButtonCandidates(
   topCardRoot: Locator,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): VisibleLocatorCandidate[] {
   const moreExactRegex = buildLinkedInSelectorPhraseRegex(
     "more",
     selectorLocale,
-    { exact: true }
+    { exact: true },
   );
   const moreExactRegexHint = formatLinkedInSelectorRegexHint(
     "more",
     selectorLocale,
-    { exact: true }
+    { exact: true },
   );
   const moreActionsAriaSelector = buildLinkedInAriaLabelContainsSelector(
     "button",
     "more_actions",
-    selectorLocale
+    selectorLocale,
   );
 
   return [
@@ -266,22 +251,22 @@ function buildProfileMoreButtonCandidates(
       selectorHint: `topCard.getByRole(button, ${moreExactRegexHint})`,
       locatorFactory: () =>
         topCardRoot.getByRole("button", {
-          name: moreExactRegex
-        })
+          name: moreExactRegex,
+        }),
     },
     {
       key: "topcard-more-actions-aria",
       selectorHint: `topCard ${moreActionsAriaSelector}`,
-      locatorFactory: () => topCardRoot.locator(moreActionsAriaSelector)
+      locatorFactory: () => topCardRoot.locator(moreActionsAriaSelector),
     },
     {
       key: "page-more-role",
       selectorHint: `page.getByRole(button, ${moreExactRegexHint})`,
       locatorFactory: (targetPage) =>
         targetPage.getByRole("button", {
-          name: moreExactRegex
-        })
-    }
+          name: moreExactRegex,
+        }),
+    },
   ];
 }
 
@@ -289,14 +274,11 @@ function createMenuActionCandidates(
   selectorLocale: LinkedInSelectorLocale,
   english: readonly string[],
   danish: readonly string[],
-  keyPrefix: string
+  keyPrefix: string,
 ): VisibleLocatorCandidate[] {
-  const exactRegex = buildLocalizedRegex(
-    selectorLocale,
-    english,
-    danish,
-    { exact: true }
-  );
+  const exactRegex = buildLocalizedRegex(selectorLocale, english, danish, {
+    exact: true,
+  });
   const textRegex = buildLocalizedRegex(selectorLocale, english, danish);
 
   return [
@@ -305,25 +287,25 @@ function createMenuActionCandidates(
       selectorHint: `[role='menuitem'] hasText ${textRegex}`,
       locatorFactory: (root) =>
         root.locator("[role='menuitem']").filter({
-          hasText: exactRegex
-        })
+          hasText: exactRegex,
+        }),
     },
     {
       key: `${keyPrefix}-menu-button`,
       selectorHint: `.artdeco-dropdown__content-inner button hasText ${textRegex}`,
       locatorFactory: (root) =>
         root.locator(".artdeco-dropdown__content-inner button").filter({
-          hasText: textRegex
-        })
+          hasText: textRegex,
+        }),
     },
     {
       key: `${keyPrefix}-menu-li`,
       selectorHint: `.artdeco-dropdown__content-inner li hasText ${textRegex}`,
       locatorFactory: (root) =>
         root.locator(".artdeco-dropdown__content-inner li").filter({
-          hasText: textRegex
-        })
-    }
+          hasText: textRegex,
+        }),
+    },
   ];
 }
 
@@ -332,14 +314,11 @@ function createDialogActionCandidates(
   english: readonly string[],
   danish: readonly string[],
   keyPrefix: string,
-  options: { includePrimaryFallback?: boolean } = {}
+  options: { includePrimaryFallback?: boolean } = {},
 ): VisibleLocatorCandidate[] {
-  const exactRegex = buildLocalizedRegex(
-    selectorLocale,
-    english,
-    danish,
-    { exact: true }
-  );
+  const exactRegex = buildLocalizedRegex(selectorLocale, english, danish, {
+    exact: true,
+  });
   const textRegex = buildLocalizedRegex(selectorLocale, english, danish);
 
   return [
@@ -347,23 +326,21 @@ function createDialogActionCandidates(
       key: `${keyPrefix}-dialog-role-button`,
       selectorHint: `dialog.getByRole(button, ${textRegex})`,
       locatorFactory: (root) =>
-        root.locator("div[role='dialog'], aside[role='dialog']").getByRole(
-          "button",
-          {
-            name: exactRegex
-          }
-        )
+        root
+          .locator("div[role='dialog'], aside[role='dialog']")
+          .getByRole("button", {
+            name: exactRegex,
+          }),
     },
     {
       key: `${keyPrefix}-dialog-role-radio`,
       selectorHint: `dialog.getByRole(radio, ${textRegex})`,
       locatorFactory: (root) =>
-        root.locator("div[role='dialog'], aside[role='dialog']").getByRole(
-          "radio",
-          {
-            name: exactRegex
-          }
-        )
+        root
+          .locator("div[role='dialog'], aside[role='dialog']")
+          .getByRole("radio", {
+            name: exactRegex,
+          }),
     },
     {
       key: `${keyPrefix}-dialog-label`,
@@ -373,8 +350,8 @@ function createDialogActionCandidates(
           .locator("div[role='dialog'], aside[role='dialog']")
           .locator("label")
           .filter({
-            hasText: textRegex
-          })
+            hasText: textRegex,
+          }),
     },
     {
       key: `${keyPrefix}-dialog-button-text`,
@@ -384,8 +361,8 @@ function createDialogActionCandidates(
           .locator("div[role='dialog'], aside[role='dialog']")
           .locator("button")
           .filter({
-            hasText: textRegex
-          })
+            hasText: textRegex,
+          }),
     },
     {
       key: `${keyPrefix}-dialog-generic`,
@@ -395,8 +372,8 @@ function createDialogActionCandidates(
           .locator("div[role='dialog'], aside[role='dialog']")
           .locator("[role='radio'], button, label, li")
           .filter({
-            hasText: textRegex
-          })
+            hasText: textRegex,
+          }),
     },
     ...(options.includePrimaryFallback
       ? [
@@ -406,7 +383,7 @@ function createDialogActionCandidates(
             locatorFactory: (root: Page | Locator) =>
               root
                 .locator("div[role='dialog'], aside[role='dialog']")
-                .locator("button.artdeco-button--primary")
+                .locator("button.artdeco-button--primary"),
           },
           {
             key: `${keyPrefix}-dialog-primary-data`,
@@ -414,10 +391,10 @@ function createDialogActionCandidates(
             locatorFactory: (root: Page | Locator) =>
               root
                 .locator("div[role='dialog'], aside[role='dialog']")
-                .locator("button[data-test-dialog-primary-btn]")
-          }
+                .locator("button[data-test-dialog-primary-btn]"),
+          },
         ]
-      : [])
+      : []),
   ];
 }
 
@@ -445,12 +422,12 @@ function resolveProfileHrefFragment(targetProfile: string): string {
 async function openProfileActionsMenu(
   page: Page,
   selectorLocale: LinkedInSelectorLocale,
-  targetProfile: string
+  targetProfile: string,
 ): Promise<string> {
   const topCardRoot = buildProfileTopCardRoot(page);
   const moreCandidates = buildProfileMoreButtonCandidates(
     topCardRoot,
-    selectorLocale
+    selectorLocale,
   );
   const moreButton = await findVisibleLocator(page, moreCandidates);
   if (!moreButton) {
@@ -459,8 +436,10 @@ async function openProfileActionsMenu(
       "Could not find the LinkedIn profile actions menu.",
       {
         target_profile: targetProfile,
-        attempted_selectors: moreCandidates.map((candidate) => candidate.selectorHint)
-      }
+        attempted_selectors: moreCandidates.map(
+          (candidate) => candidate.selectorHint,
+        ),
+      },
     );
   }
 
@@ -472,18 +451,24 @@ async function openProfileActionsMenu(
 async function clickMemberSafetyEntry(
   page: Page,
   selectorLocale: LinkedInSelectorLocale,
-  targetProfile: string
+  targetProfile: string,
 ): Promise<string> {
   const moreButtonKey = await openProfileActionsMenu(
     page,
     selectorLocale,
-    targetProfile
+    targetProfile,
   );
   const entryCandidates = createMenuActionCandidates(
     selectorLocale,
     ["Report / Block", "Report or block", "Block or report", "Report", "Block"],
-    ["Rapportér/bloker", "Rapporter/bloker", "Bloker eller rapporter", "Rapportér", "Bloker"],
-    "member-safety-entry"
+    [
+      "Rapportér/bloker",
+      "Rapporter/bloker",
+      "Bloker eller rapporter",
+      "Rapportér",
+      "Bloker",
+    ],
+    "member-safety-entry",
   );
   const entry = await findVisibleLocator(page, entryCandidates);
   if (!entry) {
@@ -492,8 +477,10 @@ async function clickMemberSafetyEntry(
       "Could not find LinkedIn member safety actions in the profile menu.",
       {
         target_profile: targetProfile,
-        attempted_selectors: entryCandidates.map((candidate) => candidate.selectorHint)
-      }
+        attempted_selectors: entryCandidates.map(
+          (candidate) => candidate.selectorHint,
+        ),
+      },
     );
   }
 
@@ -508,14 +495,14 @@ async function clickDialogAction(
   english: readonly string[],
   danish: readonly string[],
   keyPrefix: string,
-  options: { includePrimaryFallback?: boolean } = {}
+  options: { includePrimaryFallback?: boolean } = {},
 ): Promise<string | null> {
   const candidates = createDialogActionCandidates(
     selectorLocale,
     english,
     danish,
     keyPrefix,
-    options
+    options,
   );
   const action = await findVisibleLocator(page, candidates);
   if (!action) {
@@ -527,47 +514,48 @@ async function clickDialogAction(
   return action.key;
 }
 
-function getReportReasonPhrases(
-  reason: LinkedInMemberReportReason
-): { english: readonly string[]; danish: readonly string[] } {
+function getReportReasonPhrases(reason: LinkedInMemberReportReason): {
+  english: readonly string[];
+  danish: readonly string[];
+} {
   switch (reason) {
     case "fake_profile":
       return {
         english: ["Fake profile", "Fake account", "Fake"],
-        danish: ["Falsk profil", "Falsk konto", "Falsk"]
+        danish: ["Falsk profil", "Falsk konto", "Falsk"],
       };
     case "impersonation":
       return {
         english: [
           "Pretending to be someone else",
           "Impersonation",
-          "Someone is impersonating"
+          "Someone is impersonating",
         ],
         danish: [
           "Udgiver sig for at være en anden",
           "Imitation",
-          "Nogen udgiver sig for at være en anden"
-        ]
+          "Nogen udgiver sig for at være en anden",
+        ],
       };
     case "harassment":
       return {
         english: ["Harassment", "Bullying", "Harassment or hateful speech"],
-        danish: ["Chikane", "Mobning", "Chikane eller hadefuld tale"]
+        danish: ["Chikane", "Mobning", "Chikane eller hadefuld tale"],
       };
     case "spam":
       return {
         english: ["Spam"],
-        danish: ["Spam"]
+        danish: ["Spam"],
       };
     case "scam":
       return {
         english: ["Scam", "Fraud", "Fraud or scam"],
-        danish: ["Svindel", "Bedrageri"]
+        danish: ["Svindel", "Bedrageri"],
       };
     case "misinformation":
       return {
         english: ["Misinformation", "False information"],
-        danish: ["Misinformation", "Falsk information"]
+        danish: ["Misinformation", "Falsk information"],
       };
     case "inappropriate_content":
       return {
@@ -575,14 +563,19 @@ function getReportReasonPhrases(
           "Inappropriate or offensive",
           "Offensive",
           "Violence",
-          "Sexual content"
+          "Sexual content",
         ],
-        danish: ["Upassende eller stødende", "Stødende", "Vold", "Seksuelt indhold"]
+        danish: [
+          "Upassende eller stødende",
+          "Stødende",
+          "Vold",
+          "Seksuelt indhold",
+        ],
       };
     case "something_else":
       return {
         english: ["Something else", "Other"],
-        danish: ["Noget andet", "Andet"]
+        danish: ["Noget andet", "Andet"],
       };
   }
 }
@@ -590,7 +583,7 @@ function getReportReasonPhrases(
 async function selectReportReason(
   page: Page,
   selectorLocale: LinkedInSelectorLocale,
-  reason: LinkedInMemberReportReason
+  reason: LinkedInMemberReportReason,
 ): Promise<string> {
   const phrases = getReportReasonPhrases(reason);
   const reasonKey = await clickDialogAction(
@@ -598,7 +591,7 @@ async function selectReportReason(
     selectorLocale,
     phrases.english,
     phrases.danish,
-    `report-reason-${reason}`
+    `report-reason-${reason}`,
   );
 
   if (reasonKey) {
@@ -611,16 +604,18 @@ async function selectReportReason(
     {
       report_reason: reason,
       attempted_english_phrases: phrases.english,
-      attempted_danish_phrases: phrases.danish
-    }
+      attempted_danish_phrases: phrases.danish,
+    },
   );
 }
 
 async function fillReportDetailsIfVisible(
   page: Page,
-  details: string
+  details: string,
 ): Promise<string | null> {
-  const dialog = page.locator("div[role='dialog'], aside[role='dialog']").first();
+  const dialog = page
+    .locator("div[role='dialog'], aside[role='dialog']")
+    .first();
   const field = dialog.locator("textarea, input[type='text']").first();
   if (!(await field.isVisible().catch(() => false))) {
     return null;
@@ -632,7 +627,7 @@ async function fillReportDetailsIfVisible(
 
 async function finishDialogFlow(
   page: Page,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<string[]> {
   const clickedKeys: string[] = [];
 
@@ -647,7 +642,7 @@ async function finishDialogFlow(
       ["Next", "Continue", "Submit", "Done", "Report"],
       ["Næste", "Fortsæt", "Send", "Færdig", "Rapportér"],
       `dialog-step-${step}`,
-      { includePrimaryFallback: true }
+      { includePrimaryFallback: true },
     );
 
     if (!actionKey) {
@@ -662,7 +657,7 @@ async function finishDialogFlow(
 
 async function withBlockedMembersPage<T>(
   page: Page,
-  action: (page: Page, sourceUrl: string) => Promise<T>
+  action: (page: Page, sourceUrl: string) => Promise<T>,
 ): Promise<T> {
   const errors: Array<Record<string, string>> = [];
 
@@ -674,7 +669,7 @@ async function withBlockedMembersPage<T>(
     } catch (error) {
       errors.push({
         url,
-        message: error instanceof Error ? error.message : String(error)
+        message: error instanceof Error ? error.message : String(error),
       });
     }
   }
@@ -684,21 +679,23 @@ async function withBlockedMembersPage<T>(
     "Could not open the LinkedIn blocked members settings page.",
     {
       attempted_urls: BLOCKED_MEMBERS_URLS,
-      errors
-    }
+      errors,
+    },
   );
 }
 
 async function findBlockedMemberCard(
   page: Page,
-  targetProfile: string
+  targetProfile: string,
 ): Promise<{ locator: Locator; key: string } | null> {
   const hrefFragment = escapeCssAttributeValue(
-    resolveProfileHrefFragment(targetProfile)
+    resolveProfileHrefFragment(targetProfile),
   );
   const profileUrl = resolveProfileUrl(targetProfile);
   const vanityName = extractVanityName(profileUrl);
-  const textRegex = vanityName ? new RegExp(escapeRegExp(vanityName), "iu") : null;
+  const textRegex = vanityName
+    ? new RegExp(escapeRegExp(vanityName), "iu")
+    : null;
   const candidates: VisibleLocatorCandidate[] = [
     {
       key: "blocked-member-link-card",
@@ -708,10 +705,10 @@ async function findBlockedMemberCard(
           [
             `li:has(a[href*="${hrefFragment}"])`,
             `div[role='listitem']:has(a[href*="${hrefFragment}"])`,
-            `article:has(a[href*="${hrefFragment}"])`
-          ].join(", ")
-        )
-    }
+            `article:has(a[href*="${hrefFragment}"])`,
+          ].join(", "),
+        ),
+    },
   ];
 
   if (textRegex) {
@@ -721,7 +718,7 @@ async function findBlockedMemberCard(
       locatorFactory: (root) =>
         root
           .locator("li, div[role='listitem'], article")
-          .filter({ hasText: textRegex })
+          .filter({ hasText: textRegex }),
     });
   }
 
@@ -729,7 +726,7 @@ async function findBlockedMemberCard(
 }
 
 export function normalizeLinkedInMemberReportReason(
-  value: string
+  value: string,
 ): LinkedInMemberReportReason {
   const normalizedValue = normalizeText(value).toLowerCase();
   const matchedReason = LINKEDIN_MEMBER_REPORT_REASONS.find((candidate) => {
@@ -742,14 +739,14 @@ export function normalizeLinkedInMemberReportReason(
 
   throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
-    `reason must be one of: ${LINKEDIN_MEMBER_REPORT_REASONS.join(", ")}.`
+    `reason must be one of: ${LINKEDIN_MEMBER_REPORT_REASONS.join(", ")}.`,
   );
 }
 
 async function executeBlockMember(
   runtime: LinkedInMembersExecutorRuntime,
   actionId: string,
-  target: Record<string, unknown>
+  target: Record<string, unknown>,
 ): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
   const profileName = String(target.profile_name ?? "default");
   const targetProfile = String(target.target_profile ?? "");
@@ -759,7 +756,7 @@ async function executeBlockMember(
     {
       cdpUrl: runtime.cdpUrl,
       profileName,
-      headless: true
+      headless: true,
     },
     async (context) => {
       const page = await getOrCreatePage(context);
@@ -773,11 +770,11 @@ async function executeBlockMember(
         targetUrl: profileUrl,
         metadata: {
           target_profile: targetProfile,
-          profile_url: profileUrl
+          profile_url: profileUrl,
         },
         errorDetails: {
           target_profile: targetProfile,
-          profile_url: profileUrl
+          profile_url: profileUrl,
         },
         beforeExecute: () =>
           consumeRateLimitOrThrow(runtime.rateLimiter, {
@@ -787,14 +784,14 @@ async function executeBlockMember(
               action_id: actionId,
               profile_name: profileName,
               target_profile: targetProfile,
-              profile_url: profileUrl
-            }
+              profile_url: profileUrl,
+            },
           }),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
             "UNKNOWN",
-            "Failed to execute LinkedIn block_member action."
+            "Failed to execute LinkedIn block_member action.",
           ),
         execute: async () => {
           await page.goto(profileUrl, { waitUntil: "domcontentloaded" });
@@ -803,7 +800,7 @@ async function executeBlockMember(
           const entryKey = await clickMemberSafetyEntry(
             page,
             runtime.selectorLocale,
-            targetProfile
+            targetProfile,
           );
           const blockDialogKey = await clickDialogAction(
             page,
@@ -811,7 +808,7 @@ async function executeBlockMember(
             ["Block"],
             ["Bloker"],
             "block-member",
-            { includePrimaryFallback: true }
+            { includePrimaryFallback: true },
           );
 
           const confirmKey =
@@ -821,12 +818,12 @@ async function executeBlockMember(
               ["Block"],
               ["Bloker"],
               "confirm-block-member",
-              { includePrimaryFallback: true }
+              { includePrimaryFallback: true },
             )) ?? null;
 
           const closed = await waitForCondition(
             async () => !(await isDialogVisible(page)),
-            5_000
+            5_000,
           );
           if (!closed) {
             throw new LinkedInBuddyError(
@@ -836,8 +833,8 @@ async function executeBlockMember(
                 target_profile: targetProfile,
                 entry_selector_key: entryKey,
                 block_selector_key: blockDialogKey,
-                confirm_selector_key: confirmKey
-              }
+                confirm_selector_key: confirmKey,
+              },
             );
           }
 
@@ -848,20 +845,20 @@ async function executeBlockMember(
               target_profile: targetProfile,
               entry_selector_key: entryKey,
               block_selector_key: blockDialogKey,
-              confirm_selector_key: confirmKey
+              confirm_selector_key: confirmKey,
             },
-            artifacts: []
+            artifacts: [],
           };
-        }
+        },
       });
-    }
+    },
   );
 }
 
 async function executeUnblockMember(
   runtime: LinkedInMembersExecutorRuntime,
   actionId: string,
-  target: Record<string, unknown>
+  target: Record<string, unknown>,
 ): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
   const profileName = String(target.profile_name ?? "default");
   const targetProfile = String(target.target_profile ?? "");
@@ -870,7 +867,7 @@ async function executeUnblockMember(
     {
       cdpUrl: runtime.cdpUrl,
       profileName,
-      headless: true
+      headless: true,
     },
     async (context) => {
       const page = await getOrCreatePage(context);
@@ -883,10 +880,10 @@ async function executeUnblockMember(
         profileName,
         targetUrl: BLOCKED_MEMBERS_URLS[0],
         metadata: {
-          target_profile: targetProfile
+          target_profile: targetProfile,
         },
         errorDetails: {
-          target_profile: targetProfile
+          target_profile: targetProfile,
         },
         beforeExecute: () =>
           consumeRateLimitOrThrow(runtime.rateLimiter, {
@@ -895,111 +892,117 @@ async function executeUnblockMember(
             details: {
               action_id: actionId,
               profile_name: profileName,
-              target_profile: targetProfile
-            }
+              target_profile: targetProfile,
+            },
           }),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
             "UNKNOWN",
-            "Failed to execute LinkedIn unblock_member action."
+            "Failed to execute LinkedIn unblock_member action.",
           ),
         execute: async () => {
-          const result = await withBlockedMembersPage(page, async (currentPage, sourceUrl) => {
-            const card = await findBlockedMemberCard(currentPage, targetProfile);
-            if (!card) {
-              throw new LinkedInBuddyError(
-                "TARGET_NOT_FOUND",
-                `Could not find a blocked LinkedIn member matching "${targetProfile}".`,
-                {
-                  target_profile: targetProfile
-                }
+          const result = await withBlockedMembersPage(
+            page,
+            async (currentPage, sourceUrl) => {
+              const card = await findBlockedMemberCard(
+                currentPage,
+                targetProfile,
               );
-            }
-
-            const unblockButtonCandidates = [
-              {
-                key: "blocked-member-unblock-role",
-                selectorHint: "card.getByRole(button, /^(?:Unblock)$/iu)",
-                locatorFactory: (root: Page | Locator) =>
-                  root.getByRole("button", {
-                    name: buildLocalizedRegex(
-                      runtime.selectorLocale,
-                      ["Unblock"],
-                      ["Fjern blokering", "Ophæv blokering"],
-                      { exact: true }
-                    )
-                  })
-              },
-              {
-                key: "blocked-member-unblock-text",
-                selectorHint: "card button hasText /(?:Unblock)/iu",
-                locatorFactory: (root: Page | Locator) =>
-                  root.locator("button").filter({
-                    hasText: buildLocalizedRegex(
-                      runtime.selectorLocale,
-                      ["Unblock"],
-                      ["Fjern blokering", "Ophæv blokering"]
-                    )
-                  })
+              if (!card) {
+                throw new LinkedInBuddyError(
+                  "TARGET_NOT_FOUND",
+                  `Could not find a blocked LinkedIn member matching "${targetProfile}".`,
+                  {
+                    target_profile: targetProfile,
+                  },
+                );
               }
-            ] satisfies VisibleLocatorCandidate[];
-            const unblockButton = await findVisibleLocator(
-              card.locator,
-              unblockButtonCandidates
-            );
-            if (!unblockButton) {
-              throw new LinkedInBuddyError(
-                "UI_CHANGED_SELECTOR_FAILED",
-                "Could not find the Unblock button for the blocked LinkedIn member.",
+
+              const unblockButtonCandidates = [
                 {
-                  target_profile: targetProfile,
-                  attempted_selectors: unblockButtonCandidates.map(
-                    (candidate) => candidate.selectorHint
-                  )
-                }
-              );
-            }
-
-            await unblockButton.locator.click({ timeout: 5_000 });
-            await currentPage.waitForTimeout(600);
-
-            const confirmKey =
-              (await clickDialogAction(
-                currentPage,
-                runtime.selectorLocale,
-                ["Unblock"],
-                ["Fjern blokering", "Ophæv blokering"],
-                "confirm-unblock-member",
-                { includePrimaryFallback: true }
-              )) ?? null;
-
-            const removed = await waitForCondition(async () => {
-              const existingCard = await findBlockedMemberCard(
-                currentPage,
-                targetProfile
-              );
-              return existingCard === null;
-            }, 5_000);
-
-            if (!removed) {
-              throw new LinkedInBuddyError(
-                "UNKNOWN",
-                "LinkedIn unblock flow could not be verified after confirmation.",
+                  key: "blocked-member-unblock-role",
+                  selectorHint: "card.getByRole(button, /^(?:Unblock)$/iu)",
+                  locatorFactory: (root: Page | Locator) =>
+                    root.getByRole("button", {
+                      name: buildLocalizedRegex(
+                        runtime.selectorLocale,
+                        ["Unblock"],
+                        ["Fjern blokering", "Ophæv blokering"],
+                        { exact: true },
+                      ),
+                    }),
+                },
                 {
-                  target_profile: targetProfile,
-                  unblock_selector_key: unblockButton.key,
-                  confirm_selector_key: confirmKey
-                }
+                  key: "blocked-member-unblock-text",
+                  selectorHint: "card button hasText /(?:Unblock)/iu",
+                  locatorFactory: (root: Page | Locator) =>
+                    root.locator("button").filter({
+                      hasText: buildLocalizedRegex(
+                        runtime.selectorLocale,
+                        ["Unblock"],
+                        ["Fjern blokering", "Ophæv blokering"],
+                      ),
+                    }),
+                },
+              ] satisfies VisibleLocatorCandidate[];
+              const unblockButton = await findVisibleLocator(
+                card.locator,
+                unblockButtonCandidates,
               );
-            }
+              if (!unblockButton) {
+                throw new LinkedInBuddyError(
+                  "UI_CHANGED_SELECTOR_FAILED",
+                  "Could not find the Unblock button for the blocked LinkedIn member.",
+                  {
+                    target_profile: targetProfile,
+                    attempted_selectors: unblockButtonCandidates.map(
+                      (candidate) => candidate.selectorHint,
+                    ),
+                  },
+                );
+              }
 
-            return {
-              sourceUrl,
-              unblockButtonKey: unblockButton.key,
-              confirmKey
-            };
-          });
+              await unblockButton.locator.click({ timeout: 5_000 });
+              await currentPage.waitForTimeout(600);
+
+              const confirmKey =
+                (await clickDialogAction(
+                  currentPage,
+                  runtime.selectorLocale,
+                  ["Unblock"],
+                  ["Fjern blokering", "Ophæv blokering"],
+                  "confirm-unblock-member",
+                  { includePrimaryFallback: true },
+                )) ?? null;
+
+              const removed = await waitForCondition(async () => {
+                const existingCard = await findBlockedMemberCard(
+                  currentPage,
+                  targetProfile,
+                );
+                return existingCard === null;
+              }, 5_000);
+
+              if (!removed) {
+                throw new LinkedInBuddyError(
+                  "UNKNOWN",
+                  "LinkedIn unblock flow could not be verified after confirmation.",
+                  {
+                    target_profile: targetProfile,
+                    unblock_selector_key: unblockButton.key,
+                    confirm_selector_key: confirmKey,
+                  },
+                );
+              }
+
+              return {
+                sourceUrl,
+                unblockButtonKey: unblockButton.key,
+                confirmKey,
+              };
+            },
+          );
 
           return {
             ok: true,
@@ -1008,13 +1011,13 @@ async function executeUnblockMember(
               target_profile: targetProfile,
               source_url: result.sourceUrl,
               unblock_selector_key: result.unblockButtonKey,
-              confirm_selector_key: result.confirmKey
+              confirm_selector_key: result.confirmKey,
             },
-            artifacts: []
+            artifacts: [],
           };
-        }
+        },
       });
-    }
+    },
   );
 }
 
@@ -1022,19 +1025,21 @@ async function executeReportMember(
   runtime: LinkedInMembersExecutorRuntime,
   actionId: string,
   target: Record<string, unknown>,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
 ): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
   const profileName = String(target.profile_name ?? "default");
   const targetProfile = String(target.target_profile ?? "");
   const profileUrl = resolveProfileUrl(targetProfile);
-  const reason = normalizeLinkedInMemberReportReason(String(payload.reason ?? ""));
+  const reason = normalizeLinkedInMemberReportReason(
+    String(payload.reason ?? ""),
+  );
   const details = normalizeText(String(payload.details ?? ""));
 
   return runtime.profileManager.runWithContext(
     {
       cdpUrl: runtime.cdpUrl,
       profileName,
-      headless: true
+      headless: true,
     },
     async (context) => {
       const page = await getOrCreatePage(context);
@@ -1049,12 +1054,12 @@ async function executeReportMember(
         metadata: {
           target_profile: targetProfile,
           report_reason: reason,
-          profile_url: profileUrl
+          profile_url: profileUrl,
         },
         errorDetails: {
           target_profile: targetProfile,
           report_reason: reason,
-          profile_url: profileUrl
+          profile_url: profileUrl,
         },
         beforeExecute: () =>
           consumeRateLimitOrThrow(runtime.rateLimiter, {
@@ -1065,14 +1070,14 @@ async function executeReportMember(
               profile_name: profileName,
               target_profile: targetProfile,
               report_reason: reason,
-              profile_url: profileUrl
-            }
+              profile_url: profileUrl,
+            },
           }),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
             "UNKNOWN",
-            "Failed to execute LinkedIn report_member action."
+            "Failed to execute LinkedIn report_member action.",
           ),
         execute: async () => {
           await page.goto(profileUrl, { waitUntil: "domcontentloaded" });
@@ -1081,7 +1086,7 @@ async function executeReportMember(
           const entryKey = await clickMemberSafetyEntry(
             page,
             runtime.selectorLocale,
-            targetProfile
+            targetProfile,
           );
 
           const reportActionKey =
@@ -1091,25 +1096,25 @@ async function executeReportMember(
               ["Report"],
               ["Rapportér"],
               "report-member",
-              { includePrimaryFallback: false }
+              { includePrimaryFallback: false },
             )) ?? null;
 
           const reasonKey = await selectReportReason(
             page,
             runtime.selectorLocale,
-            reason
+            reason,
           );
           const detailsKey = details
             ? await fillReportDetailsIfVisible(page, details)
             : null;
           const completionKeys = await finishDialogFlow(
             page,
-            runtime.selectorLocale
+            runtime.selectorLocale,
           );
 
           const closed = await waitForCondition(
             async () => !(await isDialogVisible(page)),
-            8_000
+            8_000,
           );
           if (!closed) {
             throw new LinkedInBuddyError(
@@ -1121,8 +1126,8 @@ async function executeReportMember(
                 entry_selector_key: entryKey,
                 report_selector_key: reportActionKey,
                 reason_selector_key: reasonKey,
-                completion_selector_keys: completionKeys
-              }
+                completion_selector_keys: completionKeys,
+              },
             );
           }
 
@@ -1136,70 +1141,64 @@ async function executeReportMember(
               report_selector_key: reportActionKey,
               reason_selector_key: reasonKey,
               details_selector_key: detailsKey,
-              completion_selector_keys: completionKeys
+              completion_selector_keys: completionKeys,
             },
-            artifacts: []
+            artifacts: [],
           };
-        }
+        },
       });
-    }
+    },
   );
 }
 
-export class BlockMemberActionExecutor
-  implements ActionExecutor<LinkedInMembersExecutorRuntime>
-{
+export class BlockMemberActionExecutor implements ActionExecutor<LinkedInMembersExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInMembersExecutorRuntime>
+    input: ActionExecutorInput<LinkedInMembersExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const { result, artifacts } = await executeBlockMember(
       input.runtime,
       input.action.id,
-      input.action.target
+      input.action.target,
     );
     return {
       ok: true,
       result,
-      artifacts
+      artifacts,
     };
   }
 }
 
-export class UnblockMemberActionExecutor
-  implements ActionExecutor<LinkedInMembersExecutorRuntime>
-{
+export class UnblockMemberActionExecutor implements ActionExecutor<LinkedInMembersExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInMembersExecutorRuntime>
+    input: ActionExecutorInput<LinkedInMembersExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const { result, artifacts } = await executeUnblockMember(
       input.runtime,
       input.action.id,
-      input.action.target
+      input.action.target,
     );
     return {
       ok: true,
       result,
-      artifacts
+      artifacts,
     };
   }
 }
 
-export class ReportMemberActionExecutor
-  implements ActionExecutor<LinkedInMembersExecutorRuntime>
-{
+export class ReportMemberActionExecutor implements ActionExecutor<LinkedInMembersExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInMembersExecutorRuntime>
+    input: ActionExecutorInput<LinkedInMembersExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const { result, artifacts } = await executeReportMember(
       input.runtime,
       input.action.id,
       input.action.target,
-      input.action.payload
+      input.action.payload,
     );
     return {
       ok: true,
       result,
-      artifacts
+      artifacts,
     };
   }
 }
@@ -1211,7 +1210,7 @@ export function createMemberActionExecutors(): Record<
   return {
     [BLOCK_MEMBER_ACTION_TYPE]: new BlockMemberActionExecutor(),
     [UNBLOCK_MEMBER_ACTION_TYPE]: new UnblockMemberActionExecutor(),
-    [REPORT_MEMBER_ACTION_TYPE]: new ReportMemberActionExecutor()
+    [REPORT_MEMBER_ACTION_TYPE]: new ReportMemberActionExecutor(),
   };
 }
 
@@ -1236,13 +1235,13 @@ export class LinkedInMembersService {
     if (!targetProfile) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        "targetProfile is required."
+        "targetProfile is required.",
       );
     }
 
     const target = {
       profile_name: profileName,
-      target_profile: targetProfile
+      target_profile: targetProfile,
     };
 
     return this.runtime.twoPhaseCommit.prepare({
@@ -1255,16 +1254,14 @@ export class LinkedInMembersService {
         ...(input.payload ? { payload: input.payload } : {}),
         rate_limit: peekRateLimitPreview(
           this.runtime.rateLimiter,
-          getMemberRateLimitConfig(input.actionType)
-        )
+          getMemberRateLimitConfig(input.actionType),
+        ),
       },
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 
-  prepareBlockMember(
-    input: PrepareBlockMemberInput
-  ): {
+  prepareBlockMember(input: PrepareBlockMemberInput): {
     preparedActionId: string;
     confirmToken: string;
     expiresAtMs: number;
@@ -1275,13 +1272,11 @@ export class LinkedInMembersService {
       targetProfile: input.targetProfile,
       summary: `Block LinkedIn member ${normalizeText(input.targetProfile)}`,
       ...(input.profileName ? { profileName: input.profileName } : {}),
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 
-  prepareUnblockMember(
-    input: PrepareUnblockMemberInput
-  ): {
+  prepareUnblockMember(input: PrepareUnblockMemberInput): {
     preparedActionId: string;
     confirmToken: string;
     expiresAtMs: number;
@@ -1292,13 +1287,11 @@ export class LinkedInMembersService {
       targetProfile: input.targetProfile,
       summary: `Unblock LinkedIn member ${normalizeText(input.targetProfile)}`,
       ...(input.profileName ? { profileName: input.profileName } : {}),
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 
-  prepareReportMember(
-    input: PrepareReportMemberInput
-  ): {
+  prepareReportMember(input: PrepareReportMemberInput): {
     preparedActionId: string;
     confirmToken: string;
     expiresAtMs: number;
@@ -1313,10 +1306,10 @@ export class LinkedInMembersService {
       summary: `Report LinkedIn member ${normalizeText(input.targetProfile)} for ${reason}`,
       payload: {
         reason,
-        ...(details ? { details } : {})
+        ...(details ? { details } : {}),
       },
       ...(input.profileName ? { profileName: input.profileName } : {}),
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 }

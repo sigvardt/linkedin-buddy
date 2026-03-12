@@ -2,37 +2,34 @@ import { LinkedInBuddyError } from "./errors.js";
 import {
   LIKE_POST_ACTION_TYPE,
   normalizeLinkedInFeedReaction,
-  type LinkedInFeedReaction
+  type LinkedInFeedReaction,
 } from "./linkedinFeed.js";
 import {
   SEND_INVITATION_ACTION_TYPE,
-  type LinkedInPendingInvitation
+  type LinkedInPendingInvitation,
 } from "./linkedinConnections.js";
 import { FOLLOWUP_AFTER_ACCEPT_ACTION_TYPE } from "./linkedinFollowups.js";
 import {
   normalizeLinkedInProfileUrl,
-  resolveProfileUrl
+  resolveProfileUrl,
 } from "./linkedinProfile.js";
 import {
   CREATE_POST_ACTION_TYPE,
-  normalizeLinkedInPostVisibility
+  normalizeLinkedInPostVisibility,
 } from "./linkedinPosts.js";
 import type {
   LinkedInWriteValidationActionDefinition,
   ScenarioPrepareResult,
-  WriteValidationScenarioDefinition
+  WriteValidationScenarioDefinition,
 } from "./writeValidationShared.js";
 import {
   SEND_MESSAGE_ACTION_TYPE,
-  WRITE_VALIDATION_FEED_URL
+  WRITE_VALIDATION_FEED_URL,
 } from "./writeValidationShared.js";
 import type { WriteValidationAccountTargets } from "./writeValidationAccounts.js";
+import { normalizeText } from "./shared.js";
 
 const WRITE_VALIDATION_OPERATOR_NOTE = "Tier 3 write-validation harness";
-
-function normalizeText(value: string | null | undefined): string {
-  return (value ?? "").replace(/\s+/gu, " ").trim();
-}
 
 function createWriteValidationTag(): string {
   return new Date().toISOString();
@@ -51,7 +48,7 @@ function resolveThreadUrl(thread: string): string {
   if (!trimmedThread) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "Thread identifier is required."
+      "Thread identifier is required.",
     );
   }
 
@@ -59,7 +56,7 @@ function resolveThreadUrl(thread: string): string {
     const parsedUrl = new URL(trimmedThread);
     return `${parsedUrl.origin}${parsedUrl.pathname}${parsedUrl.search}`.replace(
       /\/$/u,
-      "/"
+      "/",
     );
   }
 
@@ -73,7 +70,7 @@ function resolveThreadUrl(thread: string): string {
 function getRequiredTarget<T>(
   targets: WriteValidationAccountTargets,
   actionType: keyof WriteValidationAccountTargets,
-  accountId: string
+  accountId: string,
 ): T {
   const target = targets[actionType];
   if (target !== undefined) {
@@ -85,24 +82,24 @@ function getRequiredTarget<T>(
     `Write-validation account "${accountId}" is missing targets.${String(actionType)} in config.json.`,
     {
       account_id: accountId,
-      missing_target_key: actionType
-    }
+      missing_target_key: actionType,
+    },
   );
 }
 
 function matchPendingInvitation(
   invitations: LinkedInPendingInvitation[],
-  targetProfile: string
+  targetProfile: string,
 ): LinkedInPendingInvitation | null {
   const normalizedTargetProfile = normalizeLinkedInProfileUrl(
-    resolveProfileUrl(targetProfile)
+    resolveProfileUrl(targetProfile),
   );
   const targetSlug =
     /\/in\/([^/?#]+)/u.exec(normalizedTargetProfile)?.[1] ?? null;
 
   for (const invitation of invitations) {
     const normalizedInvitationProfile = normalizeLinkedInProfileUrl(
-      resolveProfileUrl(invitation.profile_url)
+      resolveProfileUrl(invitation.profile_url),
     );
 
     if (normalizedInvitationProfile === normalizedTargetProfile) {
@@ -121,7 +118,9 @@ function matchPendingInvitation(
   return null;
 }
 
-function extractRecentMessageText(messages: readonly { text: string }[]): string | null {
+function extractRecentMessageText(
+  messages: readonly { text: string }[],
+): string | null {
   const lastMessage = [...messages]
     .reverse()
     .find((message) => normalizeText(message.text).length > 0);
@@ -140,32 +139,32 @@ export const WRITE_VALIDATION_SCENARIOS = [
     validateConfig(account) {
       void normalizeLinkedInPostVisibility(
         account.targets["post.create"]?.visibility,
-        "connections"
+        "connections",
       );
     },
     async prepare(runtime, account) {
       const visibility = normalizeLinkedInPostVisibility(
         account.targets["post.create"]?.visibility,
-        "connections"
+        "connections",
       );
       const text = buildWriteValidationPostText();
       const prepared = await runtime.posts.prepareCreate({
         profileName: account.profileName,
         text,
         visibility,
-        operatorNote: WRITE_VALIDATION_OPERATOR_NOTE
+        operatorNote: WRITE_VALIDATION_OPERATOR_NOTE,
       });
 
       return {
         prepared,
         beforeScreenshotUrl: WRITE_VALIDATION_FEED_URL,
         cleanupGuidance: [
-          "Delete the validation post manually after review if you do not want it to remain in the feed."
+          "Delete the validation post manually after review if you do not want it to remain in the feed.",
         ],
         verificationContext: {
           post_text: text,
-          visibility
-        }
+          visibility,
+        },
       } satisfies ScenarioPrepareResult;
     },
     resolveAfterScreenshotUrl(_account, _prepared, confirmed) {
@@ -188,17 +187,19 @@ export const WRITE_VALIDATION_SCENARIOS = [
           source: "post_publish_result",
           message: "Post publish result did not include a published_post_url.",
           details: {
-            result: confirmed.result
-          }
+            result: confirmed.result,
+          },
         };
       }
 
       const post = await runtime.feed.viewPost({
         profileName: account.profileName,
-        postUrl: publishedPostUrl
+        postUrl: publishedPostUrl,
       });
 
-      const verified = normalizeText(post.text).includes(normalizeText(expectedText));
+      const verified = normalizeText(post.text).includes(
+        normalizeText(expectedText),
+      );
 
       return {
         verified,
@@ -209,10 +210,10 @@ export const WRITE_VALIDATION_SCENARIOS = [
           : "Published post could not be matched by text in the feed after confirmation.",
         details: {
           post_url: publishedPostUrl,
-          observed_text: post.text
-        }
+          observed_text: post.text,
+        },
       };
-    }
+    },
   },
   {
     actionType: SEND_INVITATION_ACTION_TYPE,
@@ -237,18 +238,18 @@ export const WRITE_VALIDATION_SCENARIOS = [
         profileName: account.profileName,
         targetProfile: target.targetProfile,
         ...(target.note ? { note: target.note } : {}),
-        operatorNote: WRITE_VALIDATION_OPERATOR_NOTE
+        operatorNote: WRITE_VALIDATION_OPERATOR_NOTE,
       });
 
       return {
         prepared,
         beforeScreenshotUrl: resolveProfileUrl(target.targetProfile),
         cleanupGuidance: [
-          "Withdraw the validation invitation manually after review if the recipient should not keep it pending."
+          "Withdraw the validation invitation manually after review if the recipient should not keep it pending.",
         ],
         verificationContext: {
-          target_profile: target.targetProfile
-        }
+          target_profile: target.targetProfile,
+        },
       } satisfies ScenarioPrepareResult;
     },
     resolveAfterScreenshotUrl(_account, prepared) {
@@ -264,19 +265,25 @@ export const WRITE_VALIDATION_SCENARIOS = [
           verified: false,
           state_synced: false,
           source: "connections.listPendingInvitations",
-          message: "Connection target profile was missing from the verification context.",
-          details: {}
+          message:
+            "Connection target profile was missing from the verification context.",
+          details: {},
         };
       }
 
       const invitations = await runtime.connections.listPendingInvitations({
         profileName: account.profileName,
-        filter: "sent"
+        filter: "sent",
       });
-      const matchedInvitation = matchPendingInvitation(invitations, targetProfile);
+      const matchedInvitation = matchPendingInvitation(
+        invitations,
+        targetProfile,
+      );
       const stateRow = runtime.db.getSentInvitationState({
         profileName: account.profileName,
-        profileUrlKey: normalizeLinkedInProfileUrl(resolveProfileUrl(targetProfile))
+        profileUrlKey: normalizeLinkedInProfileUrl(
+          resolveProfileUrl(targetProfile),
+        ),
       });
 
       return {
@@ -290,10 +297,10 @@ export const WRITE_VALIDATION_SCENARIOS = [
         details: {
           target_profile: targetProfile,
           matched_invitation: matchedInvitation,
-          state_synced: stateRow !== undefined
-        }
+          state_synced: stateRow !== undefined,
+        },
       };
-    }
+    },
   },
   {
     actionType: SEND_MESSAGE_ACTION_TYPE,
@@ -320,7 +327,7 @@ export const WRITE_VALIDATION_SCENARIOS = [
         profileName: account.profileName,
         thread: target.thread,
         text,
-        operatorNote: WRITE_VALIDATION_OPERATOR_NOTE
+        operatorNote: WRITE_VALIDATION_OPERATOR_NOTE,
       });
 
       return {
@@ -330,8 +337,8 @@ export const WRITE_VALIDATION_SCENARIOS = [
         verificationContext: {
           message_text: text,
           participant_pattern: target.participantPattern,
-          thread: target.thread
-        }
+          thread: target.thread,
+        },
       } satisfies ScenarioPrepareResult;
     },
     resolveAfterScreenshotUrl(_account, prepared) {
@@ -348,14 +355,14 @@ export const WRITE_VALIDATION_SCENARIOS = [
           state_synced: null,
           source: "inbox.getThread",
           message: "Message verification context was incomplete.",
-          details: {}
+          details: {},
         };
       }
 
       const detail = await runtime.inbox.getThread({
         profileName: account.profileName,
         thread,
-        limit: 8
+        limit: 8,
       });
       const recentMessageText = extractRecentMessageText(detail.messages);
       const verified = recentMessageText === normalizeText(expectedText);
@@ -370,10 +377,10 @@ export const WRITE_VALIDATION_SCENARIOS = [
         details: {
           thread_id: detail.thread_id,
           recent_message_text: recentMessageText,
-          expected_text: expectedText
-        }
+          expected_text: expectedText,
+        },
       };
-    }
+    },
   },
   {
     actionType: FOLLOWUP_AFTER_ACCEPT_ACTION_TYPE,
@@ -397,7 +404,7 @@ export const WRITE_VALIDATION_SCENARIOS = [
           profileName: account.profileName,
           profileUrlKey: target.profileUrlKey,
           refreshState: true,
-          operatorNote: WRITE_VALIDATION_OPERATOR_NOTE
+          operatorNote: WRITE_VALIDATION_OPERATOR_NOTE,
         });
 
       if (!preparedFollowup) {
@@ -407,8 +414,8 @@ export const WRITE_VALIDATION_SCENARIOS = [
           {
             account_id: account.id,
             profile_name: account.profileName,
-            profile_url_key: target.profileUrlKey
-          }
+            profile_url_key: target.profileUrlKey,
+          },
         );
       }
 
@@ -417,13 +424,13 @@ export const WRITE_VALIDATION_SCENARIOS = [
           preparedActionId: preparedFollowup.preparedActionId,
           confirmToken: preparedFollowup.confirmToken,
           expiresAtMs: preparedFollowup.expiresAtMs,
-          preview: preparedFollowup.preview
+          preview: preparedFollowup.preview,
         },
         beforeScreenshotUrl: resolveProfileUrl(target.profileUrlKey),
         cleanupGuidance: [],
         verificationContext: {
-          profile_url_key: target.profileUrlKey
-        }
+          profile_url_key: target.profileUrlKey,
+        },
       } satisfies ScenarioPrepareResult;
     },
     resolveAfterScreenshotUrl(_account, prepared, confirmed) {
@@ -445,13 +452,13 @@ export const WRITE_VALIDATION_SCENARIOS = [
           state_synced: false,
           source: "followups.confirm_result",
           message: "Follow-up verification context was incomplete.",
-          details: {}
+          details: {},
         };
       }
 
       const stateRow = runtime.db.getSentInvitationState({
         profileName: account.profileName,
-        profileUrlKey
+        profileUrlKey,
       });
 
       return {
@@ -465,10 +472,10 @@ export const WRITE_VALIDATION_SCENARIOS = [
         details: {
           profile_url_key: profileUrlKey,
           followup_confirmed_at: stateRow?.followup_confirmed_at ?? null,
-          confirm_result: confirmed.result
-        }
+          confirm_result: confirmed.result,
+        },
       };
-    }
+    },
   },
   {
     actionType: LIKE_POST_ACTION_TYPE,
@@ -494,19 +501,19 @@ export const WRITE_VALIDATION_SCENARIOS = [
         profileName: account.profileName,
         postUrl: target.postUrl,
         reaction,
-        operatorNote: WRITE_VALIDATION_OPERATOR_NOTE
+        operatorNote: WRITE_VALIDATION_OPERATOR_NOTE,
       });
 
       return {
         prepared,
         beforeScreenshotUrl: target.postUrl,
         cleanupGuidance: [
-          "Remove the validation reaction manually after review if you do not want it to remain on the post."
+          "Remove the validation reaction manually after review if you do not want it to remain on the post.",
         ],
         verificationContext: {
           post_url: target.postUrl,
-          reaction
-        }
+          reaction,
+        },
       } satisfies ScenarioPrepareResult;
     },
     resolveAfterScreenshotUrl(_account, prepared) {
@@ -526,11 +533,11 @@ export const WRITE_VALIDATION_SCENARIOS = [
           : "Reaction executor did not report the target reaction as active after confirmation.",
         details: {
           confirm_result: confirmed.result,
-          reaction
-        }
+          reaction,
+        },
       };
-    }
-  }
+    },
+  },
 ] satisfies readonly WriteValidationScenarioDefinition[];
 
 /** Public metadata projection derived from the full scenario implementations. */
@@ -540,6 +547,6 @@ export const LINKEDIN_WRITE_VALIDATION_ACTIONS: readonly LinkedInWriteValidation
       actionType,
       expectedOutcome,
       riskClass,
-      summary
-    })
+      summary,
+    }),
   );

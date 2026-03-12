@@ -4,14 +4,13 @@ import {
   createReadStream,
   mkdirSync,
   realpathSync,
-  statSync
+  statSync,
 } from "node:fs";
 import path from "node:path";
 import {
   errors as playwrightErrors,
-  type BrowserContext,
   type Locator,
-  type Page
+  type Page,
 } from "playwright-core";
 import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
@@ -26,16 +25,24 @@ import {
   createConfirmRateLimitMessage,
   peekRateLimitPreview,
   type ConsumeRateLimitInput,
-  type RateLimiter
+  type RateLimiter,
 } from "./rateLimiter.js";
 import type { LinkedInSelectorLocale } from "./selectorLocale.js";
 import { getLinkedInSelectorPhrases } from "./selectorLocale.js";
+import {
+  escapeCssAttributeValue,
+  escapeRegExp,
+  getOrCreatePage,
+  isAbsoluteUrl,
+  isRecord,
+  normalizeText,
+} from "./shared.js";
 import type {
   ActionExecutor,
   ActionExecutorInput,
   ActionExecutorResult,
   PreparedActionResult,
-  TwoPhaseCommitService
+  TwoPhaseCommitService,
 } from "./twoPhaseCommit.js";
 
 export interface LinkedInExperience {
@@ -104,78 +111,78 @@ const PROFILE_RATE_LIMIT_CONFIGS = {
   [UPDATE_PROFILE_INTRO_ACTION_TYPE]: {
     counterKey: "linkedin.profile.update_intro",
     windowSizeMs: 24 * 60 * 60 * 1000,
-    limit: 10
+    limit: 10,
   },
   [UPDATE_PROFILE_SETTINGS_ACTION_TYPE]: {
     counterKey: "linkedin.profile.update_settings",
     windowSizeMs: 24 * 60 * 60 * 1000,
-    limit: 10
+    limit: 10,
   },
   [UPDATE_PROFILE_PUBLIC_PROFILE_ACTION_TYPE]: {
     counterKey: "linkedin.profile.update_public_profile",
     windowSizeMs: 24 * 60 * 60 * 1000,
-    limit: 10
+    limit: 10,
   },
   [UPSERT_PROFILE_SECTION_ITEM_ACTION_TYPE]: {
     counterKey: "linkedin.profile.upsert_section_item",
     windowSizeMs: 24 * 60 * 60 * 1000,
-    limit: 10
+    limit: 10,
   },
   [REMOVE_PROFILE_SECTION_ITEM_ACTION_TYPE]: {
     counterKey: "linkedin.profile.remove_section_item",
     windowSizeMs: 24 * 60 * 60 * 1000,
-    limit: 10
+    limit: 10,
   },
   [UPLOAD_PROFILE_PHOTO_ACTION_TYPE]: {
     counterKey: "linkedin.profile.upload_photo",
     windowSizeMs: 24 * 60 * 60 * 1000,
-    limit: 5
+    limit: 5,
   },
   [UPLOAD_PROFILE_BANNER_ACTION_TYPE]: {
     counterKey: "linkedin.profile.upload_banner",
     windowSizeMs: 24 * 60 * 60 * 1000,
-    limit: 5
+    limit: 5,
   },
   [ADD_PROFILE_FEATURED_ACTION_TYPE]: {
     counterKey: "linkedin.profile.featured_add",
     windowSizeMs: 24 * 60 * 60 * 1000,
-    limit: 10
+    limit: 10,
   },
   [REMOVE_PROFILE_FEATURED_ACTION_TYPE]: {
     counterKey: "linkedin.profile.featured_remove",
     windowSizeMs: 24 * 60 * 60 * 1000,
-    limit: 10
+    limit: 10,
   },
   [REORDER_PROFILE_FEATURED_ACTION_TYPE]: {
     counterKey: "linkedin.profile.featured_reorder",
     windowSizeMs: 24 * 60 * 60 * 1000,
-    limit: 10
+    limit: 10,
   },
   [ADD_PROFILE_SKILL_ACTION_TYPE]: {
     counterKey: "linkedin.profile.skill_add",
     windowSizeMs: 24 * 60 * 60 * 1000,
-    limit: 10
+    limit: 10,
   },
   [REORDER_PROFILE_SKILLS_ACTION_TYPE]: {
     counterKey: "linkedin.profile.skills_reorder",
     windowSizeMs: 24 * 60 * 60 * 1000,
-    limit: 10
+    limit: 10,
   },
   [ENDORSE_PROFILE_SKILL_ACTION_TYPE]: {
     counterKey: "linkedin.profile.skill_endorse",
     windowSizeMs: 24 * 60 * 60 * 1000,
-    limit: 30
+    limit: 30,
   },
   [REQUEST_PROFILE_RECOMMENDATION_ACTION_TYPE]: {
     counterKey: "linkedin.profile.recommendation_request",
     windowSizeMs: 24 * 60 * 60 * 1000,
-    limit: 5
+    limit: 5,
   },
   [WRITE_PROFILE_RECOMMENDATION_ACTION_TYPE]: {
     counterKey: "linkedin.profile.recommendation_write",
     windowSizeMs: 24 * 60 * 60 * 1000,
-    limit: 5
-  }
+    limit: 5,
+  },
 } as const satisfies Record<string, ConsumeRateLimitInput>;
 
 export const LINKEDIN_PROFILE_SECTION_TYPES = [
@@ -186,13 +193,13 @@ export const LINKEDIN_PROFILE_SECTION_TYPES = [
   "languages",
   "projects",
   "volunteer_experience",
-  "honors_awards"
+  "honors_awards",
 ] as const;
 
 export const LINKEDIN_PROFILE_FEATURED_ITEM_KINDS = [
   "link",
   "media",
-  "post"
+  "post",
 ] as const;
 
 export type LinkedInProfileSectionType =
@@ -322,7 +329,8 @@ export interface PrepareUpdateProfilePublicProfileInput {
 }
 
 export type PrepareUpdateSettingsInput = PrepareUpdateProfileSettingsInput;
-export type PrepareUpdatePublicProfileInput = PrepareUpdateProfilePublicProfileInput;
+export type PrepareUpdatePublicProfileInput =
+  PrepareUpdateProfilePublicProfileInput;
 
 export interface PrepareUpsertSectionItemInput {
   profileName?: string;
@@ -409,8 +417,7 @@ export interface PrepareWriteRecommendationInput {
   operatorNote?: string;
 }
 
-export interface LinkedInProfileExecutorRuntime
-  extends LinkedInProfileRuntimeBase {
+export interface LinkedInProfileExecutorRuntime extends LinkedInProfileRuntimeBase {
   artifacts: ArtifactHelpers;
   confirmFailureArtifacts: ConfirmFailureArtifactConfig;
 }
@@ -486,27 +493,29 @@ const FEATURED_MEDIA_UPLOAD_EXTENSIONS = [
   ".doc",
   ".docx",
   ".ppt",
-  ".pptx"
+  ".pptx",
 ] as const;
 
 const PROFILE_UPLOAD_MIME_TYPES: Record<string, string> = {
   ".doc": "application/msword",
-  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".docx":
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   ".gif": "image/gif",
   ".jpeg": "image/jpeg",
   ".jpg": "image/jpeg",
   ".pdf": "application/pdf",
   ".png": "image/png",
   ".ppt": "application/vnd.ms-powerpoint",
-  ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+  ".pptx":
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 };
 
 export const PROFILE_GLOBAL_ADD_SECTION_CONTROL = {
   labels: {
     en: ["Add profile section", "Add section"],
-    da: ["Tilføj profilsektion", "Tilføj sektion"]
+    da: ["Tilføj profilsektion", "Tilføj sektion"],
   },
-  roles: ["button", "link"]
+  roles: ["button", "link"],
 } as const;
 
 export const PROFILE_TOP_CARD_HEADING_SELECTORS = [
@@ -517,67 +526,70 @@ export const PROFILE_TOP_CARD_HEADING_SELECTORS = [
   "h2",
   "h1",
   "[role='heading'][aria-level='1']",
-  "[role='heading'][aria-level='2']"
+  "[role='heading'][aria-level='2']",
 ] as const;
 
 export const PROFILE_TOP_CARD_STRUCTURAL_SELECTORS = [
   "section[componentkey*='topcard' i]",
-  "div[componentkey*='topcard' i]"
+  "div[componentkey*='topcard' i]",
 ] as const;
 
 const PROFILE_ACTION_LABELS = {
   add: {
     en: ["Add"],
-    da: ["Tilføj"]
+    da: ["Tilføj"],
   },
   addProfileSection: PROFILE_GLOBAL_ADD_SECTION_CONTROL.labels,
   edit: {
     en: ["Edit"],
-    da: ["Rediger"]
+    da: ["Rediger"],
   },
   delete: {
     en: ["Delete", "Remove"],
-    da: ["Slet", "Fjern"]
+    da: ["Slet", "Fjern"],
   },
   more: {
     en: ["More", "More actions"],
-    da: ["Mere", "Flere handlinger"]
+    da: ["Mere", "Flere handlinger"],
   },
   save: {
     en: ["Save", "Done", "Apply", "Save photo"],
-    da: ["Gem", "Færdig", "Udført", "Anvend"]
+    da: ["Gem", "Færdig", "Udført", "Anvend"],
   },
   close: {
     en: ["Close", "Dismiss"],
-    da: ["Luk"]
-  }
+    da: ["Luk"],
+  },
 } as const;
 
 const PROFILE_INTRO_ACTION_LABELS = {
   edit: {
     en: ["Edit intro", "Edit profile intro", "Edit introduction"],
-    da: ["Rediger intro", "Rediger profilintro", "Rediger introduktion"]
-  }
+    da: ["Rediger intro", "Rediger profilintro", "Rediger introduktion"],
+  },
 } as const;
 
-const PROFILE_INTRO_EDIT_HREF_PATTERNS = ["/edit/intro/", "/edit/forms/intro/"] as const;
+const PROFILE_INTRO_EDIT_HREF_PATTERNS = [
+  "/edit/intro/",
+  "/edit/forms/intro/",
+] as const;
 
 const PROFILE_FEATURED_LABELS = {
   section: {
     en: ["Featured"],
-    da: ["Fremhævet", "Udvalgte"]
+    da: ["Fremhævet", "Udvalgte"],
   },
   addLink: {
     en: ["Add a link", "Add link", "Link"],
-    da: ["Tilføj et link", "Tilføj link", "Link"]
+    da: ["Tilføj et link", "Tilføj link", "Link"],
   },
   addMedia: {
     en: ["Add media", "Media", "Upload media"],
-    da: ["Tilføj medier", "Tilføj medie", "Medier"]
+    da: ["Tilføj medier", "Tilføj medie", "Medier"],
   },
   addPost: {
     en: ["Add a post", "Add post", "Post"],
-    da: ["Tilføj et opslag", "Tilføj opslag", "Opslag"]
+    da: ["Tilføj et opslag", "Tilføj opslag", "Opslag"],
   },
   remove: {
     en: [
@@ -585,14 +597,10 @@ const PROFILE_FEATURED_LABELS = {
       "Remove from Featured",
       "Remove from profile",
       "Remove from top of profile",
-      "Unfeature"
+      "Unfeature",
     ],
-    da: [
-      "Fjern fra fremhævede",
-      "Fjern fra udvalgte",
-      "Fjern fra profilen"
-    ]
-  }
+    da: ["Fjern fra fremhævede", "Fjern fra udvalgte", "Fjern fra profilen"],
+  },
 } as const;
 
 const PROFILE_MEDIA_LABELS = {
@@ -603,7 +611,7 @@ const PROFILE_MEDIA_LABELS = {
       "Add photo",
       "Change photo",
       "Edit photo",
-      "Upload photo"
+      "Upload photo",
     ],
     da: [
       "Profilbillede",
@@ -611,8 +619,8 @@ const PROFILE_MEDIA_LABELS = {
       "Tilføj billede",
       "Skift billede",
       "Rediger billede",
-      "Upload billede"
-    ]
+      "Upload billede",
+    ],
   },
   banner: {
     en: [
@@ -621,7 +629,7 @@ const PROFILE_MEDIA_LABELS = {
       "Banner",
       "Add a cover image",
       "Change cover image",
-      "Edit cover image"
+      "Edit cover image",
     ],
     da: [
       "Baggrundsbillede",
@@ -629,8 +637,8 @@ const PROFILE_MEDIA_LABELS = {
       "Banner",
       "Tilføj forsidebillede",
       "Skift forsidebillede",
-      "Rediger forsidebillede"
-    ]
+      "Rediger forsidebillede",
+    ],
   },
   upload: {
     en: [
@@ -643,7 +651,7 @@ const PROFILE_MEDIA_LABELS = {
       "Change photo",
       "Edit photo",
       "Select photo",
-      "Select image"
+      "Select image",
     ],
     da: [
       "Upload billede",
@@ -652,9 +660,9 @@ const PROFILE_MEDIA_LABELS = {
       "Tilføj billede",
       "Skift billede",
       "Rediger billede",
-      "Vælg billede"
-    ]
-  }
+      "Vælg billede",
+    ],
+  },
 } as const;
 
 export const PROFILE_MEDIA_STRUCTURAL_SELECTORS = {
@@ -662,16 +670,17 @@ export const PROFILE_MEDIA_STRUCTURAL_SELECTORS = {
     "button.profile-photo-edit__edit-btn",
     ".profile-photo-edit button",
     ".pv-top-card__photo-wrapper .profile-photo-edit button",
-    ".pv-top-card__edit-photo button"
+    ".pv-top-card__edit-photo button",
   ],
   banner: [
     ".profile-topcard-background-image-edit__icon button",
     ".profile-topcard-background-image-edit__button button",
-    "[id^='cover-photo-dropdown-button-trigger-']"
-  ]
+    "[id^='cover-photo-dropdown-button-trigger-']",
+  ],
 } as const;
 
-const PROFILE_DIALOG_ROOT_SELECTOR = "dialog[data-testid='dialog'], [role='dialog'], dialog";
+const PROFILE_DIALOG_ROOT_SELECTOR =
+  "dialog[data-testid='dialog'], [role='dialog'], dialog";
 
 export const PROFILE_INTRO_EDITOR_SURFACE_SELECTORS = {
   topCardHeadings: PROFILE_TOP_CARD_HEADING_SELECTORS,
@@ -681,14 +690,14 @@ export const PROFILE_INTRO_EDITOR_SURFACE_SELECTORS = {
     "[data-testid='lazy-column']",
     "form",
     "main",
-    "body"
-  ]
+    "body",
+  ],
 } as const;
 
 const PROFILE_SKILL_LABELS = {
   section: {
     en: ["Skills"],
-    da: ["Kompetencer", "Færdigheder"]
+    da: ["Kompetencer", "Færdigheder"],
   },
   add: {
     en: ["Add skill", "Add a skill", "Add skills", "Skill"],
@@ -696,17 +705,17 @@ const PROFILE_SKILL_LABELS = {
       "Tilføj færdighed",
       "Tilføj en færdighed",
       "Tilføj kompetence",
-      "Tilføj kompetencer"
-    ]
+      "Tilføj kompetencer",
+    ],
   },
   showAll: {
     en: ["Show all skills", "Show all"],
-    da: ["Vis alle færdigheder", "Vis alle kompetencer", "Vis alle"]
+    da: ["Vis alle færdigheder", "Vis alle kompetencer", "Vis alle"],
   },
   endorse: {
     en: ["Endorse"],
-    da: ["Anerkend", "Støt", "Anbefal"]
-  }
+    da: ["Anerkend", "Støt", "Anbefal"],
+  },
 } as const;
 
 const PROFILE_RECOMMENDATION_LABELS = {
@@ -714,42 +723,42 @@ const PROFILE_RECOMMENDATION_LABELS = {
     en: [
       "Request a recommendation",
       "Request recommendation",
-      "Ask for a recommendation"
+      "Ask for a recommendation",
     ],
-    da: ["Bed om en anbefaling", "Anmod om en anbefaling"]
+    da: ["Bed om en anbefaling", "Anmod om en anbefaling"],
   },
   write: {
     en: ["Recommend", "Write a recommendation", "Give recommendation"],
-    da: ["Anbefal", "Skriv en anbefaling", "Giv en anbefaling"]
+    da: ["Anbefal", "Skriv en anbefaling", "Giv en anbefaling"],
   },
   next: {
     en: ["Next", "Continue"],
-    da: ["Næste", "Fortsæt"]
+    da: ["Næste", "Fortsæt"],
   },
   send: {
     en: ["Send", "Submit"],
-    da: ["Send", "Indsend"]
+    da: ["Send", "Indsend"],
   },
   relationshipField: {
     en: ["Relationship", "Relationship to"],
-    da: ["Relation", "Forhold"]
+    da: ["Relation", "Forhold"],
   },
   positionField: {
     en: ["Position at the time", "Position"],
-    da: ["Stilling på det tidspunkt", "Stilling"]
+    da: ["Stilling på det tidspunkt", "Stilling"],
   },
   companyField: {
     en: ["Company at the time", "Company"],
-    da: ["Virksomhed på det tidspunkt", "Virksomhed"]
+    da: ["Virksomhed på det tidspunkt", "Virksomhed"],
   },
   messageField: {
     en: ["Message", "Add a message", "Personal message"],
-    da: ["Besked", "Tilføj en besked", "Personlig besked"]
+    da: ["Besked", "Tilføj en besked", "Personlig besked"],
   },
   textField: {
     en: ["Recommendation", "Write a recommendation"],
-    da: ["Anbefaling", "Skriv en anbefaling"]
-  }
+    da: ["Anbefaling", "Skriv en anbefaling"],
+  },
 } as const;
 
 const PROFILE_SECTION_LABELS: Record<
@@ -758,68 +767,68 @@ const PROFILE_SECTION_LABELS: Record<
 > = {
   about: {
     en: ["About"],
-    da: ["Om"]
+    da: ["Om"],
   },
   experience: {
     en: ["Experience"],
-    da: ["Erfaring"]
+    da: ["Erfaring"],
   },
   education: {
     en: ["Education"],
-    da: ["Uddannelse"]
+    da: ["Uddannelse"],
   },
   certifications: {
     en: [
       "Licenses & certifications",
       "Licenses and certifications",
-      "Certifications"
+      "Certifications",
     ],
-    da: ["Licenser og certificeringer", "Certificeringer"]
+    da: ["Licenser og certificeringer", "Certificeringer"],
   },
   languages: {
     en: ["Languages"],
-    da: ["Sprog"]
+    da: ["Sprog"],
   },
   projects: {
     en: ["Projects"],
-    da: ["Projekter"]
+    da: ["Projekter"],
   },
   volunteer_experience: {
     en: ["Volunteer experience", "Volunteering"],
-    da: ["Frivilligt arbejde"]
+    da: ["Frivilligt arbejde"],
   },
   honors_awards: {
     en: ["Honors & awards", "Honours & awards", "Awards"],
-    da: ["Udmærkelser og priser", "Priser"]
-  }
+    da: ["Udmærkelser og priser", "Priser"],
+  },
 };
 
 const PROFILE_INTRO_FIELD_DEFINITIONS: readonly EditableFieldDefinition[] = [
   {
     key: "firstName",
     aliases: ["firstName", "first_name", "First name", "Fornavn"],
-    control: "text"
+    control: "text",
   },
   {
     key: "lastName",
     aliases: ["lastName", "last_name", "Last name", "Efternavn"],
-    control: "text"
+    control: "text",
   },
   {
     key: "headline",
     aliases: ["headline", "Headline", "Overskrift"],
-    control: "text"
+    control: "text",
   },
   {
     key: "location",
     aliases: ["location", "Location", "City", "Lokation", "By"],
-    control: "text"
-  }
+    control: "text",
+  },
 ] as const;
 
 const PROFILE_INTRO_LOCATION_FIELD_DEFINITION =
   PROFILE_INTRO_FIELD_DEFINITIONS.find(
-    (definition) => definition.key === "location"
+    (definition) => definition.key === "location",
   )!;
 
 const PROFILE_INTRO_LOCATION_COUNTRY_FIELD_DEFINITION = {
@@ -832,28 +841,28 @@ const PROFILE_INTRO_LOCATION_COUNTRY_FIELD_DEFINITION = {
     "Country",
     "Land/område",
     "Land/region",
-    "Land"
+    "Land",
   ],
-  control: "text"
+  control: "text",
 } as const satisfies EditableFieldDefinition;
 
 const PROFILE_INTRO_LOCATION_CITY_FIELD_DEFINITION = {
   key: "city",
   aliases: ["city", "City", "City/District", "Town/City", "By"],
-  control: "text"
+  control: "text",
 } as const satisfies EditableFieldDefinition;
 
 const PROFILE_SETTINGS_FIELD_DEFINITIONS = [
   {
     key: "industry",
     aliases: ["industry", "Industry", "Professional category", "Branche"],
-    control: "select"
-  }
+    control: "select",
+  },
 ] as const satisfies readonly EditableFieldDefinition[];
 
 const PROFILE_INTRO_EDITOR_FIELD_DEFINITIONS = [
   ...PROFILE_INTRO_FIELD_DEFINITIONS,
-  ...PROFILE_SETTINGS_FIELD_DEFINITIONS
+  ...PROFILE_SETTINGS_FIELD_DEFINITIONS,
 ] as const satisfies readonly EditableFieldDefinition[];
 
 const PROFILE_SECTION_FIELD_DEFINITIONS: Record<
@@ -864,14 +873,14 @@ const PROFILE_SECTION_FIELD_DEFINITIONS: Record<
     {
       key: "text",
       aliases: ["text", "about", "summary", "description", "Om", "Beskrivelse"],
-      control: "textarea"
-    }
+      control: "textarea",
+    },
   ],
   experience: [
     {
       key: "title",
       aliases: ["title", "Title", "Titel"],
-      control: "text"
+      control: "text",
     },
     {
       key: "company",
@@ -880,24 +889,24 @@ const PROFILE_SECTION_FIELD_DEFINITIONS: Record<
         "Company",
         "Company or organization",
         "Virksomhed",
-        "Virksomhed eller organisation"
+        "Virksomhed eller organisation",
       ],
-      control: "text"
+      control: "text",
     },
     {
       key: "location",
       aliases: ["location", "Location", "Lokation"],
-      control: "text"
+      control: "text",
     },
     {
       key: "description",
       aliases: ["description", "Description", "Beskrivelse"],
-      control: "textarea"
+      control: "textarea",
     },
     {
       key: "employmentType",
       aliases: ["employmentType", "Employment type", "Ansættelsestype"],
-      control: "select"
+      control: "select",
     },
     {
       key: "currentlyWorkingHere",
@@ -906,78 +915,83 @@ const PROFILE_SECTION_FIELD_DEFINITIONS: Record<
         "current",
         "I am currently working in this role",
         "I currently work here",
-        "Jeg arbejder i øjeblikket i denne rolle"
+        "Jeg arbejder i øjeblikket i denne rolle",
       ],
-      control: "checkbox"
+      control: "checkbox",
     },
     {
       key: "startMonth",
       aliases: ["startMonth", "Start month", "Startmåned"],
-      control: "select"
+      control: "select",
     },
     {
       key: "startYear",
       aliases: ["startYear", "Start year", "Startår"],
-      control: "text"
+      control: "text",
     },
     {
       key: "endMonth",
       aliases: ["endMonth", "End month", "Slutmåned"],
-      control: "select"
+      control: "select",
     },
     {
       key: "endYear",
       aliases: ["endYear", "End year", "Slutår"],
-      control: "text"
-    }
+      control: "text",
+    },
   ],
   education: [
     {
       key: "school",
       aliases: ["school", "School", "Skole"],
-      control: "text"
+      control: "text",
     },
     {
       key: "degree",
       aliases: ["degree", "Degree", "Grad"],
-      control: "text"
+      control: "text",
     },
     {
       key: "fieldOfStudy",
-      aliases: ["fieldOfStudy", "field_of_study", "Field of study", "Studieretning"],
-      control: "text"
+      aliases: [
+        "fieldOfStudy",
+        "field_of_study",
+        "Field of study",
+        "Studieretning",
+      ],
+      control: "text",
     },
     {
       key: "description",
       aliases: ["description", "Description", "Beskrivelse"],
-      control: "textarea"
+      control: "textarea",
     },
     {
       key: "startMonth",
       aliases: ["startMonth", "Start month", "Startmåned"],
-      control: "select"
+      control: "select",
     },
     {
       key: "startYear",
       aliases: ["startYear", "Start year", "Startår"],
-      control: "text"
+      control: "text",
     },
     {
       key: "endMonth",
       aliases: ["endMonth", "End month", "Slutmåned"],
-      control: "select"
+      control: "select",
     },
     {
       key: "endYear",
       aliases: ["endYear", "End year", "Slutår"],
-      control: "text"
-    }
+      control: "text",
+    },
   ],
   certifications: [
     {
       key: "name",
       aliases: ["name", "Name", "Navn"],
-      control: "text"
+      control: "text",
     },
     {
       key: "issuingOrganization",
@@ -985,85 +999,85 @@ const PROFILE_SECTION_FIELD_DEFINITIONS: Record<
         "issuingOrganization",
         "issuing_organization",
         "Issuing organization",
-        "Udstedende organisation"
+        "Udstedende organisation",
       ],
-      control: "text"
+      control: "text",
     },
     {
       key: "issueMonth",
       aliases: ["issueMonth", "Issue month", "Udstedelsesmåned"],
-      control: "select"
+      control: "select",
     },
     {
       key: "issueYear",
       aliases: ["issueYear", "Issue year", "Udstedelsesår"],
-      control: "text"
+      control: "text",
     },
     {
       key: "credentialId",
       aliases: ["credentialId", "credential_id", "Credential ID"],
-      control: "text"
+      control: "text",
     },
     {
       key: "credentialUrl",
       aliases: ["credentialUrl", "credential_url", "Credential URL"],
-      control: "text"
-    }
+      control: "text",
+    },
   ],
   languages: [
     {
       key: "name",
       aliases: ["name", "language", "Language", "Sprog"],
-      control: "text"
+      control: "text",
     },
     {
       key: "proficiency",
       aliases: ["proficiency", "Proficiency", "Færdighedsniveau"],
-      control: "select"
-    }
+      control: "select",
+    },
   ],
   projects: [
     {
       key: "title",
       aliases: ["title", "name", "Project name", "Name", "Navn"],
-      control: "text"
+      control: "text",
     },
     {
       key: "url",
       aliases: ["url", "projectUrl", "project_url", "Project URL"],
-      control: "text"
+      control: "text",
     },
     {
       key: "description",
       aliases: ["description", "Description", "Beskrivelse"],
-      control: "textarea"
+      control: "textarea",
     },
     {
       key: "startMonth",
       aliases: ["startMonth", "Start month", "Startmåned"],
-      control: "select"
+      control: "select",
     },
     {
       key: "startYear",
       aliases: ["startYear", "Start year", "Startår"],
-      control: "text"
+      control: "text",
     },
     {
       key: "endMonth",
       aliases: ["endMonth", "End month", "Slutmåned"],
-      control: "select"
+      control: "select",
     },
     {
       key: "endYear",
       aliases: ["endYear", "End year", "Slutår"],
-      control: "text"
-    }
+      control: "text",
+    },
   ],
   volunteer_experience: [
     {
       key: "role",
       aliases: ["role", "Role", "Rolle"],
-      control: "text"
+      control: "text",
     },
     {
       key: "organization",
@@ -1071,107 +1085,107 @@ const PROFILE_SECTION_FIELD_DEFINITIONS: Record<
         "organization",
         "Organisation",
         "Organization",
-        "Virksomhed eller organisation"
+        "Virksomhed eller organisation",
       ],
-      control: "text"
+      control: "text",
     },
     {
       key: "cause",
       aliases: ["cause", "Cause", "Sag"],
-      control: "select"
+      control: "select",
     },
     {
       key: "description",
       aliases: ["description", "Description", "Beskrivelse"],
-      control: "textarea"
+      control: "textarea",
     },
     {
       key: "startMonth",
       aliases: ["startMonth", "Start month", "Startmåned"],
-      control: "select"
+      control: "select",
     },
     {
       key: "startYear",
       aliases: ["startYear", "Start year", "Startår"],
-      control: "text"
+      control: "text",
     },
     {
       key: "endMonth",
       aliases: ["endMonth", "End month", "Slutmåned"],
-      control: "select"
+      control: "select",
     },
     {
       key: "endYear",
       aliases: ["endYear", "End year", "Slutår"],
-      control: "text"
-    }
+      control: "text",
+    },
   ],
   honors_awards: [
     {
       key: "title",
       aliases: ["title", "Title", "Titel"],
-      control: "text"
+      control: "text",
     },
     {
       key: "issuer",
       aliases: ["issuer", "Issuer", "Udsteder"],
-      control: "text"
+      control: "text",
     },
     {
       key: "issueMonth",
       aliases: ["issueMonth", "Issue month", "Udstedelsesmåned"],
-      control: "select"
+      control: "select",
     },
     {
       key: "issueYear",
       aliases: ["issueYear", "Issue year", "Udstedelsesår"],
-      control: "text"
+      control: "text",
     },
     {
       key: "description",
       aliases: ["description", "Description", "Beskrivelse"],
-      control: "textarea"
-    }
-  ]
+      control: "textarea",
+    },
+  ],
 };
 
 const FEATURED_LINK_FIELD_DEFINITIONS = [
   {
     key: "url",
     aliases: ["url", "link", "Link", "Link URL", "Website", "Website URL"],
-    control: "text"
+    control: "text",
   },
   {
     key: "title",
     aliases: ["title", "Title", "Name", "Navn"],
-    control: "text"
+    control: "text",
   },
   {
     key: "description",
     aliases: ["description", "Description", "Beskrivelse"],
-    control: "textarea"
-  }
+    control: "textarea",
+  },
 ] as const satisfies readonly EditableFieldDefinition[];
 
 const FEATURED_MEDIA_FIELD_DEFINITIONS = [
   {
     key: "title",
     aliases: ["title", "Title", "Name", "Navn"],
-    control: "text"
+    control: "text",
   },
   {
     key: "description",
     aliases: ["description", "Description", "Beskrivelse"],
-    control: "textarea"
-  }
+    control: "textarea",
+  },
 ] as const satisfies readonly EditableFieldDefinition[];
 
 const SKILL_FIELD_DEFINITIONS = [
   {
     key: "skillName",
     aliases: ["skillName", "skill", "Skill", "Skills"],
-    control: "text"
-  }
+    control: "text",
+  },
 ] as const satisfies readonly EditableFieldDefinition[];
 
 const RECOMMENDATION_COMMON_FIELD_DEFINITIONS = [
@@ -1181,25 +1195,20 @@ const RECOMMENDATION_COMMON_FIELD_DEFINITIONS = [
       "relationship",
       "Relationship",
       "Relationship to",
-      "Your relationship"
+      "Your relationship",
     ],
-    control: "select"
+    control: "select",
   },
   {
     key: "position",
-    aliases: [
-      "position",
-      "Position",
-      "Position at the time",
-      "Your position"
-    ],
-    control: "select"
+    aliases: ["position", "Position", "Position at the time", "Your position"],
+    control: "select",
   },
   {
     key: "company",
     aliases: ["company", "Company", "Company at the time"],
-    control: "select"
-  }
+    control: "select",
+  },
 ] as const satisfies readonly EditableFieldDefinition[];
 
 const RECOMMENDATION_REQUEST_FIELD_DEFINITIONS = [
@@ -1207,24 +1216,29 @@ const RECOMMENDATION_REQUEST_FIELD_DEFINITIONS = [
   {
     key: "message",
     aliases: ["message", "Message", "Add a message", "Personal message"],
-    control: "textarea"
-  }
+    control: "textarea",
+  },
 ] as const satisfies readonly EditableFieldDefinition[];
 
 const RECOMMENDATION_WRITE_FIELD_DEFINITIONS = [
   ...RECOMMENDATION_COMMON_FIELD_DEFINITIONS,
   {
     key: "text",
-    aliases: ["text", "recommendation", "Recommendation", "Write a recommendation"],
-    control: "textarea"
-  }
+    aliases: [
+      "text",
+      "recommendation",
+      "Recommendation",
+      "Write a recommendation",
+    ],
+    control: "textarea",
+  },
 ] as const satisfies readonly EditableFieldDefinition[];
 
 const LINKEDIN_PUBLIC_PROFILE_SETTINGS_URL =
   "https://www.linkedin.com/public-profile/settings/?trk=d_flagship3_profile_self_view_public_profile";
 
 function buildFallbackEditablePublicProfile(
-  profile: LinkedInProfile
+  profile: LinkedInProfile,
 ): LinkedInProfileEditablePublicProfile {
   const vanityName = normalizeText(profile.vanity_name);
   return {
@@ -1235,13 +1249,13 @@ function buildFallbackEditablePublicProfile(
         : profile.profile_url
           ? normalizeLinkedInProfileUrl(profile.profile_url)
           : null,
-    supported_fields: ["vanityName", "publicProfileUrl"]
+    supported_fields: ["vanityName", "publicProfileUrl"],
   };
 }
 
 async function extractEditableSettings(
   page: Page,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<LinkedInProfileEditableSettings> {
   let surface: ProfileEditorSurface | null = null;
 
@@ -1250,19 +1264,19 @@ async function extractEditableSettings(
     const industryField = await waitForDialogFieldLocator(
       surface.root,
       PROFILE_SETTINGS_FIELD_DEFINITIONS[0],
-      10_000
+      10_000,
     );
 
     return {
       industry: industryField
         ? await readEditableFieldValue(industryField)
         : "",
-      supported_fields: ["industry"]
+      supported_fields: ["industry"],
     };
   } catch {
     return {
       industry: "",
-      supported_fields: ["industry"]
+      supported_fields: ["industry"],
     };
   } finally {
     if (surface) {
@@ -1271,11 +1285,9 @@ async function extractEditableSettings(
   }
 }
 
-function normalizeText(value: string | null | undefined): string {
-  return (value ?? "").replace(/\s+/g, " ").trim();
-}
-
-export async function readEditableFieldValue(locator: Locator): Promise<string> {
+export async function readEditableFieldValue(
+  locator: Locator,
+): Promise<string> {
   try {
     return normalizeText(
       await locator.evaluate((element) => {
@@ -1299,7 +1311,7 @@ export async function readEditableFieldValue(locator: Locator): Promise<string> 
         const readString = (value: unknown): string =>
           typeof value === "string" ? value : "";
         const readSelectedOptionText = (
-          target: EvaluatedFieldElement
+          target: EvaluatedFieldElement,
         ): string => {
           const firstOption = target.selectedOptions?.[0];
           if (!firstOption) {
@@ -1308,16 +1320,16 @@ export async function readEditableFieldValue(locator: Locator): Promise<string> 
 
           return normalize(
             readString(firstOption.label) ||
-              readString(firstOption.textContent)
+              readString(firstOption.textContent),
           );
         };
-        const readElementValue = (
-          target: EvaluatedFieldElement
-        ): string => {
+        const readElementValue = (target: EvaluatedFieldElement): string => {
           const tagName = target.tagName.toLowerCase();
           const directValue = normalize(readString(target.value));
           const valueAttribute = normalize(target.getAttribute("value"));
-          const ariaValueText = normalize(target.getAttribute("aria-valuetext"));
+          const ariaValueText = normalize(
+            target.getAttribute("aria-valuetext"),
+          );
           const ariaLabel = normalize(target.getAttribute("aria-label"));
           const textContent = normalize(target.textContent);
 
@@ -1331,17 +1343,23 @@ export async function readEditableFieldValue(locator: Locator): Promise<string> 
             );
           }
 
-          return ariaValueText || directValue || valueAttribute || textContent || ariaLabel;
+          return (
+            ariaValueText ||
+            directValue ||
+            valueAttribute ||
+            textContent ||
+            ariaLabel
+          );
         };
 
         const nestedControl = element.querySelector(
-          "input, textarea, select, [role='combobox']"
+          "input, textarea, select, [role='combobox']",
         );
 
         return readElementValue(
-          (nestedControl ?? element) as EvaluatedFieldElement
+          (nestedControl ?? element) as EvaluatedFieldElement,
         );
-      })
+      }),
     );
   } catch {
     return "";
@@ -1355,7 +1373,7 @@ function getProfileRateLimitConfig(actionType: string): ConsumeRateLimitInput {
 
   if (!config) {
     throw new LinkedInBuddyError("UNKNOWN", "Missing rate limit policy.", {
-      action_type: actionType
+      action_type: actionType,
     });
   }
 
@@ -1367,7 +1385,7 @@ function createProfileRateLimitGuard(
   actionType: string,
   actionId: string,
   profileName: string,
-  details: Record<string, unknown>
+  details: Record<string, unknown>,
 ): () => void {
   return () =>
     consumeRateLimitOrThrow(runtime.rateLimiter, {
@@ -1376,13 +1394,9 @@ function createProfileRateLimitGuard(
       details: {
         action_id: actionId,
         profile_name: profileName,
-        ...details
-      }
+        ...details,
+      },
     });
-}
-
-function isAbsoluteUrl(value: string): boolean {
-  return /^https?:\/\//i.test(value);
 }
 
 export function resolveProfileUrl(target: string | undefined): string {
@@ -1399,7 +1413,7 @@ export function resolveProfileUrl(target: string | undefined): string {
       throw asLinkedInBuddyError(
         error,
         "ACTION_PRECONDITION_FAILED",
-        "Profile URL must be a valid URL."
+        "Profile URL must be a valid URL.",
       );
     }
 
@@ -1410,7 +1424,7 @@ export function resolveProfileUrl(target: string | undefined): string {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "Profile URL must point to linkedin.com/in/.",
-        { target: trimmedTarget }
+        { target: trimmedTarget },
       );
     }
 
@@ -1455,11 +1469,13 @@ function getArtifactsRootDir(artifacts: ArtifactHelpers): string {
 }
 
 function slugifyPathComponent(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "") || "upload";
+  return (
+    value
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "upload"
+  );
 }
 
 async function computeFileSha256(filePath: string): Promise<string> {
@@ -1489,7 +1505,7 @@ function requireFilePath(value: string | undefined, label: string): string {
 
   throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
-    `${label} is required.`
+    `${label} is required.`,
   );
 }
 
@@ -1501,19 +1517,19 @@ function requireNonEmptyText(value: string | undefined, label: string): string {
 
   throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
-    `${label} is required.`
+    `${label} is required.`,
   );
 }
 
 function resolveExternalProfileTarget(
   target: string | undefined,
-  label: string
+  label: string,
 ): string {
   const normalizedTarget = requireNonEmptyText(target, label);
   if (normalizedTarget.toLowerCase() === "me") {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      `${label} must refer to another LinkedIn member.`
+      `${label} must refer to another LinkedIn member.`,
     );
   }
 
@@ -1533,26 +1549,29 @@ function normalizeSkillNames(skillNames: readonly string[]): string[] {
   if (normalizedSkillNames.length === 0) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "skillNames must include at least one non-empty skill name."
+      "skillNames must include at least one non-empty skill name.",
     );
   }
 
   if (new Set(normalizedSkillNames).size !== normalizedSkillNames.length) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "skillNames must be unique."
+      "skillNames must be unique.",
     );
   }
 
   return normalizedSkillNames;
 }
 
-function normalizeAbsoluteUrl(value: string | undefined, label: string): string {
+function normalizeAbsoluteUrl(
+  value: string | undefined,
+  label: string,
+): string {
   const normalizedValue = normalizeText(value);
   if (!normalizedValue) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      `${label} is required.`
+      `${label} is required.`,
     );
   }
 
@@ -1561,8 +1580,8 @@ function normalizeAbsoluteUrl(value: string | undefined, label: string): string 
       "ACTION_PRECONDITION_FAILED",
       `${label} must be an absolute URL.`,
       {
-        value: normalizedValue
-      }
+        value: normalizedValue,
+      },
     );
   }
 
@@ -1574,7 +1593,7 @@ function normalizeAbsoluteUrl(value: string | undefined, label: string): string 
     throw asLinkedInBuddyError(
       error,
       "ACTION_PRECONDITION_FAILED",
-      `${label} must be a valid URL.`
+      `${label} must be a valid URL.`,
     );
   }
 }
@@ -1599,8 +1618,8 @@ function normalizeLinkedInFeaturedPostUrl(value: string | undefined): string {
         "ACTION_PRECONDITION_FAILED",
         "Featured post URL must point to a LinkedIn post, article, or newsletter.",
         {
-          value: normalizedUrl
-        }
+          value: normalizedUrl,
+        },
       );
     }
 
@@ -1613,7 +1632,7 @@ function normalizeLinkedInFeaturedPostUrl(value: string | undefined): string {
     throw asLinkedInBuddyError(
       error,
       "ACTION_PRECONDITION_FAILED",
-      "Featured post URL must be a valid LinkedIn URL."
+      "Featured post URL must be a valid LinkedIn URL.",
     );
   }
 }
@@ -1621,7 +1640,7 @@ function normalizeLinkedInFeaturedPostUrl(value: string | undefined): string {
 function normalizeLinkedInVanityName(value: string | undefined): string {
   const normalizedValue = requireNonEmptyText(
     value,
-    "vanityName or publicProfileUrl"
+    "vanityName or publicProfileUrl",
   );
 
   if (!normalizedValue.includes("://")) {
@@ -1635,8 +1654,8 @@ function normalizeLinkedInVanityName(value: string | undefined): string {
         "ACTION_PRECONDITION_FAILED",
         "vanityName must be a LinkedIn vanity slug or linkedin.com/in/ URL.",
         {
-          value: normalizedValue
-        }
+          value: normalizedValue,
+        },
       );
     }
 
@@ -1655,8 +1674,8 @@ function normalizeLinkedInVanityName(value: string | undefined): string {
         "ACTION_PRECONDITION_FAILED",
         "publicProfileUrl must point to linkedin.com/in/<vanity-name>/.",
         {
-          value: normalizedValue
-        }
+          value: normalizedValue,
+        },
       );
     }
 
@@ -1669,7 +1688,7 @@ function normalizeLinkedInVanityName(value: string | undefined): string {
     throw asLinkedInBuddyError(
       error,
       "ACTION_PRECONDITION_FAILED",
-      "publicProfileUrl must be a valid LinkedIn profile URL."
+      "publicProfileUrl must be a valid LinkedIn profile URL.",
     );
   }
 }
@@ -1682,33 +1701,42 @@ function normalizePreparedPublicProfileInput(
   input: Pick<
     PrepareUpdateProfilePublicProfileInput,
     "vanityName" | "customProfileUrl" | "publicProfileUrl"
-  >
+  >,
 ): {
   vanityName: string;
   publicProfileUrl: string;
 } {
-  const rawValues = [input.vanityName, input.customProfileUrl, input.publicProfileUrl]
-    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+  const rawValues = [
+    input.vanityName,
+    input.customProfileUrl,
+    input.publicProfileUrl,
+  ]
+    .filter(
+      (value): value is string =>
+        typeof value === "string" && value.trim().length > 0,
+    )
     .map((value) => normalizeLinkedInVanityName(value));
 
   const [vanityName] = rawValues;
   if (!vanityName) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "Public profile update requires vanityName, customProfileUrl, or publicProfileUrl."
+      "Public profile update requires vanityName, customProfileUrl, or publicProfileUrl.",
     );
   }
 
-  if (rawValues.some((value) => value.toLowerCase() !== vanityName.toLowerCase())) {
+  if (
+    rawValues.some((value) => value.toLowerCase() !== vanityName.toLowerCase())
+  ) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "vanityName, customProfileUrl, and publicProfileUrl must all point to the same LinkedIn public profile URL."
+      "vanityName, customProfileUrl, and publicProfileUrl must all point to the same LinkedIn public profile URL.",
     );
   }
 
   return {
     vanityName,
-    publicProfileUrl: buildLinkedInPublicProfileUrl(vanityName)
+    publicProfileUrl: buildLinkedInPublicProfileUrl(vanityName),
   };
 }
 
@@ -1717,7 +1745,7 @@ async function stagePreparedUploadArtifact(
   filePath: string | undefined,
   label: string,
   allowedExtensions: readonly string[],
-  purpose: string
+  purpose: string,
 ): Promise<PreparedUploadArtifact> {
   const requestedPath = requireFilePath(filePath, `${label} filePath`);
 
@@ -1728,7 +1756,7 @@ async function stagePreparedUploadArtifact(
     throw asLinkedInBuddyError(
       error,
       "ACTION_PRECONDITION_FAILED",
-      `${label} file does not exist.`
+      `${label} file does not exist.`,
     );
   }
 
@@ -1738,8 +1766,8 @@ async function stagePreparedUploadArtifact(
       "ACTION_PRECONDITION_FAILED",
       `${label} filePath must point to a file.`,
       {
-        file_path: canonicalPath
-      }
+        file_path: canonicalPath,
+      },
     );
   }
 
@@ -1748,8 +1776,8 @@ async function stagePreparedUploadArtifact(
       "ACTION_PRECONDITION_FAILED",
       `${label} file must not be empty.`,
       {
-        file_path: canonicalPath
-      }
+        file_path: canonicalPath,
+      },
     );
   }
 
@@ -1760,8 +1788,8 @@ async function stagePreparedUploadArtifact(
       {
         file_path: canonicalPath,
         size_bytes: stats.size,
-        max_size_bytes: MAX_PROFILE_UPLOAD_BYTES
-      }
+        max_size_bytes: MAX_PROFILE_UPLOAD_BYTES,
+      },
     );
   }
 
@@ -1773,14 +1801,14 @@ async function stagePreparedUploadArtifact(
       {
         file_path: canonicalPath,
         extension,
-        allowed_extensions: [...allowedExtensions]
-      }
+        allowed_extensions: [...allowedExtensions],
+      },
     );
   }
 
   const sha256 = await computeFileSha256(canonicalPath);
   const relativePath = `linkedin/input-${purpose}-${Date.now()}-${slugifyPathComponent(
-    path.basename(canonicalPath, extension)
+    path.basename(canonicalPath, extension),
   )}${extension}`;
   const absolutePath = runtime.artifacts.resolve(relativePath);
   mkdirSync(path.dirname(absolutePath), { recursive: true });
@@ -1791,7 +1819,7 @@ async function stagePreparedUploadArtifact(
     purpose,
     file_name: path.basename(canonicalPath),
     size_bytes: stats.size,
-    sha256
+    sha256,
   });
 
   return {
@@ -1801,7 +1829,7 @@ async function stagePreparedUploadArtifact(
     extension,
     size_bytes: stats.size,
     sha256,
-    mime_type: mimeType
+    mime_type: mimeType,
   };
 }
 
@@ -1810,29 +1838,34 @@ async function resolvePreparedUploadArtifact(
   payload: Record<string, unknown>,
   key: string,
   label: string,
-  allowedExtensions: readonly string[]
+  allowedExtensions: readonly string[],
 ): Promise<PreparedUploadArtifact> {
   const uploadRecord = getPayloadRecord(payload, key, label);
   const absolutePath = normalizeText(
-    typeof uploadRecord.absolute_path === "string" ? uploadRecord.absolute_path : ""
+    typeof uploadRecord.absolute_path === "string"
+      ? uploadRecord.absolute_path
+      : "",
   );
   const expectedRelativePath = normalizeText(
-    typeof uploadRecord.relative_path === "string" ? uploadRecord.relative_path : ""
+    typeof uploadRecord.relative_path === "string"
+      ? uploadRecord.relative_path
+      : "",
   );
   const expectedFileName = normalizeText(
-    typeof uploadRecord.file_name === "string" ? uploadRecord.file_name : ""
+    typeof uploadRecord.file_name === "string" ? uploadRecord.file_name : "",
   );
   const expectedExtension = normalizeText(
-    typeof uploadRecord.extension === "string" ? uploadRecord.extension : ""
+    typeof uploadRecord.extension === "string" ? uploadRecord.extension : "",
   ).toLowerCase();
   const expectedSha256 = normalizeText(
-    typeof uploadRecord.sha256 === "string" ? uploadRecord.sha256 : ""
+    typeof uploadRecord.sha256 === "string" ? uploadRecord.sha256 : "",
   );
   const expectedMimeType = normalizeText(
-    typeof uploadRecord.mime_type === "string" ? uploadRecord.mime_type : ""
+    typeof uploadRecord.mime_type === "string" ? uploadRecord.mime_type : "",
   );
   const expectedSizeBytes =
-    typeof uploadRecord.size_bytes === "number" && Number.isFinite(uploadRecord.size_bytes)
+    typeof uploadRecord.size_bytes === "number" &&
+    Number.isFinite(uploadRecord.size_bytes)
       ? uploadRecord.size_bytes
       : NaN;
 
@@ -1847,18 +1880,23 @@ async function resolvePreparedUploadArtifact(
   ) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      `${label} payload is missing staged upload details.`
+      `${label} payload is missing staged upload details.`,
     );
   }
 
   const normalizedAbsolutePath = path.resolve(absolutePath);
-  if (!isPathWithinParent(getArtifactsRootDir(runtime.artifacts), normalizedAbsolutePath)) {
+  if (
+    !isPathWithinParent(
+      getArtifactsRootDir(runtime.artifacts),
+      normalizedAbsolutePath,
+    )
+  ) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} upload artifact escapes the assistant artifacts directory.`,
       {
-        artifact_path: normalizedAbsolutePath
-      }
+        artifact_path: normalizedAbsolutePath,
+      },
     );
   }
 
@@ -1868,8 +1906,8 @@ async function resolvePreparedUploadArtifact(
       "ACTION_PRECONDITION_FAILED",
       `${label} upload artifact is missing.`,
       {
-        artifact_path: normalizedAbsolutePath
-      }
+        artifact_path: normalizedAbsolutePath,
+      },
     );
   }
 
@@ -1881,8 +1919,8 @@ async function resolvePreparedUploadArtifact(
       {
         artifact_path: normalizedAbsolutePath,
         extension: actualExtension,
-        allowed_extensions: [...allowedExtensions]
-      }
+        allowed_extensions: [...allowedExtensions],
+      },
     );
   }
 
@@ -1893,8 +1931,8 @@ async function resolvePreparedUploadArtifact(
       {
         artifact_path: normalizedAbsolutePath,
         expected_size_bytes: expectedSizeBytes,
-        actual_size_bytes: stats.size
-      }
+        actual_size_bytes: stats.size,
+      },
     );
   }
 
@@ -1906,8 +1944,8 @@ async function resolvePreparedUploadArtifact(
       {
         artifact_path: normalizedAbsolutePath,
         expected_sha256: expectedSha256,
-        actual_sha256: actualSha256
-      }
+        actual_sha256: actualSha256,
+      },
     );
   }
 
@@ -1918,22 +1956,24 @@ async function resolvePreparedUploadArtifact(
     extension: actualExtension,
     size_bytes: stats.size,
     sha256: actualSha256,
-    mime_type: expectedMimeType
+    mime_type: expectedMimeType,
   };
 }
 
-function buildPreparedUploadPreview(upload: PreparedUploadArtifact): Record<string, unknown> {
+function buildPreparedUploadPreview(
+  upload: PreparedUploadArtifact,
+): Record<string, unknown> {
   return {
     file_name: upload.file_name,
     mime_type: upload.mime_type,
     size_bytes: upload.size_bytes,
     artifact_path: upload.relative_path,
-    sha256_prefix: upload.sha256.slice(0, 12)
+    sha256_prefix: upload.sha256.slice(0, 12),
   };
 }
 
 function normalizeProfileFeaturedItemKind(
-  value: string
+  value: string,
 ): LinkedInProfileFeaturedItemKind {
   const normalizedValue = normalizeFieldKey(value);
 
@@ -1955,15 +1995,15 @@ function normalizeProfileFeaturedItemKind(
         "ACTION_PRECONDITION_FAILED",
         `kind must be one of: ${LINKEDIN_PROFILE_FEATURED_ITEM_KINDS.join(", ")}.`,
         {
-          provided_kind: value
-        }
+          provided_kind: value,
+        },
       );
   }
 }
 
 function inferFeaturedItemKind(
   url: string | null,
-  rawText: string
+  rawText: string,
 ): LinkedInProfileFeaturedItemKind {
   const normalizedUrl = normalizeText(url);
   if (normalizedUrl) {
@@ -1985,7 +2025,11 @@ function inferFeaturedItemKind(
         return "post";
       }
 
-      if (isLinkedInMediaHost || pathname.includes("/dms/") || pathname.includes("/media/")) {
+      if (
+        isLinkedInMediaHost ||
+        pathname.includes("/dms/") ||
+        pathname.includes("/media/")
+      ) {
         return "media";
       }
 
@@ -1998,394 +2042,395 @@ function inferFeaturedItemKind(
   return /newsletter|article|post/i.test(rawText) ? "post" : "media";
 }
 
-async function getOrCreatePage(context: BrowserContext): Promise<Page> {
-  const existing = context.pages()[0];
-  if (existing) {
-    return existing;
-  }
-  return context.newPage();
-}
-
 /* eslint-disable no-undef -- DOM types (ParentNode, Element) are valid inside page.evaluate() */
 async function extractProfileData(
   page: Page,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<LinkedInProfile> {
   const visibleTopCardSummary = await extractVisibleTopCardSummary(page);
-  const extracted = await page.evaluate((sectionLabels) => {
-    const normalize = (value: string | null | undefined): string =>
-      (value ?? "").replace(/\s+/g, " ").trim();
-    const emptyProfile = {
-      profile_url: globalThis.window.location.href,
-      vanity_name: null,
-      full_name: "",
-      headline: "",
-      location: "",
-      about: "",
-      connection_degree: "",
-      experience: [],
-      education: []
-    };
+  const extracted = await page.evaluate(
+    (sectionLabels) => {
+      const normalize = (value: string | null | undefined): string =>
+        (value ?? "").replace(/\s+/g, " ").trim();
+      const emptyProfile = {
+        profile_url: globalThis.window.location.href,
+        vanity_name: null,
+        full_name: "",
+        headline: "",
+        location: "",
+        about: "",
+        connection_degree: "",
+        experience: [],
+        education: [],
+      };
 
-    const pickText = (
-      selectors: string[],
-      root: ParentNode = globalThis.document
-    ): string => {
-      for (const selector of selectors) {
-        const text = normalize(root.querySelector(selector)?.textContent);
-        if (text) {
-          return text;
+      const pickText = (
+        selectors: string[],
+        root: ParentNode = globalThis.document,
+      ): string => {
+        for (const selector of selectors) {
+          const text = normalize(root.querySelector(selector)?.textContent);
+          if (text) {
+            return text;
+          }
         }
-      }
-      return "";
-    };
+        return "";
+      };
 
-    const pickList = (
-      selectors: string[],
-      root: ParentNode = globalThis.document
-    ): string[] => {
-      for (const selector of selectors) {
-        const values = Array.from(root.querySelectorAll(selector))
-          .map((node) => normalize(node.textContent))
-          .filter((value) => value.length > 0);
-        if (values.length > 0) {
-          return values;
+      const pickList = (
+        selectors: string[],
+        root: ParentNode = globalThis.document,
+      ): string[] => {
+        for (const selector of selectors) {
+          const values = Array.from(root.querySelectorAll(selector))
+            .map((node) => normalize(node.textContent))
+            .filter((value) => value.length > 0);
+          if (values.length > 0) {
+            return values;
+          }
         }
-      }
-      return [];
-    };
-
-    const includesAnyLabel = (
-      value: string,
-      labels: string[]
-    ): boolean => {
-      const normalizedValue = normalize(value).toLowerCase();
-      return labels.some((label) => normalizedValue.includes(normalize(label).toLowerCase()));
-    };
-
-    const findSectionRoot = (id: string, labels: string[]): Element | null => {
-      const byId = globalThis.document.querySelector(`#${id}`);
-      if (byId) {
-        return byId.closest("section") ?? byId;
-      }
-
-      const sections = Array.from(
-        globalThis.document.querySelectorAll("section, div.pv-profile-card")
-      );
-      for (const section of sections) {
-        const heading = normalize(
-          section.querySelector("h2, h3, .pvs-header__title")?.textContent
-        );
-        if (includesAnyLabel(heading, labels)) {
-          return section;
-        }
-      }
-
-      return null;
-    };
-
-    const collectSectionItems = (sectionRoot: Element | null): Element[] => {
-      if (!sectionRoot) {
         return [];
-      }
+      };
 
-      const itemSelectors = [
-        ".pvs-list__paged-list-item",
-        ".pvs-list__item--line-separated",
-        "li.artdeco-list__item",
-        "li[class*='pvs-list__item']"
-      ];
-      for (const selector of itemSelectors) {
-        const items = Array.from(sectionRoot.querySelectorAll(selector));
-        if (items.length > 0) {
-          return items;
+      const includesAnyLabel = (value: string, labels: string[]): boolean => {
+        const normalizedValue = normalize(value).toLowerCase();
+        return labels.some((label) =>
+          normalizedValue.includes(normalize(label).toLowerCase()),
+        );
+      };
+
+      const findSectionRoot = (
+        id: string,
+        labels: string[],
+      ): Element | null => {
+        const byId = globalThis.document.querySelector(`#${id}`);
+        if (byId) {
+          return byId.closest("section") ?? byId;
         }
-      }
 
-      return Array.from(sectionRoot.querySelectorAll("li"));
-    };
-
-    const textLooksLikeDuration = (value: string): boolean =>
-      /\b(present|\d+\s*(?:yr|yrs|year|years|mo|mos|month|months))\b/i.test(
-        value
-      );
-
-    try {
-      const vanityMatch = /\/in\/([^/]+)/.exec(
-        globalThis.window.location.pathname
-      );
-      const vanityNameRaw = vanityMatch?.[1];
-      let vanityName: string | null = null;
-      if (vanityNameRaw) {
-        try {
-          vanityName = decodeURIComponent(vanityNameRaw);
-        } catch {
-          vanityName = vanityNameRaw;
-        }
-      }
-
-      const nameSelectors = [
-        "h1.text-heading-xlarge",
-        "h1[class*='text-heading']",
-        "h1"
-      ];
-      const fullName = pickText(nameSelectors);
-      const nameElement =
-        globalThis.document.querySelector("h1.text-heading-xlarge") ??
-        globalThis.document.querySelector("h1[class*='text-heading']") ??
-        globalThis.document.querySelector("h1");
-      const headerContainer =
-        nameElement?.closest(".pv-text-details__left-panel") ??
-        nameElement?.parentElement?.parentElement ??
-        nameElement?.closest("section") ??
-        globalThis.document;
-
-      let headline = pickText(
-        [
-          ".text-body-medium[data-anonymize='headline']",
-          ".text-body-medium"
-        ],
-        headerContainer
-      );
-      if (!headline) {
-        headline = pickText([
-          ".text-body-medium[data-anonymize='headline']",
-          ".text-body-medium"
-        ]);
-      }
-
-      let location = pickText(
-        [
-          "span.text-body-small[data-anonymize='location']",
-          ".text-body-small.inline"
-        ],
-        headerContainer
-      );
-      if (!location) {
-        location = pickText([
-          "span.text-body-small[data-anonymize='location']",
-          ".text-body-small.inline"
-        ]);
-      }
-
-      let about = pickText([
-        "#about .inline-show-more-text span[aria-hidden='true']",
-        "#about .inline-show-more-text",
-        "#about ~ .display-flex .inline-show-more-text span[aria-hidden='true']",
-        "#about ~ .display-flex .inline-show-more-text"
-      ]);
-
-      if (!about) {
         const sections = Array.from(
-          globalThis.document.querySelectorAll("section, div")
+          globalThis.document.querySelectorAll("section, div.pv-profile-card"),
         );
         for (const section of sections) {
           const heading = normalize(
-            section.querySelector("h2, h3, .pvs-header__title")?.textContent
+            section.querySelector("h2, h3, .pvs-header__title")?.textContent,
           );
-          if (!heading || !includesAnyLabel(heading, sectionLabels.about)) {
-            continue;
-          }
-
-          about = pickText(
-            [
-              ".inline-show-more-text span[aria-hidden='true']",
-              ".inline-show-more-text",
-              ".pv-shared-text-with-see-more",
-              "p"
-            ],
-            section
-          );
-          if (about) {
-            break;
+          if (includesAnyLabel(heading, labels)) {
+            return section;
           }
         }
-      }
 
-      let connectionDegree = pickText([
-        ".dist-value",
-        ".distance-badge",
-        "[class*='distance']"
-      ]);
+        return null;
+      };
 
-      if (!connectionDegree) {
-        const bodyText = normalize(globalThis.document.body?.textContent);
-        const degreeMatch = /\b(1st|2nd|3rd\+?)\b/i.exec(bodyText);
-        connectionDegree = degreeMatch ? normalize(degreeMatch[1]) : "";
-      }
+      const collectSectionItems = (sectionRoot: Element | null): Element[] => {
+        if (!sectionRoot) {
+          return [];
+        }
 
-      const experienceSection = findSectionRoot(
-        "experience",
-        sectionLabels.experience
-      );
-      const experience = collectSectionItems(experienceSection)
-        .map((item) => {
-          const lines = pickList(
-            [
-              ".t-bold span[aria-hidden='true']",
-              ".t-normal span[aria-hidden='true']",
-              ".pvs-entity__caption-wrapper span[aria-hidden='true']",
-              ".pvs-entity__description-wrapper span[aria-hidden='true']",
-              ".inline-show-more-text span[aria-hidden='true']"
-            ],
-            item
-          );
-
-          const title =
-            pickText(
-              [
-                ".t-bold span[aria-hidden='true']",
-                ".t-bold",
-                "[data-field='title']"
-              ],
-              item
-            ) ?? "";
-          const company =
-            pickText(
-              [
-                ".t-normal span[aria-hidden='true']",
-                ".pv-entity__secondary-title",
-                "[data-field='company']"
-              ],
-              item
-            ) ?? "";
-          let duration = pickText(
-            [
-              ".pvs-entity__caption-wrapper[aria-hidden='true']",
-              ".pv-entity__date-range span:nth-child(2)",
-              "[data-field='date-range']"
-            ],
-            item
-          );
-          if (!duration) {
-            duration =
-              lines.find((line) => textLooksLikeDuration(line) && line !== company) ??
-              "";
+        const itemSelectors = [
+          ".pvs-list__paged-list-item",
+          ".pvs-list__item--line-separated",
+          "li.artdeco-list__item",
+          "li[class*='pvs-list__item']",
+        ];
+        for (const selector of itemSelectors) {
+          const items = Array.from(sectionRoot.querySelectorAll(selector));
+          if (items.length > 0) {
+            return items;
           }
+        }
 
-          let itemLocation = pickText(
-            [
-              ".pvs-entity__caption-wrapper + .pvs-entity__caption-wrapper span[aria-hidden='true']",
-              ".pv-entity__location span:nth-child(2)",
-              "[data-field='location']"
-            ],
-            item
-          );
-          if (!itemLocation) {
-            itemLocation =
-              lines.find(
-                (line) =>
-                  line !== title &&
-                  line !== company &&
-                  line !== duration &&
-                  !textLooksLikeDuration(line)
-              ) ?? "";
-          }
+        return Array.from(sectionRoot.querySelectorAll("li"));
+      };
 
-          const description = pickText(
-            [
-              ".pvs-entity__description-wrapper span[aria-hidden='true']",
-              ".inline-show-more-text span[aria-hidden='true']",
-              ".inline-show-more-text"
-            ],
-            item
-          );
-
-          return {
-            title,
-            company,
-            duration,
-            location: itemLocation,
-            description
-          };
-        })
-        .filter(
-          (item) =>
-            item.title ||
-            item.company ||
-            item.duration ||
-            item.location ||
-            item.description
+      const textLooksLikeDuration = (value: string): boolean =>
+        /\b(present|\d+\s*(?:yr|yrs|year|years|mo|mos|month|months))\b/i.test(
+          value,
         );
 
-      const educationSection = findSectionRoot(
-        "education",
-        sectionLabels.education
-      );
-      const education = collectSectionItems(educationSection)
-        .map((item) => {
-          const lines = pickList(
-            [
-              ".t-bold span[aria-hidden='true']",
-              ".t-normal span[aria-hidden='true']",
-              ".pvs-entity__caption-wrapper span[aria-hidden='true']"
-            ],
-            item
-          );
+      try {
+        const vanityMatch = /\/in\/([^/]+)/.exec(
+          globalThis.window.location.pathname,
+        );
+        const vanityNameRaw = vanityMatch?.[1];
+        let vanityName: string | null = null;
+        if (vanityNameRaw) {
+          try {
+            vanityName = decodeURIComponent(vanityNameRaw);
+          } catch {
+            vanityName = vanityNameRaw;
+          }
+        }
 
-          const school =
-            pickText(
+        const nameSelectors = [
+          "h1.text-heading-xlarge",
+          "h1[class*='text-heading']",
+          "h1",
+        ];
+        const fullName = pickText(nameSelectors);
+        const nameElement =
+          globalThis.document.querySelector("h1.text-heading-xlarge") ??
+          globalThis.document.querySelector("h1[class*='text-heading']") ??
+          globalThis.document.querySelector("h1");
+        const headerContainer =
+          nameElement?.closest(".pv-text-details__left-panel") ??
+          nameElement?.parentElement?.parentElement ??
+          nameElement?.closest("section") ??
+          globalThis.document;
+
+        let headline = pickText(
+          [".text-body-medium[data-anonymize='headline']", ".text-body-medium"],
+          headerContainer,
+        );
+        if (!headline) {
+          headline = pickText([
+            ".text-body-medium[data-anonymize='headline']",
+            ".text-body-medium",
+          ]);
+        }
+
+        let location = pickText(
+          [
+            "span.text-body-small[data-anonymize='location']",
+            ".text-body-small.inline",
+          ],
+          headerContainer,
+        );
+        if (!location) {
+          location = pickText([
+            "span.text-body-small[data-anonymize='location']",
+            ".text-body-small.inline",
+          ]);
+        }
+
+        let about = pickText([
+          "#about .inline-show-more-text span[aria-hidden='true']",
+          "#about .inline-show-more-text",
+          "#about ~ .display-flex .inline-show-more-text span[aria-hidden='true']",
+          "#about ~ .display-flex .inline-show-more-text",
+        ]);
+
+        if (!about) {
+          const sections = Array.from(
+            globalThis.document.querySelectorAll("section, div"),
+          );
+          for (const section of sections) {
+            const heading = normalize(
+              section.querySelector("h2, h3, .pvs-header__title")?.textContent,
+            );
+            if (!heading || !includesAnyLabel(heading, sectionLabels.about)) {
+              continue;
+            }
+
+            about = pickText(
+              [
+                ".inline-show-more-text span[aria-hidden='true']",
+                ".inline-show-more-text",
+                ".pv-shared-text-with-see-more",
+                "p",
+              ],
+              section,
+            );
+            if (about) {
+              break;
+            }
+          }
+        }
+
+        let connectionDegree = pickText([
+          ".dist-value",
+          ".distance-badge",
+          "[class*='distance']",
+        ]);
+
+        if (!connectionDegree) {
+          const bodyText = normalize(globalThis.document.body?.textContent);
+          const degreeMatch = /\b(1st|2nd|3rd\+?)\b/i.exec(bodyText);
+          connectionDegree = degreeMatch ? normalize(degreeMatch[1]) : "";
+        }
+
+        const experienceSection = findSectionRoot(
+          "experience",
+          sectionLabels.experience,
+        );
+        const experience = collectSectionItems(experienceSection)
+          .map((item) => {
+            const lines = pickList(
               [
                 ".t-bold span[aria-hidden='true']",
-                ".pv-entity__school-name",
-                "[data-field='school']"
-              ],
-              item
-            ) ?? "";
-          const degree =
-            pickText(
-              [
                 ".t-normal span[aria-hidden='true']",
-                ".pv-entity__degree-name span:nth-child(2)",
-                "[data-field='degree']"
+                ".pvs-entity__caption-wrapper span[aria-hidden='true']",
+                ".pvs-entity__description-wrapper span[aria-hidden='true']",
+                ".inline-show-more-text span[aria-hidden='true']",
               ],
-              item
-            ) ?? "";
-          const fieldOfStudy =
-            pickText(
-              [".pv-entity__fos span:nth-child(2)", "[data-field='field_of_study']"],
-              item
-            ) ?? "";
-          let dates = pickText(
-            [
-              ".pvs-entity__caption-wrapper[aria-hidden='true']",
-              ".pv-entity__dates span:nth-child(2)",
-              "[data-field='dates']"
-            ],
-            item
+              item,
+            );
+
+            const title =
+              pickText(
+                [
+                  ".t-bold span[aria-hidden='true']",
+                  ".t-bold",
+                  "[data-field='title']",
+                ],
+                item,
+              ) ?? "";
+            const company =
+              pickText(
+                [
+                  ".t-normal span[aria-hidden='true']",
+                  ".pv-entity__secondary-title",
+                  "[data-field='company']",
+                ],
+                item,
+              ) ?? "";
+            let duration = pickText(
+              [
+                ".pvs-entity__caption-wrapper[aria-hidden='true']",
+                ".pv-entity__date-range span:nth-child(2)",
+                "[data-field='date-range']",
+              ],
+              item,
+            );
+            if (!duration) {
+              duration =
+                lines.find(
+                  (line) => textLooksLikeDuration(line) && line !== company,
+                ) ?? "";
+            }
+
+            let itemLocation = pickText(
+              [
+                ".pvs-entity__caption-wrapper + .pvs-entity__caption-wrapper span[aria-hidden='true']",
+                ".pv-entity__location span:nth-child(2)",
+                "[data-field='location']",
+              ],
+              item,
+            );
+            if (!itemLocation) {
+              itemLocation =
+                lines.find(
+                  (line) =>
+                    line !== title &&
+                    line !== company &&
+                    line !== duration &&
+                    !textLooksLikeDuration(line),
+                ) ?? "";
+            }
+
+            const description = pickText(
+              [
+                ".pvs-entity__description-wrapper span[aria-hidden='true']",
+                ".inline-show-more-text span[aria-hidden='true']",
+                ".inline-show-more-text",
+              ],
+              item,
+            );
+
+            return {
+              title,
+              company,
+              duration,
+              location: itemLocation,
+              description,
+            };
+          })
+          .filter(
+            (item) =>
+              item.title ||
+              item.company ||
+              item.duration ||
+              item.location ||
+              item.description,
           );
-          if (!dates) {
-            dates = lines.find(textLooksLikeDuration) ?? "";
-          }
 
-          return {
-            school,
-            degree,
-            field_of_study: fieldOfStudy,
-            dates
-          };
-        })
-        .filter((item) => item.school || item.degree || item.field_of_study || item.dates);
+        const educationSection = findSectionRoot(
+          "education",
+          sectionLabels.education,
+        );
+        const education = collectSectionItems(educationSection)
+          .map((item) => {
+            const lines = pickList(
+              [
+                ".t-bold span[aria-hidden='true']",
+                ".t-normal span[aria-hidden='true']",
+                ".pvs-entity__caption-wrapper span[aria-hidden='true']",
+              ],
+              item,
+            );
 
-      return {
-        profile_url: globalThis.window.location.href,
-        vanity_name: vanityName,
-        full_name: fullName,
-        headline,
-        location,
-        about,
-        connection_degree: connectionDegree,
-        experience,
-        education
-      };
-    } catch {
-      return emptyProfile;
-    }
-  }, {
-    about: getLinkedInSelectorPhrases("about", selectorLocale),
-    experience: getLinkedInSelectorPhrases("experience", selectorLocale),
-    education: getLinkedInSelectorPhrases("education", selectorLocale)
-  });
+            const school =
+              pickText(
+                [
+                  ".t-bold span[aria-hidden='true']",
+                  ".pv-entity__school-name",
+                  "[data-field='school']",
+                ],
+                item,
+              ) ?? "";
+            const degree =
+              pickText(
+                [
+                  ".t-normal span[aria-hidden='true']",
+                  ".pv-entity__degree-name span:nth-child(2)",
+                  "[data-field='degree']",
+                ],
+                item,
+              ) ?? "";
+            const fieldOfStudy =
+              pickText(
+                [
+                  ".pv-entity__fos span:nth-child(2)",
+                  "[data-field='field_of_study']",
+                ],
+                item,
+              ) ?? "";
+            let dates = pickText(
+              [
+                ".pvs-entity__caption-wrapper[aria-hidden='true']",
+                ".pv-entity__dates span:nth-child(2)",
+                "[data-field='dates']",
+              ],
+              item,
+            );
+            if (!dates) {
+              dates = lines.find(textLooksLikeDuration) ?? "";
+            }
+
+            return {
+              school,
+              degree,
+              field_of_study: fieldOfStudy,
+              dates,
+            };
+          })
+          .filter(
+            (item) =>
+              item.school || item.degree || item.field_of_study || item.dates,
+          );
+
+        return {
+          profile_url: globalThis.window.location.href,
+          vanity_name: vanityName,
+          full_name: fullName,
+          headline,
+          location,
+          about,
+          connection_degree: connectionDegree,
+          experience,
+          education,
+        };
+      } catch {
+        return emptyProfile;
+      }
+    },
+    {
+      about: getLinkedInSelectorPhrases("about", selectorLocale),
+      experience: getLinkedInSelectorPhrases("experience", selectorLocale),
+      education: getLinkedInSelectorPhrases("education", selectorLocale),
+    },
+  );
 
   return {
     profile_url: normalizeText(extracted.profile_url),
@@ -2410,14 +2455,14 @@ async function extractProfileData(
       company: normalizeText(item.company),
       duration: normalizeText(item.duration),
       location: normalizeText(item.location),
-      description: normalizeText(item.description)
+      description: normalizeText(item.description),
     })),
     education: extracted.education.map((item) => ({
       school: normalizeText(item.school),
       degree: normalizeText(item.degree),
       field_of_study: normalizeText(item.field_of_study),
-      dates: normalizeText(item.dates)
-    }))
+      dates: normalizeText(item.dates),
+    })),
   };
 }
 /* eslint-enable no-undef */
@@ -2429,12 +2474,10 @@ interface LinkedInProfileTopCardSummary {
   connection_degree: string;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function dedupeStrings(values: readonly string[]): string[] {
-  return [...new Set(values.map((value) => normalizeText(value)).filter(Boolean))];
+  return [
+    ...new Set(values.map((value) => normalizeText(value)).filter(Boolean)),
+  ];
 }
 
 async function readFirstVisibleLocatorText(locator: Locator): Promise<string> {
@@ -2466,56 +2509,64 @@ async function readVisibleLocatorTexts(locator: Locator): Promise<string[]> {
 }
 
 function looksLikeLocationText(value: string): boolean {
-  return /,/.test(value) || /\b(?:region|area|district|county|province)\b/i.test(value);
+  return (
+    /,/.test(value) ||
+    /\b(?:region|area|district|county|province)\b/i.test(value)
+  );
 }
 
 function looksLikeProfileActionText(value: string): boolean {
   return /^(?:add|contact|edit|enhance|get started|learn more|open to|save|share|show|tell|try premium)\b/i.test(
-    value
+    value,
   );
 }
 
 export async function extractVisibleTopCardSummaryFromRoot(
-  root: Locator
+  root: Locator,
 ): Promise<LinkedInProfileTopCardSummary> {
   const fullName = await readFirstVisibleLocatorText(
-    root.locator("h1.text-heading-xlarge, h1[class*='text-heading'], h2, h1")
+    root.locator("h1.text-heading-xlarge, h1[class*='text-heading'], h2, h1"),
   );
   let headline = await readFirstVisibleLocatorText(
-    root.locator(".text-body-medium[data-anonymize='headline'], .text-body-medium")
+    root.locator(
+      ".text-body-medium[data-anonymize='headline'], .text-body-medium",
+    ),
   );
   let location = await readFirstVisibleLocatorText(
-    root.locator("span.text-body-small[data-anonymize='location'], .text-body-small.inline")
+    root.locator(
+      "span.text-body-small[data-anonymize='location'], .text-body-small.inline",
+    ),
   );
   const connectionDegree = await readFirstVisibleLocatorText(
-    root.locator(".dist-value, .distance-badge, [class*='distance']")
+    root.locator(".dist-value, .distance-badge, [class*='distance']"),
   );
 
   if (!headline) {
     headline = await readFirstVisibleLocatorText(
       root.locator(
-        "xpath=(.//*[self::h1 or self::h2]/ancestor::div[following-sibling::p][1]/following-sibling::p[normalize-space()][1])[1]"
-      )
+        "xpath=(.//*[self::h1 or self::h2]/ancestor::div[following-sibling::p][1]/following-sibling::p[normalize-space()][1])[1]",
+      ),
     );
   }
 
   if (!location) {
     location = await readFirstVisibleLocatorText(
       root.locator(
-        "xpath=(.//*[self::h1 or self::h2]/ancestor::div[following-sibling::p][1]/following-sibling::div[1]//*[self::p or self::span][normalize-space()][1])[1]"
-      )
+        "xpath=(.//*[self::h1 or self::h2]/ancestor::div[following-sibling::p][1]/following-sibling::div[1]//*[self::p or self::span][normalize-space()][1])[1]",
+      ),
     );
   }
 
   if (!headline || !location) {
-    const paragraphTexts = dedupeStrings(await readVisibleLocatorTexts(root.locator("p")));
+    const paragraphTexts = dedupeStrings(
+      await readVisibleLocatorTexts(root.locator("p")),
+    );
 
     if (!headline) {
       headline =
         paragraphTexts.find(
           (text) =>
-            !looksLikeLocationText(text) &&
-            !looksLikeProfileActionText(text)
+            !looksLikeLocationText(text) && !looksLikeProfileActionText(text),
         ) ?? "";
     }
 
@@ -2525,7 +2576,7 @@ export async function extractVisibleTopCardSummaryFromRoot(
           (text) =>
             text !== headline &&
             looksLikeLocationText(text) &&
-            !looksLikeProfileActionText(text)
+            !looksLikeProfileActionText(text),
         ) ?? "";
     }
   }
@@ -2534,12 +2585,12 @@ export async function extractVisibleTopCardSummaryFromRoot(
     full_name: fullName,
     headline,
     location,
-    connection_degree: connectionDegree
+    connection_degree: connectionDegree,
   };
 }
 
 async function extractVisibleTopCardSummary(
-  page: Page
+  page: Page,
 ): Promise<LinkedInProfileTopCardSummary> {
   try {
     const topCardRoot = await getTopCardRoot(page);
@@ -2549,7 +2600,7 @@ async function extractVisibleTopCardSummary(
       full_name: "",
       headline: "",
       location: "",
-      connection_degree: ""
+      connection_degree: "",
     };
   }
 }
@@ -2558,15 +2609,9 @@ function normalizeFieldKey(value: string): string {
   return value.replace(/[^a-z0-9]+/gi, "").toLowerCase();
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function escapeCssAttributeValue(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-}
-
-export function isProfileIntroEditHref(href: string | null | undefined): boolean {
+export function isProfileIntroEditHref(
+  href: string | null | undefined,
+): boolean {
   if (typeof href !== "string") {
     return false;
   }
@@ -2579,104 +2624,106 @@ export function isProfileIntroEditHref(href: string | null | undefined): boolean
   try {
     const resolvedUrl = new URL(normalizedHref, "https://www.linkedin.com");
     return PROFILE_INTRO_EDIT_HREF_PATTERNS.some((pattern) =>
-      resolvedUrl.pathname.includes(pattern)
+      resolvedUrl.pathname.includes(pattern),
     );
   } catch {
     return PROFILE_INTRO_EDIT_HREF_PATTERNS.some((pattern) =>
-      normalizedHref.includes(pattern)
+      normalizedHref.includes(pattern),
     );
   }
 }
 
 function buildProfileIntroEditHrefSelector(): string {
   return PROFILE_INTRO_EDIT_HREF_PATTERNS.map(
-    (pattern) => `a[href*="${escapeCssAttributeValue(pattern)}"]`
+    (pattern) => `a[href*="${escapeCssAttributeValue(pattern)}"]`,
   ).join(", ");
 }
 
 function buildTextRegex(labels: readonly string[], exact = false): RegExp {
   const normalizedLabels = dedupeStrings(labels);
-  const pattern = normalizedLabels.map((label) => escapeRegExp(label)).join("|");
+  const pattern = normalizedLabels
+    .map((label) => escapeRegExp(label))
+    .join("|");
   return new RegExp(exact ? `^(?:${pattern})$` : `(?:${pattern})`, "i");
 }
 
 function buildAriaLabelContainsSelector(
   tagName: string,
-  labels: readonly string[]
+  labels: readonly string[],
 ): string {
   return dedupeStrings(labels)
     .map(
       (label) =>
-        `${tagName}[aria-label*="${escapeCssAttributeValue(label)}" i]`
+        `${tagName}[aria-label*="${escapeCssAttributeValue(label)}" i]`,
     )
     .join(", ");
 }
 
 function getLocalizedLabels(
   labels: Record<LinkedInSelectorLocale, readonly string[]>,
-  locale: LinkedInSelectorLocale
+  locale: LinkedInSelectorLocale,
 ): string[] {
   return dedupeStrings([...(labels[locale] ?? labels.en), ...labels.en]);
 }
 
 function getUiActionLabels(
   action: keyof typeof PROFILE_ACTION_LABELS,
-  locale: LinkedInSelectorLocale
+  locale: LinkedInSelectorLocale,
 ): string[] {
   return getLocalizedLabels(PROFILE_ACTION_LABELS[action], locale);
 }
 
 function getIntroActionLabels(
   action: keyof typeof PROFILE_INTRO_ACTION_LABELS,
-  locale: LinkedInSelectorLocale
+  locale: LinkedInSelectorLocale,
 ): string[] {
   return getLocalizedLabels(PROFILE_INTRO_ACTION_LABELS[action], locale);
 }
 
 function getFeaturedActionLabels(
   action: keyof typeof PROFILE_FEATURED_LABELS,
-  locale: LinkedInSelectorLocale
+  locale: LinkedInSelectorLocale,
 ): string[] {
   return getLocalizedLabels(PROFILE_FEATURED_LABELS[action], locale);
 }
 
 function getProfileMediaActionLabels(
   action: keyof typeof PROFILE_MEDIA_LABELS,
-  locale: LinkedInSelectorLocale
+  locale: LinkedInSelectorLocale,
 ): string[] {
   return getLocalizedLabels(PROFILE_MEDIA_LABELS[action], locale);
 }
 
 function getSkillActionLabels(
   action: keyof typeof PROFILE_SKILL_LABELS,
-  locale: LinkedInSelectorLocale
+  locale: LinkedInSelectorLocale,
 ): string[] {
   return getLocalizedLabels(PROFILE_SKILL_LABELS[action], locale);
 }
 
 function getRecommendationActionLabels(
   action: keyof typeof PROFILE_RECOMMENDATION_LABELS,
-  locale: LinkedInSelectorLocale
+  locale: LinkedInSelectorLocale,
 ): string[] {
   return getLocalizedLabels(PROFILE_RECOMMENDATION_LABELS[action], locale);
 }
 
 function getSectionLabels(
   section: LinkedInProfileSectionType,
-  locale: LinkedInSelectorLocale
+  locale: LinkedInSelectorLocale,
 ): string[] {
   return getLocalizedLabels(PROFILE_SECTION_LABELS[section], locale);
 }
 
 function getSectionDisplayLabel(
   section: LinkedInProfileSectionType,
-  locale: LinkedInSelectorLocale
+  locale: LinkedInSelectorLocale,
 ): string {
   return getSectionLabels(section, locale)[0] ?? section;
 }
 
 function normalizeProfileSectionType(
-  value: string
+  value: string,
 ): LinkedInProfileSectionType {
   const normalized = normalizeFieldKey(value);
 
@@ -2699,7 +2746,7 @@ function normalizeProfileSectionType(
     ["honoursawards", "honors_awards"],
     ["honoraward", "honors_awards"],
     ["honouraward", "honors_awards"],
-    ["awards", "honors_awards"]
+    ["awards", "honors_awards"],
   ]);
 
   const section = sectionAliases.get(normalized);
@@ -2710,15 +2757,20 @@ function normalizeProfileSectionType(
   throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     `section must be one of: ${LINKEDIN_PROFILE_SECTION_TYPES.join(", ")}.`,
-    { provided_section: value }
+    { provided_section: value },
   );
 }
 
 function createProfileSectionItemFingerprint(
   input: Pick<
     DecodedProfileSectionItemId,
-    "section" | "sourceId" | "primaryText" | "secondaryText" | "tertiaryText" | "rawText"
-  >
+    | "section"
+    | "sourceId"
+    | "primaryText"
+    | "secondaryText"
+    | "tertiaryText"
+    | "rawText"
+  >,
 ): string {
   const hash = createHash("sha256");
   hash.update(input.section);
@@ -2736,7 +2788,7 @@ function createProfileSectionItemFingerprint(
 }
 
 function createProfileSectionItemId(
-  identity: DecodedProfileSectionItemId
+  identity: DecodedProfileSectionItemId,
 ): string {
   const payload = {
     v: 1,
@@ -2745,16 +2797,16 @@ function createProfileSectionItemId(
     primaryText: normalizeText(identity.primaryText),
     secondaryText: normalizeText(identity.secondaryText),
     tertiaryText: normalizeText(identity.tertiaryText),
-    rawText: normalizeText(identity.rawText)
+    rawText: normalizeText(identity.rawText),
   };
 
   return `${PROFILE_SECTION_ITEM_ID_PREFIX}${Buffer.from(
-    JSON.stringify(payload)
+    JSON.stringify(payload),
   ).toString("base64url")}`;
 }
 
 function decodeProfileSectionItemId(
-  itemId: string | undefined
+  itemId: string | undefined,
 ): DecodedProfileSectionItemId | null {
   if (!itemId || !itemId.startsWith(PROFILE_SECTION_ITEM_ID_PREFIX)) {
     return null;
@@ -2763,7 +2815,7 @@ function decodeProfileSectionItemId(
   try {
     const decoded = Buffer.from(
       itemId.slice(PROFILE_SECTION_ITEM_ID_PREFIX.length),
-      "base64url"
+      "base64url",
     ).toString("utf8");
     const parsed = JSON.parse(decoded) as unknown;
     if (!isRecord(parsed) || typeof parsed.section !== "string") {
@@ -2786,7 +2838,7 @@ function decodeProfileSectionItemId(
         : {}),
       ...(typeof parsed.rawText === "string"
         ? { rawText: normalizeText(parsed.rawText) }
-        : {})
+        : {}),
     };
   } catch {
     return null;
@@ -2797,7 +2849,7 @@ function createProfileFeaturedItemFingerprint(
   input: Pick<
     DecodedProfileFeaturedItemId,
     "kind" | "sourceId" | "url" | "title" | "subtitle" | "rawText"
-  >
+  >,
 ): string {
   const hash = createHash("sha256");
   hash.update(input.kind);
@@ -2815,7 +2867,7 @@ function createProfileFeaturedItemFingerprint(
 }
 
 function createProfileFeaturedItemId(
-  identity: DecodedProfileFeaturedItemId
+  identity: DecodedProfileFeaturedItemId,
 ): string {
   const payload = {
     v: 1,
@@ -2824,16 +2876,16 @@ function createProfileFeaturedItemId(
     url: normalizeText(identity.url),
     title: normalizeText(identity.title),
     subtitle: normalizeText(identity.subtitle),
-    rawText: normalizeText(identity.rawText)
+    rawText: normalizeText(identity.rawText),
   };
 
   return `${PROFILE_FEATURED_ITEM_ID_PREFIX}${Buffer.from(
-    JSON.stringify(payload)
+    JSON.stringify(payload),
   ).toString("base64url")}`;
 }
 
 function decodeProfileFeaturedItemId(
-  itemId: string | undefined
+  itemId: string | undefined,
 ): DecodedProfileFeaturedItemId | null {
   if (!itemId || !itemId.startsWith(PROFILE_FEATURED_ITEM_ID_PREFIX)) {
     return null;
@@ -2842,7 +2894,7 @@ function decodeProfileFeaturedItemId(
   try {
     const decoded = Buffer.from(
       itemId.slice(PROFILE_FEATURED_ITEM_ID_PREFIX.length),
-      "base64url"
+      "base64url",
     ).toString("utf8");
     const parsed = JSON.parse(decoded) as unknown;
     if (!isRecord(parsed) || typeof parsed.kind !== "string") {
@@ -2854,7 +2906,9 @@ function decodeProfileFeaturedItemId(
       ...(typeof parsed.sourceId === "string"
         ? { sourceId: normalizeText(parsed.sourceId) }
         : {}),
-      ...(typeof parsed.url === "string" ? { url: normalizeText(parsed.url) } : {}),
+      ...(typeof parsed.url === "string"
+        ? { url: normalizeText(parsed.url) }
+        : {}),
       ...(typeof parsed.title === "string"
         ? { title: normalizeText(parsed.title) }
         : {}),
@@ -2863,7 +2917,7 @@ function decodeProfileFeaturedItemId(
         : {}),
       ...(typeof parsed.rawText === "string"
         ? { rawText: normalizeText(parsed.rawText) }
-        : {})
+        : {}),
     };
   } catch {
     return null;
@@ -2871,13 +2925,13 @@ function decodeProfileFeaturedItemId(
 }
 
 function getEditableFieldDefinitions(
-  section: LinkedInProfileSectionType
+  section: LinkedInProfileSectionType,
 ): readonly EditableFieldDefinition[] {
   return PROFILE_SECTION_FIELD_DEFINITIONS[section];
 }
 
 function buildEditableFieldAliasMap(
-  definitions: readonly EditableFieldDefinition[]
+  definitions: readonly EditableFieldDefinition[],
 ): Map<string, EditableFieldDefinition> {
   const fieldMap = new Map<string, EditableFieldDefinition>();
 
@@ -2904,14 +2958,14 @@ function normalizeEditableValue(value: unknown): NormalizedEditableValue {
 
   throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
-    "Editable field values must be strings, booleans, or finite numbers."
+    "Editable field values must be strings, booleans, or finite numbers.",
   );
 }
 
 function normalizeEditableValues(
   values: Record<string, unknown>,
   definitions: readonly EditableFieldDefinition[],
-  label: string
+  label: string,
 ): Record<string, NormalizedEditableValue> {
   const fieldMap = buildEditableFieldAliasMap(definitions);
   const normalized: Record<string, NormalizedEditableValue> = {};
@@ -2924,8 +2978,10 @@ function normalizeEditableValues(
         `Unsupported ${label} field "${rawKey}".`,
         {
           field: rawKey,
-          allowed_fields: definitions.map((definitionItem) => definitionItem.key)
-        }
+          allowed_fields: definitions.map(
+            (definitionItem) => definitionItem.key,
+          ),
+        },
       );
     }
 
@@ -2940,7 +2996,7 @@ function normalizeEditableValues(
   if (Object.keys(normalized).length === 0) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      `${label} values must include at least one non-empty field.`
+      `${label} values must include at least one non-empty field.`,
     );
   }
 
@@ -2949,7 +3005,7 @@ function normalizeEditableValues(
 
 function normalizeOptionalEditableValues(
   values: Record<string, unknown>,
-  definitions: readonly EditableFieldDefinition[]
+  definitions: readonly EditableFieldDefinition[],
 ): Record<string, NormalizedEditableValue> {
   const fieldMap = buildEditableFieldAliasMap(definitions);
   const normalized: Record<string, NormalizedEditableValue> = {};
@@ -2966,8 +3022,10 @@ function normalizeOptionalEditableValues(
         `Unsupported editable field "${rawKey}".`,
         {
           field: rawKey,
-          allowed_fields: definitions.map((definitionItem) => definitionItem.key)
-        }
+          allowed_fields: definitions.map(
+            (definitionItem) => definitionItem.key,
+          ),
+        },
       );
     }
 
@@ -2985,18 +3043,22 @@ function normalizeOptionalEditableValues(
 function normalizeProfileSectionItemMatch(
   match: LinkedInProfileSectionItemMatch | Record<string, unknown> | undefined,
   itemId: string | undefined,
-  section: LinkedInProfileSectionType
+  section: LinkedInProfileSectionType,
 ): LinkedInProfileSectionItemMatch | undefined {
   const decodedItem = decodeProfileSectionItemId(itemId);
   const candidate = isRecord(match) ? match : {};
 
   const normalized = {
     ...(decodedItem?.sourceId ? { sourceId: decodedItem.sourceId } : {}),
-    ...(decodedItem?.primaryText ? { primaryText: decodedItem.primaryText } : {}),
+    ...(decodedItem?.primaryText
+      ? { primaryText: decodedItem.primaryText }
+      : {}),
     ...(decodedItem?.secondaryText
       ? { secondaryText: decodedItem.secondaryText }
       : {}),
-    ...(decodedItem?.tertiaryText ? { tertiaryText: decodedItem.tertiaryText } : {}),
+    ...(decodedItem?.tertiaryText
+      ? { tertiaryText: decodedItem.tertiaryText }
+      : {}),
     ...(decodedItem?.rawText ? { rawText: decodedItem.rawText } : {}),
     ...(typeof candidate.sourceId === "string"
       ? { sourceId: normalizeText(candidate.sourceId) }
@@ -3027,7 +3089,7 @@ function normalizeProfileSectionItemMatch(
       : {}),
     ...(typeof candidate.raw_text === "string"
       ? { rawText: normalizeText(candidate.raw_text) }
-      : {})
+      : {}),
   };
 
   if (
@@ -3046,8 +3108,8 @@ function normalizeProfileSectionItemMatch(
       "itemId belongs to a different profile section.",
       {
         expected_section: section,
-        item_section: decodedItem.section
-      }
+        item_section: decodedItem.section,
+      },
     );
   }
 
@@ -3056,7 +3118,7 @@ function normalizeProfileSectionItemMatch(
 
 function normalizeProfileFeaturedItemMatch(
   match: LinkedInProfileFeaturedItemMatch | Record<string, unknown> | undefined,
-  itemId: string | undefined
+  itemId: string | undefined,
 ): LinkedInProfileFeaturedItemMatch | undefined {
   const decodedItem = decodeProfileFeaturedItemId(itemId);
   const candidate = isRecord(match) ? match : {};
@@ -3073,7 +3135,9 @@ function normalizeProfileFeaturedItemMatch(
     ...(typeof candidate.source_id === "string"
       ? { sourceId: normalizeText(candidate.source_id) }
       : {}),
-    ...(typeof candidate.url === "string" ? { url: normalizeText(candidate.url) } : {}),
+    ...(typeof candidate.url === "string"
+      ? { url: normalizeText(candidate.url) }
+      : {}),
     ...(typeof candidate.title === "string"
       ? { title: normalizeText(candidate.title) }
       : {}),
@@ -3085,7 +3149,7 @@ function normalizeProfileFeaturedItemMatch(
       : {}),
     ...(typeof candidate.raw_text === "string"
       ? { rawText: normalizeText(candidate.raw_text) }
-      : {})
+      : {}),
   };
 
   if (
@@ -3117,11 +3181,11 @@ const EDITABLE_FIELD_CONTROL_XPATH = [
   "self::select",
   "@role='combobox'",
   "@role='textbox'",
-  "@contenteditable='true'"
+  "@contenteditable='true'",
 ].join(" or ");
 
 export async function resolveFirstVisibleLocator(
-  locator: Locator
+  locator: Locator,
 ): Promise<Locator | null> {
   const count = await locator.count().catch(() => 0);
 
@@ -3140,14 +3204,14 @@ async function isLocatorVisible(locator: Locator): Promise<boolean> {
 }
 
 async function findFirstVisibleLocator(
-  candidates: readonly LocatorCandidate[]
+  candidates: readonly LocatorCandidate[],
 ): Promise<LocatorCandidate | null> {
   for (const candidate of candidates) {
     const visibleLocator = await resolveFirstVisibleLocator(candidate.locator);
     if (visibleLocator) {
       return {
         ...candidate,
-        locator: visibleLocator
+        locator: visibleLocator,
       };
     }
   }
@@ -3157,7 +3221,7 @@ async function findFirstVisibleLocator(
 
 async function waitForFirstVisibleLocator(
   candidates: readonly LocatorCandidate[],
-  timeoutMs: number
+  timeoutMs: number,
 ): Promise<LocatorCandidate | null> {
   const deadline = Date.now() + timeoutMs;
 
@@ -3179,7 +3243,7 @@ function createActionCandidates(
   root: Page | Locator,
   labels: readonly string[],
   keyPrefix: string,
-  role: "button" | "link" = "button"
+  role: "button" | "link" = "button",
 ): LocatorCandidate[] {
   const textRegex = buildTextRegex(labels);
   const exactRegex = buildTextRegex(labels, true);
@@ -3188,45 +3252,49 @@ function createActionCandidates(
   return [
     {
       key: `${keyPrefix}-${role}-exact`,
-      locator: root.getByRole(role, { name: exactRegex })
+      locator: root.getByRole(role, { name: exactRegex }),
     },
     {
       key: `${keyPrefix}-${role}-text`,
-      locator: root.getByRole(role, { name: textRegex })
+      locator: root.getByRole(role, { name: textRegex }),
     },
     {
       key: `${keyPrefix}-${role}-aria`,
-      locator: root.locator(buildAriaLabelContainsSelector(tagName, labels))
+      locator: root.locator(buildAriaLabelContainsSelector(tagName, labels)),
     },
     {
       key: `${keyPrefix}-generic-text`,
       locator: root
         .locator(`${tagName}, [role='${role}']`)
-        .filter({ hasText: textRegex })
-    }
+        .filter({ hasText: textRegex }),
+    },
   ];
 }
 
 function createCssLocatorCandidates(
   root: Page | Locator,
   selectors: readonly string[],
-  keyPrefix: string
+  keyPrefix: string,
 ): LocatorCandidate[] {
-  return [...new Set(selectors.map((selector) => selector.trim()).filter(Boolean))].map(
-    (selector, index) => ({
-      key: `${keyPrefix}-css-${index + 1}`,
-      locator: root.locator(selector)
-    })
-  );
+  return [
+    ...new Set(selectors.map((selector) => selector.trim()).filter(Boolean)),
+  ].map((selector, index) => ({
+    key: `${keyPrefix}-css-${index + 1}`,
+    locator: root.locator(selector),
+  }));
 }
 
 function buildEditableFieldTextRegex(labels: readonly string[]): RegExp {
   const normalizedLabels = dedupeStrings(labels);
-  const pattern = normalizedLabels.map((label) => escapeRegExp(label)).join("|");
+  const pattern = normalizedLabels
+    .map((label) => escapeRegExp(label))
+    .join("|");
   return new RegExp(`^(?:${pattern})\\s*[*:]?$`, "i");
 }
 
-function buildEditableFieldAttributeSelectors(labels: readonly string[]): string[] {
+function buildEditableFieldAttributeSelectors(
+  labels: readonly string[],
+): string[] {
   const selectors: string[] = [];
 
   for (const label of dedupeStrings(labels)) {
@@ -3240,7 +3308,7 @@ function buildEditableFieldAttributeSelectors(labels: readonly string[]): string
       `[contenteditable='true'][aria-label*="${escapedLabel}" i]`,
       `input[placeholder*="${escapedLabel}" i]`,
       `textarea[placeholder*="${escapedLabel}" i]`,
-      `[contenteditable='true'][data-placeholder*="${escapedLabel}" i]`
+      `[contenteditable='true'][data-placeholder*="${escapedLabel}" i]`,
     );
   }
 
@@ -3252,33 +3320,38 @@ async function waitForProfilePageReady(page: Page): Promise<void> {
     {
       key: "profile-heading",
       locator: page.locator(
-        PROFILE_TOP_CARD_HEADING_SELECTORS.map((selector) => `main ${selector}`).join(", ")
-      )
+        PROFILE_TOP_CARD_HEADING_SELECTORS.map(
+          (selector) => `main ${selector}`,
+        ).join(", "),
+      ),
     },
     {
       key: "profile-intro-edit",
-      locator: page.locator(buildProfileIntroEditHrefSelector())
+      locator: page.locator(buildProfileIntroEditHrefSelector()),
     },
     {
       key: "profile-top-card-current-self",
       locator: page.locator(
         PROFILE_TOP_CARD_STRUCTURAL_SELECTORS.map(
-          (selector) => `main ${selector}`
-        ).join(", ")
-      )
+          (selector) => `main ${selector}`,
+        ).join(", "),
+      ),
     },
     ...createCssLocatorCandidates(
       page,
-      [...PROFILE_MEDIA_STRUCTURAL_SELECTORS.photo, ...PROFILE_MEDIA_STRUCTURAL_SELECTORS.banner],
-      "profile-ready-media"
-    )
+      [
+        ...PROFILE_MEDIA_STRUCTURAL_SELECTORS.photo,
+        ...PROFILE_MEDIA_STRUCTURAL_SELECTORS.banner,
+      ],
+      "profile-ready-media",
+    ),
   ];
 
   await waitForFirstVisibleLocator(readyCandidates, 10_000);
 }
 
 function tryNormalizeLinkedInProfileUrl(
-  value: string | null | undefined
+  value: string | null | undefined,
 ): string | null {
   if (typeof value !== "string" || value.trim().length === 0) {
     return null;
@@ -3295,7 +3368,7 @@ async function readPageAttributeWithTimeout(
   page: Page,
   selector: string,
   attribute: string,
-  timeoutMs: number
+  timeoutMs: number,
 ): Promise<string | null> {
   try {
     return await page
@@ -3309,12 +3382,12 @@ async function readPageAttributeWithTimeout(
 
 async function hasOwnProfileEditControl(
   page: Page,
-  options: { requireVisible: boolean }
+  options: { requireVisible: boolean },
 ): Promise<boolean> {
   const selectors = [
     buildProfileIntroEditHrefSelector(),
     ...PROFILE_MEDIA_STRUCTURAL_SELECTORS.photo,
-    ...PROFILE_MEDIA_STRUCTURAL_SELECTORS.banner
+    ...PROFILE_MEDIA_STRUCTURAL_SELECTORS.banner,
   ];
 
   for (const selector of selectors) {
@@ -3337,7 +3410,9 @@ async function hasOwnProfileEditControl(
   return false;
 }
 
-async function canRecoverOwnProfileNavigationTimeout(page: Page): Promise<boolean> {
+async function canRecoverOwnProfileNavigationTimeout(
+  page: Page,
+): Promise<boolean> {
   const SHORT_TIMEOUT_MS = 1_000;
   const currentProfileUrl = tryNormalizeLinkedInProfileUrl(page.url());
   if (!currentProfileUrl) {
@@ -3349,24 +3424,24 @@ async function canRecoverOwnProfileNavigationTimeout(page: Page): Promise<boolea
       page,
       "link[rel='canonical']",
       "href",
-      SHORT_TIMEOUT_MS
-    )
+      SHORT_TIMEOUT_MS,
+    ),
   );
   const ogProfileUrl = tryNormalizeLinkedInProfileUrl(
     await readPageAttributeWithTimeout(
       page,
       "meta[property='og:url']",
       "content",
-      SHORT_TIMEOUT_MS
-    )
+      SHORT_TIMEOUT_MS,
+    ),
   );
   const menuProfileUrl = tryNormalizeLinkedInProfileUrl(
     await readPageAttributeWithTimeout(
       page,
       AUTH_PROFILE_MENU_LINK_SELECTOR,
       "href",
-      SHORT_TIMEOUT_MS
-    )
+      SHORT_TIMEOUT_MS,
+    ),
   );
   if (menuProfileUrl) {
     if (menuProfileUrl === currentProfileUrl) {
@@ -3409,7 +3484,9 @@ async function resolveLatestVisibleDialog(page: Page): Promise<Locator | null> {
   return null;
 }
 
-async function resolveVisibleProfileIntroEditPage(page: Page): Promise<Locator | null> {
+async function resolveVisibleProfileIntroEditPage(
+  page: Page,
+): Promise<Locator | null> {
   if (!isProfileIntroEditHref(page.url())) {
     return null;
   }
@@ -3421,15 +3498,17 @@ async function resolveVisibleProfileIntroEditPage(page: Page): Promise<Locator |
     "select",
     "[role='combobox']",
     "[role='textbox']",
-    "[contenteditable='true']"
+    "[contenteditable='true']",
   ].join(", ");
   const readyCandidates: LocatorCandidate[] =
-    PROFILE_INTRO_EDITOR_SURFACE_SELECTORS.pageRootSelectors.map((selector, index) => ({
-      key: `intro-edit-page-root-${index + 1}`,
-      locator: page.locator(selector).filter({
-        has: page.locator(fieldSelector)
-      })
-    }));
+    PROFILE_INTRO_EDITOR_SURFACE_SELECTORS.pageRootSelectors.map(
+      (selector, index) => ({
+        key: `intro-edit-page-root-${index + 1}`,
+        locator: page.locator(selector).filter({
+          has: page.locator(fieldSelector),
+        }),
+      }),
+    );
   const ready = await findFirstVisibleLocator(readyCandidates);
 
   return ready?.locator ?? null;
@@ -3437,7 +3516,7 @@ async function resolveVisibleProfileIntroEditPage(page: Page): Promise<Locator |
 
 async function hasVisibleEditableField(
   root: Locator,
-  definitions: readonly EditableFieldDefinition[]
+  definitions: readonly EditableFieldDefinition[],
 ): Promise<boolean> {
   for (const definition of definitions) {
     if (await findDialogFieldLocator(root, definition)) {
@@ -3450,7 +3529,7 @@ async function hasVisibleEditableField(
 
 async function waitForVisibleProfileIntroEditorSurface(
   page: Page,
-  timeoutMs: number
+  timeoutMs: number,
 ): Promise<ProfileEditorSurface | null> {
   const deadline = Date.now() + timeoutMs;
   let fallbackSurface: ProfileEditorSurface | null = null;
@@ -3460,12 +3539,15 @@ async function waitForVisibleProfileIntroEditorSurface(
     if (pageRoot) {
       const pageSurface = {
         kind: "page" as const,
-        root: pageRoot
+        root: pageRoot,
       };
       fallbackSurface = pageSurface;
 
       if (
-        await hasVisibleEditableField(pageSurface.root, PROFILE_INTRO_EDITOR_FIELD_DEFINITIONS)
+        await hasVisibleEditableField(
+          pageSurface.root,
+          PROFILE_INTRO_EDITOR_FIELD_DEFINITIONS,
+        )
       ) {
         return pageSurface;
       }
@@ -3475,12 +3557,15 @@ async function waitForVisibleProfileIntroEditorSurface(
     if (dialogRoot) {
       const dialogSurface = {
         kind: "dialog" as const,
-        root: dialogRoot
+        root: dialogRoot,
       };
       fallbackSurface ??= dialogSurface;
 
       if (
-        await hasVisibleEditableField(dialogSurface.root, PROFILE_INTRO_EDITOR_FIELD_DEFINITIONS)
+        await hasVisibleEditableField(
+          dialogSurface.root,
+          PROFILE_INTRO_EDITOR_FIELD_DEFINITIONS,
+        )
       ) {
         return dialogSurface;
       }
@@ -3502,7 +3587,7 @@ async function waitForVisibleOverlay(page: Page): Promise<Locator> {
 
 async function clickLocatorAndWaitForDialog(
   page: Page,
-  locator: Locator
+  locator: Locator,
 ): Promise<Locator> {
   await locator.first().click();
   return waitForVisibleDialog(page);
@@ -3510,7 +3595,7 @@ async function clickLocatorAndWaitForDialog(
 
 async function clickLocatorAndWaitForOverlay(
   page: Page,
-  locator: Locator
+  locator: Locator,
 ): Promise<Locator> {
   await locator.first().click();
   return waitForVisibleOverlay(page);
@@ -3534,66 +3619,67 @@ export async function navigateToOwnProfile(page: Page): Promise<void> {
 
 async function getTopCardRoot(page: Page): Promise<Locator> {
   const headingLocator = page.locator(
-    PROFILE_TOP_CARD_HEADING_SELECTORS.join(", ")
+    PROFILE_TOP_CARD_HEADING_SELECTORS.join(", "),
   );
   const introEditLocator = page.locator(buildProfileIntroEditHrefSelector());
   const candidateRoots: LocatorCandidate[] = [
     {
       key: "top-card-current-intro-edit-with-heading",
-      locator: page.locator("main section, main div").filter({
-        has: introEditLocator
-      }).filter({
-        has: headingLocator
-      })
+      locator: page
+        .locator("main section, main div")
+        .filter({
+          has: introEditLocator,
+        })
+        .filter({
+          has: headingLocator,
+        }),
     },
     {
       key: "top-card-artdeco-card-with-heading",
       locator: page
         .locator("main section.artdeco-card, main div.artdeco-card")
         .filter({
-          has: headingLocator
-        })
+          has: headingLocator,
+        }),
     },
     {
       key: "top-card-legacy-with-heading",
-      locator: page
-        .locator("main .pv-top-card, main .top-card-layout")
-        .filter({
-          has: headingLocator
-        })
+      locator: page.locator("main .pv-top-card, main .top-card-layout").filter({
+        has: headingLocator,
+      }),
     },
     {
       key: "top-card-current-self-with-heading",
       locator: page
         .locator(
           PROFILE_TOP_CARD_STRUCTURAL_SELECTORS.map(
-            (selector) => `main ${selector}`
-          ).join(", ")
+            (selector) => `main ${selector}`,
+          ).join(", "),
         )
         .filter({
-          has: headingLocator
-        })
+          has: headingLocator,
+        }),
     },
     {
       key: "top-card-section-with-heading",
       locator: page.locator("main section").filter({
-        has: headingLocator
-      })
+        has: headingLocator,
+      }),
     },
     {
       key: "top-card-pv",
-      locator: page.locator("main .pv-top-card")
+      locator: page.locator("main .pv-top-card"),
     },
     {
       key: "top-card-layout",
-      locator: page.locator("main .top-card-layout")
-    }
+      locator: page.locator("main .top-card-layout"),
+    },
   ];
   const resolved = await findFirstVisibleLocator(candidateRoots);
   if (!resolved) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      "Could not find the profile top card on the profile page."
+      "Could not find the profile top card on the profile page.",
     );
   }
 
@@ -3603,13 +3689,19 @@ async function getTopCardRoot(page: Page): Promise<Locator> {
 async function findProfileSectionRoot(
   page: Page,
   section: LinkedInProfileSectionType,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<Locator | null> {
-  const headingRegex = buildTextRegex(getSectionLabels(section, selectorLocale), true);
+  const headingRegex = buildTextRegex(
+    getSectionLabels(section, selectorLocale),
+    true,
+  );
   const candidate = page
     .locator("section, div.pv-profile-card, div.artdeco-card")
     .filter({
-      has: page.locator("h2, h3, .pvs-header__title").filter({ hasText: headingRegex }).first()
+      has: page
+        .locator("h2, h3, .pvs-header__title")
+        .filter({ hasText: headingRegex })
+        .first(),
     })
     .first();
 
@@ -3618,13 +3710,19 @@ async function findProfileSectionRoot(
 
 async function findFeaturedSectionRoot(
   page: Page,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<Locator | null> {
-  const headingRegex = buildTextRegex(getFeaturedActionLabels("section", selectorLocale), true);
+  const headingRegex = buildTextRegex(
+    getFeaturedActionLabels("section", selectorLocale),
+    true,
+  );
   const candidate = page
     .locator("section, div.pv-profile-card, div.artdeco-card")
     .filter({
-      has: page.locator("h2, h3, .pvs-header__title").filter({ hasText: headingRegex }).first()
+      has: page
+        .locator("h2, h3, .pvs-header__title")
+        .filter({ hasText: headingRegex })
+        .first(),
     })
     .first();
 
@@ -3633,13 +3731,19 @@ async function findFeaturedSectionRoot(
 
 async function findSkillsSectionRoot(
   page: Page,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<Locator | null> {
-  const headingRegex = buildTextRegex(getSkillActionLabels("section", selectorLocale), true);
+  const headingRegex = buildTextRegex(
+    getSkillActionLabels("section", selectorLocale),
+    true,
+  );
   const candidate = page
     .locator("section, div.pv-profile-card, div.artdeco-card")
     .filter({
-      has: page.locator("h2, h3, .pvs-header__title").filter({ hasText: headingRegex }).first()
+      has: page
+        .locator("h2, h3, .pvs-header__title")
+        .filter({ hasText: headingRegex })
+        .first(),
     })
     .first();
 
@@ -3647,7 +3751,7 @@ async function findSkillsSectionRoot(
 }
 
 async function readExtractedSectionItem(
-  locator: Locator
+  locator: Locator,
 ): Promise<ExtractedEditableSectionItem> {
   return locator.evaluate((element) => {
     const normalize = (value: string | null | undefined): string =>
@@ -3658,13 +3762,18 @@ async function readExtractedSectionItem(
       root.getAttribute("data-entity-urn"),
       root.getAttribute("data-urn"),
       root.id,
-      ...Array.from(root.querySelectorAll("[data-entity-urn], [data-urn], a[href]"))
-        .map((candidate) =>
-          candidate.getAttribute("data-entity-urn") ??
-          candidate.getAttribute("data-urn") ??
-          candidate.getAttribute("href")
+      ...Array.from(
+        root.querySelectorAll("[data-entity-urn], [data-urn], a[href]"),
+      )
+        .map(
+          (candidate) =>
+            candidate.getAttribute("data-entity-urn") ??
+            candidate.getAttribute("data-urn") ??
+            candidate.getAttribute("href"),
         )
-        .filter((candidate): candidate is string => typeof candidate === "string")
+        .filter(
+          (candidate): candidate is string => typeof candidate === "string",
+        ),
     ]
       .map((candidate) => normalize(candidate))
       .filter((candidate) => candidate.length > 0);
@@ -3675,11 +3784,13 @@ async function readExtractedSectionItem(
       ".pvs-entity__caption-wrapper span[aria-hidden='true']",
       ".pvs-entity__description-wrapper span[aria-hidden='true']",
       ".inline-show-more-text span[aria-hidden='true']",
-      ".inline-show-more-text"
+      ".inline-show-more-text",
     ];
 
     let lines = lineSelectors.flatMap((selector) =>
-      Array.from(root.querySelectorAll(selector)).map((node) => normalize(node.textContent))
+      Array.from(root.querySelectorAll(selector)).map((node) =>
+        normalize(node.textContent),
+      ),
     );
 
     lines = lines.filter((line) => line.length > 0);
@@ -3697,7 +3808,12 @@ async function readExtractedSectionItem(
     const description =
       lines
         .slice(3)
-        .filter((line) => line !== primaryText && line !== secondaryText && line !== tertiaryText)
+        .filter(
+          (line) =>
+            line !== primaryText &&
+            line !== secondaryText &&
+            line !== tertiaryText,
+        )
         .join(" ") || rawText;
 
     return {
@@ -3706,13 +3822,13 @@ async function readExtractedSectionItem(
       secondary_text: secondaryText,
       tertiary_text: tertiaryText,
       description,
-      raw_text: rawText
+      raw_text: rawText,
     };
   });
 }
 
 async function readExtractedFeaturedItem(
-  locator: Locator
+  locator: Locator,
 ): Promise<ExtractedEditableFeaturedItem> {
   return locator.evaluate((element) => {
     const normalize = (value: string | null | undefined): string =>
@@ -3723,13 +3839,18 @@ async function readExtractedFeaturedItem(
       root.getAttribute("data-entity-urn"),
       root.getAttribute("data-urn"),
       root.id,
-      ...Array.from(root.querySelectorAll("[data-entity-urn], [data-urn], a[href]"))
-        .map((candidate) =>
-          candidate.getAttribute("data-entity-urn") ??
-          candidate.getAttribute("data-urn") ??
-          candidate.getAttribute("href")
+      ...Array.from(
+        root.querySelectorAll("[data-entity-urn], [data-urn], a[href]"),
+      )
+        .map(
+          (candidate) =>
+            candidate.getAttribute("data-entity-urn") ??
+            candidate.getAttribute("data-urn") ??
+            candidate.getAttribute("href"),
         )
-        .filter((candidate): candidate is string => typeof candidate === "string")
+        .filter(
+          (candidate): candidate is string => typeof candidate === "string",
+        ),
     ]
       .map((candidate) => normalize(candidate))
       .filter((candidate) => candidate.length > 0);
@@ -3746,11 +3867,13 @@ async function readExtractedFeaturedItem(
       ".pvs-entity__caption-wrapper span[aria-hidden='true']",
       ".pvs-entity__description-wrapper span[aria-hidden='true']",
       ".inline-show-more-text span[aria-hidden='true']",
-      ".inline-show-more-text"
+      ".inline-show-more-text",
     ];
 
     let lines = lineSelectors.flatMap((selector) =>
-      Array.from(root.querySelectorAll(selector)).map((node) => normalize(node.textContent))
+      Array.from(root.querySelectorAll(selector)).map((node) =>
+        normalize(node.textContent),
+      ),
     );
     lines = lines.filter((line) => line.length > 0);
 
@@ -3776,14 +3899,14 @@ async function readExtractedFeaturedItem(
       subtitle,
       description,
       url: urlCandidates[0] ?? null,
-      raw_text: rawText
+      raw_text: rawText,
     };
   });
 }
 
 function doesSectionItemMatch(
   candidate: ExtractedEditableSectionItem,
-  match: LinkedInProfileSectionItemMatch
+  match: LinkedInProfileSectionItemMatch,
 ): boolean {
   const candidateSourceId = normalizeText(candidate.source_id);
   const candidateRawText = normalizeText(candidate.raw_text);
@@ -3802,7 +3925,7 @@ function doesSectionItemMatch(
     [match.primaryText, candidatePrimaryText],
     [match.secondaryText, candidateSecondaryText],
     [match.tertiaryText, candidateTertiaryText],
-    [match.rawText, candidateRawText]
+    [match.rawText, candidateRawText],
   ];
 
   for (const [expected, actual] of comparisons) {
@@ -3828,10 +3951,10 @@ function doesSectionItemMatch(
 
 async function findMatchingSectionItemLocator(
   sectionRoot: Locator,
-  match: LinkedInProfileSectionItemMatch
+  match: LinkedInProfileSectionItemMatch,
 ): Promise<Locator | null> {
   const items = sectionRoot.locator(
-    ".pvs-list__paged-list-item, .pvs-list__item--line-separated, li.artdeco-list__item, li[class*='pvs-list__item']"
+    ".pvs-list__paged-list-item, .pvs-list__item--line-separated, li.artdeco-list__item, li[class*='pvs-list__item']",
   );
   const itemCount = await items.count();
 
@@ -3848,7 +3971,7 @@ async function findMatchingSectionItemLocator(
 
 function doesFeaturedItemMatch(
   candidate: ExtractedEditableFeaturedItem,
-  match: LinkedInProfileFeaturedItemMatch
+  match: LinkedInProfileFeaturedItemMatch,
 ): boolean {
   const candidateSourceId = normalizeText(candidate.source_id);
   const candidateUrl = normalizeText(candidate.url);
@@ -3867,7 +3990,7 @@ function doesFeaturedItemMatch(
     [match.url, candidateUrl],
     [match.title, candidateTitle],
     [match.subtitle, candidateSubtitle],
-    [match.rawText, candidateRawText]
+    [match.rawText, candidateRawText],
   ];
 
   for (const [expected, actual] of comparisons) {
@@ -3893,10 +4016,10 @@ function doesFeaturedItemMatch(
 
 async function findMatchingFeaturedItemLocator(
   sectionRoot: Locator,
-  match: LinkedInProfileFeaturedItemMatch
+  match: LinkedInProfileFeaturedItemMatch,
 ): Promise<Locator | null> {
   const items = sectionRoot.locator(
-    ".pvs-list__paged-list-item, .pvs-list__item--line-separated, li.artdeco-list__item, li[class*='pvs-list__item']"
+    ".pvs-list__paged-list-item, .pvs-list__item--line-separated, li.artdeco-list__item, li[class*='pvs-list__item']",
   );
   const itemCount = await items.count();
 
@@ -3913,45 +4036,45 @@ async function findMatchingFeaturedItemLocator(
 
 async function openIntroEditSurface(
   page: Page,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<ProfileEditorSurface> {
   const topCardRoot = await getTopCardRoot(page);
   const introEditLabels = getIntroActionLabels("edit", selectorLocale);
   const editCandidates: LocatorCandidate[] = [
     {
       key: "intro-edit-link-href",
-      locator: topCardRoot.locator(buildProfileIntroEditHrefSelector())
+      locator: topCardRoot.locator(buildProfileIntroEditHrefSelector()),
     },
     {
       key: "intro-edit-button-aria",
       locator: topCardRoot.locator(
-        buildAriaLabelContainsSelector("button", introEditLabels)
-      )
+        buildAriaLabelContainsSelector("button", introEditLabels),
+      ),
     },
     {
       key: "intro-edit-link-aria",
       locator: topCardRoot.locator(
-        buildAriaLabelContainsSelector("a", introEditLabels)
-      )
+        buildAriaLabelContainsSelector("a", introEditLabels),
+      ),
     },
     {
       key: "intro-edit-button-role",
       locator: topCardRoot.getByRole("button", {
-        name: buildTextRegex(introEditLabels)
-      })
+        name: buildTextRegex(introEditLabels),
+      }),
     },
     {
       key: "intro-edit-link-role",
       locator: topCardRoot.getByRole("link", {
-        name: buildTextRegex(introEditLabels)
-      })
-    }
+        name: buildTextRegex(introEditLabels),
+      }),
+    },
   ];
   const resolved = await findFirstVisibleLocator(editCandidates);
   if (!resolved) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      "Could not find the intro edit control on the profile page."
+      "Could not find the intro edit control on the profile page.",
     );
   }
 
@@ -3964,38 +4087,41 @@ async function openIntroEditSurface(
 
   throw new LinkedInBuddyError(
     "TARGET_NOT_FOUND",
-    "Could not open the intro editor after clicking the edit control."
+    "Could not open the intro editor after clicking the edit control.",
   );
 }
 
 async function openGlobalAddSectionDialog(
   page: Page,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<Locator> {
   const topCardRoot = await getTopCardRoot(page);
-  const addSectionLabels = getUiActionLabels("addProfileSection", selectorLocale);
+  const addSectionLabels = getUiActionLabels(
+    "addProfileSection",
+    selectorLocale,
+  );
   const addCandidates: LocatorCandidate[] = [
     ...PROFILE_GLOBAL_ADD_SECTION_CONTROL.roles.flatMap((role) =>
       createActionCandidates(
         topCardRoot,
         addSectionLabels,
         `profile-section-add-${role}`,
-        role
-      )
+        role,
+      ),
     ),
     {
       key: "profile-section-add-generic",
       locator: topCardRoot
         .locator("button, a, [role='button'], [role='link']")
-        .filter({ hasText: buildTextRegex(addSectionLabels) })
-    }
+        .filter({ hasText: buildTextRegex(addSectionLabels) }),
+    },
   ];
   const resolved = await findFirstVisibleLocator(addCandidates);
 
   if (!resolved) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      "Could not find the global add profile section control."
+      "Could not find the global add profile section control.",
     );
   }
 
@@ -4005,47 +4131,59 @@ async function openGlobalAddSectionDialog(
 async function openSectionCreateDialog(
   page: Page,
   section: LinkedInProfileSectionType,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<Locator> {
-  const sectionRoot = await findProfileSectionRoot(page, section, selectorLocale);
+  const sectionRoot = await findProfileSectionRoot(
+    page,
+    section,
+    selectorLocale,
+  );
   const addLabels = getUiActionLabels("add", selectorLocale);
 
   if (sectionRoot) {
     const sectionAddCandidates = createActionCandidates(
       sectionRoot,
       addLabels,
-      `${section}-add`
+      `${section}-add`,
     );
-    const resolvedSectionAdd = await findFirstVisibleLocator(sectionAddCandidates);
+    const resolvedSectionAdd =
+      await findFirstVisibleLocator(sectionAddCandidates);
     if (resolvedSectionAdd) {
       return clickLocatorAndWaitForDialog(page, resolvedSectionAdd.locator);
     }
   }
 
-  const addSectionDialog = await openGlobalAddSectionDialog(page, selectorLocale);
+  const addSectionDialog = await openGlobalAddSectionDialog(
+    page,
+    selectorLocale,
+  );
   const sectionLabels = getSectionLabels(section, selectorLocale);
   const sectionTextRegex = buildTextRegex(sectionLabels);
   const sectionCandidates: LocatorCandidate[] = [
-    ...createActionCandidates(addSectionDialog, sectionLabels, `${section}-global-button`),
+    ...createActionCandidates(
+      addSectionDialog,
+      sectionLabels,
+      `${section}-global-button`,
+    ),
     ...createActionCandidates(
       addSectionDialog,
       sectionLabels,
       `${section}-global-link`,
-      "link"
+      "link",
     ),
     {
       key: `${section}-global-generic`,
       locator: addSectionDialog
         .locator("button, a, div[role='button'], li")
-        .filter({ hasText: sectionTextRegex })
-    }
+        .filter({ hasText: sectionTextRegex }),
+    },
   ];
 
   const resolved = await findFirstVisibleLocator(sectionCandidates);
   if (!resolved) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      `Could not find an add flow for the ${getSectionDisplayLabel(section, selectorLocale)} section.`
+      `Could not find an add flow for the ${getSectionDisplayLabel(section, selectorLocale)} section.`,
     );
   }
 
@@ -4058,13 +4196,17 @@ async function openExistingSectionItemDialog(
   page: Page,
   section: LinkedInProfileSectionType,
   match: LinkedInProfileSectionItemMatch,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<Locator> {
-  const sectionRoot = await findProfileSectionRoot(page, section, selectorLocale);
+  const sectionRoot = await findProfileSectionRoot(
+    page,
+    section,
+    selectorLocale,
+  );
   if (!sectionRoot) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      `Could not find the ${getSectionDisplayLabel(section, selectorLocale)} section on the profile page.`
+      `Could not find the ${getSectionDisplayLabel(section, selectorLocale)} section on the profile page.`,
     );
   }
 
@@ -4075,15 +4217,15 @@ async function openExistingSectionItemDialog(
       `Could not find a matching item in the ${getSectionDisplayLabel(section, selectorLocale)} section.`,
       {
         section,
-        match
-      }
+        match,
+      },
     );
   }
 
   const editCandidates = createActionCandidates(
     itemLocator,
     getUiActionLabels("edit", selectorLocale),
-    `${section}-item-edit`
+    `${section}-item-edit`,
   );
   const resolvedEdit = await findFirstVisibleLocator(editCandidates);
   if (resolvedEdit) {
@@ -4093,31 +4235,37 @@ async function openExistingSectionItemDialog(
   const moreCandidates = createActionCandidates(
     itemLocator,
     getUiActionLabels("more", selectorLocale),
-    `${section}-item-more`
+    `${section}-item-more`,
   );
   const resolvedMore = await findFirstVisibleLocator(moreCandidates);
   if (!resolvedMore) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      `Could not find edit controls for the selected ${getSectionDisplayLabel(section, selectorLocale)} item.`
+      `Could not find edit controls for the selected ${getSectionDisplayLabel(section, selectorLocale)} item.`,
     );
   }
 
   await resolvedMore.locator.first().click();
   const editMenuCandidates: LocatorCandidate[] = [
-    ...createActionCandidates(page, getUiActionLabels("edit", selectorLocale), `${section}-menu-edit`),
+    ...createActionCandidates(
+      page,
+      getUiActionLabels("edit", selectorLocale),
+      `${section}-menu-edit`,
+    ),
     {
       key: `${section}-menu-edit-item`,
       locator: page
         .locator("[role='menuitem'], button, div[role='button']")
-        .filter({ hasText: buildTextRegex(getUiActionLabels("edit", selectorLocale)) })
-    }
+        .filter({
+          hasText: buildTextRegex(getUiActionLabels("edit", selectorLocale)),
+        }),
+    },
   ];
   const resolvedMenuEdit = await findFirstVisibleLocator(editMenuCandidates);
   if (!resolvedMenuEdit) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      `Could not find the edit menu entry for the selected ${getSectionDisplayLabel(section, selectorLocale)} item.`
+      `Could not find the edit menu entry for the selected ${getSectionDisplayLabel(section, selectorLocale)} item.`,
     );
   }
 
@@ -4126,7 +4274,7 @@ async function openExistingSectionItemDialog(
 
 async function findDialogFieldLocatorByDefinition(
   dialog: Locator,
-  definition: EditableFieldDefinition
+  definition: EditableFieldDefinition,
 ): Promise<Locator | null> {
   const labelRegex = buildTextRegex(definition.aliases);
   const fieldTextRegex = buildEditableFieldTextRegex(definition.aliases);
@@ -4134,7 +4282,7 @@ async function findDialogFieldLocatorByDefinition(
     dialog.getByLabel(labelRegex),
     dialog.getByRole("textbox", { name: labelRegex }),
     dialog.getByRole("combobox", { name: labelRegex }),
-    dialog.getByRole("checkbox", { name: labelRegex })
+    dialog.getByRole("checkbox", { name: labelRegex }),
   ];
 
   for (const candidate of roleCandidates) {
@@ -4147,7 +4295,7 @@ async function findDialogFieldLocatorByDefinition(
   const attributeCandidates = createCssLocatorCandidates(
     dialog,
     buildEditableFieldAttributeSelectors(definition.aliases),
-    `editable-field-${definition.key}`
+    `editable-field-${definition.key}`,
   );
   const resolvedAttribute = await findFirstVisibleLocator(attributeCandidates);
   if (resolvedAttribute) {
@@ -4163,7 +4311,9 @@ async function findDialogFieldLocatorByDefinition(
     }
 
     const followingControl = await resolveFirstVisibleLocator(
-      textCandidate.locator(`xpath=following::*[(${EDITABLE_FIELD_CONTROL_XPATH})][1]`)
+      textCandidate.locator(
+        `xpath=following::*[(${EDITABLE_FIELD_CONTROL_XPATH})][1]`,
+      ),
     );
     if (followingControl) {
       return followingControl;
@@ -4174,7 +4324,7 @@ async function findDialogFieldLocatorByDefinition(
     const normalizedAlias = normalizeText(alias).toLowerCase();
     const typeaheadInput = dialog
       .locator(
-        `xpath=.//*[self::label or self::p or self::div or self::span][contains(translate(normalize-space(string(.)), 'ABCDEFGHIJKLMNOPQRSTUVWXYZÆØÅ', 'abcdefghijklmnopqrstuvwxyzæøå'), "${normalizedAlias}")]/following::input[@aria-autocomplete='list' or @role='combobox' or @data-testid='typeahead-input'][1]`
+        `xpath=.//*[self::label or self::p or self::div or self::span][contains(translate(normalize-space(string(.)), 'ABCDEFGHIJKLMNOPQRSTUVWXYZÆØÅ', 'abcdefghijklmnopqrstuvwxyzæøå'), "${normalizedAlias}")]/following::input[@aria-autocomplete='list' or @role='combobox' or @data-testid='typeahead-input'][1]`,
       )
       .first();
     if (await isLocatorVisible(typeaheadInput)) {
@@ -4183,7 +4333,7 @@ async function findDialogFieldLocatorByDefinition(
 
     const xpath = dialog
       .locator(
-        `xpath=.//*[self::label or self::p or self::div or self::span][contains(translate(normalize-space(string(.)), 'ABCDEFGHIJKLMNOPQRSTUVWXYZÆØÅ', 'abcdefghijklmnopqrstuvwxyzæøå'), "${normalizedAlias}")]/following::*[(${EDITABLE_FIELD_CONTROL_XPATH})][1]`
+        `xpath=.//*[self::label or self::p or self::div or self::span][contains(translate(normalize-space(string(.)), 'ABCDEFGHIJKLMNOPQRSTUVWXYZÆØÅ', 'abcdefghijklmnopqrstuvwxyzæøå'), "${normalizedAlias}")]/following::*[(${EDITABLE_FIELD_CONTROL_XPATH})][1]`,
       )
       .first();
     const resolvedXpath = await resolveFirstVisibleLocator(xpath);
@@ -4196,22 +4346,25 @@ async function findDialogFieldLocatorByDefinition(
 }
 
 export async function findIntroLocationFieldLocator(
-  dialog: Locator
+  dialog: Locator,
 ): Promise<Locator | null> {
   const cityField = await findDialogFieldLocatorByDefinition(
     dialog,
-    PROFILE_INTRO_LOCATION_CITY_FIELD_DEFINITION
+    PROFILE_INTRO_LOCATION_CITY_FIELD_DEFINITION,
   );
   if (cityField) {
     return cityField;
   }
 
-  return findDialogFieldLocatorByDefinition(dialog, PROFILE_INTRO_LOCATION_FIELD_DEFINITION);
+  return findDialogFieldLocatorByDefinition(
+    dialog,
+    PROFILE_INTRO_LOCATION_FIELD_DEFINITION,
+  );
 }
 
 async function findDialogFieldLocator(
   dialog: Locator,
-  definition: EditableFieldDefinition
+  definition: EditableFieldDefinition,
 ): Promise<Locator | null> {
   if (definition.key === "location") {
     return findIntroLocationFieldLocator(dialog);
@@ -4223,7 +4376,7 @@ async function findDialogFieldLocator(
 async function waitForDialogFieldLocator(
   dialog: Locator,
   definition: EditableFieldDefinition,
-  timeoutMs: number
+  timeoutMs: number,
 ): Promise<Locator | null> {
   const deadline = Date.now() + timeoutMs;
 
@@ -4254,20 +4407,22 @@ export function splitProfileIntroLocationValue(value: string): {
   if (segments.length < 2) {
     return {
       city: normalizedValue,
-      countryOrRegion: null
+      countryOrRegion: null,
     };
   }
 
   return {
     city: segments.slice(0, -1).join(", "),
-    countryOrRegion: segments.at(-1) ?? null
+    countryOrRegion: segments.at(-1) ?? null,
   };
 }
 
 async function isAutocompleteField(locator: Locator): Promise<boolean> {
   return locator.evaluate((element) => {
     const role = (element.getAttribute("role") ?? "").toLowerCase();
-    const autocomplete = (element.getAttribute("aria-autocomplete") ?? "").toLowerCase();
+    const autocomplete = (
+      element.getAttribute("aria-autocomplete") ?? ""
+    ).toLowerCase();
     const testId = (element.getAttribute("data-testid") ?? "").toLowerCase();
 
     return (
@@ -4280,13 +4435,13 @@ async function isAutocompleteField(locator: Locator): Promise<boolean> {
 
 async function replaceDialogFieldValue(
   locator: Locator,
-  value: string
+  value: string,
 ): Promise<void> {
   await locator.click();
   await locator.fill(value).catch(async () => {
-    await locator.press(`${process.platform === "darwin" ? "Meta" : "Control"}+A`).catch(
-      () => undefined
-    );
+    await locator
+      .press(`${process.platform === "darwin" ? "Meta" : "Control"}+A`)
+      .catch(() => undefined);
     await locator.press("Backspace").catch(() => undefined);
     await locator.type(value);
   });
@@ -4295,7 +4450,7 @@ async function replaceDialogFieldValue(
 async function commitAutocompleteFieldIfNeeded(
   page: Page,
   locator: Locator,
-  value: string
+  value: string,
 ): Promise<void> {
   if (!(await isAutocompleteField(locator))) {
     return;
@@ -4308,7 +4463,7 @@ async function commitAutocompleteFieldIfNeeded(
 async function fillSplitProfileIntroLocationField(
   page: Page,
   dialog: Locator,
-  value: string
+  value: string,
 ): Promise<boolean> {
   const { city, countryOrRegion } = splitProfileIntroLocationValue(value);
   let updatedField = false;
@@ -4317,7 +4472,7 @@ async function fillSplitProfileIntroLocationField(
     countryOrRegion !== null
       ? await findDialogFieldLocatorByDefinition(
           dialog,
-          PROFILE_INTRO_LOCATION_COUNTRY_FIELD_DEFINITION
+          PROFILE_INTRO_LOCATION_COUNTRY_FIELD_DEFINITION,
         )
       : null;
   if (countryField && countryOrRegion) {
@@ -4328,13 +4483,13 @@ async function fillSplitProfileIntroLocationField(
 
   let cityField = await findDialogFieldLocatorByDefinition(
     dialog,
-    PROFILE_INTRO_LOCATION_CITY_FIELD_DEFINITION
+    PROFILE_INTRO_LOCATION_CITY_FIELD_DEFINITION,
   );
   if (!cityField && updatedField) {
     await page.waitForTimeout(250);
     cityField = await findDialogFieldLocatorByDefinition(
       dialog,
-      PROFILE_INTRO_LOCATION_CITY_FIELD_DEFINITION
+      PROFILE_INTRO_LOCATION_CITY_FIELD_DEFINITION,
     );
   }
 
@@ -4351,13 +4506,13 @@ async function fillDialogField(
   page: Page,
   dialog: Locator,
   definition: EditableFieldDefinition,
-  value: NormalizedEditableValue
+  value: NormalizedEditableValue,
 ): Promise<void> {
   const locator = await waitForDialogFieldLocator(dialog, definition, 10_000);
   if (!locator) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      `Could not find the "${definition.key}" field in the profile editor.`
+      `Could not find the "${definition.key}" field in the profile editor.`,
     );
   }
 
@@ -4381,17 +4536,24 @@ async function fillDialogField(
     const filledSplitLocation = await fillSplitProfileIntroLocationField(
       page,
       dialog,
-      stringValue
+      stringValue,
     );
     if (filledSplitLocation) {
       return;
     }
   }
 
-  const tagName = await locator.evaluate((element) => element.tagName.toLowerCase());
-  const ariaAutocomplete = await locator.getAttribute("aria-autocomplete").catch(() => null);
-  const dataTestId = await locator.getAttribute("data-testid").catch(() => null);
-  const isTypeaheadField = ariaAutocomplete === "list" || dataTestId === "typeahead-input";
+  const tagName = await locator.evaluate((element) =>
+    element.tagName.toLowerCase(),
+  );
+  const ariaAutocomplete = await locator
+    .getAttribute("aria-autocomplete")
+    .catch(() => null);
+  const dataTestId = await locator
+    .getAttribute("data-testid")
+    .catch(() => null);
+  const isTypeaheadField =
+    ariaAutocomplete === "list" || dataTestId === "typeahead-input";
 
   if (definition.control === "select" && tagName === "select") {
     await locator.selectOption({ label: stringValue }).catch(async () => {
@@ -4417,38 +4579,40 @@ async function fillDialogField(
 async function clickSaveInProfileEditorSurface(
   page: Page,
   surface: ProfileEditorSurface,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<void> {
   const saveCandidates: LocatorCandidate[] = [
     ...createActionCandidates(
       surface.root,
       getUiActionLabels("save", selectorLocale),
-      "profile-editor-save"
+      "profile-editor-save",
     ),
     {
       key: "profile-editor-save-submit",
-      locator: surface.root.locator("button[type='submit']")
-    }
+      locator: surface.root.locator("button[type='submit']"),
+    },
   ];
   const resolved = await waitForFirstVisibleLocator(saveCandidates, 10_000);
   if (!resolved) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      "Could not find the save button in the profile editor."
+      "Could not find the save button in the profile editor.",
     );
   }
 
   await resolved.locator.first().click();
 
   if (surface.kind === "dialog") {
-    await surface.root.waitFor({ state: "hidden", timeout: 10_000 }).catch(() => undefined);
+    await surface.root
+      .waitFor({ state: "hidden", timeout: 10_000 })
+      .catch(() => undefined);
     await waitForNetworkIdleBestEffort(page);
     return;
   }
 
   const exitEditPage = page
     .waitForURL((url) => !isProfileIntroEditHref(url.toString()), {
-      timeout: 10_000
+      timeout: 10_000,
     })
     .catch(() => undefined);
 
@@ -4459,7 +4623,7 @@ async function clickSaveInProfileEditorSurface(
 async function closeProfileEditorSurface(
   page: Page,
   surface: ProfileEditorSurface,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<void> {
   if (surface.kind === "page") {
     if (isProfileIntroEditHref(page.url())) {
@@ -4472,66 +4636,77 @@ async function closeProfileEditorSurface(
     ...createActionCandidates(
       surface.root,
       getUiActionLabels("close", selectorLocale),
-      "dialog-close"
+      "dialog-close",
     ),
     {
       key: "dialog-close-button",
       locator: surface.root.locator(
-        "button[aria-label*='close' i], button[aria-label*='dismiss' i]"
-      )
-    }
+        "button[aria-label*='close' i], button[aria-label*='dismiss' i]",
+      ),
+    },
   ];
   const resolvedClose = await findFirstVisibleLocator(closeCandidates);
 
   if (resolvedClose) {
-    await resolvedClose.locator.first().click().catch(() => undefined);
+    await resolvedClose.locator
+      .first()
+      .click()
+      .catch(() => undefined);
   } else {
     await page.keyboard.press("Escape").catch(() => undefined);
   }
 
-  await surface.root.waitFor({ state: "hidden", timeout: 5_000 }).catch(() => undefined);
+  await surface.root
+    .waitFor({ state: "hidden", timeout: 5_000 })
+    .catch(() => undefined);
 }
 
 async function clickSaveInDialog(
   page: Page,
   dialog: Locator,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<void> {
   const saveCandidates: LocatorCandidate[] = [
-    ...createActionCandidates(dialog, getUiActionLabels("save", selectorLocale), "dialog-save"),
+    ...createActionCandidates(
+      dialog,
+      getUiActionLabels("save", selectorLocale),
+      "dialog-save",
+    ),
     {
       key: "dialog-save-submit",
-      locator: dialog.locator("button[type='submit']")
-    }
+      locator: dialog.locator("button[type='submit']"),
+    },
   ];
   const resolved = await waitForFirstVisibleLocator(saveCandidates, 10_000);
   if (!resolved) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      "Could not find the save button in the profile editor dialog."
+      "Could not find the save button in the profile editor dialog.",
     );
   }
 
   await resolved.locator.first().click();
-  await dialog.waitFor({ state: "hidden", timeout: 10_000 }).catch(() => undefined);
+  await dialog
+    .waitFor({ state: "hidden", timeout: 10_000 })
+    .catch(() => undefined);
   await waitForNetworkIdleBestEffort(page);
 }
 
 async function clickDeleteInDialog(
   page: Page,
   dialog: Locator,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<void> {
   const deleteCandidates = createActionCandidates(
     dialog,
     getUiActionLabels("delete", selectorLocale),
-    "dialog-delete"
+    "dialog-delete",
   );
   const resolvedDelete = await findFirstVisibleLocator(deleteCandidates);
   if (!resolvedDelete) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      "Could not find the delete button in the profile editor dialog."
+      "Could not find the delete button in the profile editor dialog.",
     );
   }
 
@@ -4539,22 +4714,32 @@ async function clickDeleteInDialog(
   await page.waitForTimeout(500);
 
   const confirmDeleteCandidates: LocatorCandidate[] = [
-    ...createActionCandidates(page, getUiActionLabels("delete", selectorLocale), "confirm-delete"),
+    ...createActionCandidates(
+      page,
+      getUiActionLabels("delete", selectorLocale),
+      "confirm-delete",
+    ),
     {
       key: "confirm-delete-generic",
       locator: page
         .locator("[role='dialog'] button, [role='dialog'] [role='button']")
-        .filter({ hasText: buildTextRegex(getUiActionLabels("delete", selectorLocale)) })
-    }
+        .filter({
+          hasText: buildTextRegex(getUiActionLabels("delete", selectorLocale)),
+        }),
+    },
   ];
-  const resolvedConfirmDelete = await findFirstVisibleLocator(confirmDeleteCandidates);
+  const resolvedConfirmDelete = await findFirstVisibleLocator(
+    confirmDeleteCandidates,
+  );
   if (resolvedConfirmDelete) {
     await resolvedConfirmDelete.locator.first().click();
   }
 
-  await page.locator("[role='dialog']").last().waitFor({ state: "hidden", timeout: 10_000 }).catch(
-    () => undefined
-  );
+  await page
+    .locator("[role='dialog']")
+    .last()
+    .waitFor({ state: "hidden", timeout: 10_000 })
+    .catch(() => undefined);
   await waitForNetworkIdleBestEffort(page);
 }
 
@@ -4562,20 +4747,20 @@ async function clickDialogAction(
   page: Page,
   dialog: Locator,
   labels: readonly string[],
-  keyPrefix: string
+  keyPrefix: string,
 ): Promise<void> {
   const candidates: LocatorCandidate[] = [
     ...createActionCandidates(dialog, labels, keyPrefix),
     {
       key: `${keyPrefix}-submit`,
-      locator: dialog.locator("button[type='submit']")
-    }
+      locator: dialog.locator("button[type='submit']"),
+    },
   ];
   const resolved = await findFirstVisibleLocator(candidates);
   if (!resolved) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      `Could not find the ${keyPrefix.replace(/-/g, " ")} button in the dialog.`
+      `Could not find the ${keyPrefix.replace(/-/g, " ")} button in the dialog.`,
     );
   }
 
@@ -4586,12 +4771,12 @@ async function clickDialogAction(
 
 async function navigateToPublicProfileSettings(page: Page): Promise<void> {
   await page.goto(LINKEDIN_PUBLIC_PROFILE_SETTINGS_URL, {
-    waitUntil: "domcontentloaded"
+    waitUntil: "domcontentloaded",
   });
   await waitForNetworkIdleBestEffort(page);
   await page.locator("#vanityUrlForm").first().waitFor({
     state: "visible",
-    timeout: 10_000
+    timeout: 10_000,
   });
 }
 
@@ -4600,7 +4785,7 @@ async function getPublicProfileVanityInput(page: Page): Promise<Locator> {
   if (!(await isLocatorVisible(input))) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      "Could not find the custom public profile URL field."
+      "Could not find the custom public profile URL field.",
     );
   }
 
@@ -4608,7 +4793,7 @@ async function getPublicProfileVanityInput(page: Page): Promise<Locator> {
 }
 
 async function isPublicProfileVanityInputReadonly(
-  input: Locator
+  input: Locator,
 ): Promise<boolean> {
   return input.evaluate((element) => element.hasAttribute("readonly"));
 }
@@ -4622,18 +4807,18 @@ async function openPublicProfileVanityEditor(page: Page): Promise<Locator> {
   const editCandidates: LocatorCandidate[] = [
     {
       key: "public-profile-edit-class",
-      locator: page.locator("button.vanity-name__edit-vanity-btn")
+      locator: page.locator("button.vanity-name__edit-vanity-btn"),
     },
     {
       key: "public-profile-edit-aria",
-      locator: page.locator("button[aria-label*='custom URL' i]")
-    }
+      locator: page.locator("button[aria-label*='custom URL' i]"),
+    },
   ];
   const resolved = await findFirstVisibleLocator(editCandidates);
   if (!resolved) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      "Could not find the edit control for the custom public profile URL."
+      "Could not find the edit control for the custom public profile URL.",
     );
   }
 
@@ -4649,11 +4834,13 @@ async function openPublicProfileVanityEditor(page: Page): Promise<Locator> {
   return input;
 }
 
-async function readPublicProfileVanityError(page: Page): Promise<string | null> {
+async function readPublicProfileVanityError(
+  page: Page,
+): Promise<string | null> {
   const errorCandidates = [
     page.locator("#vanityNameError").first(),
     page.locator(".vanity-name__feedback").first(),
-    page.locator("[role='alert']").first()
+    page.locator("[role='alert']").first(),
   ];
 
   for (const candidate of errorCandidates) {
@@ -4668,20 +4855,20 @@ async function readPublicProfileVanityError(page: Page): Promise<string | null> 
 
 async function savePublicProfileVanityName(
   page: Page,
-  vanityName: string
+  vanityName: string,
 ): Promise<void> {
   const saveCandidates: LocatorCandidate[] = [
     {
       key: "public-profile-save-class",
-      locator: page.locator("button.vanity-name__button--submit")
+      locator: page.locator("button.vanity-name__button--submit"),
     },
-    ...createActionCandidates(page, ["Save"], "public-profile-save")
+    ...createActionCandidates(page, ["Save"], "public-profile-save"),
   ];
   const resolved = await findFirstVisibleLocator(saveCandidates);
   if (!resolved) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      "Could not find the save button for the custom public profile URL."
+      "Could not find the save button for the custom public profile URL.",
     );
   }
 
@@ -4702,19 +4889,21 @@ async function savePublicProfileVanityName(
         );
       },
       vanityName,
-      { timeout: 10_000 }
+      { timeout: 10_000 },
     );
   } catch {
     const errorText = await readPublicProfileVanityError(page);
-    const currentValue = normalizeText(await input.inputValue().catch(() => ""));
+    const currentValue = normalizeText(
+      await input.inputValue().catch(() => ""),
+    );
 
     if (errorText) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         `LinkedIn rejected the requested custom public profile URL: ${errorText}`,
         {
-          vanity_name: vanityName
-        }
+          vanity_name: vanityName,
+        },
       );
     }
 
@@ -4723,15 +4912,15 @@ async function savePublicProfileVanityName(
       "LinkedIn custom public profile URL did not update as expected.",
       {
         requested_vanity_name: vanityName,
-        current_vanity_name: currentValue
-      }
+        current_vanity_name: currentValue,
+      },
     );
   }
 }
 
 async function extractEditablePublicProfile(
   page: Page,
-  profile: LinkedInProfile
+  profile: LinkedInProfile,
 ): Promise<LinkedInProfileEditablePublicProfile> {
   const fallbackProfile = buildFallbackEditablePublicProfile(profile);
 
@@ -4744,7 +4933,7 @@ async function extractEditablePublicProfile(
       : normalizeText(
           await openPublicProfileVanityEditor(page)
             .then(async (editableInput) => editableInput.inputValue())
-            .catch(() => "")
+            .catch(() => ""),
         );
     if (!editableInputValue) {
       return fallbackProfile;
@@ -4754,7 +4943,7 @@ async function extractEditablePublicProfile(
     return {
       vanity_name: vanityName,
       public_profile_url: buildLinkedInPublicProfileUrl(vanityName),
-      supported_fields: ["vanityName", "publicProfileUrl"]
+      supported_fields: ["vanityName", "publicProfileUrl"],
     };
   } catch {
     return fallbackProfile;
@@ -4764,129 +4953,143 @@ async function extractEditablePublicProfile(
 async function extractEditableSections(
   page: Page,
   selectorLocale: LinkedInSelectorLocale,
-  profile: LinkedInProfile
+  profile: LinkedInProfile,
 ): Promise<LinkedInProfileEditableSection[]> {
   const sectionLabels = Object.fromEntries(
     LINKEDIN_PROFILE_SECTION_TYPES.map((section) => [
       section,
-      getSectionLabels(section, selectorLocale)
-    ])
+      getSectionLabels(section, selectorLocale),
+    ]),
   ) as Record<LinkedInProfileSectionType, string[]>;
 
-  const extracted = await page.evaluate((config) => {
-    const normalize = (value: string | null | undefined): string =>
-      (value ?? "").replace(/\s+/g, " ").trim();
+  const extracted = await page.evaluate(
+    (config) => {
+      const normalize = (value: string | null | undefined): string =>
+        (value ?? "").replace(/\s+/g, " ").trim();
 
-    const includesAnyLabel = (value: string, labels: string[]): boolean => {
-      const normalizedValue = normalize(value).toLowerCase();
-      return labels.some((label) => normalizedValue.includes(normalize(label).toLowerCase()));
-    };
-
-    const findSectionRoot = (labels: string[]) => {
-      const sections = Array.from(
-        globalThis.document.querySelectorAll("section, div.pv-profile-card, div.artdeco-card")
-      );
-      for (const section of sections) {
-        const heading = normalize(
-          section.querySelector("h2, h3, .pvs-header__title")?.textContent
+      const includesAnyLabel = (value: string, labels: string[]): boolean => {
+        const normalizedValue = normalize(value).toLowerCase();
+        return labels.some((label) =>
+          normalizedValue.includes(normalize(label).toLowerCase()),
         );
-        if (heading && includesAnyLabel(heading, labels)) {
-          return section;
+      };
+
+      const findSectionRoot = (labels: string[]) => {
+        const sections = Array.from(
+          globalThis.document.querySelectorAll(
+            "section, div.pv-profile-card, div.artdeco-card",
+          ),
+        );
+        for (const section of sections) {
+          const heading = normalize(
+            section.querySelector("h2, h3, .pvs-header__title")?.textContent,
+          );
+          if (heading && includesAnyLabel(heading, labels)) {
+            return section;
+          }
         }
-      }
 
-      return null;
-    };
+        return null;
+      };
 
-    const itemSelectors = [
-      ".pvs-list__paged-list-item",
-      ".pvs-list__item--line-separated",
-      "li.artdeco-list__item",
-      "li[class*='pvs-list__item']"
-    ];
-
-    const collectItems = (sectionRoot: globalThis.Element) => {
-      for (const selector of itemSelectors) {
-        const items = Array.from(sectionRoot.querySelectorAll(selector));
-        if (items.length > 0) {
-          return items;
-        }
-      }
-      return [];
-    };
-
-    const readItem = (itemRoot: globalThis.Element) => {
-      const lineSelectors = [
-        ".t-bold span[aria-hidden='true']",
-        ".t-normal span[aria-hidden='true']",
-        ".pvs-entity__caption-wrapper span[aria-hidden='true']",
-        ".pvs-entity__description-wrapper span[aria-hidden='true']",
-        ".inline-show-more-text span[aria-hidden='true']",
-        ".inline-show-more-text"
+      const itemSelectors = [
+        ".pvs-list__paged-list-item",
+        ".pvs-list__item--line-separated",
+        "li.artdeco-list__item",
+        "li[class*='pvs-list__item']",
       ];
 
-      let lines = lineSelectors.flatMap((selector) =>
-        Array.from(itemRoot.querySelectorAll(selector)).map((node) => normalize(node.textContent))
-      );
-      lines = lines.filter((line) => line.length > 0);
-
-      const rawText = normalize(itemRoot.textContent);
-      if (lines.length === 0 && rawText) {
-        lines = rawText
-          .split(/\n+/)
-          .map((line) => normalize(line))
-          .filter((line) => line.length > 0);
-      }
-
-      const sourceCandidates = [
-        itemRoot.getAttribute("data-entity-urn"),
-        itemRoot.getAttribute("data-urn"),
-        itemRoot.id,
-        ...Array.from(itemRoot.querySelectorAll("[data-entity-urn], [data-urn], a[href]"))
-          .map((candidate) =>
-            candidate.getAttribute("data-entity-urn") ??
-            candidate.getAttribute("data-urn") ??
-            candidate.getAttribute("href")
-          )
-          .filter((candidate): candidate is string => typeof candidate === "string")
-      ]
-        .map((candidate) => normalize(candidate))
-        .filter((candidate) => candidate.length > 0);
-
-      return {
-        source_id: sourceCandidates[0] ?? null,
-        primary_text: lines[0] ?? "",
-        secondary_text: lines[1] ?? "",
-        tertiary_text: lines[2] ?? "",
-        description: lines.slice(3).join(" ") || rawText,
-        raw_text: rawText
-      };
-    };
-
-    return Object.fromEntries(
-      Object.entries(config.sectionLabels)
-        .filter(([section]) => section !== "about")
-        .map(([section, labels]) => {
-          const root = findSectionRoot(labels);
-          if (!root) {
-            return [section, []];
+      const collectItems = (sectionRoot: globalThis.Element) => {
+        for (const selector of itemSelectors) {
+          const items = Array.from(sectionRoot.querySelectorAll(selector));
+          if (items.length > 0) {
+            return items;
           }
+        }
+        return [];
+      };
 
-          const items = collectItems(root)
-            .map((itemRoot) => readItem(itemRoot))
+      const readItem = (itemRoot: globalThis.Element) => {
+        const lineSelectors = [
+          ".t-bold span[aria-hidden='true']",
+          ".t-normal span[aria-hidden='true']",
+          ".pvs-entity__caption-wrapper span[aria-hidden='true']",
+          ".pvs-entity__description-wrapper span[aria-hidden='true']",
+          ".inline-show-more-text span[aria-hidden='true']",
+          ".inline-show-more-text",
+        ];
+
+        let lines = lineSelectors.flatMap((selector) =>
+          Array.from(itemRoot.querySelectorAll(selector)).map((node) =>
+            normalize(node.textContent),
+          ),
+        );
+        lines = lines.filter((line) => line.length > 0);
+
+        const rawText = normalize(itemRoot.textContent);
+        if (lines.length === 0 && rawText) {
+          lines = rawText
+            .split(/\n+/)
+            .map((line) => normalize(line))
+            .filter((line) => line.length > 0);
+        }
+
+        const sourceCandidates = [
+          itemRoot.getAttribute("data-entity-urn"),
+          itemRoot.getAttribute("data-urn"),
+          itemRoot.id,
+          ...Array.from(
+            itemRoot.querySelectorAll("[data-entity-urn], [data-urn], a[href]"),
+          )
+            .map(
+              (candidate) =>
+                candidate.getAttribute("data-entity-urn") ??
+                candidate.getAttribute("data-urn") ??
+                candidate.getAttribute("href"),
+            )
             .filter(
-              (item) =>
-                item.primary_text ||
-                item.secondary_text ||
-                item.tertiary_text ||
-                item.description ||
-                item.raw_text
-            );
+              (candidate): candidate is string => typeof candidate === "string",
+            ),
+        ]
+          .map((candidate) => normalize(candidate))
+          .filter((candidate) => candidate.length > 0);
 
-          return [section, items];
-        })
-    );
-  }, { sectionLabels });
+        return {
+          source_id: sourceCandidates[0] ?? null,
+          primary_text: lines[0] ?? "",
+          secondary_text: lines[1] ?? "",
+          tertiary_text: lines[2] ?? "",
+          description: lines.slice(3).join(" ") || rawText,
+          raw_text: rawText,
+        };
+      };
+
+      return Object.fromEntries(
+        Object.entries(config.sectionLabels)
+          .filter(([section]) => section !== "about")
+          .map(([section, labels]) => {
+            const root = findSectionRoot(labels);
+            if (!root) {
+              return [section, []];
+            }
+
+            const items = collectItems(root)
+              .map((itemRoot) => readItem(itemRoot))
+              .filter(
+                (item) =>
+                  item.primary_text ||
+                  item.secondary_text ||
+                  item.tertiary_text ||
+                  item.description ||
+                  item.raw_text,
+              );
+
+            return [section, items];
+          }),
+      );
+    },
+    { sectionLabels },
+  );
 
   return LINKEDIN_PROFILE_SECTION_TYPES.map((section) => {
     const sectionItems =
@@ -4899,8 +5102,8 @@ async function extractEditableSections(
                 secondary_text: "",
                 tertiary_text: "",
                 description: profile.about,
-                raw_text: profile.about
-              }
+                raw_text: profile.about,
+              },
             ]
           : []
         : ((extracted[section] ?? []) as ExtractedEditableSectionItem[]);
@@ -4908,7 +5111,9 @@ async function extractEditableSections(
     return {
       section,
       label: getSectionDisplayLabel(section, selectorLocale),
-      supported_fields: getEditableFieldDefinitions(section).map((definition) => definition.key),
+      supported_fields: getEditableFieldDefinitions(section).map(
+        (definition) => definition.key,
+      ),
       can_add: true,
       items: sectionItems.map((item) => {
         const itemId = createProfileSectionItemId({
@@ -4917,7 +5122,7 @@ async function extractEditableSections(
           primaryText: item.primary_text,
           secondaryText: item.secondary_text,
           tertiaryText: item.tertiary_text,
-          rawText: item.raw_text
+          rawText: item.raw_text,
         });
 
         return {
@@ -4928,31 +5133,32 @@ async function extractEditableSections(
           tertiary_text: normalizeText(item.tertiary_text),
           description: normalizeText(item.description),
           raw_text: normalizeText(item.raw_text),
-          source_id: item.source_id ? normalizeText(item.source_id) : null
+          source_id: item.source_id ? normalizeText(item.source_id) : null,
         };
-      })
+      }),
     } satisfies LinkedInProfileEditableSection;
   });
 }
 
 async function extractEditableFeaturedSection(
   page: Page,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<LinkedInProfileEditableFeaturedSection> {
   const featuredRoot = await findFeaturedSectionRoot(page, selectorLocale);
   if (!featuredRoot) {
     return {
-      label: getFeaturedActionLabels("section", selectorLocale)[0] ?? "Featured",
+      label:
+        getFeaturedActionLabels("section", selectorLocale)[0] ?? "Featured",
       can_add: true,
       can_remove: true,
       can_reorder: false,
       supported_kinds: [...LINKEDIN_PROFILE_FEATURED_ITEM_KINDS],
-      items: []
+      items: [],
     };
   }
 
   const itemLocators = featuredRoot.locator(
-    ".pvs-list__paged-list-item, .pvs-list__item--line-separated, li.artdeco-list__item, li[class*='pvs-list__item']"
+    ".pvs-list__paged-list-item, .pvs-list__item--line-separated, li.artdeco-list__item, li[class*='pvs-list__item']",
   );
   const itemCount = await itemLocators.count();
   const items: LinkedInProfileEditableFeaturedItem[] = [];
@@ -4977,7 +5183,7 @@ async function extractEditableFeaturedSection(
         ...(extracted.url ? { url: extracted.url } : {}),
         title: extracted.title,
         subtitle: extracted.subtitle,
-        rawText: extracted.raw_text
+        rawText: extracted.raw_text,
       }),
       position: items.length + 1,
       kind,
@@ -4986,7 +5192,9 @@ async function extractEditableFeaturedSection(
       description: normalizeText(extracted.description),
       url: extracted.url ? normalizeText(extracted.url) : null,
       raw_text: normalizeText(extracted.raw_text),
-      source_id: extracted.source_id ? normalizeText(extracted.source_id) : null
+      source_id: extracted.source_id
+        ? normalizeText(extracted.source_id)
+        : null,
     });
   }
 
@@ -4996,16 +5204,20 @@ async function extractEditableFeaturedSection(
     can_remove: true,
     can_reorder: items.length > 1,
     supported_kinds: [...LINKEDIN_PROFILE_FEATURED_ITEM_KINDS],
-    items
+    items,
   };
 }
 
 async function openSectionEditDialog(
   page: Page,
   section: LinkedInProfileSectionType,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<Locator> {
-  const sectionRoot = await findProfileSectionRoot(page, section, selectorLocale);
+  const sectionRoot = await findProfileSectionRoot(
+    page,
+    section,
+    selectorLocale,
+  );
   if (!sectionRoot) {
     return openSectionCreateDialog(page, section, selectorLocale);
   }
@@ -5013,7 +5225,7 @@ async function openSectionEditDialog(
   const editCandidates = createActionCandidates(
     sectionRoot,
     getUiActionLabels("edit", selectorLocale),
-    `${section}-edit`
+    `${section}-edit`,
   );
   const resolvedEdit = await findFirstVisibleLocator(editCandidates);
   if (!resolvedEdit) {
@@ -5028,7 +5240,9 @@ async function getVisibleDialogOrNull(page: Page): Promise<Locator | null> {
   return (await isLocatorVisible(dialog)) ? dialog : null;
 }
 
-async function findVisibleFileInput(root: Page | Locator): Promise<Locator | null> {
+async function findVisibleFileInput(
+  root: Page | Locator,
+): Promise<Locator | null> {
   const inputs = root.locator("input[type='file']");
   const count = Math.min(await inputs.count().catch(() => 0), 4);
   let fallback: Locator | null = null;
@@ -5053,11 +5267,11 @@ async function findVisibleFileInput(root: Page | Locator): Promise<Locator | nul
 async function clickLocatorForUpload(
   page: Page,
   locator: Locator,
-  filePath: string
+  filePath: string,
 ): Promise<{ surface: Locator | null; uploaded: boolean }> {
-  const fileChooserPromise = page.waitForEvent("filechooser", { timeout: 1_200 }).catch(
-    () => null
-  );
+  const fileChooserPromise = page
+    .waitForEvent("filechooser", { timeout: 1_200 })
+    .catch(() => null);
   try {
     await locator.first().click({ timeout: 5_000 });
   } catch {
@@ -5071,7 +5285,7 @@ async function clickLocatorForUpload(
     await fileChooser.setFiles(filePath);
     return {
       surface: await getVisibleDialogOrNull(page),
-      uploaded: true
+      uploaded: true,
     };
   }
 
@@ -5082,13 +5296,13 @@ async function clickLocatorForUpload(
       await input.setInputFiles(filePath);
       return {
         surface: overlay,
-        uploaded: true
+        uploaded: true,
       };
     }
 
     return {
       surface: overlay,
-      uploaded: false
+      uploaded: false,
     };
   }
 
@@ -5097,13 +5311,13 @@ async function clickLocatorForUpload(
     await pageInput.setInputFiles(filePath);
     return {
       surface: await getVisibleDialogOrNull(page),
-      uploaded: true
+      uploaded: true,
     };
   }
 
   return {
     surface: null,
-    uploaded: false
+    uploaded: false,
   };
 }
 
@@ -5112,7 +5326,7 @@ async function uploadFileFromSurface(
   surface: Page | Locator,
   filePath: string,
   uploadLabels: readonly string[],
-  keyPrefix: string
+  keyPrefix: string,
 ): Promise<{ surface: Locator | null; uploaded: boolean }> {
   const surfaceInput = await findVisibleFileInput(surface);
   if (surfaceInput) {
@@ -5120,7 +5334,7 @@ async function uploadFileFromSurface(
     const surfaceLocator = surface === page ? null : (surface as Locator);
     return {
       surface: surfaceLocator ?? (await getVisibleDialogOrNull(page)),
-      uploaded: true
+      uploaded: true,
     };
   }
 
@@ -5129,19 +5343,24 @@ async function uploadFileFromSurface(
     await pageInput.setInputFiles(filePath);
     return {
       surface: await getVisibleDialogOrNull(page),
-      uploaded: true
+      uploaded: true,
     };
   }
 
   const candidates: LocatorCandidate[] = [
     ...createActionCandidates(surface, uploadLabels, `${keyPrefix}-button`),
-    ...createActionCandidates(surface, uploadLabels, `${keyPrefix}-link`, "link"),
+    ...createActionCandidates(
+      surface,
+      uploadLabels,
+      `${keyPrefix}-link`,
+      "link",
+    ),
     {
       key: `${keyPrefix}-generic`,
       locator: surface
         .locator("button, a, [role='button']")
-        .filter({ hasText: buildTextRegex(uploadLabels) })
-    }
+        .filter({ hasText: buildTextRegex(uploadLabels) }),
+    },
   ];
 
   for (const candidate of candidates) {
@@ -5149,7 +5368,11 @@ async function uploadFileFromSurface(
       continue;
     }
 
-    const result = await clickLocatorForUpload(page, candidate.locator, filePath);
+    const result = await clickLocatorForUpload(
+      page,
+      candidate.locator,
+      filePath,
+    );
     if (result.uploaded || result.surface) {
       return result;
     }
@@ -5157,13 +5380,13 @@ async function uploadFileFromSurface(
 
   return {
     surface: null,
-    uploaded: false
+    uploaded: false,
   };
 }
 
 async function openFeaturedAddSurface(
   page: Page,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<Locator> {
   const featuredRoot = await findFeaturedSectionRoot(page, selectorLocale);
 
@@ -5171,7 +5394,7 @@ async function openFeaturedAddSurface(
     const addCandidates = createActionCandidates(
       featuredRoot,
       getUiActionLabels("add", selectorLocale),
-      "featured-add"
+      "featured-add",
     );
     const resolvedAdd = await findFirstVisibleLocator(addCandidates);
     if (resolvedAdd) {
@@ -5179,32 +5402,39 @@ async function openFeaturedAddSurface(
     }
   }
 
-  const addSectionDialog = await openGlobalAddSectionDialog(page, selectorLocale);
+  const addSectionDialog = await openGlobalAddSectionDialog(
+    page,
+    selectorLocale,
+  );
   const featuredCandidates: LocatorCandidate[] = [
     ...createActionCandidates(
       addSectionDialog,
       getFeaturedActionLabels("section", selectorLocale),
-      "featured-global"
+      "featured-global",
     ),
     ...createActionCandidates(
       addSectionDialog,
       getFeaturedActionLabels("section", selectorLocale),
       "featured-global-link",
-      "link"
+      "link",
     ),
     {
       key: "featured-global-generic",
       locator: addSectionDialog
         .locator("button, a, div[role='button'], li")
-        .filter({ hasText: buildTextRegex(getFeaturedActionLabels("section", selectorLocale)) })
-    }
+        .filter({
+          hasText: buildTextRegex(
+            getFeaturedActionLabels("section", selectorLocale),
+          ),
+        }),
+    },
   ];
 
   const resolvedFeatured = await findFirstVisibleLocator(featuredCandidates);
   if (!resolvedFeatured) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      "Could not find the Featured section add flow on the profile page."
+      "Could not find the Featured section add flow on the profile page.",
     );
   }
 
@@ -5217,7 +5447,7 @@ async function selectFeaturedAddOption(
   page: Page,
   overlay: Locator,
   kind: LinkedInProfileFeaturedItemKind,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<Locator> {
   const labels =
     kind === "link"
@@ -5228,20 +5458,25 @@ async function selectFeaturedAddOption(
 
   const candidates: LocatorCandidate[] = [
     ...createActionCandidates(overlay, labels, `featured-add-${kind}`),
-    ...createActionCandidates(overlay, labels, `featured-add-${kind}-link`, "link"),
+    ...createActionCandidates(
+      overlay,
+      labels,
+      `featured-add-${kind}-link`,
+      "link",
+    ),
     {
       key: `featured-add-${kind}-generic`,
       locator: overlay
         .locator("button, a, div[role='button'], li")
-        .filter({ hasText: buildTextRegex(labels) })
-    }
+        .filter({ hasText: buildTextRegex(labels) }),
+    },
   ];
 
   const resolved = await findFirstVisibleLocator(candidates);
   if (!resolved) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      `Could not find the Featured ${kind} add option.`
+      `Could not find the Featured ${kind} add option.`,
     );
   }
 
@@ -5252,26 +5487,26 @@ async function selectFeaturedAddOption(
 
 async function openFeaturedEditDialog(
   page: Page,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<Locator> {
   const featuredRoot = await findFeaturedSectionRoot(page, selectorLocale);
   if (!featuredRoot) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      "Could not find the Featured section on the profile page."
+      "Could not find the Featured section on the profile page.",
     );
   }
 
   const editCandidates = createActionCandidates(
     featuredRoot,
     getUiActionLabels("edit", selectorLocale),
-    "featured-edit"
+    "featured-edit",
   );
   const resolvedEdit = await findFirstVisibleLocator(editCandidates);
   if (!resolvedEdit) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      "Could not find the Featured edit control on the profile page."
+      "Could not find the Featured edit control on the profile page.",
     );
   }
 
@@ -5282,7 +5517,7 @@ async function fillDialogFieldIfPresent(
   page: Page,
   dialog: Locator,
   definition: EditableFieldDefinition,
-  value: NormalizedEditableValue | undefined
+  value: NormalizedEditableValue | undefined,
 ): Promise<void> {
   if (value === undefined) {
     return;
@@ -5307,10 +5542,13 @@ function normalizeComparableUrl(value: string): string {
   }
 }
 
-async function selectFeaturedPostInDialog(dialog: Locator, postUrl: string): Promise<void> {
+async function selectFeaturedPostInDialog(
+  dialog: Locator,
+  postUrl: string,
+): Promise<void> {
   const normalizedPostUrl = normalizeComparableUrl(postUrl);
   const rows = dialog.locator(
-    "li, [role='listitem'], .artdeco-list__item, .pvs-list__paged-list-item"
+    "li, [role='listitem'], .artdeco-list__item, .pvs-list__paged-list-item",
   );
   const rowCount = await rows.count();
 
@@ -5321,15 +5559,21 @@ async function selectFeaturedPostInDialog(dialog: Locator, postUrl: string): Pro
       .evaluateAll((anchors) =>
         anchors
           .map((anchor) => anchor.getAttribute("href") ?? "")
-          .filter((href) => href.length > 0)
+          .filter((href) => href.length > 0),
       )
       .catch(() => [] as string[]);
 
     if (
-      hrefs.some((href) => normalizeComparableUrl(href) === normalizedPostUrl) ||
-      hrefs.some((href) => normalizeComparableUrl(href).includes(normalizedPostUrl))
+      hrefs.some(
+        (href) => normalizeComparableUrl(href) === normalizedPostUrl,
+      ) ||
+      hrefs.some((href) =>
+        normalizeComparableUrl(href).includes(normalizedPostUrl),
+      )
     ) {
-      const selectionControl = row.locator("input[type='checkbox'], button, [role='button']").first();
+      const selectionControl = row
+        .locator("input[type='checkbox'], button, [role='button']")
+        .first();
       if (await isLocatorVisible(selectionControl)) {
         await selectionControl.click().catch(async () => {
           await row.click();
@@ -5345,8 +5589,8 @@ async function selectFeaturedPostInDialog(dialog: Locator, postUrl: string): Pro
     "TARGET_NOT_FOUND",
     "Could not find the requested post in the Featured post picker.",
     {
-      post_url: postUrl
-    }
+      post_url: postUrl,
+    },
   );
 }
 
@@ -5355,15 +5599,30 @@ async function addFeaturedLink(
   selectorLocale: LinkedInSelectorLocale,
   url: string,
   title: string | undefined,
-  description: string | undefined
+  description: string | undefined,
 ): Promise<void> {
   const overlay = await openFeaturedAddSurface(page, selectorLocale);
-  const dialog = await selectFeaturedAddOption(page, overlay, "link", selectorLocale);
+  const dialog = await selectFeaturedAddOption(
+    page,
+    overlay,
+    "link",
+    selectorLocale,
+  );
 
   await fillDialogField(page, dialog, FEATURED_LINK_FIELD_DEFINITIONS[0], url);
   await page.waitForTimeout(300);
-  await fillDialogFieldIfPresent(page, dialog, FEATURED_LINK_FIELD_DEFINITIONS[1], title);
-  await fillDialogFieldIfPresent(page, dialog, FEATURED_LINK_FIELD_DEFINITIONS[2], description);
+  await fillDialogFieldIfPresent(
+    page,
+    dialog,
+    FEATURED_LINK_FIELD_DEFINITIONS[1],
+    title,
+  );
+  await fillDialogFieldIfPresent(
+    page,
+    dialog,
+    FEATURED_LINK_FIELD_DEFINITIONS[2],
+    description,
+  );
   await clickSaveInDialog(page, dialog, selectorLocale);
 }
 
@@ -5372,33 +5631,45 @@ async function addFeaturedMedia(
   selectorLocale: LinkedInSelectorLocale,
   upload: PreparedUploadArtifact,
   title: string | undefined,
-  description: string | undefined
+  description: string | undefined,
 ): Promise<void> {
   const overlay = await openFeaturedAddSurface(page, selectorLocale);
-  const dialogOrMenu = await selectFeaturedAddOption(page, overlay, "media", selectorLocale);
+  const dialogOrMenu = await selectFeaturedAddOption(
+    page,
+    overlay,
+    "media",
+    selectorLocale,
+  );
   const uploadResult = await uploadFileFromSurface(
     page,
     dialogOrMenu,
     upload.absolute_path,
     getProfileMediaActionLabels("upload", selectorLocale),
-    "featured-media-upload"
+    "featured-media-upload",
   );
 
   if (!uploadResult.uploaded) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      "Could not find a file upload control for the Featured media flow."
+      "Could not find a file upload control for the Featured media flow.",
     );
   }
 
   const dialog =
-    (await getVisibleDialogOrNull(page)) ?? uploadResult.surface ?? dialogOrMenu;
-  await fillDialogFieldIfPresent(page, dialog, FEATURED_MEDIA_FIELD_DEFINITIONS[0], title);
+    (await getVisibleDialogOrNull(page)) ??
+    uploadResult.surface ??
+    dialogOrMenu;
+  await fillDialogFieldIfPresent(
+    page,
+    dialog,
+    FEATURED_MEDIA_FIELD_DEFINITIONS[0],
+    title,
+  );
   await fillDialogFieldIfPresent(
     page,
     dialog,
     FEATURED_MEDIA_FIELD_DEFINITIONS[1],
-    description
+    description,
   );
   await clickSaveInDialog(page, dialog, selectorLocale);
 }
@@ -5406,10 +5677,15 @@ async function addFeaturedMedia(
 async function addFeaturedPost(
   page: Page,
   selectorLocale: LinkedInSelectorLocale,
-  postUrl: string
+  postUrl: string,
 ): Promise<void> {
   const overlay = await openFeaturedAddSurface(page, selectorLocale);
-  const dialog = await selectFeaturedAddOption(page, overlay, "post", selectorLocale);
+  const dialog = await selectFeaturedAddOption(
+    page,
+    overlay,
+    "post",
+    selectorLocale,
+  );
   await selectFeaturedPostInDialog(dialog, postUrl);
   await clickSaveInDialog(page, dialog, selectorLocale);
 }
@@ -5417,37 +5693,40 @@ async function addFeaturedPost(
 async function openFeaturedItemMenu(
   page: Page,
   selectorLocale: LinkedInSelectorLocale,
-  match: LinkedInProfileFeaturedItemMatch
+  match: LinkedInProfileFeaturedItemMatch,
 ): Promise<Locator> {
   const featuredRoot = await findFeaturedSectionRoot(page, selectorLocale);
   if (!featuredRoot) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      "Could not find the Featured section on the profile page."
+      "Could not find the Featured section on the profile page.",
     );
   }
 
-  const itemLocator = await findMatchingFeaturedItemLocator(featuredRoot, match);
+  const itemLocator = await findMatchingFeaturedItemLocator(
+    featuredRoot,
+    match,
+  );
   if (!itemLocator) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
       "Could not find a matching item in the Featured section.",
       {
-        match
-      }
+        match,
+      },
     );
   }
 
   const moreCandidates = createActionCandidates(
     itemLocator,
     getUiActionLabels("more", selectorLocale),
-    "featured-item-more"
+    "featured-item-more",
   );
   const resolvedMore = await findFirstVisibleLocator(moreCandidates);
   if (!resolvedMore) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      "Could not find the Featured item actions menu."
+      "Could not find the Featured item actions menu.",
     );
   }
 
@@ -5457,23 +5736,31 @@ async function openFeaturedItemMenu(
 async function removeFeaturedItem(
   page: Page,
   selectorLocale: LinkedInSelectorLocale,
-  match: LinkedInProfileFeaturedItemMatch
+  match: LinkedInProfileFeaturedItemMatch,
 ): Promise<void> {
   const overlay = await openFeaturedItemMenu(page, selectorLocale, match);
   const removeCandidates: LocatorCandidate[] = [
-    ...createActionCandidates(overlay, getFeaturedActionLabels("remove", selectorLocale), "featured-remove"),
+    ...createActionCandidates(
+      overlay,
+      getFeaturedActionLabels("remove", selectorLocale),
+      "featured-remove",
+    ),
     {
       key: "featured-remove-generic",
       locator: overlay
         .locator("[role='menuitem'], button, div[role='button']")
-        .filter({ hasText: buildTextRegex(getFeaturedActionLabels("remove", selectorLocale)) })
-    }
+        .filter({
+          hasText: buildTextRegex(
+            getFeaturedActionLabels("remove", selectorLocale),
+          ),
+        }),
+    },
   ];
   const resolvedRemove = await findFirstVisibleLocator(removeCandidates);
   if (!resolvedRemove) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      "Could not find the remove-from-featured action for the selected item."
+      "Could not find the remove-from-featured action for the selected item.",
     );
   }
 
@@ -5486,15 +5773,17 @@ async function removeFeaturedItem(
       ...createActionCandidates(
         confirmationDialog,
         getFeaturedActionLabels("remove", selectorLocale),
-        "featured-remove-confirm"
+        "featured-remove-confirm",
       ),
       ...createActionCandidates(
         confirmationDialog,
         getUiActionLabels("delete", selectorLocale),
-        "featured-remove-confirm-delete"
-      )
+        "featured-remove-confirm-delete",
+      ),
     ];
-    const resolvedConfirmation = await findFirstVisibleLocator(confirmationCandidates);
+    const resolvedConfirmation = await findFirstVisibleLocator(
+      confirmationCandidates,
+    );
     if (resolvedConfirmation) {
       await resolvedConfirmation.locator.first().click();
     }
@@ -5505,10 +5794,10 @@ async function removeFeaturedItem(
 
 async function findMatchingFeaturedDialogRow(
   dialog: Locator,
-  match: LinkedInProfileFeaturedItemMatch
+  match: LinkedInProfileFeaturedItemMatch,
 ): Promise<{ row: Locator; index: number } | null> {
   const rows = dialog.locator(
-    "li, [role='listitem'], .artdeco-list__item, .pvs-list__paged-list-item"
+    "li, [role='listitem'], .artdeco-list__item, .pvs-list__paged-list-item",
   );
   const rowCount = await rows.count();
 
@@ -5528,7 +5817,7 @@ async function findVisibleDragHandle(row: Locator): Promise<Locator | null> {
     "[aria-label*='Move' i]",
     "[aria-roledescription*='drag' i]",
     "button[draggable='true']",
-    "[draggable='true']"
+    "[draggable='true']",
   ];
 
   for (const selector of selectors) {
@@ -5544,7 +5833,7 @@ async function findVisibleDragHandle(row: Locator): Promise<Locator | null> {
 async function dragLocatorToTarget(
   page: Page,
   source: Locator,
-  target: Locator
+  target: Locator,
 ): Promise<void> {
   const sourceBox = await source.boundingBox();
   const targetBox = await target.boundingBox();
@@ -5552,19 +5841,19 @@ async function dragLocatorToTarget(
   if (!sourceBox || !targetBox) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      "Could not resolve drag handles while reordering Featured items."
+      "Could not resolve drag handles while reordering Featured items.",
     );
   }
 
   await page.mouse.move(
     sourceBox.x + sourceBox.width / 2,
-    sourceBox.y + sourceBox.height / 2
+    sourceBox.y + sourceBox.height / 2,
   );
   await page.mouse.down();
   await page.mouse.move(
     targetBox.x + Math.max(targetBox.width / 2, 8),
     targetBox.y + Math.min(targetBox.height / 4, 12),
-    { steps: 20 }
+    { steps: 20 },
   );
   await page.mouse.up();
   await page.waitForTimeout(350);
@@ -5573,7 +5862,7 @@ async function dragLocatorToTarget(
 async function reorderFeaturedItems(
   page: Page,
   selectorLocale: LinkedInSelectorLocale,
-  itemIds: string[]
+  itemIds: string[],
 ): Promise<void> {
   const dialog = await openFeaturedEditDialog(page, selectorLocale);
   const decodedItems = itemIds.map((itemId) => {
@@ -5583,8 +5872,8 @@ async function reorderFeaturedItems(
         "ACTION_PRECONDITION_FAILED",
         "Featured reorder requires itemIds returned by view_editable.featured.items.",
         {
-          item_id: itemId
-        }
+          item_id: itemId,
+        },
       );
     }
 
@@ -5598,7 +5887,7 @@ async function reorderFeaturedItems(
       ...(decoded.url ? { url: decoded.url } : {}),
       ...(decoded.title ? { title: decoded.title } : {}),
       ...(decoded.subtitle ? { subtitle: decoded.subtitle } : {}),
-      ...(decoded.rawText ? { rawText: decoded.rawText } : {})
+      ...(decoded.rawText ? { rawText: decoded.rawText } : {}),
     };
     const locatedRow = await findMatchingFeaturedDialogRow(dialog, match);
     if (!locatedRow) {
@@ -5606,8 +5895,8 @@ async function reorderFeaturedItems(
         "TARGET_NOT_FOUND",
         "Could not find one of the requested Featured items in the reorder dialog.",
         {
-          match
-        }
+          match,
+        },
       );
     }
 
@@ -5616,9 +5905,12 @@ async function reorderFeaturedItems(
     }
 
     const firstRow = dialog
-      .locator("li, [role='listitem'], .artdeco-list__item, .pvs-list__paged-list-item")
+      .locator(
+        "li, [role='listitem'], .artdeco-list__item, .pvs-list__paged-list-item",
+      )
       .first();
-    const sourceHandle = (await findVisibleDragHandle(locatedRow.row)) ?? locatedRow.row;
+    const sourceHandle =
+      (await findVisibleDragHandle(locatedRow.row)) ?? locatedRow.row;
     const targetHandle = (await findVisibleDragHandle(firstRow)) ?? firstRow;
     await dragLocatorToTarget(page, sourceHandle, targetHandle);
   }
@@ -5628,7 +5920,7 @@ async function reorderFeaturedItems(
 
 function getCollectionItemLocator(root: Locator): Locator {
   return root.locator(
-    ".pvs-list__paged-list-item, .pvs-list__item--line-separated, li.artdeco-list__item, li[class*='pvs-list__item'], li[class*='artdeco-models-table-row']"
+    ".pvs-list__paged-list-item, .pvs-list__item--line-separated, li.artdeco-list__item, li[class*='pvs-list__item'], li[class*='artdeco-models-table-row']",
   );
 }
 
@@ -5640,12 +5932,12 @@ async function readSkillRowName(locator: Locator): Promise<string> {
     const lines = [
       ...Array.from(
         element.querySelectorAll(
-          ".t-bold span[aria-hidden='true'], .t-bold, .t-normal span[aria-hidden='true'], [data-field='skill'], [data-field='name']"
-        )
+          ".t-bold span[aria-hidden='true'], .t-bold, .t-normal span[aria-hidden='true'], [data-field='skill'], [data-field='name']",
+        ),
       ).map((node) => normalize(node.textContent)),
       ...normalize(element.textContent)
         .split(/\n+/)
-        .map((line) => normalize(line))
+        .map((line) => normalize(line)),
     ].filter((line) => line.length > 0);
 
     return lines[0] ?? "";
@@ -5664,7 +5956,7 @@ function doesSkillNameMatch(actual: string, expected: string): boolean {
 
 async function findMatchingSkillRow(
   root: Locator,
-  skillName: string
+  skillName: string,
 ): Promise<{ row: Locator; index: number } | null> {
   const rows = getCollectionItemLocator(root);
   const rowCount = await rows.count();
@@ -5683,18 +5975,23 @@ async function findMatchingSkillRow(
 async function maybeOpenSkillsListSurface(
   page: Page,
   sectionRoot: Locator,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<Locator | null> {
   const labels = getSkillActionLabels("showAll", selectorLocale);
   const candidates: LocatorCandidate[] = [
     ...createActionCandidates(sectionRoot, labels, "skills-show-all"),
-    ...createActionCandidates(sectionRoot, labels, "skills-show-all-link", "link"),
+    ...createActionCandidates(
+      sectionRoot,
+      labels,
+      "skills-show-all-link",
+      "link",
+    ),
     {
       key: "skills-show-all-generic",
       locator: sectionRoot
         .locator("button, a, [role='button']")
-        .filter({ hasText: buildTextRegex(labels) })
-    }
+        .filter({ hasText: buildTextRegex(labels) }),
+    },
   ];
   const resolved = await findFirstVisibleLocator(candidates);
   if (!resolved) {
@@ -5710,24 +6007,29 @@ async function maybeOpenSkillsListSurface(
 
 async function openSkillsAddDialog(
   page: Page,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<Locator> {
   const skillsRoot = await findSkillsSectionRoot(page, selectorLocale);
   const directLabels = dedupeStrings([
     ...getSkillActionLabels("add", selectorLocale),
-    ...getUiActionLabels("add", selectorLocale)
+    ...getUiActionLabels("add", selectorLocale),
   ]);
 
   if (skillsRoot) {
     const sectionCandidates: LocatorCandidate[] = [
       ...createActionCandidates(skillsRoot, directLabels, "skills-add"),
-      ...createActionCandidates(skillsRoot, directLabels, "skills-add-link", "link"),
+      ...createActionCandidates(
+        skillsRoot,
+        directLabels,
+        "skills-add-link",
+        "link",
+      ),
       {
         key: "skills-add-generic",
         locator: skillsRoot
           .locator("button, a, [role='button']")
-          .filter({ hasText: buildTextRegex(directLabels) })
-      }
+          .filter({ hasText: buildTextRegex(directLabels) }),
+      },
     ];
     const resolvedSectionAdd = await findFirstVisibleLocator(sectionCandidates);
     if (resolvedSectionAdd) {
@@ -5735,26 +6037,34 @@ async function openSkillsAddDialog(
     }
   }
 
-  const addSectionDialog = await openGlobalAddSectionDialog(page, selectorLocale);
+  const addSectionDialog = await openGlobalAddSectionDialog(
+    page,
+    selectorLocale,
+  );
   const globalLabels = dedupeStrings([
     ...getSkillActionLabels("add", selectorLocale),
-    ...getSkillActionLabels("section", selectorLocale)
+    ...getSkillActionLabels("section", selectorLocale),
   ]);
   const globalCandidates: LocatorCandidate[] = [
     ...createActionCandidates(addSectionDialog, globalLabels, "skills-global"),
-    ...createActionCandidates(addSectionDialog, globalLabels, "skills-global-link", "link"),
+    ...createActionCandidates(
+      addSectionDialog,
+      globalLabels,
+      "skills-global-link",
+      "link",
+    ),
     {
       key: "skills-global-generic",
       locator: addSectionDialog
         .locator("button, a, div[role='button'], li")
-        .filter({ hasText: buildTextRegex(globalLabels) })
-    }
+        .filter({ hasText: buildTextRegex(globalLabels) }),
+    },
   ];
   const resolvedGlobalAdd = await findFirstVisibleLocator(globalCandidates);
   if (!resolvedGlobalAdd) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      "Could not find the LinkedIn Skills add flow on the profile page."
+      "Could not find the LinkedIn Skills add flow on the profile page.",
     );
   }
 
@@ -5771,7 +6081,7 @@ async function findSkillInputLocator(dialog: Locator): Promise<Locator | null> {
     dialog.locator("input[aria-autocomplete='list']").first(),
     dialog.locator('input[name*="skill" i]').first(),
     dialog.locator('input[id*="skill" i]').first(),
-    dialog.locator('input[placeholder*="skill" i]').first()
+    dialog.locator('input[placeholder*="skill" i]').first(),
   ];
 
   for (const candidate of candidates) {
@@ -5785,25 +6095,25 @@ async function findSkillInputLocator(dialog: Locator): Promise<Locator | null> {
 
 async function selectAutocompleteOption(
   page: Page,
-  value: string
+  value: string,
 ): Promise<void> {
   const exactRegex = buildTextRegex([value], true);
   const fuzzyRegex = buildTextRegex([value]);
   const candidates: LocatorCandidate[] = [
     {
       key: "autocomplete-exact-option",
-      locator: page.getByRole("option", { name: exactRegex })
+      locator: page.getByRole("option", { name: exactRegex }),
     },
     {
       key: "autocomplete-fuzzy-option",
-      locator: page.getByRole("option", { name: fuzzyRegex })
+      locator: page.getByRole("option", { name: fuzzyRegex }),
     },
     {
       key: "autocomplete-fuzzy-list-item",
       locator: page
         .locator("[role='option'], li, [role='listitem']")
-        .filter({ hasText: fuzzyRegex })
-    }
+        .filter({ hasText: fuzzyRegex }),
+    },
   ];
   const resolved = await findFirstVisibleLocator(candidates);
   if (resolved) {
@@ -5818,22 +6128,22 @@ async function selectAutocompleteOption(
 async function addSkill(
   page: Page,
   selectorLocale: LinkedInSelectorLocale,
-  skillName: string
+  skillName: string,
 ): Promise<void> {
   const dialog = await openSkillsAddDialog(page, selectorLocale);
   const skillInput = await findSkillInputLocator(dialog);
   if (!skillInput) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      "Could not find the skill input in the LinkedIn skills dialog."
+      "Could not find the skill input in the LinkedIn skills dialog.",
     );
   }
 
   await skillInput.click();
   await skillInput.fill(skillName).catch(async () => {
-    await skillInput.press(`${process.platform === "darwin" ? "Meta" : "Control"}+A`).catch(
-      () => undefined
-    );
+    await skillInput
+      .press(`${process.platform === "darwin" ? "Meta" : "Control"}+A`)
+      .catch(() => undefined);
     await skillInput.press("Backspace").catch(() => undefined);
     await skillInput.type(skillName);
   });
@@ -5844,26 +6154,26 @@ async function addSkill(
 
 async function openSkillsEditDialog(
   page: Page,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<Locator> {
   const skillsRoot = await findSkillsSectionRoot(page, selectorLocale);
   if (!skillsRoot) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      "Could not find the Skills section on the profile page."
+      "Could not find the Skills section on the profile page.",
     );
   }
 
   const editCandidates = createActionCandidates(
     skillsRoot,
     getUiActionLabels("edit", selectorLocale),
-    "skills-edit"
+    "skills-edit",
   );
   const resolvedEdit = await findFirstVisibleLocator(editCandidates);
   if (!resolvedEdit) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      "Could not find the Skills edit control on the profile page."
+      "Could not find the Skills edit control on the profile page.",
     );
   }
 
@@ -5873,7 +6183,7 @@ async function openSkillsEditDialog(
 async function reorderSkills(
   page: Page,
   selectorLocale: LinkedInSelectorLocale,
-  skillNames: string[]
+  skillNames: string[],
 ): Promise<void> {
   const dialog = await openSkillsEditDialog(page, selectorLocale);
 
@@ -5885,8 +6195,8 @@ async function reorderSkills(
         "TARGET_NOT_FOUND",
         "Could not find one of the requested skills in the reorder dialog.",
         {
-          skill_name: skillName
-        }
+          skill_name: skillName,
+        },
       );
     }
 
@@ -5895,7 +6205,8 @@ async function reorderSkills(
     }
 
     const firstRow = getCollectionItemLocator(dialog).first();
-    const sourceHandle = (await findVisibleDragHandle(locatedRow.row)) ?? locatedRow.row;
+    const sourceHandle =
+      (await findVisibleDragHandle(locatedRow.row)) ?? locatedRow.row;
     const targetHandle = (await findVisibleDragHandle(firstRow)) ?? firstRow;
     await dragLocatorToTarget(page, sourceHandle, targetHandle);
   }
@@ -5906,13 +6217,13 @@ async function reorderSkills(
 async function locateSkillRowOnProfile(
   page: Page,
   selectorLocale: LinkedInSelectorLocale,
-  skillName: string
+  skillName: string,
 ): Promise<Locator> {
   const skillsRoot = await findSkillsSectionRoot(page, selectorLocale);
   if (!skillsRoot) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      "Could not find the Skills section on the target profile."
+      "Could not find the Skills section on the target profile.",
     );
   }
 
@@ -5921,9 +6232,16 @@ async function locateSkillRowOnProfile(
     return directMatch.row;
   }
 
-  const expandedSurface = await maybeOpenSkillsListSurface(page, skillsRoot, selectorLocale);
+  const expandedSurface = await maybeOpenSkillsListSurface(
+    page,
+    skillsRoot,
+    selectorLocale,
+  );
   if (expandedSurface) {
-    const expandedMatch = await findMatchingSkillRow(expandedSurface, skillName);
+    const expandedMatch = await findMatchingSkillRow(
+      expandedSurface,
+      skillName,
+    );
     if (expandedMatch) {
       return expandedMatch.row;
     }
@@ -5933,8 +6251,8 @@ async function locateSkillRowOnProfile(
     "TARGET_NOT_FOUND",
     "Could not find the requested skill on the target profile.",
     {
-      skill_name: skillName
-    }
+      skill_name: skillName,
+    },
   );
 }
 
@@ -5942,7 +6260,7 @@ async function endorseSkill(
   page: Page,
   selectorLocale: LinkedInSelectorLocale,
   targetProfileUrl: string,
-  skillName: string
+  skillName: string,
 ): Promise<"endorsed" | "already_endorsed"> {
   await page.goto(targetProfileUrl, { waitUntil: "domcontentloaded" });
   await waitForNetworkIdleBestEffort(page);
@@ -5950,13 +6268,19 @@ async function endorseSkill(
 
   const row = await locateSkillRowOnProfile(page, selectorLocale, skillName);
   const endorseCandidates: LocatorCandidate[] = [
-    ...createActionCandidates(row, getSkillActionLabels("endorse", selectorLocale), "skill-endorse"),
+    ...createActionCandidates(
+      row,
+      getSkillActionLabels("endorse", selectorLocale),
+      "skill-endorse",
+    ),
     {
       key: "skill-endorse-generic",
-      locator: row
-        .locator("button, [role='button']")
-        .filter({ hasText: buildTextRegex(getSkillActionLabels("endorse", selectorLocale)) })
-    }
+      locator: row.locator("button, [role='button']").filter({
+        hasText: buildTextRegex(
+          getSkillActionLabels("endorse", selectorLocale),
+        ),
+      }),
+    },
   ];
   const resolvedEndorse = await findFirstVisibleLocator(endorseCandidates);
   if (resolvedEndorse) {
@@ -5975,26 +6299,26 @@ async function endorseSkill(
     "TARGET_NOT_FOUND",
     "Could not find an endorse control for the requested skill.",
     {
-      skill_name: skillName
-    }
+      skill_name: skillName,
+    },
   );
 }
 
 async function openTopCardMoreMenu(
   page: Page,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<Locator> {
   const topCardRoot = await getTopCardRoot(page);
   const moreCandidates = createActionCandidates(
     topCardRoot,
     getUiActionLabels("more", selectorLocale),
-    "profile-top-more"
+    "profile-top-more",
   );
   const resolvedMore = await findFirstVisibleLocator(moreCandidates);
   if (!resolvedMore) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      "Could not find the profile More actions menu."
+      "Could not find the profile More actions menu.",
     );
   }
 
@@ -6005,7 +6329,7 @@ async function clickOverlayActionByLabels(
   page: Page,
   overlay: Locator,
   labels: readonly string[],
-  keyPrefix: string
+  keyPrefix: string,
 ): Promise<Locator> {
   const candidates: LocatorCandidate[] = [
     ...createActionCandidates(overlay, labels, keyPrefix),
@@ -6014,14 +6338,14 @@ async function clickOverlayActionByLabels(
       key: `${keyPrefix}-generic`,
       locator: overlay
         .locator("[role='menuitem'], button, a, div[role='button']")
-        .filter({ hasText: buildTextRegex(labels) })
-    }
+        .filter({ hasText: buildTextRegex(labels) }),
+    },
   ];
   const resolved = await findFirstVisibleLocator(candidates);
   if (!resolved) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      `Could not find the ${keyPrefix.replace(/-/g, " ")} action.`
+      `Could not find the ${keyPrefix.replace(/-/g, " ")} action.`,
     );
   }
 
@@ -6033,14 +6357,14 @@ async function clickOverlayActionByLabels(
 async function openRecommendationDialog(
   page: Page,
   selectorLocale: LinkedInSelectorLocale,
-  action: "request" | "write"
+  action: "request" | "write",
 ): Promise<Locator> {
   const overlay = await openTopCardMoreMenu(page, selectorLocale);
   return clickOverlayActionByLabels(
     page,
     overlay,
     getRecommendationActionLabels(action, selectorLocale),
-    `recommendation-${action}`
+    `recommendation-${action}`,
   );
 }
 
@@ -6048,30 +6372,37 @@ async function fillRecommendationFields(
   page: Page,
   dialog: Locator,
   definitions: readonly EditableFieldDefinition[],
-  values: Record<string, NormalizedEditableValue>
+  values: Record<string, NormalizedEditableValue>,
 ): Promise<void> {
   for (const definition of definitions) {
-    await fillDialogFieldIfPresent(page, dialog, definition, values[definition.key]);
+    await fillDialogFieldIfPresent(
+      page,
+      dialog,
+      definition,
+      values[definition.key],
+    );
   }
 }
 
 async function maybeAdvanceRecommendationDialog(
   page: Page,
   dialog: Locator,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<Locator> {
   const candidates: LocatorCandidate[] = [
     ...createActionCandidates(
       dialog,
       getRecommendationActionLabels("next", selectorLocale),
-      "recommendation-next"
+      "recommendation-next",
     ),
     {
       key: "recommendation-next-submit",
       locator: dialog.locator("button[type='submit']").filter({
-        hasText: buildTextRegex(getRecommendationActionLabels("next", selectorLocale))
-      })
-    }
+        hasText: buildTextRegex(
+          getRecommendationActionLabels("next", selectorLocale),
+        ),
+      }),
+    },
   ];
   const resolved = await findFirstVisibleLocator(candidates);
   if (!resolved) {
@@ -6087,7 +6418,7 @@ async function requestRecommendation(
   page: Page,
   selectorLocale: LinkedInSelectorLocale,
   targetProfileUrl: string,
-  fields: Record<string, NormalizedEditableValue>
+  fields: Record<string, NormalizedEditableValue>,
 ): Promise<void> {
   await page.goto(targetProfileUrl, { waitUntil: "domcontentloaded" });
   await waitForNetworkIdleBestEffort(page);
@@ -6098,23 +6429,23 @@ async function requestRecommendation(
     page,
     dialog,
     RECOMMENDATION_COMMON_FIELD_DEFINITIONS,
-    fields
+    fields,
   );
   dialog = await maybeAdvanceRecommendationDialog(page, dialog, selectorLocale);
   await fillDialogFieldIfPresent(
     page,
     dialog,
     RECOMMENDATION_REQUEST_FIELD_DEFINITIONS[3]!,
-    fields.message
+    fields.message,
   );
   await clickDialogAction(
     page,
     dialog,
     dedupeStrings([
       ...getRecommendationActionLabels("send", selectorLocale),
-      ...getUiActionLabels("save", selectorLocale)
+      ...getUiActionLabels("save", selectorLocale),
     ]),
-    "recommendation-send"
+    "recommendation-send",
   );
 }
 
@@ -6122,7 +6453,7 @@ async function writeRecommendation(
   page: Page,
   selectorLocale: LinkedInSelectorLocale,
   targetProfileUrl: string,
-  fields: Record<string, NormalizedEditableValue>
+  fields: Record<string, NormalizedEditableValue>,
 ): Promise<void> {
   await page.goto(targetProfileUrl, { waitUntil: "domcontentloaded" });
   await waitForNetworkIdleBestEffort(page);
@@ -6133,15 +6464,18 @@ async function writeRecommendation(
     page,
     dialog,
     RECOMMENDATION_COMMON_FIELD_DEFINITIONS,
-    fields
+    fields,
   );
   dialog = await maybeAdvanceRecommendationDialog(page, dialog, selectorLocale);
 
   const recommendationText = fields.text;
-  if (typeof recommendationText !== "string" || recommendationText.length === 0) {
+  if (
+    typeof recommendationText !== "string" ||
+    recommendationText.length === 0
+  ) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "Write recommendation payload is missing text."
+      "Write recommendation payload is missing text.",
     );
   }
 
@@ -6149,16 +6483,16 @@ async function writeRecommendation(
     page,
     dialog,
     RECOMMENDATION_WRITE_FIELD_DEFINITIONS[3]!,
-    recommendationText
+    recommendationText,
   );
   await clickDialogAction(
     page,
     dialog,
     dedupeStrings([
       ...getRecommendationActionLabels("send", selectorLocale),
-      ...getUiActionLabels("save", selectorLocale)
+      ...getUiActionLabels("save", selectorLocale),
     ]),
-    "recommendation-send"
+    "recommendation-send",
   );
 }
 
@@ -6166,34 +6500,36 @@ async function openProfileMediaAndUpload(
   page: Page,
   selectorLocale: LinkedInSelectorLocale,
   kind: "photo" | "banner",
-  upload: PreparedUploadArtifact
+  upload: PreparedUploadArtifact,
 ): Promise<Locator | null> {
   const topCardRoot = await getTopCardRoot(page);
   const openCandidates: LocatorCandidate[] = [
     ...createActionCandidates(
       topCardRoot,
       getProfileMediaActionLabels(kind, selectorLocale),
-      `profile-${kind}`
+      `profile-${kind}`,
     ),
     ...createActionCandidates(
       topCardRoot,
       getProfileMediaActionLabels(kind, selectorLocale),
       `profile-${kind}-link`,
-      "link"
+      "link",
     ),
     // LinkedIn currently renders the profile-photo entry point as an unlabeled
     // edit button around the avatar preview, so keep structural fallbacks.
     ...createCssLocatorCandidates(
       topCardRoot,
       PROFILE_MEDIA_STRUCTURAL_SELECTORS[kind],
-      `profile-${kind}-structural`
+      `profile-${kind}-structural`,
     ),
     {
       key: `profile-${kind}-generic`,
-      locator: topCardRoot
-        .locator("button, a, [role='button']")
-        .filter({ hasText: buildTextRegex(getProfileMediaActionLabels(kind, selectorLocale)) })
-    }
+      locator: topCardRoot.locator("button, a, [role='button']").filter({
+        hasText: buildTextRegex(
+          getProfileMediaActionLabels(kind, selectorLocale),
+        ),
+      }),
+    },
   ];
 
   for (const candidate of openCandidates) {
@@ -6201,7 +6537,11 @@ async function openProfileMediaAndUpload(
       continue;
     }
 
-    const result = await clickLocatorForUpload(page, candidate.locator, upload.absolute_path);
+    const result = await clickLocatorForUpload(
+      page,
+      candidate.locator,
+      upload.absolute_path,
+    );
     if (result.uploaded) {
       return (await getVisibleDialogOrNull(page)) ?? result.surface;
     }
@@ -6212,7 +6552,7 @@ async function openProfileMediaAndUpload(
       followUpSurface,
       upload.absolute_path,
       getProfileMediaActionLabels("upload", selectorLocale),
-      `profile-${kind}-upload`
+      `profile-${kind}-upload`,
     );
     if (followUpUpload.uploaded) {
       return (await getVisibleDialogOrNull(page)) ?? followUpUpload.surface;
@@ -6221,20 +6561,20 @@ async function openProfileMediaAndUpload(
 
   throw new LinkedInBuddyError(
     "TARGET_NOT_FOUND",
-    `Could not find the LinkedIn profile ${kind} upload controls.`
+    `Could not find the LinkedIn profile ${kind} upload controls.`,
   );
 }
 
 function getPayloadRecord(
   payload: Record<string, unknown>,
   key: string,
-  label: string
+  label: string,
 ): Record<string, unknown> {
   const value = payload[key];
   if (!isRecord(value)) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      `${label} payload is missing a valid ${key} object.`
+      `${label} payload is missing a valid ${key} object.`,
     );
   }
 
@@ -6245,18 +6585,18 @@ async function executeAddProfileSkill(
   runtime: LinkedInProfileExecutorRuntime,
   actionId: string,
   target: Record<string, unknown>,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
 ): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
   const profileName = String(target.profile_name ?? "default");
   const skillName = normalizeSkillName(
-    typeof payload.skill_name === "string" ? payload.skill_name : undefined
+    typeof payload.skill_name === "string" ? payload.skill_name : undefined,
   );
 
   return runtime.profileManager.runWithContext(
     {
       cdpUrl: runtime.cdpUrl,
       profileName,
-      headless: true
+      headless: true,
     },
     async (context) => {
       const page = await getOrCreatePage(context);
@@ -6270,11 +6610,11 @@ async function executeAddProfileSkill(
         targetUrl: resolveProfileUrl("me"),
         metadata: {
           profile_name: profileName,
-          skill_name: skillName
+          skill_name: skillName,
         },
         errorDetails: {
           profile_name: profileName,
-          skill_name: skillName
+          skill_name: skillName,
         },
         beforeExecute: createProfileRateLimitGuard(
           runtime,
@@ -6282,14 +6622,14 @@ async function executeAddProfileSkill(
           actionId,
           profileName,
           {
-            skill_name: skillName
-          }
+            skill_name: skillName,
+          },
         ),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
             "UNKNOWN",
-            `Failed to add the LinkedIn skill "${skillName}".`
+            `Failed to add the LinkedIn skill "${skillName}".`,
           ),
         execute: async () => {
           await navigateToOwnProfile(page);
@@ -6299,13 +6639,13 @@ async function executeAddProfileSkill(
             ok: true,
             result: {
               status: "profile_skill_added",
-              skill_name: skillName
+              skill_name: skillName,
             },
-            artifacts: []
+            artifacts: [],
           };
-        }
+        },
       });
-    }
+    },
   );
 }
 
@@ -6313,22 +6653,22 @@ async function executeReorderProfileSkills(
   runtime: LinkedInProfileExecutorRuntime,
   actionId: string,
   target: Record<string, unknown>,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
 ): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
   const profileName = String(target.profile_name ?? "default");
   const skillNames = normalizeSkillNames(
     Array.isArray(payload.skill_names)
       ? payload.skill_names.filter(
-          (skillName): skillName is string => typeof skillName === "string"
+          (skillName): skillName is string => typeof skillName === "string",
         )
-      : []
+      : [],
   );
 
   return runtime.profileManager.runWithContext(
     {
       cdpUrl: runtime.cdpUrl,
       profileName,
-      headless: true
+      headless: true,
     },
     async (context) => {
       const page = await getOrCreatePage(context);
@@ -6342,11 +6682,11 @@ async function executeReorderProfileSkills(
         targetUrl: resolveProfileUrl("me"),
         metadata: {
           profile_name: profileName,
-          skill_count: skillNames.length
+          skill_count: skillNames.length,
         },
         errorDetails: {
           profile_name: profileName,
-          skill_count: skillNames.length
+          skill_count: skillNames.length,
         },
         beforeExecute: createProfileRateLimitGuard(
           runtime,
@@ -6354,14 +6694,14 @@ async function executeReorderProfileSkills(
           actionId,
           profileName,
           {
-            skill_count: skillNames.length
-          }
+            skill_count: skillNames.length,
+          },
         ),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
             "UNKNOWN",
-            "Failed to reorder LinkedIn skills."
+            "Failed to reorder LinkedIn skills.",
           ),
         execute: async () => {
           await navigateToOwnProfile(page);
@@ -6372,13 +6712,13 @@ async function executeReorderProfileSkills(
             result: {
               status: "profile_skills_reordered",
               skill_count: skillNames.length,
-              skill_names: skillNames
+              skill_names: skillNames,
             },
-            artifacts: []
+            artifacts: [],
           };
-        }
+        },
       });
-    }
+    },
   );
 }
 
@@ -6386,7 +6726,7 @@ async function executeEndorseProfileSkill(
   runtime: LinkedInProfileExecutorRuntime,
   actionId: string,
   target: Record<string, unknown>,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
 ): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
   const profileName = String(target.profile_name ?? "default");
   const targetProfileUrl = resolveExternalProfileTarget(
@@ -6395,17 +6735,17 @@ async function executeEndorseProfileSkill(
       : typeof target.target_profile === "string"
         ? target.target_profile
         : undefined,
-    "target"
+    "target",
   );
   const skillName = normalizeSkillName(
-    typeof payload.skill_name === "string" ? payload.skill_name : undefined
+    typeof payload.skill_name === "string" ? payload.skill_name : undefined,
   );
 
   return runtime.profileManager.runWithContext(
     {
       cdpUrl: runtime.cdpUrl,
       profileName,
-      headless: true
+      headless: true,
     },
     async (context) => {
       const page = await getOrCreatePage(context);
@@ -6420,12 +6760,12 @@ async function executeEndorseProfileSkill(
         metadata: {
           profile_name: profileName,
           target_profile_url: targetProfileUrl,
-          skill_name: skillName
+          skill_name: skillName,
         },
         errorDetails: {
           profile_name: profileName,
           target_profile_url: targetProfileUrl,
-          skill_name: skillName
+          skill_name: skillName,
         },
         beforeExecute: createProfileRateLimitGuard(
           runtime,
@@ -6434,21 +6774,21 @@ async function executeEndorseProfileSkill(
           profileName,
           {
             target_profile_url: targetProfileUrl,
-            skill_name: skillName
-          }
+            skill_name: skillName,
+          },
         ),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
             "UNKNOWN",
-            `Failed to endorse "${skillName}" on the target LinkedIn profile.`
+            `Failed to endorse "${skillName}" on the target LinkedIn profile.`,
           ),
         execute: async () => {
           const endorseResult = await endorseSkill(
             page,
             runtime.selectorLocale,
             targetProfileUrl,
-            skillName
+            skillName,
           );
 
           return {
@@ -6459,13 +6799,13 @@ async function executeEndorseProfileSkill(
                   ? "profile_skill_already_endorsed"
                   : "profile_skill_endorsed",
               target_profile_url: targetProfileUrl,
-              skill_name: skillName
+              skill_name: skillName,
             },
-            artifacts: []
+            artifacts: [],
           };
-        }
+        },
       });
-    }
+    },
   );
 }
 
@@ -6473,7 +6813,7 @@ async function executeRequestProfileRecommendation(
   runtime: LinkedInProfileExecutorRuntime,
   actionId: string,
   target: Record<string, unknown>,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
 ): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
   const profileName = String(target.profile_name ?? "default");
   const targetProfileUrl = resolveExternalProfileTarget(
@@ -6482,18 +6822,18 @@ async function executeRequestProfileRecommendation(
       : typeof target.target_profile === "string"
         ? target.target_profile
         : undefined,
-    "target"
+    "target",
   );
   const fields = normalizeOptionalEditableValues(
     getPayloadRecord(payload, "fields", "recommendation request"),
-    RECOMMENDATION_REQUEST_FIELD_DEFINITIONS
+    RECOMMENDATION_REQUEST_FIELD_DEFINITIONS,
   );
 
   return runtime.profileManager.runWithContext(
     {
       cdpUrl: runtime.cdpUrl,
       profileName,
-      headless: true
+      headless: true,
     },
     async (context) => {
       const page = await getOrCreatePage(context);
@@ -6508,12 +6848,12 @@ async function executeRequestProfileRecommendation(
         metadata: {
           profile_name: profileName,
           target_profile_url: targetProfileUrl,
-          provided_fields: Object.keys(fields)
+          provided_fields: Object.keys(fields),
         },
         errorDetails: {
           profile_name: profileName,
           target_profile_url: targetProfileUrl,
-          provided_fields: Object.keys(fields)
+          provided_fields: Object.keys(fields),
         },
         beforeExecute: createProfileRateLimitGuard(
           runtime,
@@ -6522,21 +6862,21 @@ async function executeRequestProfileRecommendation(
           profileName,
           {
             target_profile_url: targetProfileUrl,
-            provided_fields: Object.keys(fields)
-          }
+            provided_fields: Object.keys(fields),
+          },
         ),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
             "UNKNOWN",
-            "Failed to request a LinkedIn recommendation."
+            "Failed to request a LinkedIn recommendation.",
           ),
         execute: async () => {
           await requestRecommendation(
             page,
             runtime.selectorLocale,
             targetProfileUrl,
-            fields
+            fields,
           );
 
           return {
@@ -6544,13 +6884,13 @@ async function executeRequestProfileRecommendation(
             result: {
               status: "profile_recommendation_requested",
               target_profile_url: targetProfileUrl,
-              provided_fields: Object.keys(fields)
+              provided_fields: Object.keys(fields),
             },
-            artifacts: []
+            artifacts: [],
           };
-        }
+        },
       });
-    }
+    },
   );
 }
 
@@ -6558,7 +6898,7 @@ async function executeWriteProfileRecommendation(
   runtime: LinkedInProfileExecutorRuntime,
   actionId: string,
   target: Record<string, unknown>,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
 ): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
   const profileName = String(target.profile_name ?? "default");
   const targetProfileUrl = resolveExternalProfileTarget(
@@ -6567,17 +6907,20 @@ async function executeWriteProfileRecommendation(
       : typeof target.target_profile === "string"
         ? target.target_profile
         : undefined,
-    "target"
+    "target",
   );
   const fields = normalizeOptionalEditableValues(
     getPayloadRecord(payload, "fields", "write recommendation"),
-    RECOMMENDATION_WRITE_FIELD_DEFINITIONS
+    RECOMMENDATION_WRITE_FIELD_DEFINITIONS,
   );
   const recommendationText = fields.text;
-  if (typeof recommendationText !== "string" || recommendationText.length === 0) {
+  if (
+    typeof recommendationText !== "string" ||
+    recommendationText.length === 0
+  ) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "Write recommendation payload is missing text."
+      "Write recommendation payload is missing text.",
     );
   }
 
@@ -6590,7 +6933,7 @@ async function executeWriteProfileRecommendation(
     {
       cdpUrl: runtime.cdpUrl,
       profileName,
-      headless: true
+      headless: true,
     },
     async (context) => {
       const page = await getOrCreatePage(context);
@@ -6605,12 +6948,12 @@ async function executeWriteProfileRecommendation(
         metadata: {
           profile_name: profileName,
           target_profile_url: targetProfileUrl,
-          provided_fields: Object.keys(fields)
+          provided_fields: Object.keys(fields),
         },
         errorDetails: {
           profile_name: profileName,
           target_profile_url: targetProfileUrl,
-          provided_fields: Object.keys(fields)
+          provided_fields: Object.keys(fields),
         },
         beforeExecute: createProfileRateLimitGuard(
           runtime,
@@ -6619,21 +6962,21 @@ async function executeWriteProfileRecommendation(
           profileName,
           {
             target_profile_url: targetProfileUrl,
-            provided_fields: Object.keys(fields)
-          }
+            provided_fields: Object.keys(fields),
+          },
         ),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
             "UNKNOWN",
-            "Failed to write a LinkedIn recommendation."
+            "Failed to write a LinkedIn recommendation.",
           ),
         execute: async () => {
           await writeRecommendation(
             page,
             runtime.selectorLocale,
             targetProfileUrl,
-            fields
+            fields,
           );
 
           return {
@@ -6642,13 +6985,13 @@ async function executeWriteProfileRecommendation(
               status: "profile_recommendation_written",
               target_profile_url: targetProfileUrl,
               text_sha256_prefix: textHash,
-              provided_fields: Object.keys(fields)
+              provided_fields: Object.keys(fields),
             },
-            artifacts: []
+            artifacts: [],
           };
-        }
+        },
       });
-    }
+    },
   );
 }
 
@@ -6657,7 +7000,7 @@ async function executeUploadProfileMedia(
   actionId: string,
   target: Record<string, unknown>,
   payload: Record<string, unknown>,
-  kind: "photo" | "banner"
+  kind: "photo" | "banner",
 ): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
   const profileName = String(target.profile_name ?? "default");
   const upload = await resolvePreparedUploadArtifact(
@@ -6665,14 +7008,14 @@ async function executeUploadProfileMedia(
     payload,
     "upload",
     `profile ${kind} upload`,
-    PROFILE_IMAGE_UPLOAD_EXTENSIONS
+    PROFILE_IMAGE_UPLOAD_EXTENSIONS,
   );
 
   return runtime.profileManager.runWithContext(
     {
       cdpUrl: runtime.cdpUrl,
       profileName,
-      headless: true
+      headless: true,
     },
     async (context) => {
       const page = await getOrCreatePage(context);
@@ -6692,12 +7035,12 @@ async function executeUploadProfileMedia(
           media_kind: kind,
           file_name: upload.file_name,
           size_bytes: upload.size_bytes,
-          artifact_path: upload.relative_path
+          artifact_path: upload.relative_path,
         },
         errorDetails: {
           profile_name: profileName,
           media_kind: kind,
-          file_name: upload.file_name
+          file_name: upload.file_name,
         },
         beforeExecute: createProfileRateLimitGuard(
           runtime,
@@ -6708,14 +7051,14 @@ async function executeUploadProfileMedia(
           profileName,
           {
             media_kind: kind,
-            file_name: upload.file_name
-          }
+            file_name: upload.file_name,
+          },
         ),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
             "UNKNOWN",
-            `Failed to execute LinkedIn profile ${kind} upload.`
+            `Failed to execute LinkedIn profile ${kind} upload.`,
           ),
         execute: async () => {
           await navigateToOwnProfile(page);
@@ -6723,7 +7066,7 @@ async function executeUploadProfileMedia(
             page,
             runtime.selectorLocale,
             kind,
-            upload
+            upload,
           );
 
           if (dialog) {
@@ -6741,13 +7084,13 @@ async function executeUploadProfileMedia(
                   : "profile_banner_uploaded",
               media_kind: kind,
               file_name: upload.file_name,
-              artifact_path: upload.relative_path
+              artifact_path: upload.relative_path,
             },
-            artifacts: []
+            artifacts: [],
           };
-        }
+        },
       });
-    }
+    },
   );
 }
 
@@ -6755,14 +7098,22 @@ async function executeAddFeaturedItem(
   runtime: LinkedInProfileExecutorRuntime,
   actionId: string,
   target: Record<string, unknown>,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
 ): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
   const profileName = String(target.profile_name ?? "default");
-  const kind = normalizeProfileFeaturedItemKind(String(payload.kind ?? target.kind ?? ""));
-  const url = typeof payload.url === "string" ? normalizeText(payload.url) : undefined;
-  const title = typeof payload.title === "string" ? normalizeText(payload.title) : undefined;
+  const kind = normalizeProfileFeaturedItemKind(
+    String(payload.kind ?? target.kind ?? ""),
+  );
+  const url =
+    typeof payload.url === "string" ? normalizeText(payload.url) : undefined;
+  const title =
+    typeof payload.title === "string"
+      ? normalizeText(payload.title)
+      : undefined;
   const description =
-    typeof payload.description === "string" ? normalizeText(payload.description) : undefined;
+    typeof payload.description === "string"
+      ? normalizeText(payload.description)
+      : undefined;
   const upload =
     kind === "media"
       ? await resolvePreparedUploadArtifact(
@@ -6770,7 +7121,7 @@ async function executeAddFeaturedItem(
           payload,
           "upload",
           "featured media upload",
-          FEATURED_MEDIA_UPLOAD_EXTENSIONS
+          FEATURED_MEDIA_UPLOAD_EXTENSIONS,
         )
       : undefined;
 
@@ -6778,7 +7129,7 @@ async function executeAddFeaturedItem(
     {
       cdpUrl: runtime.cdpUrl,
       profileName,
-      headless: true
+      headless: true,
     },
     async (context) => {
       const page = await getOrCreatePage(context);
@@ -6794,13 +7145,13 @@ async function executeAddFeaturedItem(
           profile_name: profileName,
           featured_kind: kind,
           ...(url ? { url } : {}),
-          ...(upload ? { file_name: upload.file_name } : {})
+          ...(upload ? { file_name: upload.file_name } : {}),
         },
         errorDetails: {
           profile_name: profileName,
           featured_kind: kind,
           ...(url ? { url } : {}),
-          ...(upload ? { file_name: upload.file_name } : {})
+          ...(upload ? { file_name: upload.file_name } : {}),
         },
         beforeExecute: createProfileRateLimitGuard(
           runtime,
@@ -6810,28 +7161,40 @@ async function executeAddFeaturedItem(
           {
             featured_kind: kind,
             ...(url ? { url } : {}),
-            ...(upload ? { file_name: upload.file_name } : {})
-          }
+            ...(upload ? { file_name: upload.file_name } : {}),
+          },
         ),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
             "UNKNOWN",
-            `Failed to add a ${kind} item to the LinkedIn Featured section.`
+            `Failed to add a ${kind} item to the LinkedIn Featured section.`,
           ),
         execute: async () => {
           await navigateToOwnProfile(page);
 
           if (kind === "link") {
-            await addFeaturedLink(page, runtime.selectorLocale, url ?? "", title, description);
+            await addFeaturedLink(
+              page,
+              runtime.selectorLocale,
+              url ?? "",
+              title,
+              description,
+            );
           } else if (kind === "media") {
             if (!upload) {
               throw new LinkedInBuddyError(
                 "ACTION_PRECONDITION_FAILED",
-                "Featured media add is missing the staged upload payload."
+                "Featured media add is missing the staged upload payload.",
               );
             }
-            await addFeaturedMedia(page, runtime.selectorLocale, upload, title, description);
+            await addFeaturedMedia(
+              page,
+              runtime.selectorLocale,
+              upload,
+              title,
+              description,
+            );
           } else {
             await addFeaturedPost(page, runtime.selectorLocale, url ?? "");
           }
@@ -6846,14 +7209,14 @@ async function executeAddFeaturedItem(
                 kind,
                 ...(url ? { url } : {}),
                 ...(title ? { title } : {}),
-                rawText: upload?.sha256 ?? description ?? url ?? title ?? kind
-              })
+                rawText: upload?.sha256 ?? description ?? url ?? title ?? kind,
+              }),
             },
-            artifacts: []
+            artifacts: [],
           };
-        }
+        },
       });
-    }
+    },
   );
 }
 
@@ -6861,21 +7224,21 @@ async function executeRemoveFeaturedItem(
   runtime: LinkedInProfileExecutorRuntime,
   actionId: string,
   target: Record<string, unknown>,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
 ): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
   const profileName = String(target.profile_name ?? "default");
   const match = normalizeProfileFeaturedItemMatch(
     isRecord(payload.match) ? payload.match : undefined,
-    typeof target.item_id === "string" ? target.item_id : undefined
+    typeof target.item_id === "string" ? target.item_id : undefined,
   );
   const decodedItem = decodeProfileFeaturedItemId(
-    typeof target.item_id === "string" ? target.item_id : undefined
+    typeof target.item_id === "string" ? target.item_id : undefined,
   );
 
   if (!match) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "Removing a Featured item requires itemId or match details."
+      "Removing a Featured item requires itemId or match details.",
     );
   }
 
@@ -6883,7 +7246,7 @@ async function executeRemoveFeaturedItem(
     {
       cdpUrl: runtime.cdpUrl,
       profileName,
-      headless: true
+      headless: true,
     },
     async (context) => {
       const page = await getOrCreatePage(context);
@@ -6898,12 +7261,12 @@ async function executeRemoveFeaturedItem(
         metadata: {
           profile_name: profileName,
           ...(match.url ? { url: match.url } : {}),
-          ...(match.title ? { title: match.title } : {})
+          ...(match.title ? { title: match.title } : {}),
         },
         errorDetails: {
           profile_name: profileName,
           ...(match.url ? { url: match.url } : {}),
-          ...(match.title ? { title: match.title } : {})
+          ...(match.title ? { title: match.title } : {}),
         },
         beforeExecute: createProfileRateLimitGuard(
           runtime,
@@ -6912,20 +7275,25 @@ async function executeRemoveFeaturedItem(
           profileName,
           {
             ...(match.url ? { url: match.url } : {}),
-            ...(match.title ? { title: match.title } : {})
-          }
+            ...(match.title ? { title: match.title } : {}),
+          },
         ),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
             "UNKNOWN",
-            "Failed to remove a LinkedIn Featured item."
+            "Failed to remove a LinkedIn Featured item.",
           ),
         execute: async () => {
           await navigateToOwnProfile(page);
           await removeFeaturedItem(page, runtime.selectorLocale, match);
 
-          const kind = decodedItem?.kind ?? inferFeaturedItemKind(match.url ?? null, match.rawText ?? match.title ?? "");
+          const kind =
+            decodedItem?.kind ??
+            inferFeaturedItemKind(
+              match.url ?? null,
+              match.rawText ?? match.title ?? "",
+            );
 
           return {
             ok: true,
@@ -6937,14 +7305,14 @@ async function executeRemoveFeaturedItem(
                 ...(match.url ? { url: match.url } : {}),
                 ...(match.title ? { title: match.title } : {}),
                 ...(match.subtitle ? { subtitle: match.subtitle } : {}),
-                rawText: match.rawText ?? match.title ?? match.url ?? kind
-              })
+                rawText: match.rawText ?? match.title ?? match.url ?? kind,
+              }),
             },
-            artifacts: []
+            artifacts: [],
           };
-        }
+        },
       });
-    }
+    },
   );
 }
 
@@ -6952,17 +7320,19 @@ async function executeReorderFeaturedItems(
   runtime: LinkedInProfileExecutorRuntime,
   actionId: string,
   target: Record<string, unknown>,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
 ): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
   const profileName = String(target.profile_name ?? "default");
   const itemIds = Array.isArray(payload.item_ids)
-    ? payload.item_ids.filter((itemId): itemId is string => typeof itemId === "string")
+    ? payload.item_ids.filter(
+        (itemId): itemId is string => typeof itemId === "string",
+      )
     : [];
 
   if (itemIds.length === 0) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "Featured reorder payload is missing item_ids."
+      "Featured reorder payload is missing item_ids.",
     );
   }
 
@@ -6970,7 +7340,7 @@ async function executeReorderFeaturedItems(
     {
       cdpUrl: runtime.cdpUrl,
       profileName,
-      headless: true
+      headless: true,
     },
     async (context) => {
       const page = await getOrCreatePage(context);
@@ -6984,11 +7354,11 @@ async function executeReorderFeaturedItems(
         targetUrl: resolveProfileUrl("me"),
         metadata: {
           profile_name: profileName,
-          item_count: itemIds.length
+          item_count: itemIds.length,
         },
         errorDetails: {
           profile_name: profileName,
-          item_count: itemIds.length
+          item_count: itemIds.length,
         },
         beforeExecute: createProfileRateLimitGuard(
           runtime,
@@ -6996,14 +7366,14 @@ async function executeReorderFeaturedItems(
           actionId,
           profileName,
           {
-            item_count: itemIds.length
-          }
+            item_count: itemIds.length,
+          },
         ),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
             "UNKNOWN",
-            "Failed to reorder LinkedIn Featured items."
+            "Failed to reorder LinkedIn Featured items.",
           ),
         execute: async () => {
           await navigateToOwnProfile(page);
@@ -7014,13 +7384,13 @@ async function executeReorderFeaturedItems(
             result: {
               status: "profile_featured_reordered",
               item_count: itemIds.length,
-              item_ids: itemIds
+              item_ids: itemIds,
             },
-            artifacts: []
+            artifacts: [],
           };
-        }
+        },
       });
-    }
+    },
   );
 }
 
@@ -7028,20 +7398,20 @@ async function executeUpdateProfileIntro(
   runtime: LinkedInProfileExecutorRuntime,
   actionId: string,
   target: Record<string, unknown>,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
 ): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
   const profileName = String(target.profile_name ?? "default");
   const updates = normalizeEditableValues(
     getPayloadRecord(payload, "updates", "profile intro update"),
     PROFILE_INTRO_FIELD_DEFINITIONS,
-    "profile intro"
+    "profile intro",
   );
 
   return runtime.profileManager.runWithContext(
     {
       cdpUrl: runtime.cdpUrl,
       profileName,
-      headless: true
+      headless: true,
     },
     async (context) => {
       const page = await getOrCreatePage(context);
@@ -7055,11 +7425,11 @@ async function executeUpdateProfileIntro(
         targetUrl: resolveProfileUrl("me"),
         metadata: {
           profile_name: profileName,
-          updated_fields: Object.keys(updates)
+          updated_fields: Object.keys(updates),
         },
         errorDetails: {
           profile_name: profileName,
-          updated_fields: Object.keys(updates)
+          updated_fields: Object.keys(updates),
         },
         beforeExecute: createProfileRateLimitGuard(
           runtime,
@@ -7067,39 +7437,51 @@ async function executeUpdateProfileIntro(
           actionId,
           profileName,
           {
-            updated_fields: Object.keys(updates)
-          }
+            updated_fields: Object.keys(updates),
+          },
         ),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
             "UNKNOWN",
-            "Failed to execute LinkedIn profile intro update."
+            "Failed to execute LinkedIn profile intro update.",
           ),
         execute: async () => {
           await navigateToOwnProfile(page);
-          const surface = await openIntroEditSurface(page, runtime.selectorLocale);
+          const surface = await openIntroEditSurface(
+            page,
+            runtime.selectorLocale,
+          );
 
           for (const definition of PROFILE_INTRO_FIELD_DEFINITIONS) {
             if (!(definition.key in updates)) {
               continue;
             }
-            await fillDialogField(page, surface.root, definition, updates[definition.key]!);
+            await fillDialogField(
+              page,
+              surface.root,
+              definition,
+              updates[definition.key]!,
+            );
           }
 
-          await clickSaveInProfileEditorSurface(page, surface, runtime.selectorLocale);
+          await clickSaveInProfileEditorSurface(
+            page,
+            surface,
+            runtime.selectorLocale,
+          );
 
           return {
             ok: true,
             result: {
               status: "profile_intro_updated",
-              updated_fields: Object.keys(updates)
+              updated_fields: Object.keys(updates),
             },
-            artifacts: []
+            artifacts: [],
           };
-        }
+        },
       });
-    }
+    },
   );
 }
 
@@ -7107,20 +7489,20 @@ async function executeUpdateProfileSettings(
   runtime: LinkedInProfileExecutorRuntime,
   actionId: string,
   target: Record<string, unknown>,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
 ): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
   const profileName = String(target.profile_name ?? "default");
   const updates = normalizeEditableValues(
     getPayloadRecord(payload, "updates", "profile settings update"),
     PROFILE_SETTINGS_FIELD_DEFINITIONS,
-    "profile settings"
+    "profile settings",
   );
 
   return runtime.profileManager.runWithContext(
     {
       cdpUrl: runtime.cdpUrl,
       profileName,
-      headless: true
+      headless: true,
     },
     async (context) => {
       const page = await getOrCreatePage(context);
@@ -7134,11 +7516,11 @@ async function executeUpdateProfileSettings(
         targetUrl: resolveProfileUrl("me"),
         metadata: {
           profile_name: profileName,
-          updated_fields: Object.keys(updates)
+          updated_fields: Object.keys(updates),
         },
         errorDetails: {
           profile_name: profileName,
-          updated_fields: Object.keys(updates)
+          updated_fields: Object.keys(updates),
         },
         beforeExecute: createProfileRateLimitGuard(
           runtime,
@@ -7146,27 +7528,39 @@ async function executeUpdateProfileSettings(
           actionId,
           profileName,
           {
-            updated_fields: Object.keys(updates)
-          }
+            updated_fields: Object.keys(updates),
+          },
         ),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
             "UNKNOWN",
-            "Failed to execute LinkedIn profile settings update."
+            "Failed to execute LinkedIn profile settings update.",
           ),
         execute: async () => {
           await navigateToOwnProfile(page);
-          const surface = await openIntroEditSurface(page, runtime.selectorLocale);
+          const surface = await openIntroEditSurface(
+            page,
+            runtime.selectorLocale,
+          );
 
           for (const definition of PROFILE_SETTINGS_FIELD_DEFINITIONS) {
             if (!(definition.key in updates)) {
               continue;
             }
-            await fillDialogField(page, surface.root, definition, updates[definition.key]!);
+            await fillDialogField(
+              page,
+              surface.root,
+              definition,
+              updates[definition.key]!,
+            );
           }
 
-          await clickSaveInProfileEditorSurface(page, surface, runtime.selectorLocale);
+          await clickSaveInProfileEditorSurface(
+            page,
+            surface,
+            runtime.selectorLocale,
+          );
 
           return {
             ok: true,
@@ -7175,13 +7569,13 @@ async function executeUpdateProfileSettings(
               updated_fields: Object.keys(updates),
               ...(typeof updates.industry === "string"
                 ? { industry: updates.industry }
-                : {})
+                : {}),
             },
-            artifacts: []
+            artifacts: [],
           };
-        }
+        },
       });
-    }
+    },
   );
 }
 
@@ -7189,7 +7583,7 @@ async function executeUpdateProfilePublicProfile(
   runtime: LinkedInProfileExecutorRuntime,
   actionId: string,
   target: Record<string, unknown>,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
 ): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
   const profileName = String(target.profile_name ?? "default");
   const publicProfile = normalizePreparedPublicProfileInput({
@@ -7198,14 +7592,14 @@ async function executeUpdateProfilePublicProfile(
       : {}),
     ...(typeof payload.public_profile_url === "string"
       ? { publicProfileUrl: payload.public_profile_url }
-      : {})
+      : {}),
   });
 
   return runtime.profileManager.runWithContext(
     {
       cdpUrl: runtime.cdpUrl,
       profileName,
-      headless: true
+      headless: true,
     },
     async (context) => {
       const page = await getOrCreatePage(context);
@@ -7220,12 +7614,12 @@ async function executeUpdateProfilePublicProfile(
         metadata: {
           profile_name: profileName,
           vanity_name: publicProfile.vanityName,
-          public_profile_url: publicProfile.publicProfileUrl
+          public_profile_url: publicProfile.publicProfileUrl,
         },
         errorDetails: {
           profile_name: profileName,
           vanity_name: publicProfile.vanityName,
-          public_profile_url: publicProfile.publicProfileUrl
+          public_profile_url: publicProfile.publicProfileUrl,
         },
         beforeExecute: createProfileRateLimitGuard(
           runtime,
@@ -7234,19 +7628,21 @@ async function executeUpdateProfilePublicProfile(
           profileName,
           {
             vanity_name: publicProfile.vanityName,
-            public_profile_url: publicProfile.publicProfileUrl
-          }
+            public_profile_url: publicProfile.publicProfileUrl,
+          },
         ),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
             "UNKNOWN",
-            "Failed to execute LinkedIn public profile update."
+            "Failed to execute LinkedIn public profile update.",
           ),
         execute: async () => {
           await navigateToPublicProfileSettings(page);
           const input = await openPublicProfileVanityEditor(page);
-          const currentVanityName = normalizeText(await input.inputValue().catch(() => ""));
+          const currentVanityName = normalizeText(
+            await input.inputValue().catch(() => ""),
+          );
           if (
             currentVanityName &&
             normalizeLinkedInVanityName(currentVanityName).toLowerCase() ===
@@ -7257,9 +7653,9 @@ async function executeUpdateProfilePublicProfile(
               result: {
                 status: "profile_public_profile_updated",
                 vanity_name: publicProfile.vanityName,
-                public_profile_url: publicProfile.publicProfileUrl
+                public_profile_url: publicProfile.publicProfileUrl,
               },
-              artifacts: []
+              artifacts: [],
             };
           }
 
@@ -7271,13 +7667,13 @@ async function executeUpdateProfilePublicProfile(
             result: {
               status: "profile_public_profile_updated",
               vanity_name: publicProfile.vanityName,
-              public_profile_url: publicProfile.publicProfileUrl
+              public_profile_url: publicProfile.publicProfileUrl,
             },
-            artifacts: []
+            artifacts: [],
           };
-        }
+        },
       });
-    }
+    },
   );
 }
 
@@ -7285,27 +7681,28 @@ async function executeUpsertProfileSectionItem(
   runtime: LinkedInProfileExecutorRuntime,
   actionId: string,
   target: Record<string, unknown>,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
 ): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
   const profileName = String(target.profile_name ?? "default");
   const section = normalizeProfileSectionType(String(target.section ?? ""));
   const values = normalizeEditableValues(
     getPayloadRecord(payload, "values", "profile section upsert"),
     getEditableFieldDefinitions(section),
-    `${section} section`
+    `${section} section`,
   );
-  const mode = String(payload.mode ?? "create") === "update" ? "update" : "create";
+  const mode =
+    String(payload.mode ?? "create") === "update" ? "update" : "create";
   const match = normalizeProfileSectionItemMatch(
     isRecord(payload.match) ? payload.match : undefined,
     typeof target.item_id === "string" ? target.item_id : undefined,
-    section
+    section,
   );
 
   return runtime.profileManager.runWithContext(
     {
       cdpUrl: runtime.cdpUrl,
       profileName,
-      headless: true
+      headless: true,
     },
     async (context) => {
       const page = await getOrCreatePage(context);
@@ -7321,13 +7718,13 @@ async function executeUpsertProfileSectionItem(
           profile_name: profileName,
           section,
           mode,
-          updated_fields: Object.keys(values)
+          updated_fields: Object.keys(values),
         },
         errorDetails: {
           profile_name: profileName,
           section,
           mode,
-          updated_fields: Object.keys(values)
+          updated_fields: Object.keys(values),
         },
         beforeExecute: createProfileRateLimitGuard(
           runtime,
@@ -7337,37 +7734,50 @@ async function executeUpsertProfileSectionItem(
           {
             section,
             mode,
-            updated_fields: Object.keys(values)
-          }
+            updated_fields: Object.keys(values),
+          },
         ),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
             "UNKNOWN",
-            `Failed to execute LinkedIn ${section} section upsert.`
+            `Failed to execute LinkedIn ${section} section upsert.`,
           ),
         execute: async () => {
           await navigateToOwnProfile(page);
 
           let dialog: Locator;
           if (section === "about") {
-            dialog = await openSectionEditDialog(page, section, runtime.selectorLocale);
+            dialog = await openSectionEditDialog(
+              page,
+              section,
+              runtime.selectorLocale,
+            );
           } else if (mode === "update" && match) {
             dialog = await openExistingSectionItemDialog(
               page,
               section,
               match,
-              runtime.selectorLocale
+              runtime.selectorLocale,
             );
           } else {
-            dialog = await openSectionCreateDialog(page, section, runtime.selectorLocale);
+            dialog = await openSectionCreateDialog(
+              page,
+              section,
+              runtime.selectorLocale,
+            );
           }
 
           for (const definition of getEditableFieldDefinitions(section)) {
             if (!(definition.key in values)) {
               continue;
             }
-            await fillDialogField(page, dialog, definition, values[definition.key]!);
+            await fillDialogField(
+              page,
+              dialog,
+              definition,
+              values[definition.key]!,
+            );
           }
 
           await clickSaveInDialog(page, dialog, runtime.selectorLocale);
@@ -7384,17 +7794,23 @@ async function executeUpsertProfileSectionItem(
               item_fingerprint: createProfileSectionItemFingerprint({
                 section,
                 ...(match?.sourceId ? { sourceId: match.sourceId } : {}),
-                ...(match?.primaryText ? { primaryText: match.primaryText } : {}),
-                ...(match?.secondaryText ? { secondaryText: match.secondaryText } : {}),
-                ...(match?.tertiaryText ? { tertiaryText: match.tertiaryText } : {}),
-                ...(match?.rawText ? { rawText: match.rawText } : {})
-              })
+                ...(match?.primaryText
+                  ? { primaryText: match.primaryText }
+                  : {}),
+                ...(match?.secondaryText
+                  ? { secondaryText: match.secondaryText }
+                  : {}),
+                ...(match?.tertiaryText
+                  ? { tertiaryText: match.tertiaryText }
+                  : {}),
+                ...(match?.rawText ? { rawText: match.rawText } : {}),
+              }),
             },
-            artifacts: []
+            artifacts: [],
           };
-        }
+        },
       });
-    }
+    },
   );
 }
 
@@ -7402,21 +7818,21 @@ async function executeRemoveProfileSectionItem(
   runtime: LinkedInProfileExecutorRuntime,
   actionId: string,
   target: Record<string, unknown>,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
 ): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
   const profileName = String(target.profile_name ?? "default");
   const section = normalizeProfileSectionType(String(target.section ?? ""));
   const match = normalizeProfileSectionItemMatch(
     isRecord(payload.match) ? payload.match : undefined,
     typeof target.item_id === "string" ? target.item_id : undefined,
-    section
+    section,
   );
 
   return runtime.profileManager.runWithContext(
     {
       cdpUrl: runtime.cdpUrl,
       profileName,
-      headless: true
+      headless: true,
     },
     async (context) => {
       const page = await getOrCreatePage(context);
@@ -7430,11 +7846,11 @@ async function executeRemoveProfileSectionItem(
         targetUrl: resolveProfileUrl("me"),
         metadata: {
           profile_name: profileName,
-          section
+          section,
         },
         errorDetails: {
           profile_name: profileName,
-          section
+          section,
         },
         beforeExecute: createProfileRateLimitGuard(
           runtime,
@@ -7442,34 +7858,43 @@ async function executeRemoveProfileSectionItem(
           actionId,
           profileName,
           {
-            section
-          }
+            section,
+          },
         ),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
             "UNKNOWN",
-            `Failed to execute LinkedIn ${section} section removal.`
+            `Failed to execute LinkedIn ${section} section removal.`,
           ),
         execute: async () => {
           await navigateToOwnProfile(page);
 
           if (section === "about") {
-            const dialog = await openSectionEditDialog(page, section, runtime.selectorLocale);
-            await fillDialogField(page, dialog, getEditableFieldDefinitions(section)[0]!, "");
+            const dialog = await openSectionEditDialog(
+              page,
+              section,
+              runtime.selectorLocale,
+            );
+            await fillDialogField(
+              page,
+              dialog,
+              getEditableFieldDefinitions(section)[0]!,
+              "",
+            );
             await clickSaveInDialog(page, dialog, runtime.selectorLocale);
           } else {
             if (!match) {
               throw new LinkedInBuddyError(
                 "ACTION_PRECONDITION_FAILED",
-                `Removing a ${section} item requires itemId or match details.`
+                `Removing a ${section} item requires itemId or match details.`,
               );
             }
             const dialog = await openExistingSectionItemDialog(
               page,
               section,
               match,
-              runtime.selectorLocale
+              runtime.selectorLocale,
             );
             await clickDeleteInDialog(page, dialog, runtime.selectorLocale);
           }
@@ -7484,259 +7909,235 @@ async function executeRemoveProfileSectionItem(
                     item_fingerprint: createProfileSectionItemFingerprint({
                       section,
                       ...(match.sourceId ? { sourceId: match.sourceId } : {}),
-                      ...(match.primaryText ? { primaryText: match.primaryText } : {}),
-                      ...(match.secondaryText ? { secondaryText: match.secondaryText } : {}),
-                      ...(match.tertiaryText ? { tertiaryText: match.tertiaryText } : {}),
-                      ...(match.rawText ? { rawText: match.rawText } : {})
-                    })
+                      ...(match.primaryText
+                        ? { primaryText: match.primaryText }
+                        : {}),
+                      ...(match.secondaryText
+                        ? { secondaryText: match.secondaryText }
+                        : {}),
+                      ...(match.tertiaryText
+                        ? { tertiaryText: match.tertiaryText }
+                        : {}),
+                      ...(match.rawText ? { rawText: match.rawText } : {}),
+                    }),
                   }
-                : {})
+                : {}),
             },
-            artifacts: []
+            artifacts: [],
           };
-        }
+        },
       });
-    }
+    },
   );
 }
 
-export class UpdateProfileIntroActionExecutor
-  implements ActionExecutor<LinkedInProfileExecutorRuntime>
-{
+export class UpdateProfileIntroActionExecutor implements ActionExecutor<LinkedInProfileExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>
+    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const { result, artifacts } = await executeUpdateProfileIntro(
       input.runtime,
       input.action.id,
       input.action.target,
-      input.action.payload
+      input.action.payload,
     );
     return { ok: true, result, artifacts };
   }
 }
 
-export class UpdateProfileSettingsActionExecutor
-  implements ActionExecutor<LinkedInProfileExecutorRuntime>
-{
+export class UpdateProfileSettingsActionExecutor implements ActionExecutor<LinkedInProfileExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>
+    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const { result, artifacts } = await executeUpdateProfileSettings(
       input.runtime,
       input.action.id,
       input.action.target,
-      input.action.payload
+      input.action.payload,
     );
     return { ok: true, result, artifacts };
   }
 }
 
-export class UpdateProfilePublicProfileActionExecutor
-  implements ActionExecutor<LinkedInProfileExecutorRuntime>
-{
+export class UpdateProfilePublicProfileActionExecutor implements ActionExecutor<LinkedInProfileExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>
+    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const { result, artifacts } = await executeUpdateProfilePublicProfile(
       input.runtime,
       input.action.id,
       input.action.target,
-      input.action.payload
+      input.action.payload,
     );
     return { ok: true, result, artifacts };
   }
 }
 
-export class UpsertProfileSectionItemActionExecutor
-  implements ActionExecutor<LinkedInProfileExecutorRuntime>
-{
+export class UpsertProfileSectionItemActionExecutor implements ActionExecutor<LinkedInProfileExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>
+    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const { result, artifacts } = await executeUpsertProfileSectionItem(
       input.runtime,
       input.action.id,
       input.action.target,
-      input.action.payload
+      input.action.payload,
     );
     return { ok: true, result, artifacts };
   }
 }
 
-export class RemoveProfileSectionItemActionExecutor
-  implements ActionExecutor<LinkedInProfileExecutorRuntime>
-{
+export class RemoveProfileSectionItemActionExecutor implements ActionExecutor<LinkedInProfileExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>
+    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const { result, artifacts } = await executeRemoveProfileSectionItem(
       input.runtime,
       input.action.id,
       input.action.target,
-      input.action.payload
+      input.action.payload,
     );
     return { ok: true, result, artifacts };
   }
 }
 
-export class UploadProfilePhotoActionExecutor
-  implements ActionExecutor<LinkedInProfileExecutorRuntime>
-{
+export class UploadProfilePhotoActionExecutor implements ActionExecutor<LinkedInProfileExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>
+    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const { result, artifacts } = await executeUploadProfileMedia(
       input.runtime,
       input.action.id,
       input.action.target,
       input.action.payload,
-      "photo"
+      "photo",
     );
     return { ok: true, result, artifacts };
   }
 }
 
-export class UploadProfileBannerActionExecutor
-  implements ActionExecutor<LinkedInProfileExecutorRuntime>
-{
+export class UploadProfileBannerActionExecutor implements ActionExecutor<LinkedInProfileExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>
+    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const { result, artifacts } = await executeUploadProfileMedia(
       input.runtime,
       input.action.id,
       input.action.target,
       input.action.payload,
-      "banner"
+      "banner",
     );
     return { ok: true, result, artifacts };
   }
 }
 
-export class AddProfileFeaturedItemActionExecutor
-  implements ActionExecutor<LinkedInProfileExecutorRuntime>
-{
+export class AddProfileFeaturedItemActionExecutor implements ActionExecutor<LinkedInProfileExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>
+    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const { result, artifacts } = await executeAddFeaturedItem(
       input.runtime,
       input.action.id,
       input.action.target,
-      input.action.payload
+      input.action.payload,
     );
     return { ok: true, result, artifacts };
   }
 }
 
-export class RemoveProfileFeaturedItemActionExecutor
-  implements ActionExecutor<LinkedInProfileExecutorRuntime>
-{
+export class RemoveProfileFeaturedItemActionExecutor implements ActionExecutor<LinkedInProfileExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>
+    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const { result, artifacts } = await executeRemoveFeaturedItem(
       input.runtime,
       input.action.id,
       input.action.target,
-      input.action.payload
+      input.action.payload,
     );
     return { ok: true, result, artifacts };
   }
 }
 
-export class ReorderProfileFeaturedItemsActionExecutor
-  implements ActionExecutor<LinkedInProfileExecutorRuntime>
-{
+export class ReorderProfileFeaturedItemsActionExecutor implements ActionExecutor<LinkedInProfileExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>
+    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const { result, artifacts } = await executeReorderFeaturedItems(
       input.runtime,
       input.action.id,
       input.action.target,
-      input.action.payload
+      input.action.payload,
     );
     return { ok: true, result, artifacts };
   }
 }
 
-export class AddProfileSkillActionExecutor
-  implements ActionExecutor<LinkedInProfileExecutorRuntime>
-{
+export class AddProfileSkillActionExecutor implements ActionExecutor<LinkedInProfileExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>
+    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const { result, artifacts } = await executeAddProfileSkill(
       input.runtime,
       input.action.id,
       input.action.target,
-      input.action.payload
+      input.action.payload,
     );
     return { ok: true, result, artifacts };
   }
 }
 
-export class ReorderProfileSkillsActionExecutor
-  implements ActionExecutor<LinkedInProfileExecutorRuntime>
-{
+export class ReorderProfileSkillsActionExecutor implements ActionExecutor<LinkedInProfileExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>
+    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const { result, artifacts } = await executeReorderProfileSkills(
       input.runtime,
       input.action.id,
       input.action.target,
-      input.action.payload
+      input.action.payload,
     );
     return { ok: true, result, artifacts };
   }
 }
 
-export class EndorseProfileSkillActionExecutor
-  implements ActionExecutor<LinkedInProfileExecutorRuntime>
-{
+export class EndorseProfileSkillActionExecutor implements ActionExecutor<LinkedInProfileExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>
+    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const { result, artifacts } = await executeEndorseProfileSkill(
       input.runtime,
       input.action.id,
       input.action.target,
-      input.action.payload
+      input.action.payload,
     );
     return { ok: true, result, artifacts };
   }
 }
 
-export class RequestProfileRecommendationActionExecutor
-  implements ActionExecutor<LinkedInProfileExecutorRuntime>
-{
+export class RequestProfileRecommendationActionExecutor implements ActionExecutor<LinkedInProfileExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>
+    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const { result, artifacts } = await executeRequestProfileRecommendation(
       input.runtime,
       input.action.id,
       input.action.target,
-      input.action.payload
+      input.action.payload,
     );
     return { ok: true, result, artifacts };
   }
 }
 
-export class WriteProfileRecommendationActionExecutor
-  implements ActionExecutor<LinkedInProfileExecutorRuntime>
-{
+export class WriteProfileRecommendationActionExecutor implements ActionExecutor<LinkedInProfileExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>
+    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const { result, artifacts } = await executeWriteProfileRecommendation(
       input.runtime,
       input.action.id,
       input.action.target,
-      input.action.payload
+      input.action.payload,
     );
     return { ok: true, result, artifacts };
   }
@@ -7748,7 +8149,8 @@ export function createProfileActionExecutors(): Record<
 > {
   return {
     [UPDATE_PROFILE_INTRO_ACTION_TYPE]: new UpdateProfileIntroActionExecutor(),
-    [UPDATE_PROFILE_SETTINGS_ACTION_TYPE]: new UpdateProfileSettingsActionExecutor(),
+    [UPDATE_PROFILE_SETTINGS_ACTION_TYPE]:
+      new UpdateProfileSettingsActionExecutor(),
     [UPDATE_PROFILE_PUBLIC_PROFILE_ACTION_TYPE]:
       new UpdateProfilePublicProfileActionExecutor(),
     [UPSERT_PROFILE_SECTION_ITEM_ACTION_TYPE]:
@@ -7756,8 +8158,10 @@ export function createProfileActionExecutors(): Record<
     [REMOVE_PROFILE_SECTION_ITEM_ACTION_TYPE]:
       new RemoveProfileSectionItemActionExecutor(),
     [UPLOAD_PROFILE_PHOTO_ACTION_TYPE]: new UploadProfilePhotoActionExecutor(),
-    [UPLOAD_PROFILE_BANNER_ACTION_TYPE]: new UploadProfileBannerActionExecutor(),
-    [ADD_PROFILE_FEATURED_ACTION_TYPE]: new AddProfileFeaturedItemActionExecutor(),
+    [UPLOAD_PROFILE_BANNER_ACTION_TYPE]:
+      new UploadProfileBannerActionExecutor(),
+    [ADD_PROFILE_FEATURED_ACTION_TYPE]:
+      new AddProfileFeaturedItemActionExecutor(),
     [REMOVE_PROFILE_FEATURED_ACTION_TYPE]:
       new RemoveProfileFeaturedItemActionExecutor(),
     [REORDER_PROFILE_FEATURED_ACTION_TYPE]:
@@ -7765,11 +8169,12 @@ export function createProfileActionExecutors(): Record<
     [ADD_PROFILE_SKILL_ACTION_TYPE]: new AddProfileSkillActionExecutor(),
     [REORDER_PROFILE_SKILLS_ACTION_TYPE]:
       new ReorderProfileSkillsActionExecutor(),
-    [ENDORSE_PROFILE_SKILL_ACTION_TYPE]: new EndorseProfileSkillActionExecutor(),
+    [ENDORSE_PROFILE_SKILL_ACTION_TYPE]:
+      new EndorseProfileSkillActionExecutor(),
     [REQUEST_PROFILE_RECOMMENDATION_ACTION_TYPE]:
       new RequestProfileRecommendationActionExecutor(),
     [WRITE_PROFILE_RECOMMENDATION_ACTION_TYPE]:
-      new WriteProfileRecommendationActionExecutor()
+      new WriteProfileRecommendationActionExecutor(),
   };
 }
 
@@ -7791,10 +8196,10 @@ export class LinkedInProfileService {
         ...input.preview,
         rate_limit: peekRateLimitPreview(
           this.runtime.rateLimiter,
-          getProfileRateLimitConfig(input.actionType)
-        )
+          getProfileRateLimitConfig(input.actionType),
+        ),
       },
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 
@@ -7804,7 +8209,7 @@ export class LinkedInProfileService {
 
     await this.runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: this.runtime.cdpUrl
+      cdpUrl: this.runtime.cdpUrl,
     });
 
     try {
@@ -7812,7 +8217,7 @@ export class LinkedInProfileService {
         {
           cdpUrl: this.runtime.cdpUrl,
           profileName,
-          headless: true
+          headless: true,
         },
         async (context) => {
           const page = await getOrCreatePage(context);
@@ -7820,7 +8225,7 @@ export class LinkedInProfileService {
           await waitForNetworkIdleBestEffort(page);
           await waitForProfilePageReady(page);
           return extractProfileData(page, this.runtime.selectorLocale);
-        }
+        },
       );
     } catch (error) {
       if (error instanceof LinkedInBuddyError) {
@@ -7829,19 +8234,19 @@ export class LinkedInProfileService {
       throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
-        "Failed to view LinkedIn profile."
+        "Failed to view LinkedIn profile.",
       );
     }
   }
 
   async viewEditableProfile(
-    input: ViewEditableProfileInput = {}
+    input: ViewEditableProfileInput = {},
   ): Promise<LinkedInEditableProfile> {
     const profileName = input.profileName ?? "default";
 
     await this.runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: this.runtime.cdpUrl
+      cdpUrl: this.runtime.cdpUrl,
     });
 
     try {
@@ -7849,24 +8254,33 @@ export class LinkedInProfileService {
         {
           cdpUrl: this.runtime.cdpUrl,
           profileName,
-          headless: true
+          headless: true,
         },
         async (context) => {
           const page = await getOrCreatePage(context);
           await navigateToOwnProfile(page);
 
-          const profile = await extractProfileData(page, this.runtime.selectorLocale);
-          const settings = await extractEditableSettings(page, this.runtime.selectorLocale);
+          const profile = await extractProfileData(
+            page,
+            this.runtime.selectorLocale,
+          );
+          const settings = await extractEditableSettings(
+            page,
+            this.runtime.selectorLocale,
+          );
           const sections = await extractEditableSections(
             page,
             this.runtime.selectorLocale,
-            profile
+            profile,
           );
           const featured = await extractEditableFeaturedSection(
             page,
-            this.runtime.selectorLocale
+            this.runtime.selectorLocale,
           );
-          const publicProfile = await extractEditablePublicProfile(page, profile);
+          const publicProfile = await extractEditablePublicProfile(
+            page,
+            profile,
+          );
 
           return {
             profile_url: profile.profile_url,
@@ -7874,14 +8288,19 @@ export class LinkedInProfileService {
               full_name: profile.full_name,
               headline: profile.headline,
               location: profile.location,
-              supported_fields: ["firstName", "lastName", "headline", "location"]
+              supported_fields: [
+                "firstName",
+                "lastName",
+                "headline",
+                "location",
+              ],
             },
             settings,
             public_profile: publicProfile,
             sections,
-            featured
+            featured,
           };
-        }
+        },
       );
     } catch (error) {
       if (error instanceof LinkedInBuddyError) {
@@ -7890,92 +8309,92 @@ export class LinkedInProfileService {
       throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
-        "Failed to inspect the editable LinkedIn profile view."
+        "Failed to inspect the editable LinkedIn profile view.",
       );
     }
   }
 
-  prepareUpdateIntro(
-    input: PrepareUpdateIntroInput
-  ): PreparedActionResult {
+  prepareUpdateIntro(input: PrepareUpdateIntroInput): PreparedActionResult {
     const profileName = input.profileName ?? "default";
     const updates = normalizeEditableValues(
       {
-        ...(input.firstName !== undefined ? { firstName: input.firstName } : {}),
+        ...(input.firstName !== undefined
+          ? { firstName: input.firstName }
+          : {}),
         ...(input.lastName !== undefined ? { lastName: input.lastName } : {}),
         ...(input.headline !== undefined ? { headline: input.headline } : {}),
-        ...(input.location !== undefined ? { location: input.location } : {})
+        ...(input.location !== undefined ? { location: input.location } : {}),
       },
       PROFILE_INTRO_FIELD_DEFINITIONS,
-      "profile intro"
+      "profile intro",
     );
 
     const target = {
-      profile_name: profileName
+      profile_name: profileName,
     };
     const preview = {
       summary: `Update LinkedIn profile intro (${Object.keys(updates).join(", ")})`,
       target,
-      intro_updates: updates
+      intro_updates: updates,
     };
 
     return this.prepareRateLimitedAction({
       actionType: UPDATE_PROFILE_INTRO_ACTION_TYPE,
       target,
       payload: {
-        updates
+        updates,
       },
       preview,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 
   prepareUpdateSettings(
-    input: PrepareUpdateProfileSettingsInput
+    input: PrepareUpdateProfileSettingsInput,
   ): PreparedActionResult {
     const profileName = input.profileName ?? "default";
     const updates = normalizeEditableValues(
       {
-        ...(input.industry !== undefined ? { industry: input.industry } : {})
+        ...(input.industry !== undefined ? { industry: input.industry } : {}),
       },
       PROFILE_SETTINGS_FIELD_DEFINITIONS,
-      "profile settings"
+      "profile settings",
     );
 
     const target = {
-      profile_name: profileName
+      profile_name: profileName,
     };
     const preview = {
       summary: `Update LinkedIn profile settings (${Object.keys(updates).join(", ")})`,
       target,
-      settings_updates: updates
+      settings_updates: updates,
     };
 
     return this.prepareRateLimitedAction({
       actionType: UPDATE_PROFILE_SETTINGS_ACTION_TYPE,
       target,
       payload: {
-        updates
+        updates,
       },
       preview,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 
   prepareUpdatePublicProfile(
-    input: PrepareUpdateProfilePublicProfileInput
+    input: PrepareUpdateProfilePublicProfileInput,
   ): PreparedActionResult {
     const profileName = input.profileName ?? "default";
     const publicProfile = normalizePreparedPublicProfileInput(input);
 
     const target = {
-      profile_name: profileName
+      profile_name: profileName,
     };
     const preview = {
       summary: "Update LinkedIn public profile URL",
       target,
       vanity_name: publicProfile.vanityName,
-      public_profile_url: publicProfile.publicProfileUrl
+      public_profile_url: publicProfile.publicProfileUrl,
     };
 
     return this.prepareRateLimitedAction({
@@ -7983,30 +8402,34 @@ export class LinkedInProfileService {
       target,
       payload: {
         vanity_name: publicProfile.vanityName,
-        public_profile_url: publicProfile.publicProfileUrl
+        public_profile_url: publicProfile.publicProfileUrl,
       },
       preview,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 
   prepareUpsertSectionItem(
-    input: PrepareUpsertSectionItemInput
+    input: PrepareUpsertSectionItemInput,
   ): PreparedActionResult {
     const profileName = input.profileName ?? "default";
     const section = normalizeProfileSectionType(String(input.section));
     const values = normalizeEditableValues(
       input.values,
       getEditableFieldDefinitions(section),
-      `${section} section`
+      `${section} section`,
     );
-    const match = normalizeProfileSectionItemMatch(input.match, input.itemId, section);
+    const match = normalizeProfileSectionItemMatch(
+      input.match,
+      input.itemId,
+      section,
+    );
     const mode = input.itemId || match ? "update" : "create";
 
     const target = {
       profile_name: profileName,
       section,
-      ...(input.itemId ? { item_id: input.itemId } : {})
+      ...(input.itemId ? { item_id: input.itemId } : {}),
     };
     const preview = {
       summary:
@@ -8017,7 +8440,7 @@ export class LinkedInProfileService {
       mode,
       section,
       values,
-      ...(match ? { match } : {})
+      ...(match ? { match } : {}),
     };
 
     return this.prepareRateLimitedAction({
@@ -8027,31 +8450,35 @@ export class LinkedInProfileService {
         section,
         mode,
         values,
-        ...(match ? { match } : {})
+        ...(match ? { match } : {}),
       },
       preview,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 
   prepareRemoveSectionItem(
-    input: PrepareRemoveSectionItemInput
+    input: PrepareRemoveSectionItemInput,
   ): PreparedActionResult {
     const profileName = input.profileName ?? "default";
     const section = normalizeProfileSectionType(String(input.section));
-    const match = normalizeProfileSectionItemMatch(input.match, input.itemId, section);
+    const match = normalizeProfileSectionItemMatch(
+      input.match,
+      input.itemId,
+      section,
+    );
 
     if (section !== "about" && !input.itemId && !match) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        `Removing a ${section} section item requires itemId or match details.`
+        `Removing a ${section} section item requires itemId or match details.`,
       );
     }
 
     const target = {
       profile_name: profileName,
       section,
-      ...(input.itemId ? { item_id: input.itemId } : {})
+      ...(input.itemId ? { item_id: input.itemId } : {}),
     };
     const preview = {
       summary:
@@ -8060,7 +8487,7 @@ export class LinkedInProfileService {
           : `Remove ${section} profile section item`,
       target,
       section,
-      ...(match ? { match } : {})
+      ...(match ? { match } : {}),
     };
 
     return this.prepareRateLimitedAction({
@@ -8068,15 +8495,15 @@ export class LinkedInProfileService {
       target,
       payload: {
         section,
-        ...(match ? { match } : {})
+        ...(match ? { match } : {}),
       },
       preview,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 
   async prepareUploadPhoto(
-    input: PrepareUploadProfileMediaInput
+    input: PrepareUploadProfileMediaInput,
   ): Promise<PreparedActionResult> {
     const profileName = input.profileName ?? "default";
     const upload = await stagePreparedUploadArtifact(
@@ -8084,32 +8511,32 @@ export class LinkedInProfileService {
       input.filePath,
       "Profile photo",
       PROFILE_IMAGE_UPLOAD_EXTENSIONS,
-      "profile-photo"
+      "profile-photo",
     );
 
     const target = {
       profile_name: profileName,
-      media_kind: "photo"
+      media_kind: "photo",
     };
     const preview = {
       summary: `Upload LinkedIn profile photo (${upload.file_name})`,
       target,
-      upload: buildPreparedUploadPreview(upload)
+      upload: buildPreparedUploadPreview(upload),
     };
 
     return this.prepareRateLimitedAction({
       actionType: UPLOAD_PROFILE_PHOTO_ACTION_TYPE,
       target,
       payload: {
-        upload
+        upload,
       },
       preview,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 
   async prepareUploadBanner(
-    input: PrepareUploadProfileMediaInput
+    input: PrepareUploadProfileMediaInput,
   ): Promise<PreparedActionResult> {
     const profileName = input.profileName ?? "default";
     const upload = await stagePreparedUploadArtifact(
@@ -8117,32 +8544,32 @@ export class LinkedInProfileService {
       input.filePath,
       "Profile banner",
       PROFILE_IMAGE_UPLOAD_EXTENSIONS,
-      "profile-banner"
+      "profile-banner",
     );
 
     const target = {
       profile_name: profileName,
-      media_kind: "banner"
+      media_kind: "banner",
     };
     const preview = {
       summary: `Upload LinkedIn profile banner (${upload.file_name})`,
       target,
-      upload: buildPreparedUploadPreview(upload)
+      upload: buildPreparedUploadPreview(upload),
     };
 
     return this.prepareRateLimitedAction({
       actionType: UPLOAD_PROFILE_BANNER_ACTION_TYPE,
       target,
       payload: {
-        upload
+        upload,
       },
       preview,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 
   async prepareFeaturedAdd(
-    input: PrepareFeaturedAddInput
+    input: PrepareFeaturedAddInput,
   ): Promise<PreparedActionResult> {
     const profileName = input.profileName ?? "default";
     const kind = normalizeProfileFeaturedItemKind(String(input.kind));
@@ -8161,13 +8588,13 @@ export class LinkedInProfileService {
             input.filePath,
             "Featured media",
             FEATURED_MEDIA_UPLOAD_EXTENSIONS,
-            "featured-media"
+            "featured-media",
           )
         : undefined;
 
     const target = {
       profile_name: profileName,
-      kind
+      kind,
     };
     const preview = {
       summary: `Add ${kind} item to LinkedIn Featured section`,
@@ -8175,7 +8602,7 @@ export class LinkedInProfileService {
       ...(url ? { url } : {}),
       ...(title ? { title } : {}),
       ...(description ? { description } : {}),
-      ...(upload ? { upload: buildPreparedUploadPreview(upload) } : {})
+      ...(upload ? { upload: buildPreparedUploadPreview(upload) } : {}),
     };
 
     return this.prepareRateLimitedAction({
@@ -8186,15 +8613,15 @@ export class LinkedInProfileService {
         ...(url ? { url } : {}),
         ...(title ? { title } : {}),
         ...(description ? { description } : {}),
-        ...(upload ? { upload } : {})
+        ...(upload ? { upload } : {}),
       },
       preview,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 
   prepareFeaturedRemove(
-    input: PrepareFeaturedRemoveInput
+    input: PrepareFeaturedRemoveInput,
   ): PreparedActionResult {
     const profileName = input.profileName ?? "default";
     const match = normalizeProfileFeaturedItemMatch(input.match, input.itemId);
@@ -8202,33 +8629,33 @@ export class LinkedInProfileService {
     if (!input.itemId && !match) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        "Removing a Featured item requires itemId or match details."
+        "Removing a Featured item requires itemId or match details.",
       );
     }
 
     const target = {
       profile_name: profileName,
-      ...(input.itemId ? { item_id: input.itemId } : {})
+      ...(input.itemId ? { item_id: input.itemId } : {}),
     };
     const preview = {
       summary: "Remove item from LinkedIn Featured section",
       target,
-      ...(match ? { match } : {})
+      ...(match ? { match } : {}),
     };
 
     return this.prepareRateLimitedAction({
       actionType: REMOVE_PROFILE_FEATURED_ACTION_TYPE,
       target,
       payload: {
-        ...(match ? { match } : {})
+        ...(match ? { match } : {}),
       },
       preview,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 
   prepareFeaturedReorder(
-    input: PrepareFeaturedReorderInput
+    input: PrepareFeaturedReorderInput,
   ): PreparedActionResult {
     const profileName = input.profileName ?? "default";
     const itemIds = input.itemIds
@@ -8239,14 +8666,14 @@ export class LinkedInProfileService {
     if (itemIds.length === 0) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        "Featured reorder requires at least one itemId."
+        "Featured reorder requires at least one itemId.",
       );
     }
 
     if (new Set(itemIds).size !== itemIds.length) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        "Featured reorder itemIds must be unique."
+        "Featured reorder itemIds must be unique.",
       );
     }
 
@@ -8256,29 +8683,29 @@ export class LinkedInProfileService {
           "ACTION_PRECONDITION_FAILED",
           "Featured reorder requires itemIds returned by view_editable.featured.items.",
           {
-            item_id: itemId
-          }
+            item_id: itemId,
+          },
         );
       }
     }
 
     const target = {
-      profile_name: profileName
+      profile_name: profileName,
     };
     const preview = {
       summary: `Reorder LinkedIn Featured items (${itemIds.length})`,
       target,
-      item_ids: itemIds
+      item_ids: itemIds,
     };
 
     return this.prepareRateLimitedAction({
       actionType: REORDER_PROFILE_FEATURED_ACTION_TYPE,
       target,
       payload: {
-        item_ids: itemIds
+        item_ids: itemIds,
       },
       preview,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 
@@ -8287,85 +8714,87 @@ export class LinkedInProfileService {
     const skillName = normalizeSkillName(input.skillName);
 
     const target = {
-      profile_name: profileName
+      profile_name: profileName,
     };
     const preview = {
       summary: `Add "${skillName}" to LinkedIn profile skills`,
       target,
-      skill_name: skillName
+      skill_name: skillName,
     };
 
     return this.prepareRateLimitedAction({
       actionType: ADD_PROFILE_SKILL_ACTION_TYPE,
       target,
       payload: {
-        skill_name: skillName
+        skill_name: skillName,
       },
       preview,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 
-  prepareReorderSkills(
-    input: PrepareReorderSkillsInput
-  ): PreparedActionResult {
+  prepareReorderSkills(input: PrepareReorderSkillsInput): PreparedActionResult {
     const profileName = input.profileName ?? "default";
     const skillNames = normalizeSkillNames(input.skillNames);
 
     const target = {
-      profile_name: profileName
+      profile_name: profileName,
     };
     const preview = {
       summary: `Reorder LinkedIn skills (${skillNames.length})`,
       target,
-      skill_names: skillNames
+      skill_names: skillNames,
     };
 
     return this.prepareRateLimitedAction({
       actionType: REORDER_PROFILE_SKILLS_ACTION_TYPE,
       target,
       payload: {
-        skill_names: skillNames
+        skill_names: skillNames,
       },
       preview,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 
-  prepareEndorseSkill(
-    input: PrepareEndorseSkillInput
-  ): PreparedActionResult {
+  prepareEndorseSkill(input: PrepareEndorseSkillInput): PreparedActionResult {
     const profileName = input.profileName ?? "default";
     const skillName = normalizeSkillName(input.skillName);
-    const targetProfileUrl = resolveExternalProfileTarget(input.target, "target");
+    const targetProfileUrl = resolveExternalProfileTarget(
+      input.target,
+      "target",
+    );
 
     const target = {
       profile_name: profileName,
       target_profile: normalizeText(input.target),
-      target_profile_url: targetProfileUrl
+      target_profile_url: targetProfileUrl,
     };
     const preview = {
       summary: `Endorse "${skillName}" on a LinkedIn profile`,
       target,
-      skill_name: skillName
+      skill_name: skillName,
     };
 
     return this.prepareRateLimitedAction({
       actionType: ENDORSE_PROFILE_SKILL_ACTION_TYPE,
       target,
       payload: {
-        skill_name: skillName
+        skill_name: skillName,
       },
       preview,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 
   prepareRequestRecommendation(
-    input: PrepareRequestRecommendationInput
+    input: PrepareRequestRecommendationInput,
   ): PreparedActionResult {
     const profileName = input.profileName ?? "default";
-    const targetProfileUrl = resolveExternalProfileTarget(input.target, "target");
+    const targetProfileUrl = resolveExternalProfileTarget(
+      input.target,
+      "target",
+    );
     const fields = normalizeOptionalEditableValues(
       {
         ...(input.relationship !== undefined
@@ -8373,38 +8802,41 @@ export class LinkedInProfileService {
           : {}),
         ...(input.position !== undefined ? { position: input.position } : {}),
         ...(input.company !== undefined ? { company: input.company } : {}),
-        ...(input.message !== undefined ? { message: input.message } : {})
+        ...(input.message !== undefined ? { message: input.message } : {}),
       },
-      RECOMMENDATION_REQUEST_FIELD_DEFINITIONS
+      RECOMMENDATION_REQUEST_FIELD_DEFINITIONS,
     );
 
     const target = {
       profile_name: profileName,
       target_profile: normalizeText(input.target),
-      target_profile_url: targetProfileUrl
+      target_profile_url: targetProfileUrl,
     };
     const preview = {
       summary: "Request a LinkedIn recommendation",
       target,
-      ...(Object.keys(fields).length > 0 ? { fields } : {})
+      ...(Object.keys(fields).length > 0 ? { fields } : {}),
     };
 
     return this.prepareRateLimitedAction({
       actionType: REQUEST_PROFILE_RECOMMENDATION_ACTION_TYPE,
       target,
       payload: {
-        fields
+        fields,
       },
       preview,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 
   prepareWriteRecommendation(
-    input: PrepareWriteRecommendationInput
+    input: PrepareWriteRecommendationInput,
   ): PreparedActionResult {
     const profileName = input.profileName ?? "default";
-    const targetProfileUrl = resolveExternalProfileTarget(input.target, "target");
+    const targetProfileUrl = resolveExternalProfileTarget(
+      input.target,
+      "target",
+    );
     const fields = normalizeOptionalEditableValues(
       {
         ...(input.relationship !== undefined
@@ -8412,37 +8844,37 @@ export class LinkedInProfileService {
           : {}),
         ...(input.position !== undefined ? { position: input.position } : {}),
         ...(input.company !== undefined ? { company: input.company } : {}),
-        text: input.text
+        text: input.text,
       },
-      RECOMMENDATION_WRITE_FIELD_DEFINITIONS
+      RECOMMENDATION_WRITE_FIELD_DEFINITIONS,
     );
 
     if (typeof fields.text !== "string" || fields.text.length === 0) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        "text is required."
+        "text is required.",
       );
     }
 
     const target = {
       profile_name: profileName,
       target_profile: normalizeText(input.target),
-      target_profile_url: targetProfileUrl
+      target_profile_url: targetProfileUrl,
     };
     const preview = {
       summary: "Write a LinkedIn recommendation",
       target,
-      fields
+      fields,
     };
 
     return this.prepareRateLimitedAction({
       actionType: WRITE_PROFILE_RECOMMENDATION_ACTION_TYPE,
       target,
       payload: {
-        fields
+        fields,
       },
       preview,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 }

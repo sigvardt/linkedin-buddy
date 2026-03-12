@@ -1,12 +1,9 @@
-import { type BrowserContext, type Page } from "playwright-core";
+import { type Page } from "playwright-core";
 import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
 import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
 import type { ConfirmFailureArtifactConfig } from "./config.js";
-import {
-  LinkedInBuddyError,
-  asLinkedInBuddyError
-} from "./errors.js";
+import { LinkedInBuddyError, asLinkedInBuddyError } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
@@ -15,18 +12,19 @@ import {
   createConfirmRateLimitMessage,
   peekRateLimitPreview,
   type ConsumeRateLimitInput,
-  type RateLimiter
+  type RateLimiter,
 } from "./rateLimiter.js";
 import {
   buildLinkedInSelectorPhraseRegex,
-  type LinkedInSelectorLocale
+  type LinkedInSelectorLocale,
 } from "./selectorLocale.js";
+import { escapeRegExp, getOrCreatePage, normalizeText } from "./shared.js";
 import type {
   ActionExecutor,
   ActionExecutorInput,
   ActionExecutorRegistry,
   ActionExecutorResult,
-  TwoPhaseCommitService
+  TwoPhaseCommitService,
 } from "./twoPhaseCommit.js";
 
 export const GROUP_JOIN_ACTION_TYPE = "groups.join";
@@ -37,18 +35,18 @@ const GROUP_RATE_LIMIT_CONFIGS = {
   [GROUP_JOIN_ACTION_TYPE]: {
     counterKey: "linkedin.groups.join",
     windowSizeMs: 24 * 60 * 60 * 1000,
-    limit: 10
+    limit: 10,
   },
   [GROUP_LEAVE_ACTION_TYPE]: {
     counterKey: "linkedin.groups.leave",
     windowSizeMs: 24 * 60 * 60 * 1000,
-    limit: 10
+    limit: 10,
   },
   [GROUP_POST_ACTION_TYPE]: {
     counterKey: "linkedin.groups.post",
     windowSizeMs: 24 * 60 * 60 * 1000,
-    limit: 1
-  }
+    limit: 1,
+  },
 } as const satisfies Record<string, ConsumeRateLimitInput>;
 
 export type LinkedInGroupMembershipState =
@@ -127,7 +125,10 @@ export interface LinkedInGroupsExecutorRuntime {
 }
 
 export interface LinkedInGroupsRuntime extends LinkedInGroupsExecutorRuntime {
-  twoPhaseCommit: Pick<TwoPhaseCommitService<LinkedInGroupsExecutorRuntime>, "prepare">;
+  twoPhaseCommit: Pick<
+    TwoPhaseCommitService<LinkedInGroupsExecutorRuntime>,
+    "prepare"
+  >;
 }
 
 interface GroupSearchSnapshot {
@@ -152,10 +153,6 @@ interface GroupDetailSnapshot {
   membership_state: LinkedInGroupMembershipState;
 }
 
-function normalizeText(value: string | null | undefined): string {
-  return (value ?? "").replace(/\s+/g, " ").trim();
-}
-
 function getGroupRateLimitConfig(actionType: string): ConsumeRateLimitInput {
   const config = (
     GROUP_RATE_LIMIT_CONFIGS as Record<string, ConsumeRateLimitInput>
@@ -163,15 +160,11 @@ function getGroupRateLimitConfig(actionType: string): ConsumeRateLimitInput {
 
   if (!config) {
     throw new LinkedInBuddyError("UNKNOWN", "Missing rate limit policy.", {
-      action_type: actionType
+      action_type: actionType,
     });
   }
 
   return config;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function readSearchLimit(value: number | undefined): number {
@@ -186,7 +179,7 @@ function buildLocalizedRegex(
   selectorLocale: LinkedInSelectorLocale,
   english: readonly string[],
   danish: readonly string[] = english,
-  options: { exact?: boolean } = {}
+  options: { exact?: boolean } = {},
 ): RegExp {
   const phrases =
     selectorLocale === "da" ? [...danish, ...english] : [...english, ...danish];
@@ -198,7 +191,7 @@ function buildLocalizedRegex(
 async function waitForCondition(
   condition: () => Promise<boolean>,
   timeoutMs: number,
-  intervalMs = 250
+  intervalMs = 250,
 ): Promise<boolean> {
   const deadline = Date.now() + Math.max(0, timeoutMs);
 
@@ -213,15 +206,6 @@ async function waitForCondition(
   }
 
   return condition();
-}
-
-async function getOrCreatePage(context: BrowserContext): Promise<Page> {
-  const existing = context.pages()[0];
-  if (existing) {
-    return existing;
-  }
-
-  return context.newPage();
 }
 
 function extractGroupId(value: string): string {
@@ -255,13 +239,13 @@ function resolveGroupReference(group: string): {
   if (!groupId) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "group must be a LinkedIn group URL or numeric ID."
+      "group must be a LinkedIn group URL or numeric ID.",
     );
   }
 
   return {
     groupId,
-    groupUrl: buildGroupViewUrl(groupId)
+    groupUrl: buildGroupViewUrl(groupId),
   };
 }
 
@@ -270,14 +254,14 @@ async function waitForGroupSearchSurface(page: Page): Promise<void> {
     ".reusable-search__result-container",
     "li.reusable-search__result-container",
     ".scaffold-layout__main",
-    "main"
+    "main",
   ];
 
   for (const selector of selectors) {
     try {
       await page.locator(selector).first().waitFor({
         state: "visible",
-        timeout: 5_000
+        timeout: 5_000,
       });
       return;
     } catch {
@@ -290,8 +274,8 @@ async function waitForGroupSearchSurface(page: Page): Promise<void> {
     "Could not locate LinkedIn group search content.",
     {
       current_url: page.url(),
-      attempted_selectors: selectors
-    }
+      attempted_selectors: selectors,
+    },
   );
 }
 
@@ -301,14 +285,14 @@ async function waitForGroupDetailSurface(page: Page): Promise<void> {
     ".groups-guest-view",
     ".groups-header",
     ".scaffold-layout__main",
-    "main"
+    "main",
   ];
 
   for (const selector of selectors) {
     try {
       await page.locator(selector).first().waitFor({
         state: "visible",
-        timeout: 5_000
+        timeout: 5_000,
       });
       return;
     } catch {
@@ -321,15 +305,18 @@ async function waitForGroupDetailSurface(page: Page): Promise<void> {
     "Could not locate LinkedIn group detail content.",
     {
       current_url: page.url(),
-      attempted_selectors: selectors
-    }
+      attempted_selectors: selectors,
+    },
   );
 }
 
 async function scrollSearchResultsIfNeeded(
   page: Page,
-  extractor: (currentPage: Page, limit: number) => Promise<GroupSearchSnapshot[]>,
-  limit: number
+  extractor: (
+    currentPage: Page,
+    limit: number,
+  ) => Promise<GroupSearchSnapshot[]>,
+  limit: number,
 ): Promise<GroupSearchSnapshot[]> {
   let snapshots = await extractor(page, limit);
 
@@ -344,7 +331,7 @@ async function scrollSearchResultsIfNeeded(
 
 async function extractGroupSearchResults(
   page: Page,
-  limit: number
+  limit: number,
 ): Promise<GroupSearchSnapshot[]> {
   return page.evaluate((maxGroups: number) => {
     const normalize = (value: string | null | undefined): string =>
@@ -382,12 +369,13 @@ async function extractGroupSearchResults(
           .filter((line) => line.length > 0);
         const visibility =
           lines.find((line) =>
-            /(?:public|private)(?: listed)? group/iu.test(line)
+            /(?:public|private)(?: listed)? group/iu.test(line),
           ) ?? "";
         const memberCount =
           lines.find((line) => /\b(?:members|medlemmer)\b/iu.test(line)) ?? "";
         const actionLabel =
-          lines.find((line) => /^(?:join|requested to join)$/iu.test(line)) ?? "";
+          lines.find((line) => /^(?:join|requested to join)$/iu.test(line)) ??
+          "";
         const name = lines[0] ?? "";
         const description = normalize(
           lines
@@ -396,16 +384,15 @@ async function extractGroupSearchResults(
                 line !== name &&
                 line !== visibility &&
                 line !== memberCount &&
-                line !== actionLabel
+                line !== actionLabel,
             )
-            .join(" ")
+            .join(" "),
         );
-        const membershipState =
-          /^requested to join$/iu.test(actionLabel)
-            ? "pending"
-            : /^join$/iu.test(actionLabel)
-              ? "joinable"
-              : "unknown";
+        const membershipState = /^requested to join$/iu.test(actionLabel)
+          ? "pending"
+          : /^join$/iu.test(actionLabel)
+            ? "joinable"
+            : "unknown";
 
         return {
           group_id: extractGroupIdFromUrl(groupUrl),
@@ -414,23 +401,23 @@ async function extractGroupSearchResults(
           visibility,
           member_count: memberCount,
           description,
-          membership_state: membershipState
+          membership_state: membershipState,
         } satisfies GroupSearchSnapshot;
       });
   }, limit);
 }
 
-async function extractGroupDetailSnapshot(page: Page): Promise<GroupDetailSnapshot> {
+async function extractGroupDetailSnapshot(
+  page: Page,
+): Promise<GroupDetailSnapshot> {
   return page.evaluate(() => {
     const normalize = (value: string | null | undefined): string =>
       (value ?? "").replace(/\s+/g, " ").trim();
 
     const title =
+      normalize(globalThis.document.querySelector("main h1")?.textContent) ||
       normalize(
-        globalThis.document.querySelector("main h1")?.textContent
-      ) ||
-      normalize(
-        globalThis.document.querySelector(".groups-header h1")?.textContent
+        globalThis.document.querySelector(".groups-header h1")?.textContent,
       );
     const url = normalize(globalThis.window.location.href);
     const groupId = /\/groups\/(\d+)/iu.exec(url)?.[1] ?? "";
@@ -440,14 +427,16 @@ async function extractGroupDetailSnapshot(page: Page): Promise<GroupDetailSnapsh
       .filter((line) => line.length > 0);
     const visibility =
       lines.find((line) =>
-        /^(?:public|private)(?: listed)?(?: group)?$/iu.test(line)
+        /^(?:public|private)(?: listed)?(?: group)?$/iu.test(line),
       ) ?? "";
     const memberCount =
-      lines.find((line) => /^\d[\d.,\s]*(?:members|medlemmer)\b$/iu.test(line)) ?? "";
+      lines.find((line) =>
+        /^\d[\d.,\s]*(?:members|medlemmer)\b$/iu.test(line),
+      ) ?? "";
 
     const extractSection = (
       headingPattern: RegExp,
-      stopPatterns: RegExp[]
+      stopPatterns: RegExp[],
     ): string => {
       const startIndex = lines.findIndex((line) => headingPattern.test(line));
       if (startIndex < 0) {
@@ -468,11 +457,13 @@ async function extractGroupDetailSnapshot(page: Page): Promise<GroupDetailSnapsh
 
     const about = extractSection(/^(?:About this group|About)$/iu, [
       /^(?:Show all|Member highlights|Admins|Members|About|Accessibility|Help Center)$/iu,
-      /^\d+\s+(?:connections|members)\b/iu
+      /^\d+\s+(?:connections|members)\b/iu,
     ]);
     const joinedRaw =
       lines.find((line) => /^Joined group:/iu.test(line)) ?? null;
-    const membershipState = lines.some((line) => /^Start a post in this group$/iu.test(line))
+    const membershipState = lines.some((line) =>
+      /^Start a post in this group$/iu.test(line),
+    )
       ? "member"
       : lines.some((line) => /^Requested to join$/iu.test(line))
         ? "pending"
@@ -488,8 +479,10 @@ async function extractGroupDetailSnapshot(page: Page): Promise<GroupDetailSnapsh
       member_count: memberCount,
       description: about,
       about,
-      joined_at: joinedRaw ? normalize(joinedRaw.replace(/^Joined group:\s*/iu, "")) : null,
-      membership_state: membershipState
+      joined_at: joinedRaw
+        ? normalize(joinedRaw.replace(/^Joined group:\s*/iu, ""))
+        : null,
+      membership_state: membershipState,
     } satisfies GroupDetailSnapshot;
   });
 }
@@ -504,7 +497,7 @@ async function isDialogVisible(page: Page): Promise<boolean> {
 async function executeJoinGroup(
   runtime: LinkedInGroupsExecutorRuntime,
   actionId: string,
-  target: Record<string, unknown>
+  target: Record<string, unknown>,
 ): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
   const profileName = String(target.profile_name ?? "default");
   const groupId = String(target.group_id ?? "");
@@ -515,7 +508,7 @@ async function executeJoinGroup(
     {
       cdpUrl: runtime.cdpUrl,
       profileName,
-      headless: true
+      headless: true,
     },
     async (context) => {
       const page = await getOrCreatePage(context);
@@ -529,11 +522,11 @@ async function executeJoinGroup(
         targetUrl: groupUrl,
         metadata: {
           group_id: groupId,
-          group_url: groupUrl
+          group_url: groupUrl,
         },
         errorDetails: {
           group_id: groupId,
-          group_url: groupUrl
+          group_url: groupUrl,
         },
         beforeExecute: () =>
           consumeRateLimitOrThrow(runtime.rateLimiter, {
@@ -543,14 +536,14 @@ async function executeJoinGroup(
               action_id: actionId,
               profile_name: profileName,
               group_id: groupId,
-              group_url: groupUrl
-            }
+              group_url: groupUrl,
+            },
           }),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
             "UNKNOWN",
-            "Failed to execute LinkedIn group join action."
+            "Failed to execute LinkedIn group join action.",
           ),
         execute: async () => {
           await page.goto(groupUrl, { waitUntil: "domcontentloaded" });
@@ -561,17 +554,19 @@ async function executeJoinGroup(
             runtime.selectorLocale,
             ["Join"],
             ["Deltag", "Bliv medlem"],
-            { exact: true }
+            { exact: true },
           );
-          const joinButton = page.getByRole("button", {
-            name: joinRegex
-          }).first();
+          const joinButton = page
+            .getByRole("button", {
+              name: joinRegex,
+            })
+            .first();
           await joinButton.click({ timeout: 5_000 });
 
           await waitForCondition(async () => {
             const joinVisible = await page
               .getByRole("button", {
-                name: joinRegex
+                name: joinRegex,
               })
               .first()
               .isVisible()
@@ -580,11 +575,17 @@ async function executeJoinGroup(
               return true;
             }
 
-            const bodyText = await page.locator("body").innerText().catch(() => "");
+            const bodyText = await page
+              .locator("body")
+              .innerText()
+              .catch(() => "");
             return /requested to join|joined group:/iu.test(bodyText);
           }, 8_000);
 
-          const bodyText = await page.locator("body").innerText().catch(() => "");
+          const bodyText = await page
+            .locator("body")
+            .innerText()
+            .catch(() => "");
           const status = /requested to join/iu.test(bodyText)
             ? "group_join_requested"
             : /joined group:/iu.test(bodyText) ||
@@ -592,8 +593,8 @@ async function executeJoinGroup(
                   .getByRole("button", {
                     name: buildLinkedInSelectorPhraseRegex(
                       "start_post",
-                      runtime.selectorLocale
-                    )
+                      runtime.selectorLocale,
+                    ),
                   })
                   .first()
                   .isVisible()
@@ -606,20 +607,20 @@ async function executeJoinGroup(
             result: {
               status,
               group_id: groupId,
-              group_url: groupUrl
+              group_url: groupUrl,
             },
-            artifacts: []
+            artifacts: [],
           };
-        }
+        },
       });
-    }
+    },
   );
 }
 
 async function executeLeaveGroup(
   runtime: LinkedInGroupsExecutorRuntime,
   actionId: string,
-  target: Record<string, unknown>
+  target: Record<string, unknown>,
 ): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
   const profileName = String(target.profile_name ?? "default");
   const groupId = String(target.group_id ?? "");
@@ -630,7 +631,7 @@ async function executeLeaveGroup(
     {
       cdpUrl: runtime.cdpUrl,
       profileName,
-      headless: true
+      headless: true,
     },
     async (context) => {
       const page = await getOrCreatePage(context);
@@ -644,11 +645,11 @@ async function executeLeaveGroup(
         targetUrl: groupUrl,
         metadata: {
           group_id: groupId,
-          group_url: groupUrl
+          group_url: groupUrl,
         },
         errorDetails: {
           group_id: groupId,
-          group_url: groupUrl
+          group_url: groupUrl,
         },
         beforeExecute: () =>
           consumeRateLimitOrThrow(runtime.rateLimiter, {
@@ -658,14 +659,14 @@ async function executeLeaveGroup(
               action_id: actionId,
               profile_name: profileName,
               group_id: groupId,
-              group_url: groupUrl
-            }
+              group_url: groupUrl,
+            },
           }),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
             "UNKNOWN",
-            "Failed to execute LinkedIn group leave action."
+            "Failed to execute LinkedIn group leave action.",
           ),
         execute: async () => {
           await page.goto(groupUrl, { waitUntil: "domcontentloaded" });
@@ -673,41 +674,51 @@ async function executeLeaveGroup(
           await waitForGroupDetailSurface(page);
 
           await page.locator(".groups-action-dropdown__trigger").first().click({
-            timeout: 5_000
+            timeout: 5_000,
           });
           await page.waitForTimeout(500);
 
-          await page.getByText(
-            buildLocalizedRegex(
-              runtime.selectorLocale,
-              ["Leave this group"],
-              ["Forlad denne gruppe"],
-              { exact: true }
+          await page
+            .getByText(
+              buildLocalizedRegex(
+                runtime.selectorLocale,
+                ["Leave this group"],
+                ["Forlad denne gruppe"],
+                { exact: true },
+              ),
             )
-          ).first().click({ timeout: 5_000 });
+            .first()
+            .click({ timeout: 5_000 });
 
-          await page.getByRole("button", {
-            name: buildLinkedInSelectorPhraseRegex("leave", runtime.selectorLocale, {
-              exact: true
+          await page
+            .getByRole("button", {
+              name: buildLinkedInSelectorPhraseRegex(
+                "leave",
+                runtime.selectorLocale,
+                {
+                  exact: true,
+                },
+              ),
             })
-          }).last().click({ timeout: 5_000 });
+            .last()
+            .click({ timeout: 5_000 });
 
           const joinRegex = buildLocalizedRegex(
             runtime.selectorLocale,
             ["Join"],
             ["Deltag", "Bliv medlem"],
-            { exact: true }
+            { exact: true },
           );
           const finished = await waitForCondition(
             async () =>
               await page
                 .getByRole("button", {
-                  name: joinRegex
+                  name: joinRegex,
                 })
                 .first()
                 .isVisible()
                 .catch(() => false),
-            8_000
+            8_000,
           );
 
           if (!finished) {
@@ -716,8 +727,8 @@ async function executeLeaveGroup(
               "LinkedIn leave group flow could not be verified after confirmation.",
               {
                 group_id: groupId,
-                group_url: groupUrl
-              }
+                group_url: groupUrl,
+              },
             );
           }
 
@@ -726,13 +737,13 @@ async function executeLeaveGroup(
             result: {
               status: "group_left",
               group_id: groupId,
-              group_url: groupUrl
+              group_url: groupUrl,
             },
-            artifacts: []
+            artifacts: [],
           };
-        }
+        },
       });
-    }
+    },
   );
 }
 
@@ -740,7 +751,7 @@ async function executePostToGroup(
   runtime: LinkedInGroupsExecutorRuntime,
   actionId: string,
   target: Record<string, unknown>,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
 ): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
   const profileName = String(target.profile_name ?? "default");
   const groupId = String(target.group_id ?? "");
@@ -752,7 +763,7 @@ async function executePostToGroup(
     {
       cdpUrl: runtime.cdpUrl,
       profileName,
-      headless: true
+      headless: true,
     },
     async (context) => {
       const page = await getOrCreatePage(context);
@@ -766,11 +777,11 @@ async function executePostToGroup(
         targetUrl: groupUrl,
         metadata: {
           group_id: groupId,
-          group_url: groupUrl
+          group_url: groupUrl,
         },
         errorDetails: {
           group_id: groupId,
-          group_url: groupUrl
+          group_url: groupUrl,
         },
         beforeExecute: () =>
           consumeRateLimitOrThrow(runtime.rateLimiter, {
@@ -780,23 +791,29 @@ async function executePostToGroup(
               action_id: actionId,
               profile_name: profileName,
               group_id: groupId,
-              group_url: groupUrl
-            }
+              group_url: groupUrl,
+            },
           }),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
             "UNKNOWN",
-            "Failed to execute LinkedIn group post action."
+            "Failed to execute LinkedIn group post action.",
           ),
         execute: async () => {
           await page.goto(groupUrl, { waitUntil: "domcontentloaded" });
           await waitForNetworkIdleBestEffort(page);
           await waitForGroupDetailSurface(page);
 
-          await page.getByRole("button", {
-            name: buildLinkedInSelectorPhraseRegex("start_post", runtime.selectorLocale)
-          }).first().click({ timeout: 5_000 });
+          await page
+            .getByRole("button", {
+              name: buildLinkedInSelectorPhraseRegex(
+                "start_post",
+                runtime.selectorLocale,
+              ),
+            })
+            .first()
+            .click({ timeout: 5_000 });
 
           const editor = page
             .locator("div[role='textbox'][contenteditable='true']")
@@ -804,15 +821,22 @@ async function executePostToGroup(
           await editor.waitFor({ state: "visible", timeout: 5_000 });
           await editor.fill(text);
 
-          await page.getByRole("button", {
-            name: buildLinkedInSelectorPhraseRegex("post", runtime.selectorLocale, {
-              exact: true
+          await page
+            .getByRole("button", {
+              name: buildLinkedInSelectorPhraseRegex(
+                "post",
+                runtime.selectorLocale,
+                {
+                  exact: true,
+                },
+              ),
             })
-          }).first().click({ timeout: 5_000 });
+            .first()
+            .click({ timeout: 5_000 });
 
           const closed = await waitForCondition(
             async () => !(await isDialogVisible(page)),
-            8_000
+            8_000,
           );
           if (!closed) {
             throw new LinkedInBuddyError(
@@ -820,8 +844,8 @@ async function executePostToGroup(
               "LinkedIn group post composer stayed open after submitting the post.",
               {
                 group_id: groupId,
-                group_url: groupUrl
-              }
+                group_url: groupUrl,
+              },
             );
           }
 
@@ -830,73 +854,67 @@ async function executePostToGroup(
             result: {
               status: "group_post_published",
               group_id: groupId,
-              group_url: groupUrl
+              group_url: groupUrl,
             },
-            artifacts: []
+            artifacts: [],
           };
-        }
+        },
       });
-    }
+    },
   );
 }
 
-export class JoinGroupActionExecutor
-  implements ActionExecutor<LinkedInGroupsExecutorRuntime>
-{
+export class JoinGroupActionExecutor implements ActionExecutor<LinkedInGroupsExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInGroupsExecutorRuntime>
+    input: ActionExecutorInput<LinkedInGroupsExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const { result, artifacts } = await executeJoinGroup(
       input.runtime,
       input.action.id,
-      input.action.target
+      input.action.target,
     );
 
     return {
       ok: true,
       result,
-      artifacts
+      artifacts,
     };
   }
 }
 
-export class LeaveGroupActionExecutor
-  implements ActionExecutor<LinkedInGroupsExecutorRuntime>
-{
+export class LeaveGroupActionExecutor implements ActionExecutor<LinkedInGroupsExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInGroupsExecutorRuntime>
+    input: ActionExecutorInput<LinkedInGroupsExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const { result, artifacts } = await executeLeaveGroup(
       input.runtime,
       input.action.id,
-      input.action.target
+      input.action.target,
     );
 
     return {
       ok: true,
       result,
-      artifacts
+      artifacts,
     };
   }
 }
 
-export class PostToGroupActionExecutor
-  implements ActionExecutor<LinkedInGroupsExecutorRuntime>
-{
+export class PostToGroupActionExecutor implements ActionExecutor<LinkedInGroupsExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInGroupsExecutorRuntime>
+    input: ActionExecutorInput<LinkedInGroupsExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const { result, artifacts } = await executePostToGroup(
       input.runtime,
       input.action.id,
       input.action.target,
-      input.action.payload
+      input.action.payload,
     );
 
     return {
       ok: true,
       result,
-      artifacts
+      artifacts,
     };
   }
 }
@@ -905,7 +923,7 @@ export function createGroupActionExecutors(): ActionExecutorRegistry<LinkedInGro
   return {
     [GROUP_JOIN_ACTION_TYPE]: new JoinGroupActionExecutor(),
     [GROUP_LEAVE_ACTION_TYPE]: new LeaveGroupActionExecutor(),
-    [GROUP_POST_ACTION_TYPE]: new PostToGroupActionExecutor()
+    [GROUP_POST_ACTION_TYPE]: new PostToGroupActionExecutor(),
   };
 }
 
@@ -919,35 +937,40 @@ export class LinkedInGroupsService {
     if (!query) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        "query is required."
+        "query is required.",
       );
     }
 
     await this.runtime.auth.ensureAuthenticated({
-      profileName
+      profileName,
     });
 
     try {
-      const snapshots = await this.runtime.profileManager.runWithPersistentContext(
-        profileName,
-        { headless: true },
-        async (context) => {
-          const page = await getOrCreatePage(context);
-          await page.goto(buildGroupSearchUrl(query), {
-            waitUntil: "domcontentloaded"
-          });
-          await waitForNetworkIdleBestEffort(page);
-          await waitForGroupSearchSurface(page);
-          await page
-            .locator(
-              ".reusable-search__result-container, li.reusable-search__result-container"
-            )
-            .first()
-            .waitFor({ state: "visible", timeout: 10_000 })
-            .catch(() => page.waitForTimeout(2_000));
-          return scrollSearchResultsIfNeeded(page, extractGroupSearchResults, limit);
-        }
-      );
+      const snapshots =
+        await this.runtime.profileManager.runWithPersistentContext(
+          profileName,
+          { headless: true },
+          async (context) => {
+            const page = await getOrCreatePage(context);
+            await page.goto(buildGroupSearchUrl(query), {
+              waitUntil: "domcontentloaded",
+            });
+            await waitForNetworkIdleBestEffort(page);
+            await waitForGroupSearchSurface(page);
+            await page
+              .locator(
+                ".reusable-search__result-container, li.reusable-search__result-container",
+              )
+              .first()
+              .waitFor({ state: "visible", timeout: 10_000 })
+              .catch(() => page.waitForTimeout(2_000));
+            return scrollSearchResultsIfNeeded(
+              page,
+              extractGroupSearchResults,
+              limit,
+            );
+          },
+        );
 
       const results = snapshots
         .map((snapshot) => ({
@@ -957,21 +980,23 @@ export class LinkedInGroupsService {
           visibility: normalizeText(snapshot.visibility),
           member_count: normalizeText(snapshot.member_count),
           description: normalizeText(snapshot.description),
-          membership_state: snapshot.membership_state
+          membership_state: snapshot.membership_state,
         }))
-        .filter((result) => result.name.length > 0 || result.group_url.length > 0)
+        .filter(
+          (result) => result.name.length > 0 || result.group_url.length > 0,
+        )
         .slice(0, limit);
 
       return {
         query,
         results,
-        count: results.length
+        count: results.length,
       };
     } catch (error) {
       throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
-        "Failed to search LinkedIn groups."
+        "Failed to search LinkedIn groups.",
       );
     }
   }
@@ -981,21 +1006,22 @@ export class LinkedInGroupsService {
     const { groupUrl } = resolveGroupReference(input.group);
 
     await this.runtime.auth.ensureAuthenticated({
-      profileName
+      profileName,
     });
 
     try {
-      const snapshot = await this.runtime.profileManager.runWithPersistentContext(
-        profileName,
-        { headless: true },
-        async (context) => {
-          const page = await getOrCreatePage(context);
-          await page.goto(groupUrl, { waitUntil: "domcontentloaded" });
-          await waitForNetworkIdleBestEffort(page);
-          await waitForGroupDetailSurface(page);
-          return extractGroupDetailSnapshot(page);
-        }
-      );
+      const snapshot =
+        await this.runtime.profileManager.runWithPersistentContext(
+          profileName,
+          { headless: true },
+          async (context) => {
+            const page = await getOrCreatePage(context);
+            await page.goto(groupUrl, { waitUntil: "domcontentloaded" });
+            await waitForNetworkIdleBestEffort(page);
+            await waitForGroupDetailSurface(page);
+            return extractGroupDetailSnapshot(page);
+          },
+        );
 
       return {
         group_id: normalizeText(snapshot.group_id),
@@ -1005,14 +1031,16 @@ export class LinkedInGroupsService {
         member_count: normalizeText(snapshot.member_count),
         description: normalizeText(snapshot.description),
         about: normalizeText(snapshot.about),
-        joined_at: snapshot.joined_at ? normalizeText(snapshot.joined_at) : null,
-        membership_state: snapshot.membership_state
+        joined_at: snapshot.joined_at
+          ? normalizeText(snapshot.joined_at)
+          : null,
+        membership_state: snapshot.membership_state,
       };
     } catch (error) {
       throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
-        "Failed to view LinkedIn group details."
+        "Failed to view LinkedIn group details.",
       );
     }
   }
@@ -1035,7 +1063,7 @@ export class LinkedInGroupsService {
     const target = {
       profile_name: profileName,
       group_id: groupId,
-      group_url: groupUrl
+      group_url: groupUrl,
     };
 
     return this.runtime.twoPhaseCommit.prepare({
@@ -1048,16 +1076,14 @@ export class LinkedInGroupsService {
         ...(input.payload ? { payload: input.payload } : {}),
         rate_limit: peekRateLimitPreview(
           this.runtime.rateLimiter,
-          getGroupRateLimitConfig(input.actionType)
-        )
+          getGroupRateLimitConfig(input.actionType),
+        ),
       },
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 
-  prepareJoinGroup(
-    input: PrepareJoinGroupInput
-  ): {
+  prepareJoinGroup(input: PrepareJoinGroupInput): {
     preparedActionId: string;
     confirmToken: string;
     expiresAtMs: number;
@@ -1069,13 +1095,11 @@ export class LinkedInGroupsService {
       group: input.group,
       summary: `Join LinkedIn group ${groupId}`,
       ...(input.profileName ? { profileName: input.profileName } : {}),
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 
-  prepareLeaveGroup(
-    input: PrepareLeaveGroupInput
-  ): {
+  prepareLeaveGroup(input: PrepareLeaveGroupInput): {
     preparedActionId: string;
     confirmToken: string;
     expiresAtMs: number;
@@ -1087,13 +1111,11 @@ export class LinkedInGroupsService {
       group: input.group,
       summary: `Leave LinkedIn group ${groupId}`,
       ...(input.profileName ? { profileName: input.profileName } : {}),
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 
-  preparePostToGroup(
-    input: PreparePostToGroupInput
-  ): {
+  preparePostToGroup(input: PreparePostToGroupInput): {
     preparedActionId: string;
     confirmToken: string;
     expiresAtMs: number;
@@ -1103,7 +1125,7 @@ export class LinkedInGroupsService {
     if (!text) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        "text is required."
+        "text is required.",
       );
     }
 
@@ -1113,10 +1135,10 @@ export class LinkedInGroupsService {
       group: input.group,
       summary: `Post in LinkedIn group ${groupId}`,
       payload: {
-        text
+        text,
       },
       ...(input.profileName ? { profileName: input.profileName } : {}),
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 }

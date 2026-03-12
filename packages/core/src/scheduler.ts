@@ -2,26 +2,24 @@ import {
   resolveSchedulerConfig,
   type SchedulerBusinessHoursConfig,
   type SchedulerConfig,
-  type SchedulerLane
+  type SchedulerLane,
 } from "./config.js";
-import type {
-  AssistantDatabase,
-  SchedulerJobRow
-} from "./db/database.js";
+import type { AssistantDatabase, SchedulerJobRow } from "./db/database.js";
 import {
   LinkedInBuddyError,
   asLinkedInBuddyError,
-  type LinkedInBuddyErrorCode
+  type LinkedInBuddyErrorCode,
 } from "./errors.js";
 import {
   FOLLOWUP_AFTER_ACCEPT_ACTION_TYPE,
   type LinkedInAcceptedConnection,
   type PreparedAcceptedConnectionFollowup,
-  type PrepareAcceptedConnectionFollowupInput
+  type PrepareAcceptedConnectionFollowupInput,
 } from "./linkedinFollowups.js";
 import { normalizeLinkedInProfileUrl } from "./linkedinProfile.js";
 import type { JsonEventLogger } from "./logging.js";
 import { createRunId } from "./run.js";
+import { isRecord } from "./shared.js";
 
 const FOLLOWUP_PREPARATION_LANE = "followup_preparation";
 const SCHEDULER_OPERATOR_NOTE = "Prepared by local scheduler.";
@@ -46,7 +44,7 @@ interface SchedulerFollowupService {
     sinceMs?: number;
   }): Promise<LinkedInAcceptedConnection[]>;
   prepareFollowupForAcceptedConnection(
-    input: PrepareAcceptedConnectionFollowupInput
+    input: PrepareAcceptedConnectionFollowupInput,
   ): Promise<PreparedAcceptedConnectionFollowup | null>;
 }
 
@@ -119,7 +117,7 @@ function getTimeFormatter(timeZone: string): Intl.DateTimeFormat {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
-    hourCycle: "h23"
+    hourCycle: "h23",
   });
   timeFormatterCache.set(timeZone, formatter);
   return formatter;
@@ -127,13 +125,13 @@ function getTimeFormatter(timeZone: string): Intl.DateTimeFormat {
 
 function getTimeZoneDateTimeParts(
   utcMs: number,
-  timeZone: string
+  timeZone: string,
 ): TimeZoneDateTimeParts {
   const parts = getTimeFormatter(timeZone).formatToParts(new Date(utcMs));
   const entries = Object.fromEntries(
     parts
       .filter((part) => part.type !== "literal")
-      .map((part) => [part.type, part.value])
+      .map((part) => [part.type, part.value]),
   );
 
   return {
@@ -142,7 +140,7 @@ function getTimeZoneDateTimeParts(
     day: Number.parseInt(entries.day ?? "0", 10),
     hour: Number.parseInt(entries.hour ?? "0", 10),
     minute: Number.parseInt(entries.minute ?? "0", 10),
-    second: Number.parseInt(entries.second ?? "0", 10)
+    second: Number.parseInt(entries.second ?? "0", 10),
   };
 }
 
@@ -154,7 +152,7 @@ function getTimeZoneOffsetMs(utcMs: number, timeZone: string): number {
     parts.day,
     parts.hour,
     parts.minute,
-    parts.second
+    parts.second,
   );
 
   return asUtcMs - utcMs;
@@ -162,7 +160,7 @@ function getTimeZoneOffsetMs(utcMs: number, timeZone: string): number {
 
 function resolveUtcMsForLocalTime(
   localDateTime: TimeZoneDateTimeParts,
-  timeZone: string
+  timeZone: string,
 ): number {
   const initialGuess = Date.UTC(
     localDateTime.year,
@@ -170,7 +168,7 @@ function resolveUtcMsForLocalTime(
     localDateTime.day,
     localDateTime.hour,
     localDateTime.minute,
-    localDateTime.second
+    localDateTime.second,
   );
   const firstOffset = getTimeZoneOffsetMs(initialGuess, timeZone);
   let resolvedMs = initialGuess - firstOffset;
@@ -185,13 +183,15 @@ function resolveUtcMsForLocalTime(
 
 function addDays(
   parts: Pick<TimeZoneDateTimeParts, "year" | "month" | "day">,
-  days: number
+  days: number,
 ): Pick<TimeZoneDateTimeParts, "year" | "month" | "day"> {
-  const shifted = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + days));
+  const shifted = new Date(
+    Date.UTC(parts.year, parts.month - 1, parts.day + days),
+  );
   return {
     year: shifted.getUTCFullYear(),
     month: shifted.getUTCMonth() + 1,
-    day: shifted.getUTCDate()
+    day: shifted.getUTCDate(),
   };
 }
 
@@ -199,7 +199,7 @@ function parseClockTime(value: string): TimeOfDay {
   const [hourText, minuteText] = value.split(":");
   return {
     hour: Number.parseInt(hourText ?? "0", 10),
-    minute: Number.parseInt(minuteText ?? "0", 10)
+    minute: Number.parseInt(minuteText ?? "0", 10),
   };
 }
 
@@ -209,7 +209,7 @@ function toMinutesSinceMidnight(value: TimeOfDay): number {
 
 function getLocalMinutesSinceMidnight(
   utcMs: number,
-  businessHours: SchedulerBusinessHoursConfig
+  businessHours: SchedulerBusinessHoursConfig,
 ): number {
   const parts = getTimeZoneDateTimeParts(utcMs, businessHours.timeZone);
   return parts.hour * 60 + parts.minute;
@@ -221,11 +221,15 @@ function getLocalMinutesSinceMidnight(
  */
 export function isWithinBusinessHours(
   utcMs: number,
-  businessHours: SchedulerBusinessHoursConfig
+  businessHours: SchedulerBusinessHoursConfig,
 ): boolean {
   const currentMinutes = getLocalMinutesSinceMidnight(utcMs, businessHours);
-  const startMinutes = toMinutesSinceMidnight(parseClockTime(businessHours.startTime));
-  const endMinutes = toMinutesSinceMidnight(parseClockTime(businessHours.endTime));
+  const startMinutes = toMinutesSinceMidnight(
+    parseClockTime(businessHours.startTime),
+  );
+  const endMinutes = toMinutesSinceMidnight(
+    parseClockTime(businessHours.endTime),
+  );
 
   return currentMinutes >= startMinutes && currentMinutes < endMinutes;
 }
@@ -238,7 +242,7 @@ export function isWithinBusinessHours(
  */
 export function alignToBusinessHours(
   utcMs: number,
-  businessHours: SchedulerBusinessHoursConfig
+  businessHours: SchedulerBusinessHoursConfig,
 ): number {
   if (isWithinBusinessHours(utcMs, businessHours)) {
     return utcMs;
@@ -259,9 +263,9 @@ export function alignToBusinessHours(
       ...nextDate,
       hour: start.hour,
       minute: start.minute,
-      second: 0
+      second: 0,
     },
-    businessHours.timeZone
+    businessHours.timeZone,
   );
 }
 
@@ -270,7 +274,7 @@ export function alignToBusinessHours(
  */
 export function calculateSchedulerBackoffMs(
   failureCount: number,
-  retry: SchedulerConfig["retry"]
+  retry: SchedulerConfig["retry"],
 ): number {
   const exponent = Math.max(0, failureCount - 1);
   return Math.min(retry.maxBackoffMs, retry.initialBackoffMs * 2 ** exponent);
@@ -292,18 +296,20 @@ export function scheduleAcceptedConnectionFollowupAtMs(input: {
 
   return alignToBusinessHours(
     Math.max(baseMs, input.nowMs),
-    input.config.businessHours
+    input.config.businessHours,
   );
 }
 
 function buildFollowupSchedulerDedupeKey(
   profileName: string,
-  profileUrlKey: string
+  profileUrlKey: string,
 ): string {
   return `${FOLLOWUP_PREPARATION_LANE}:${profileName}:${profileUrlKey}`;
 }
 
-function isActiveSchedulerJobStatus(status: SchedulerJobRow["status"]): boolean {
+function isActiveSchedulerJobStatus(
+  status: SchedulerJobRow["status"],
+): boolean {
   return status === "pending" || status === "leased" || status === "prepared";
 }
 
@@ -319,7 +325,7 @@ function createSchedulerJobId(): string {
 }
 
 function isFollowupPreparationCandidate(
-  connection: LinkedInAcceptedConnection
+  connection: LinkedInAcceptedConnection,
 ): boolean {
   return (
     connection.followup_status === "not_prepared" ||
@@ -328,14 +334,10 @@ function isFollowupPreparationCandidate(
   );
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
 function getRequiredTargetField(
   target: Record<string, unknown>,
   key: string,
-  jobId: string
+  jobId: string,
 ): string {
   const value = target[key];
   if (typeof value === "string" && value.trim().length > 0) {
@@ -347,8 +349,8 @@ function getRequiredTargetField(
     `Scheduler job ${jobId} is missing target.${key}.`,
     {
       job_id: jobId,
-      key
-    }
+      key,
+    },
   );
 }
 
@@ -366,8 +368,8 @@ function parseFollowupSchedulerTarget(job: SchedulerJobRow): {
       `Scheduler job ${job.id} target_json is not valid JSON.`,
       {
         job_id: job.id,
-        cause: error instanceof Error ? error.message : String(error)
-      }
+        cause: error instanceof Error ? error.message : String(error),
+      },
     );
   }
 
@@ -376,12 +378,16 @@ function parseFollowupSchedulerTarget(job: SchedulerJobRow): {
       "ACTION_PRECONDITION_FAILED",
       `Scheduler job ${job.id} target_json must be an object.`,
       {
-        job_id: job.id
-      }
+        job_id: job.id,
+      },
     );
   }
 
-  const targetProfileName = getRequiredTargetField(parsed, "profile_name", job.id);
+  const targetProfileName = getRequiredTargetField(
+    parsed,
+    "profile_name",
+    job.id,
+  );
   if (targetProfileName !== job.profile_name) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
@@ -389,16 +395,16 @@ function parseFollowupSchedulerTarget(job: SchedulerJobRow): {
       {
         job_id: job.id,
         job_profile_name: job.profile_name,
-        target_profile_name: targetProfileName
-      }
+        target_profile_name: targetProfileName,
+      },
     );
   }
 
   return {
     profileName: job.profile_name,
     profileUrlKey: normalizeLinkedInProfileUrl(
-      getRequiredTargetField(parsed, "profile_url_key", job.id)
-    )
+      getRequiredTargetField(parsed, "profile_url_key", job.id),
+    ),
   };
 }
 
@@ -413,8 +419,8 @@ function getSchedulerJobLeaseOwner(job: SchedulerJobRow): string {
     {
       job_id: job.id,
       lane: job.lane,
-      status: job.status
-    }
+      status: job.status,
+    },
   );
 }
 
@@ -436,29 +442,32 @@ function normalizeSchedulerError(error: unknown): {
     "CAPTCHA_OR_CHALLENGE",
     "RATE_LIMITED",
     "NETWORK_ERROR",
-    "TIMEOUT"
+    "TIMEOUT",
   ];
 
   if (retryableCodes.includes(normalized.code)) {
     return {
       code: normalized.code,
       message: normalized.message,
-      retryable: true
+      retryable: true,
     };
   }
 
-  if (normalized.code === "ACTION_PRECONDITION_FAILED" && isProfileBusyError(error)) {
+  if (
+    normalized.code === "ACTION_PRECONDITION_FAILED" &&
+    isProfileBusyError(error)
+  ) {
     return {
       code: normalized.code,
       message: normalized.message,
-      retryable: true
+      retryable: true,
     };
   }
 
   return {
     code: normalized.code,
     message: normalized.message,
-    retryable: false
+    retryable: false,
   };
 }
 
@@ -480,11 +489,13 @@ export class LinkedInSchedulerService {
   /**
    * Runs one discovery, queue-sync, lease, and prepare cycle for a profile.
    */
-  async runTick(input: {
-    profileName?: string;
-    nowMs?: number;
-    workerId?: string;
-  } = {}): Promise<SchedulerTickResult> {
+  async runTick(
+    input: {
+      profileName?: string;
+      nowMs?: number;
+      workerId?: string;
+    } = {},
+  ): Promise<SchedulerTickResult> {
     const profileName = input.profileName ?? "default";
     const nowMs = input.nowMs ?? Date.now();
     const workerId = input.workerId ?? `scheduler:${createRunId()}`;
@@ -508,7 +519,7 @@ export class LinkedInSchedulerService {
       preparedJobs: 0,
       rescheduledJobs: 0,
       failedJobs: 0,
-      processedJobs: []
+      processedJobs: [],
     };
 
     if (
@@ -528,22 +539,23 @@ export class LinkedInSchedulerService {
       profile_name: profileName,
       worker_id: workerId,
       business_hours: this.config.businessHours,
-      max_jobs_per_tick: this.config.maxJobsPerTick
+      max_jobs_per_tick: this.config.maxJobsPerTick,
     });
 
     let acceptedConnections: LinkedInAcceptedConnection[];
 
     try {
-      acceptedConnections = await this.runtime.followups.listAcceptedConnections({
-        profileName,
-        sinceMs: this.config.followupLookbackMs
-      });
+      acceptedConnections =
+        await this.runtime.followups.listAcceptedConnections({
+          profileName,
+          sinceMs: this.config.followupLookbackMs,
+        });
     } catch (error) {
       if (isProfileBusyError(error)) {
         this.runtime.logger.log("info", "scheduler.tick.skipped_profile_busy", {
           profile_name: profileName,
           worker_id: workerId,
-          message: error instanceof Error ? error.message : String(error)
+          message: error instanceof Error ? error.message : String(error),
         });
         summary.skippedReason = "profile_busy";
         return summary;
@@ -557,7 +569,7 @@ export class LinkedInSchedulerService {
     const syncResult = this.syncFollowupJobs({
       acceptedConnections,
       nowMs,
-      profileName
+      profileName,
     });
     summary.queuedJobs = syncResult.queuedJobs;
     summary.updatedJobs = syncResult.updatedJobs;
@@ -569,7 +581,7 @@ export class LinkedInSchedulerService {
       nowMs,
       limit: this.config.maxJobsPerTick,
       leaseOwner: workerId,
-      leaseTtlMs: this.config.leaseTtlMs
+      leaseTtlMs: this.config.leaseTtlMs,
     });
     summary.claimedJobs = claimedJobs.length;
 
@@ -600,7 +612,7 @@ export class LinkedInSchedulerService {
       rescheduled_jobs: summary.rescheduledJobs,
       failed_jobs: summary.failedJobs,
       discovered_accepted_connections: summary.discoveredAcceptedConnections,
-      skipped_reason: summary.skippedReason
+      skipped_reason: summary.skippedReason,
     });
 
     return summary;
@@ -628,19 +640,19 @@ export class LinkedInSchedulerService {
     let cancelledJobs = 0;
 
     const existingJobs = this.runtime.db.listSchedulerJobs({
-      profileName: input.profileName
+      profileName: input.profileName,
     });
     const existingJobsByDedupeKey = new Map(
-      existingJobs.map((job) => [job.dedupe_key, job])
+      existingJobs.map((job) => [job.dedupe_key, job]),
     );
     let activeJobCount = existingJobs.filter((job) =>
-      isActiveSchedulerJobStatus(job.status)
+      isActiveSchedulerJobStatus(job.status),
     ).length;
 
     for (const connection of candidates) {
       const dedupeKey = buildFollowupSchedulerDedupeKey(
         input.profileName,
-        connection.profile_url_key
+        connection.profile_url_key,
       );
       let existing = existingJobsByDedupeKey.get(dedupeKey);
 
@@ -649,7 +661,7 @@ export class LinkedInSchedulerService {
           const cancelled = this.runtime.db.cancelSchedulerJob({
             id: existing.id,
             nowMs: input.nowMs,
-            reason: `Follow-up already ${connection.followup_status}.`
+            reason: `Follow-up already ${connection.followup_status}.`,
           });
           if (cancelled) {
             cancelledJobs += 1;
@@ -664,7 +676,7 @@ export class LinkedInSchedulerService {
               last_error_message: `Follow-up already ${connection.followup_status}.`,
               last_attempt_at: input.nowMs,
               completed_at: input.nowMs,
-              updated_at: input.nowMs
+              updated_at: input.nowMs,
             });
           }
         }
@@ -674,11 +686,11 @@ export class LinkedInSchedulerService {
       const scheduledAtMs = scheduleAcceptedConnectionFollowupAtMs({
         connection,
         nowMs: input.nowMs,
-        config: this.config
+        config: this.config,
       });
       const targetJson = JSON.stringify({
         profile_name: input.profileName,
-        profile_url_key: connection.profile_url_key
+        profile_url_key: connection.profile_url_key,
       });
 
       if (!existing) {
@@ -687,7 +699,7 @@ export class LinkedInSchedulerService {
             profile_name: input.profileName,
             max_active_jobs_per_profile: this.config.maxActiveJobsPerProfile,
             target_profile_url_key: connection.profile_url_key,
-            lane: FOLLOWUP_PREPARATION_LANE
+            lane: FOLLOWUP_PREPARATION_LANE,
           });
           continue;
         }
@@ -712,7 +724,7 @@ export class LinkedInSchedulerService {
           last_attempt_at: null,
           completed_at: null,
           created_at: input.nowMs,
-          updated_at: input.nowMs
+          updated_at: input.nowMs,
         };
 
         try {
@@ -726,7 +738,7 @@ export class LinkedInSchedulerService {
             scheduledAtMs: insertedJob.scheduled_at,
             maxAttempts: insertedJob.max_attempts,
             createdAtMs: insertedJob.created_at,
-            updatedAtMs: insertedJob.updated_at
+            updatedAtMs: insertedJob.updated_at,
           });
           existingJobsByDedupeKey.set(dedupeKey, insertedJob);
           queuedJobs += 1;
@@ -739,7 +751,7 @@ export class LinkedInSchedulerService {
 
           existing = this.runtime.db.getSchedulerJobByDedupeKey({
             profileName: input.profileName,
-            dedupeKey
+            dedupeKey,
           });
 
           if (!existing) {
@@ -751,12 +763,15 @@ export class LinkedInSchedulerService {
       }
 
       if (existing.status === "pending") {
-        if (scheduledAtMs < existing.scheduled_at || targetJson !== existing.target_json) {
+        if (
+          scheduledAtMs < existing.scheduled_at ||
+          targetJson !== existing.target_json
+        ) {
           const updated = this.runtime.db.updateSchedulerJobSchedule({
             id: existing.id,
             scheduledAtMs,
             targetJson,
-            updatedAtMs: input.nowMs
+            updatedAtMs: input.nowMs,
           });
           if (updated) {
             updatedJobs += 1;
@@ -764,7 +779,7 @@ export class LinkedInSchedulerService {
               ...existing,
               scheduled_at: scheduledAtMs,
               target_json: targetJson,
-              updated_at: input.nowMs
+              updated_at: input.nowMs,
             });
           }
         }
@@ -773,7 +788,9 @@ export class LinkedInSchedulerService {
 
       if (
         existing.status === "cancelled" ||
-        (existing.status === "prepared" && connection.followup_status !== "prepared" && connection.followup_status !== "executed")
+        (existing.status === "prepared" &&
+          connection.followup_status !== "prepared" &&
+          connection.followup_status !== "executed")
       ) {
         const requiresActiveSlot = existing.status === "cancelled";
         if (
@@ -785,7 +802,7 @@ export class LinkedInSchedulerService {
             max_active_jobs_per_profile: this.config.maxActiveJobsPerProfile,
             target_profile_url_key: connection.profile_url_key,
             lane: FOLLOWUP_PREPARATION_LANE,
-            existing_status: existing.status
+            existing_status: existing.status,
           });
           continue;
         }
@@ -794,7 +811,7 @@ export class LinkedInSchedulerService {
           id: existing.id,
           scheduledAtMs,
           targetJson,
-          updatedAtMs: input.nowMs
+          updatedAtMs: input.nowMs,
         });
         if (reopened) {
           reopenedJobs += 1;
@@ -813,7 +830,7 @@ export class LinkedInSchedulerService {
             last_error_code: null,
             last_error_message: null,
             completed_at: null,
-            updated_at: input.nowMs
+            updated_at: input.nowMs,
           });
         }
       }
@@ -823,13 +840,13 @@ export class LinkedInSchedulerService {
       queuedJobs,
       updatedJobs,
       reopenedJobs,
-      cancelledJobs
+      cancelledJobs,
     };
   }
 
   private async processClaimedJob(
     job: SchedulerJobRow,
-    nowMs: number
+    nowMs: number,
   ): Promise<SchedulerTickJobResult> {
     const leaseOwner = getSchedulerJobLeaseOwner(job);
 
@@ -838,7 +855,7 @@ export class LinkedInSchedulerService {
         id: job.id,
         nowMs,
         reason: `Lane ${job.lane} is not executable in this scheduler build.`,
-        leaseOwner
+        leaseOwner,
       });
 
       if (!cancelled) {
@@ -846,32 +863,33 @@ export class LinkedInSchedulerService {
           job_id: job.id,
           lane: job.lane,
           lease_owner: leaseOwner,
-          outcome: "cancelled_unsupported_lane"
+          outcome: "cancelled_unsupported_lane",
         });
       }
 
       return {
         jobId: job.id,
         lane: job.lane,
-        outcome: "cancelled"
+        outcome: "cancelled",
       };
     }
 
     try {
       const target = parseFollowupSchedulerTarget(job);
-      const prepared = await this.runtime.followups.prepareFollowupForAcceptedConnection({
-        profileName: job.profile_name,
-        profileUrlKey: target.profileUrlKey,
-        operatorNote: SCHEDULER_OPERATOR_NOTE,
-        refreshState: false
-      });
+      const prepared =
+        await this.runtime.followups.prepareFollowupForAcceptedConnection({
+          profileName: job.profile_name,
+          profileUrlKey: target.profileUrlKey,
+          operatorNote: SCHEDULER_OPERATOR_NOTE,
+          refreshState: false,
+        });
 
       if (!prepared) {
         const cancelled = this.runtime.db.cancelSchedulerJob({
           id: job.id,
           nowMs,
           reason: "Follow-up no longer needs preparation.",
-          leaseOwner
+          leaseOwner,
         });
 
         if (!cancelled) {
@@ -879,7 +897,7 @@ export class LinkedInSchedulerService {
             job_id: job.id,
             lane: job.lane,
             lease_owner: leaseOwner,
-            outcome: "cancelled_no_longer_needed"
+            outcome: "cancelled_no_longer_needed",
           });
         }
 
@@ -888,12 +906,12 @@ export class LinkedInSchedulerService {
           lane: job.lane,
           profile_name: target.profileName,
           profile_url_key: target.profileUrlKey,
-          reason: "Follow-up no longer needs preparation."
+          reason: "Follow-up no longer needs preparation.",
         });
         return {
           jobId: job.id,
           lane: job.lane,
-          outcome: "cancelled"
+          outcome: "cancelled",
         };
       }
 
@@ -901,7 +919,7 @@ export class LinkedInSchedulerService {
         id: job.id,
         nowMs,
         preparedActionId: prepared.preparedActionId,
-        leaseOwner
+        leaseOwner,
       });
 
       if (!markedPrepared) {
@@ -910,12 +928,12 @@ export class LinkedInSchedulerService {
           lane: job.lane,
           lease_owner: leaseOwner,
           prepared_action_id: prepared.preparedActionId,
-          outcome: "prepared"
+          outcome: "prepared",
         });
         return {
           jobId: job.id,
           lane: job.lane,
-          outcome: "cancelled"
+          outcome: "cancelled",
         };
       }
 
@@ -923,13 +941,13 @@ export class LinkedInSchedulerService {
         job_id: job.id,
         lane: job.lane,
         prepared_action_id: prepared.preparedActionId,
-        target_profile_url_key: target.profileUrlKey
+        target_profile_url_key: target.profileUrlKey,
       });
       return {
         jobId: job.id,
         lane: job.lane,
         outcome: "prepared",
-        preparedActionId: prepared.preparedActionId
+        preparedActionId: prepared.preparedActionId,
       };
     } catch (error) {
       const normalizedError = normalizeSchedulerError(error);
@@ -937,10 +955,13 @@ export class LinkedInSchedulerService {
 
       try {
         if (normalizedError.retryable && nextAttempt < job.max_attempts) {
-          const backoffMs = calculateSchedulerBackoffMs(nextAttempt, this.config.retry);
+          const backoffMs = calculateSchedulerBackoffMs(
+            nextAttempt,
+            this.config.retry,
+          );
           const scheduledAtMs = alignToBusinessHours(
             nowMs + backoffMs,
-            this.config.businessHours
+            this.config.businessHours,
           );
 
           const rescheduled = this.runtime.db.rescheduleSchedulerJob({
@@ -949,7 +970,7 @@ export class LinkedInSchedulerService {
             nowMs,
             leaseOwner,
             errorCode: normalizedError.code,
-            errorMessage: normalizedError.message
+            errorMessage: normalizedError.message,
           });
 
           if (!rescheduled) {
@@ -958,12 +979,12 @@ export class LinkedInSchedulerService {
               lane: job.lane,
               lease_owner: leaseOwner,
               error_code: normalizedError.code,
-              outcome: "rescheduled"
+              outcome: "rescheduled",
             });
             return {
               jobId: job.id,
               lane: job.lane,
-              outcome: "cancelled"
+              outcome: "cancelled",
             };
           }
 
@@ -973,7 +994,7 @@ export class LinkedInSchedulerService {
             error_code: normalizedError.code,
             error_message: normalizedError.message,
             next_attempt: nextAttempt,
-            scheduled_at: new Date(scheduledAtMs).toISOString()
+            scheduled_at: new Date(scheduledAtMs).toISOString(),
           });
           return {
             jobId: job.id,
@@ -981,7 +1002,7 @@ export class LinkedInSchedulerService {
             outcome: "rescheduled",
             errorCode: normalizedError.code,
             errorMessage: normalizedError.message,
-            scheduledAtMs
+            scheduledAtMs,
           };
         }
 
@@ -990,7 +1011,7 @@ export class LinkedInSchedulerService {
           nowMs,
           leaseOwner,
           errorCode: normalizedError.code,
-          errorMessage: normalizedError.message
+          errorMessage: normalizedError.message,
         });
 
         if (!failed) {
@@ -999,12 +1020,12 @@ export class LinkedInSchedulerService {
             lane: job.lane,
             lease_owner: leaseOwner,
             error_code: normalizedError.code,
-            outcome: "failed"
+            outcome: "failed",
           });
           return {
             jobId: job.id,
             lane: job.lane,
-            outcome: "cancelled"
+            outcome: "cancelled",
           };
         }
 
@@ -1015,14 +1036,14 @@ export class LinkedInSchedulerService {
           error_message: normalizedError.message,
           attempt_count: nextAttempt,
           max_attempts: job.max_attempts,
-          dead_lettered: true
+          dead_lettered: true,
         });
         return {
           jobId: job.id,
           lane: job.lane,
           outcome: "failed",
           errorCode: normalizedError.code,
-          errorMessage: normalizedError.message
+          errorMessage: normalizedError.message,
         };
       } catch (transitionError) {
         const transitionFailure = asLinkedInBuddyError(transitionError);
@@ -1036,7 +1057,7 @@ export class LinkedInSchedulerService {
           transition_error_code: transitionFailure.code,
           transition_error_message: transitionFailure.message,
           attempt_count: nextAttempt,
-          max_attempts: job.max_attempts
+          max_attempts: job.max_attempts,
         });
 
         return {
@@ -1044,7 +1065,7 @@ export class LinkedInSchedulerService {
           lane: job.lane,
           outcome: "failed",
           errorCode: transitionFailure.code,
-          errorMessage: transitionFailure.message
+          errorMessage: transitionFailure.message,
         };
       }
     }

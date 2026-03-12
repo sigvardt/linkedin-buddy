@@ -2,9 +2,8 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import {
   errors as playwrightErrors,
-  type BrowserContext,
   type Locator,
-  type Page
+  type Page,
 } from "playwright-core";
 import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
@@ -16,8 +15,9 @@ import {
   DEFAULT_LINKEDIN_SELECTOR_LOCALE,
   buildLinkedInSelectorPhraseRegex,
   formatLinkedInSelectorRegexHint,
-  type LinkedInSelectorLocale
+  type LinkedInSelectorLocale,
 } from "./selectorLocale.js";
+import { getOrCreatePage } from "./shared.js";
 import { createFeedPostComposerTriggerCandidates } from "./feedPostComposerTriggerSelectors.js";
 
 /**
@@ -28,7 +28,7 @@ export const LINKEDIN_SELECTOR_AUDIT_PAGES = [
   "inbox",
   "profile",
   "connections",
-  "notifications"
+  "notifications",
 ] as const;
 
 /**
@@ -47,7 +47,7 @@ export type LinkedInSelectorAuditPage =
 export const LINKEDIN_SELECTOR_AUDIT_STRATEGIES = [
   "primary",
   "secondary",
-  "tertiary"
+  "tertiary",
 ] as const;
 
 /**
@@ -126,7 +126,10 @@ export interface SelectorAuditResult {
   matched_selector_key: string | null;
   fallback_used: string | null;
   fallback_strategy: LinkedInSelectorAuditStrategy | null;
-  strategies: Record<LinkedInSelectorAuditStrategy, SelectorAuditStrategyResult>;
+  strategies: Record<
+    LinkedInSelectorAuditStrategy,
+    SelectorAuditStrategyResult
+  >;
   failure_artifacts: SelectorAuditFailureArtifacts;
   warnings?: string[];
   error?: string;
@@ -267,80 +270,81 @@ const SELECTOR_AUDIT_MAX_ERROR_MESSAGE_LENGTH = 500;
 const SELECTOR_AUDIT_ARTIFACT_DIR = "selector-audit";
 
 function createSelectorAuditCandidates(
-  candidates: SelectorAuditCandidateDefinitions
+  candidates: SelectorAuditCandidateDefinitions,
 ): SelectorAuditCandidate[] {
   return LINKEDIN_SELECTOR_AUDIT_STRATEGIES.map((strategy) => ({
     strategy,
-    ...candidates[strategy]
+    ...candidates[strategy],
   }));
 }
 
 function createSelectorAuditSelectorDefinition(
   key: string,
   description: string,
-  candidates: SelectorAuditCandidateDefinitions
+  candidates: SelectorAuditCandidateDefinitions,
 ): SelectorAuditSelectorDefinition {
   return {
     key,
     description,
-    candidates: createSelectorAuditCandidates(candidates)
+    candidates: createSelectorAuditCandidates(candidates),
   };
 }
 
 function createDefaultSelectorAuditRegistry(
-  selectorLocale: LinkedInSelectorLocale = DEFAULT_LINKEDIN_SELECTOR_LOCALE
+  selectorLocale: LinkedInSelectorLocale = DEFAULT_LINKEDIN_SELECTOR_LOCALE,
 ): SelectorAuditPageDefinition[] {
-  const postComposerTriggerCandidates = createFeedPostComposerTriggerCandidates(selectorLocale);
+  const postComposerTriggerCandidates =
+    createFeedPostComposerTriggerCandidates(selectorLocale);
   const postComposerTriggerPrimary = postComposerTriggerCandidates[0]!;
   const postComposerTriggerSecondary = postComposerTriggerCandidates[1]!;
   const postComposerTriggerTertiary = postComposerTriggerCandidates[2]!;
   const inboxSurfaceRegex = buildLinkedInSelectorPhraseRegex(
     ["messaging", "write_message"],
-    selectorLocale
+    selectorLocale,
   );
   const inboxSurfaceRegexHint = formatLinkedInSelectorRegexHint(
     ["messaging", "write_message"],
-    selectorLocale
+    selectorLocale,
   );
   const profileSurfaceRegex = buildLinkedInSelectorPhraseRegex(
     ["about", "experience", "education", "resources", "open_to"],
-    selectorLocale
+    selectorLocale,
   );
   const profileSurfaceRegexHint = formatLinkedInSelectorRegexHint(
     ["about", "experience", "education", "resources", "open_to"],
-    selectorLocale
+    selectorLocale,
   );
   const connectionsHeadingRegex = buildLinkedInSelectorPhraseRegex(
     "connections",
-    selectorLocale
+    selectorLocale,
   );
   const connectionsHeadingRegexHint = formatLinkedInSelectorRegexHint(
     "connections",
-    selectorLocale
+    selectorLocale,
   );
   const connectionsSurfaceRegex = buildLinkedInSelectorPhraseRegex(
     ["connections", "message", "remove_connection"],
-    selectorLocale
+    selectorLocale,
   );
   const connectionsSurfaceRegexHint = formatLinkedInSelectorRegexHint(
     ["connections", "message", "remove_connection"],
-    selectorLocale
+    selectorLocale,
   );
   const notificationsHeadingRegex = buildLinkedInSelectorPhraseRegex(
     "notifications",
-    selectorLocale
+    selectorLocale,
   );
   const notificationsHeadingRegexHint = formatLinkedInSelectorRegexHint(
     "notifications",
-    selectorLocale
+    selectorLocale,
   );
   const notificationsSurfaceRegex = buildLinkedInSelectorPhraseRegex(
     ["notifications", "time_ago"],
-    selectorLocale
+    selectorLocale,
   );
   const notificationsSurfaceRegexHint = formatLinkedInSelectorRegexHint(
     ["notifications", "time_ago"],
-    selectorLocale
+    selectorLocale,
   );
 
   return [
@@ -354,10 +358,10 @@ function createDefaultSelectorAuditRegistry(
           {
             primary: postComposerTriggerPrimary,
             secondary: postComposerTriggerSecondary,
-            tertiary: postComposerTriggerTertiary
-          }
-        )
-      ]
+            tertiary: postComposerTriggerTertiary,
+          },
+        ),
+      ],
     },
     {
       page: "inbox",
@@ -371,9 +375,9 @@ function createDefaultSelectorAuditRegistry(
               key: "role-main-with-thread-link",
               selectorHint: "getByRole(main) has a[href*='/messaging/thread/']",
               locatorFactory: (page) =>
-                page
-                  .getByRole("main")
-                  .filter({ has: page.locator("a[href*='/messaging/thread/']") })
+                page.getByRole("main").filter({
+                  has: page.locator("a[href*='/messaging/thread/']"),
+                }),
             },
             secondary: {
               key: "thread-link-or-conversation-card",
@@ -381,47 +385,54 @@ function createDefaultSelectorAuditRegistry(
                 "a[href*='/messaging/thread/'], li.msg-conversation-listitem, .msg-conversation-card, .msg-conversations-container",
               locatorFactory: (page) =>
                 page.locator(
-                  "a[href*='/messaging/thread/'], li.msg-conversation-listitem, .msg-conversation-card, .msg-conversations-container"
-                )
+                  "a[href*='/messaging/thread/'], li.msg-conversation-listitem, .msg-conversation-card, .msg-conversations-container",
+                ),
             },
             tertiary: {
               key: "main-text-messaging",
               selectorHint: `main hasText ${inboxSurfaceRegexHint}`,
               locatorFactory: (page) =>
                 page.locator("main").filter({
-                  hasText: inboxSurfaceRegex
-                })
-            }
-          }
-        )
-      ]
+                  hasText: inboxSurfaceRegex,
+                }),
+            },
+          },
+        ),
+      ],
     },
     {
       page: "profile",
       url: LINKEDIN_PROFILE_URL,
       selectors: [
-        createSelectorAuditSelectorDefinition("profile_header", "Profile header", {
-          primary: {
-            key: "role-heading-h1",
-            selectorHint: "getByRole(heading, level: 1)",
-            locatorFactory: (page) => page.getByRole("heading", { level: 1 })
+        createSelectorAuditSelectorDefinition(
+          "profile_header",
+          "Profile header",
+          {
+            primary: {
+              key: "role-heading-h1",
+              selectorHint: "getByRole(heading, level: 1)",
+              locatorFactory: (page) => page.getByRole("heading", { level: 1 }),
+            },
+            secondary: {
+              key: "profile-h1",
+              selectorHint:
+                "h1.text-heading-xlarge, h1[class*='text-heading'], h1",
+              locatorFactory: (page) =>
+                page.locator(
+                  "h1.text-heading-xlarge, h1[class*='text-heading'], h1",
+                ),
+            },
+            tertiary: {
+              key: "main-text-profile-sections",
+              selectorHint: `main hasText ${profileSurfaceRegexHint}`,
+              locatorFactory: (page) =>
+                page.locator("main").filter({
+                  hasText: profileSurfaceRegex,
+                }),
+            },
           },
-          secondary: {
-            key: "profile-h1",
-            selectorHint: "h1.text-heading-xlarge, h1[class*='text-heading'], h1",
-            locatorFactory: (page) =>
-              page.locator("h1.text-heading-xlarge, h1[class*='text-heading'], h1")
-          },
-          tertiary: {
-            key: "main-text-profile-sections",
-            selectorHint: `main hasText ${profileSurfaceRegexHint}`,
-            locatorFactory: (page) =>
-              page.locator("main").filter({
-                hasText: profileSurfaceRegex
-              })
-          }
-        })
-      ]
+        ),
+      ],
     },
     {
       page: "connections",
@@ -435,7 +446,7 @@ function createDefaultSelectorAuditRegistry(
               key: "role-heading-connections",
               selectorHint: `getByRole(heading, ${connectionsHeadingRegexHint})`,
               locatorFactory: (page) =>
-                page.getByRole("heading", { name: connectionsHeadingRegex })
+                page.getByRole("heading", { name: connectionsHeadingRegex }),
             },
             secondary: {
               key: "connection-card",
@@ -443,20 +454,20 @@ function createDefaultSelectorAuditRegistry(
                 "li.mn-connection-card, li.reusable-search-simple-insight, div.mn-connection-card, li[class*='mn-connection-card']",
               locatorFactory: (page) =>
                 page.locator(
-                  "li.mn-connection-card, li.reusable-search-simple-insight, div.mn-connection-card, li[class*='mn-connection-card']"
-                )
+                  "li.mn-connection-card, li.reusable-search-simple-insight, div.mn-connection-card, li[class*='mn-connection-card']",
+                ),
             },
             tertiary: {
               key: "main-text-connections",
               selectorHint: `main hasText ${connectionsSurfaceRegexHint}`,
               locatorFactory: (page) =>
                 page.locator("main").filter({
-                  hasText: connectionsSurfaceRegex
-                })
-            }
-          }
-        )
-      ]
+                  hasText: connectionsSurfaceRegex,
+                }),
+            },
+          },
+        ),
+      ],
     },
     {
       page: "notifications",
@@ -470,24 +481,29 @@ function createDefaultSelectorAuditRegistry(
               key: "role-heading-notifications",
               selectorHint: `getByRole(heading, ${notificationsHeadingRegexHint})`,
               locatorFactory: (page) =>
-                page.getByRole("heading", { name: notificationsHeadingRegex })
+                page.getByRole("heading", { name: notificationsHeadingRegex }),
             },
             secondary: {
               key: "notification-card",
-              selectorHint: ".nt-card, .notification-card, div[data-urn], article",
+              selectorHint:
+                ".nt-card, .notification-card, div[data-urn], article",
               locatorFactory: (page) =>
-                page.locator(".nt-card, .notification-card, div[data-urn], article")
+                page.locator(
+                  ".nt-card, .notification-card, div[data-urn], article",
+                ),
             },
             tertiary: {
               key: "main-text-notifications",
               selectorHint: `main hasText ${notificationsSurfaceRegexHint}`,
               locatorFactory: (page) =>
-                page.locator("main").filter({ hasText: notificationsSurfaceRegex })
-            }
-          }
-        )
-      ]
-    }
+                page
+                  .locator("main")
+                  .filter({ hasText: notificationsSurfaceRegex }),
+            },
+          },
+        ),
+      ],
+    },
   ];
 }
 
@@ -531,7 +547,7 @@ function validateNonEmptyText(value: string, label: string): string {
   if (normalized.length === 0) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      `${label} must not be empty.`
+      `${label} must not be empty.`,
     );
   }
 
@@ -539,7 +555,10 @@ function validateNonEmptyText(value: string, label: string): string {
 }
 
 function validateProfileName(profileName?: string): string {
-  const normalizedProfileName = validateNonEmptyText(profileName ?? "default", "profile");
+  const normalizedProfileName = validateNonEmptyText(
+    profileName ?? "default",
+    "profile",
+  );
   if (
     normalizedProfileName === "." ||
     normalizedProfileName === ".." ||
@@ -549,8 +568,8 @@ function validateProfileName(profileName?: string): string {
       "ACTION_PRECONDITION_FAILED",
       "profile must not contain path separators or relative path segments.",
       {
-        profile_name: normalizedProfileName
-      }
+        profile_name: normalizedProfileName,
+      },
     );
   }
 
@@ -560,7 +579,7 @@ function validateProfileName(profileName?: string): string {
 function validateTimeoutOption(
   value: number | undefined,
   label: string,
-  fallback: number
+  fallback: number,
 ): number {
   const normalized = value ?? fallback;
   if (!Number.isInteger(normalized) || normalized <= 0) {
@@ -569,30 +588,38 @@ function validateTimeoutOption(
       `${label} must be a positive integer number of milliseconds.`,
       {
         label,
-        value: normalized
-      }
+        value: normalized,
+      },
     );
   }
 
   return normalized;
 }
 
-function validateSelectorAuditInput(input: SelectorAuditInput = {}): SelectorAuditInput {
+function validateSelectorAuditInput(
+  input: SelectorAuditInput = {},
+): SelectorAuditInput {
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "selector audit input must be an object.",
       {
-        received_type: Array.isArray(input) ? "array" : typeof input
-      }
+        received_type: Array.isArray(input) ? "array" : typeof input,
+      },
     );
   }
 
   return input;
 }
 
-function validateAuditPageUrl(page: LinkedInSelectorAuditPage, value: string): void {
-  const normalizedUrl = validateNonEmptyText(value, `Selector audit page ${page} URL`);
+function validateAuditPageUrl(
+  page: LinkedInSelectorAuditPage,
+  value: string,
+): void {
+  const normalizedUrl = validateNonEmptyText(
+    value,
+    `Selector audit page ${page} URL`,
+  );
 
   let parsedUrl: URL;
   try {
@@ -600,28 +627,20 @@ function validateAuditPageUrl(page: LinkedInSelectorAuditPage, value: string): v
   } catch {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      `Selector audit page ${page} has an invalid URL.`
+      `Selector audit page ${page} has an invalid URL.`,
     );
   }
 
   if (parsedUrl.protocol !== "https:" && parsedUrl.protocol !== "http:") {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      `Selector audit page ${page} must use http or https.`
+      `Selector audit page ${page} must use http or https.`,
     );
   }
 }
 
-function getOrCreatePage(context: BrowserContext): Promise<Page> {
-  const existing = context.pages()[0];
-  if (existing) {
-    return Promise.resolve(existing);
-  }
-  return context.newPage();
-}
-
 function createMissingStrategyResult(
-  strategy: LinkedInSelectorAuditStrategy
+  strategy: LinkedInSelectorAuditStrategy,
 ): SelectorAuditStrategyResult {
   const titleCaseStrategy = `${strategy[0]?.toUpperCase() ?? ""}${strategy.slice(1)}`;
 
@@ -630,49 +649,52 @@ function createMissingStrategyResult(
     status: "fail",
     selector_key: `missing-${strategy}`,
     selector_hint: `${strategy} selector missing from registry`,
-    error: `${titleCaseStrategy} selector missing from registry.`
+    error: `${titleCaseStrategy} selector missing from registry.`,
   };
 }
 
-function createEmptyPageSummary(page: LinkedInSelectorAuditPage): SelectorAuditPageSummary {
+function createEmptyPageSummary(
+  page: LinkedInSelectorAuditPage,
+): SelectorAuditPageSummary {
   return {
     page,
     total_count: 0,
     pass_count: 0,
     fail_count: 0,
-    fallback_count: 0
+    fallback_count: 0,
   };
 }
 
 function countSelectorAuditResults(
-  results: SelectorAuditResult[]
+  results: SelectorAuditResult[],
 ): SelectorAuditSummaryCounts {
   return results.reduce<SelectorAuditSummaryCounts>(
     (counts, result) => ({
       totalCount: counts.totalCount + 1,
       passCount: counts.passCount + (result.status === "pass" ? 1 : 0),
       failCount: counts.failCount + (result.status === "fail" ? 1 : 0),
-      fallbackCount: counts.fallbackCount + (result.fallback_used !== null ? 1 : 0)
+      fallbackCount:
+        counts.fallbackCount + (result.fallback_used !== null ? 1 : 0),
     }),
     {
       totalCount: 0,
       passCount: 0,
       failCount: 0,
-      fallbackCount: 0
-    }
+      fallbackCount: 0,
+    },
   );
 }
 
 function formatCountLabel(
   count: number,
   singular: string,
-  plural: string = `${singular}s`
+  plural: string = `${singular}s`,
 ): string {
   return `${count} ${count === 1 ? singular : plural}`;
 }
 
 function createSelectorAuditOutcome(
-  counts: SelectorAuditSummaryCounts
+  counts: SelectorAuditSummaryCounts,
 ): SelectorAuditOutcome {
   if (counts.failCount > 0) {
     return "fail";
@@ -687,13 +709,13 @@ function createSelectorAuditOutcome(
 
 function createSelectorAuditSummary(
   counts: SelectorAuditSummaryCounts,
-  pageCount: number
+  pageCount: number,
 ): string {
   return [
     `Checked ${formatCountLabel(counts.totalCount, "selector group")} across ${formatCountLabel(pageCount, "page")}.`,
     `${counts.passCount} passed.`,
     `${counts.failCount} failed.`,
-    `${counts.fallbackCount} used fallback selectors.`
+    `${counts.fallbackCount} used fallback selectors.`,
   ].join(" ");
 }
 
@@ -707,7 +729,7 @@ function createFallbackRecommendedAction(result: SelectorAuditResult): string {
 
 function buildPageWarningSummaries(
   pageOrder: readonly LinkedInSelectorAuditPage[],
-  results: SelectorAuditResult[]
+  results: SelectorAuditResult[],
 ): SelectorAuditPageWarningSummary[] {
   const warningsByPage = new Map<LinkedInSelectorAuditPage, string[]>();
 
@@ -732,7 +754,7 @@ function buildPageWarningSummaries(
 }
 
 function buildFailureSummaries(
-  results: SelectorAuditResult[]
+  results: SelectorAuditResult[],
 ): SelectorAuditFailureSummary[] {
   return results.flatMap((result) => {
     if (result.status !== "fail") {
@@ -752,24 +774,24 @@ function buildFailureSummaries(
               page: result.page,
               url: result.page_url,
               selectors: [],
-              ...(result.warnings ? { readyCandidates: [] } : {})
+              ...(result.warnings ? { readyCandidates: [] } : {}),
             },
             {
               key: result.selector_key,
               description: result.description,
-              candidates: []
-            }
+              candidates: [],
+            },
           ),
         ...(result.warnings ? { warnings: [...result.warnings] } : {}),
         failure_artifacts: result.failure_artifacts,
-        recommended_action: createFailureRecommendedAction(result)
-      }
+        recommended_action: createFailureRecommendedAction(result),
+      },
     ];
   });
 }
 
 function buildFallbackSummaries(
-  results: SelectorAuditResult[]
+  results: SelectorAuditResult[],
 ): SelectorAuditFallbackSummary[] {
   return results.flatMap((result) => {
     if (
@@ -790,8 +812,8 @@ function buildFallbackSummaries(
         fallback_strategy: result.fallback_strategy,
         fallback_used: result.fallback_used,
         ...(result.warnings ? { warnings: [...result.warnings] } : {}),
-        recommended_action: createFallbackRecommendedAction(result)
-      }
+        recommended_action: createFallbackRecommendedAction(result),
+      },
     ];
   });
 }
@@ -807,28 +829,28 @@ function buildRecommendedActions(options: {
 
   if (options.failedSelectors.length > 0) {
     actions.push(
-      `Open ${options.reportPath} and the captured artifacts for failed selector groups before changing the registry.`
+      `Open ${options.reportPath} and the captured artifacts for failed selector groups before changing the registry.`,
     );
     actions.push(
-      `Update the selector registry entries for the failed selector groups, then rerun linkedin audit selectors --profile ${options.profileName}.`
+      `Update the selector registry entries for the failed selector groups, then rerun linkedin audit selectors --profile ${options.profileName}.`,
     );
   }
 
   if (options.fallbackSelectors.length > 0) {
     actions.push(
-      "Review selector groups that only matched via fallback and refresh their primary selectors before they fail completely."
+      "Review selector groups that only matched via fallback and refresh their primary selectors before they fail completely.",
     );
   }
 
   if (options.pageWarnings.length > 0) {
     actions.push(
-      "Some pages were not fully stable during the audit. Refresh the LinkedIn session or attached browser and rerun before treating warnings as definitive UI drift."
+      "Some pages were not fully stable during the audit. Refresh the LinkedIn session or attached browser and rerun before treating warnings as definitive UI drift.",
     );
   }
 
   if (actions.length === 0) {
     actions.push(
-      "No follow-up is required right now. Keep the selector audit in regular maintenance or CI to catch future UI drift."
+      "No follow-up is required right now. Keep the selector audit in regular maintenance or CI to catch future UI drift.",
     );
   }
 
@@ -836,12 +858,12 @@ function buildRecommendedActions(options: {
 }
 
 function validateSelectorAuditRegistry(
-  registry: SelectorAuditPageDefinition[]
+  registry: SelectorAuditPageDefinition[],
 ): SelectorAuditPageDefinition[] {
   if (registry.length === 0) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "Selector audit registry must contain at least one page definition."
+      "Selector audit registry must contain at least one page definition.",
     );
   }
 
@@ -853,7 +875,7 @@ function validateSelectorAuditRegistry(
     if (pageKeys.has(pageDefinition.page)) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        `Duplicate selector audit page definition: ${pageDefinition.page}`
+        `Duplicate selector audit page definition: ${pageDefinition.page}`,
       );
     }
 
@@ -862,22 +884,25 @@ function validateSelectorAuditRegistry(
     if (pageDefinition.selectors.length === 0) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        `Selector audit page ${pageDefinition.page} has no selectors.`
+        `Selector audit page ${pageDefinition.page} has no selectors.`,
       );
     }
 
     const selectorKeys = new Set<string>();
     for (const selectorDefinition of pageDefinition.selectors) {
-      validateNonEmptyText(selectorDefinition.key, `Selector audit key on ${pageDefinition.page}`);
+      validateNonEmptyText(
+        selectorDefinition.key,
+        `Selector audit key on ${pageDefinition.page}`,
+      );
       validateNonEmptyText(
         selectorDefinition.description,
-        `Selector audit description on ${pageDefinition.page}:${selectorDefinition.key}`
+        `Selector audit description on ${pageDefinition.page}:${selectorDefinition.key}`,
       );
 
       if (selectorKeys.has(selectorDefinition.key)) {
         throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
-          `Duplicate selector audit key ${selectorDefinition.key} on ${pageDefinition.page}.`
+          `Duplicate selector audit key ${selectorDefinition.key} on ${pageDefinition.page}.`,
         );
       }
 
@@ -886,7 +911,7 @@ function validateSelectorAuditRegistry(
       if (selectorDefinition.candidates.length === 0) {
         throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
-          `Selector audit key ${selectorDefinition.key} on ${pageDefinition.page} has no candidates.`
+          `Selector audit key ${selectorDefinition.key} on ${pageDefinition.page} has no candidates.`,
         );
       }
 
@@ -895,24 +920,24 @@ function validateSelectorAuditRegistry(
       for (const candidate of selectorDefinition.candidates) {
         validateNonEmptyText(
           candidate.key,
-          `Selector audit candidate key on ${pageDefinition.page}:${selectorDefinition.key}`
+          `Selector audit candidate key on ${pageDefinition.page}:${selectorDefinition.key}`,
         );
         validateNonEmptyText(
           candidate.selectorHint,
-          `Selector audit selector hint on ${pageDefinition.page}:${selectorDefinition.key}:${candidate.strategy}`
+          `Selector audit selector hint on ${pageDefinition.page}:${selectorDefinition.key}:${candidate.strategy}`,
         );
 
         if (typeof candidate.locatorFactory !== "function") {
           throw new LinkedInBuddyError(
             "ACTION_PRECONDITION_FAILED",
-            `Selector audit candidate ${candidate.key} on ${pageDefinition.page}:${selectorDefinition.key} is missing a locator factory.`
+            `Selector audit candidate ${candidate.key} on ${pageDefinition.page}:${selectorDefinition.key} is missing a locator factory.`,
           );
         }
 
         if (candidateKeys.has(candidate.key)) {
           throw new LinkedInBuddyError(
             "ACTION_PRECONDITION_FAILED",
-            `Duplicate selector audit candidate key ${candidate.key} on ${pageDefinition.page}:${selectorDefinition.key}.`
+            `Duplicate selector audit candidate key ${candidate.key} on ${pageDefinition.page}:${selectorDefinition.key}.`,
           );
         }
         candidateKeys.add(candidate.key);
@@ -920,7 +945,7 @@ function validateSelectorAuditRegistry(
         if (strategies.has(candidate.strategy)) {
           throw new LinkedInBuddyError(
             "ACTION_PRECONDITION_FAILED",
-            `Duplicate selector audit strategy ${candidate.strategy} on ${pageDefinition.page}:${selectorDefinition.key}.`
+            `Duplicate selector audit strategy ${candidate.strategy} on ${pageDefinition.page}:${selectorDefinition.key}.`,
           );
         }
         strategies.add(candidate.strategy);
@@ -931,24 +956,24 @@ function validateSelectorAuditRegistry(
       if (pageDefinition.readyCandidates.length === 0) {
         throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
-          `Selector audit page ${pageDefinition.page} has an empty readyCandidates list.`
+          `Selector audit page ${pageDefinition.page} has an empty readyCandidates list.`,
         );
       }
 
       for (const readyCandidate of pageDefinition.readyCandidates) {
         validateNonEmptyText(
           readyCandidate.key,
-          `Selector audit ready candidate key on ${pageDefinition.page}`
+          `Selector audit ready candidate key on ${pageDefinition.page}`,
         );
         validateNonEmptyText(
           readyCandidate.selectorHint,
-          `Selector audit ready selector hint on ${pageDefinition.page}:${readyCandidate.strategy}`
+          `Selector audit ready selector hint on ${pageDefinition.page}:${readyCandidate.strategy}`,
         );
 
         if (typeof readyCandidate.locatorFactory !== "function") {
           throw new LinkedInBuddyError(
             "ACTION_PRECONDITION_FAILED",
-            `Selector audit ready candidate ${readyCandidate.key} on ${pageDefinition.page} is missing a locator factory.`
+            `Selector audit ready candidate ${readyCandidate.key} on ${pageDefinition.page} is missing a locator factory.`,
           );
         }
       }
@@ -973,9 +998,12 @@ async function getAccessibilitySnapshot(page: Page): Promise<unknown> {
 }
 
 function createStrategyResults(
-  strategyResults: SelectorAuditStrategyResult[]
+  strategyResults: SelectorAuditStrategyResult[],
 ): Record<LinkedInSelectorAuditStrategy, SelectorAuditStrategyResult> {
-  const indexed = new Map<LinkedInSelectorAuditStrategy, SelectorAuditStrategyResult>();
+  const indexed = new Map<
+    LinkedInSelectorAuditStrategy,
+    SelectorAuditStrategyResult
+  >();
   for (const result of strategyResults) {
     indexed.set(result.strategy, result);
   }
@@ -983,88 +1011,29 @@ function createStrategyResults(
   return Object.fromEntries(
     LINKEDIN_SELECTOR_AUDIT_STRATEGIES.map((strategy) => [
       strategy,
-      indexed.get(strategy) ?? createMissingStrategyResult(strategy)
-    ])
+      indexed.get(strategy) ?? createMissingStrategyResult(strategy),
+    ]),
   ) as Record<LinkedInSelectorAuditStrategy, SelectorAuditStrategyResult>;
 }
 
-function createPageOpenError(profileName: string, error: unknown): LinkedInBuddyError {
+function createPageOpenError(
+  profileName: string,
+  error: unknown,
+): LinkedInBuddyError {
   return new LinkedInBuddyError(
     isNetworkError(error) ? "NETWORK_ERROR" : "UNKNOWN",
     `Could not open a browser page for selector audit on profile ${profileName}: ${getErrorMessage(error)}. Make sure the profile is available and retry.`,
     {
-      profile_name: profileName
+      profile_name: profileName,
     },
-    createErrorOptions(error)
+    createErrorOptions(error),
   );
 }
 
 function createPageLoadError(
   pageDefinition: SelectorAuditPageDefinition,
   navigationTimeoutMs: number,
-  error: unknown
-): LinkedInBuddyError {
-  if (error instanceof LinkedInBuddyError) {
-    return error;
-  }
-
-  const details = {
-    page: pageDefinition.page,
-    page_url: pageDefinition.url
-  };
-
-  if (error instanceof playwrightErrors.TimeoutError) {
-    return new LinkedInBuddyError(
-      "TIMEOUT",
-      `Timed out after ${navigationTimeoutMs}ms loading the ${pageDefinition.page} page. Confirm the LinkedIn session can open ${pageDefinition.url} and rerun the selector audit.`,
-      details,
-      createErrorOptions(error)
-    );
-  }
-
-  if (isNetworkError(error)) {
-    return new LinkedInBuddyError(
-      "NETWORK_ERROR",
-      `Could not load the ${pageDefinition.page} page because the browser or network connection failed: ${getErrorMessage(error)}. Check connectivity or the attached browser session and rerun the selector audit.`,
-      details,
-      createErrorOptions(error)
-    );
-  }
-
-  return new LinkedInBuddyError(
-    "UNKNOWN",
-    `Could not load the ${pageDefinition.page} page: ${getErrorMessage(error)}. Refresh the LinkedIn session or attached browser and rerun the selector audit.`,
-    details,
-    createErrorOptions(error)
-  );
-}
-
-function createPageReadinessWarning(
-  pageDefinition: SelectorAuditPageDefinition,
-  timeoutMs: number,
-  strategyResults: SelectorAuditStrategyResult[]
-): string {
-  const firstFailure = strategyResults.find((result) => result.status === "fail")?.error;
-  const firstFailureSuffix = firstFailure ? ` Last check: ${firstFailure}.` : "";
-
-  return `Could not confirm that the ${pageDefinition.page} page was ready within ${timeoutMs}ms.${firstFailureSuffix} Selector checks continued with the current DOM state; if failures persist, reload the page or update the ready selectors and rerun the selector audit.`;
-}
-
-function createNetworkIdleWarning(pageDefinition: SelectorAuditPageDefinition): string {
-  return `The ${pageDefinition.page} page did not reach network idle within ${DEFAULT_SELECTOR_AUDIT_NETWORK_IDLE_TIMEOUT_MS}ms. Selector checks continued with the current DOM state.`;
-}
-
-function createSelectorDefinitionFailureMessage(
-  pageDefinition: SelectorAuditPageDefinition,
-  selectorDefinition: SelectorAuditSelectorDefinition
-): string {
-  return `No selector strategy matched for ${selectorDefinition.key} on ${pageDefinition.page}. Review the failure artifacts, update the selector registry if LinkedIn's UI changed, and rerun the selector audit.`;
-}
-
-function createSelectorEvaluationError(
-  pageDefinition: SelectorAuditPageDefinition,
-  selectorDefinition: SelectorAuditSelectorDefinition,
-  error: unknown
+  error: unknown,
 ): LinkedInBuddyError {
   if (error instanceof LinkedInBuddyError) {
     return error;
@@ -1073,7 +1042,75 @@ function createSelectorEvaluationError(
   const details = {
     page: pageDefinition.page,
     page_url: pageDefinition.url,
-    selector_key: selectorDefinition.key
+  };
+
+  if (error instanceof playwrightErrors.TimeoutError) {
+    return new LinkedInBuddyError(
+      "TIMEOUT",
+      `Timed out after ${navigationTimeoutMs}ms loading the ${pageDefinition.page} page. Confirm the LinkedIn session can open ${pageDefinition.url} and rerun the selector audit.`,
+      details,
+      createErrorOptions(error),
+    );
+  }
+
+  if (isNetworkError(error)) {
+    return new LinkedInBuddyError(
+      "NETWORK_ERROR",
+      `Could not load the ${pageDefinition.page} page because the browser or network connection failed: ${getErrorMessage(error)}. Check connectivity or the attached browser session and rerun the selector audit.`,
+      details,
+      createErrorOptions(error),
+    );
+  }
+
+  return new LinkedInBuddyError(
+    "UNKNOWN",
+    `Could not load the ${pageDefinition.page} page: ${getErrorMessage(error)}. Refresh the LinkedIn session or attached browser and rerun the selector audit.`,
+    details,
+    createErrorOptions(error),
+  );
+}
+
+function createPageReadinessWarning(
+  pageDefinition: SelectorAuditPageDefinition,
+  timeoutMs: number,
+  strategyResults: SelectorAuditStrategyResult[],
+): string {
+  const firstFailure = strategyResults.find(
+    (result) => result.status === "fail",
+  )?.error;
+  const firstFailureSuffix = firstFailure
+    ? ` Last check: ${firstFailure}.`
+    : "";
+
+  return `Could not confirm that the ${pageDefinition.page} page was ready within ${timeoutMs}ms.${firstFailureSuffix} Selector checks continued with the current DOM state; if failures persist, reload the page or update the ready selectors and rerun the selector audit.`;
+}
+
+function createNetworkIdleWarning(
+  pageDefinition: SelectorAuditPageDefinition,
+): string {
+  return `The ${pageDefinition.page} page did not reach network idle within ${DEFAULT_SELECTOR_AUDIT_NETWORK_IDLE_TIMEOUT_MS}ms. Selector checks continued with the current DOM state.`;
+}
+
+function createSelectorDefinitionFailureMessage(
+  pageDefinition: SelectorAuditPageDefinition,
+  selectorDefinition: SelectorAuditSelectorDefinition,
+): string {
+  return `No selector strategy matched for ${selectorDefinition.key} on ${pageDefinition.page}. Review the failure artifacts, update the selector registry if LinkedIn's UI changed, and rerun the selector audit.`;
+}
+
+function createSelectorEvaluationError(
+  pageDefinition: SelectorAuditPageDefinition,
+  selectorDefinition: SelectorAuditSelectorDefinition,
+  error: unknown,
+): LinkedInBuddyError {
+  if (error instanceof LinkedInBuddyError) {
+    return error;
+  }
+
+  const details = {
+    page: pageDefinition.page,
+    page_url: pageDefinition.url,
+    selector_key: selectorDefinition.key,
   };
 
   if (error instanceof playwrightErrors.TimeoutError) {
@@ -1081,7 +1118,7 @@ function createSelectorEvaluationError(
       "TIMEOUT",
       `Timed out while checking ${selectorDefinition.key} on ${pageDefinition.page}. Review the selector registry and rerun the selector audit after the page is stable.`,
       details,
-      createErrorOptions(error)
+      createErrorOptions(error),
     );
   }
 
@@ -1089,14 +1126,14 @@ function createSelectorEvaluationError(
     "UNKNOWN",
     `Selector audit failed while checking ${selectorDefinition.key} on ${pageDefinition.page}: ${getErrorMessage(error)}. Review the selector registry and rerun the selector audit.`,
     details,
-    createErrorOptions(error)
+    createErrorOptions(error),
   );
 }
 
 function createCandidateErrorMessage(
   candidate: SelectorAuditCandidate,
   timeoutMs: number,
-  error: unknown
+  error: unknown,
 ): string {
   if (error instanceof playwrightErrors.TimeoutError) {
     return `Timed out after ${timeoutMs}ms waiting for ${candidate.strategy} selector ${candidate.key} (${candidate.selectorHint}) to become visible. Confirm the page is loaded and authenticated, then rerun the selector audit.`;
@@ -1109,7 +1146,7 @@ function createArtifactCaptureWarning(
   artifactKind: "screenshot" | "DOM snapshot" | "accessibility snapshot",
   pageDefinition: SelectorAuditPageDefinition,
   selectorDefinition: SelectorAuditSelectorDefinition,
-  error: unknown
+  error: unknown,
 ): string {
   return `Could not capture the ${artifactKind} for ${selectorDefinition.key} on ${pageDefinition.page}: ${getErrorMessage(error)}.`;
 }
@@ -1126,28 +1163,28 @@ export class LinkedInSelectorAuditService {
 
   constructor(
     private readonly runtime: LinkedInSelectorAuditRuntime,
-    options: LinkedInSelectorAuditServiceOptions = {}
+    options: LinkedInSelectorAuditServiceOptions = {},
   ) {
     this.registry = validateSelectorAuditRegistry(
       options.registry ??
         createDefaultSelectorAuditRegistry(
-          this.runtime.selectorLocale ?? DEFAULT_LINKEDIN_SELECTOR_LOCALE
-        )
+          this.runtime.selectorLocale ?? DEFAULT_LINKEDIN_SELECTOR_LOCALE,
+        ),
     );
     this.candidateTimeoutMs = validateTimeoutOption(
       options.candidateTimeoutMs,
       "candidateTimeoutMs",
-      DEFAULT_SELECTOR_AUDIT_CANDIDATE_TIMEOUT_MS
+      DEFAULT_SELECTOR_AUDIT_CANDIDATE_TIMEOUT_MS,
     );
     this.pageReadyTimeoutMs = validateTimeoutOption(
       options.pageReadyTimeoutMs,
       "pageReadyTimeoutMs",
-      DEFAULT_SELECTOR_AUDIT_PAGE_READY_TIMEOUT_MS
+      DEFAULT_SELECTOR_AUDIT_PAGE_READY_TIMEOUT_MS,
     );
     this.pageNavigationTimeoutMs = validateTimeoutOption(
       options.pageNavigationTimeoutMs,
       "pageNavigationTimeoutMs",
-      DEFAULT_SELECTOR_AUDIT_PAGE_NAVIGATION_TIMEOUT_MS
+      DEFAULT_SELECTOR_AUDIT_PAGE_NAVIGATION_TIMEOUT_MS,
     );
   }
 
@@ -1159,13 +1196,15 @@ export class LinkedInSelectorAuditService {
    * for failures, writes a JSON report into the run artifact directory, and
    * returns the same report to the caller.
    */
-  async auditSelectors(input: SelectorAuditInput = {}): Promise<SelectorAuditReport> {
+  async auditSelectors(
+    input: SelectorAuditInput = {},
+  ): Promise<SelectorAuditReport> {
     const normalizedInput = validateSelectorAuditInput(input);
     const profileName = validateProfileName(normalizedInput.profileName);
 
     this.runtime.logger.log("info", "selector.audit.start", {
       profileName,
-      pageCount: this.registry.length
+      pageCount: this.registry.length,
     });
 
     await this.runtime.auth.ensureAuthenticated({ profileName });
@@ -1174,7 +1213,7 @@ export class LinkedInSelectorAuditService {
       {
         cdpUrl: this.runtime.cdpUrl,
         profileName,
-        headless: true
+        headless: true,
       },
       async (context) => {
         let page: Page;
@@ -1191,7 +1230,7 @@ export class LinkedInSelectorAuditService {
             profileName,
             page: pageDefinition.page,
             url: pageDefinition.url,
-            selectorCount: pageDefinition.selectors.length
+            selectorCount: pageDefinition.selectors.length,
           });
 
           const currentPageResults = await this.auditPage(page, pageDefinition);
@@ -1203,24 +1242,26 @@ export class LinkedInSelectorAuditService {
             page: pageDefinition.page,
             passCount: counts.passCount,
             failCount: counts.failCount,
-            fallbackCount: counts.fallbackCount
+            fallbackCount: counts.fallbackCount,
           });
         }
 
         return pageResults;
-      }
+      },
     );
 
-    const artifactDir = this.runtime.artifacts.resolve(SELECTOR_AUDIT_ARTIFACT_DIR);
+    const artifactDir = this.runtime.artifacts.resolve(
+      SELECTOR_AUDIT_ARTIFACT_DIR,
+    );
     const reportPath = this.runtime.artifacts.resolve(
-      `${SELECTOR_AUDIT_ARTIFACT_DIR}/report.json`
+      `${SELECTOR_AUDIT_ARTIFACT_DIR}/report.json`,
     );
     const checkedAt = new Date().toISOString();
     const pageSummaries = this.buildPageSummaries(results);
     const counts = countSelectorAuditResults(results);
     const pageWarnings = buildPageWarningSummaries(
       this.registry.map((pageDefinition) => pageDefinition.page),
-      results
+      results,
     );
     const failedSelectors = buildFailureSummaries(results);
     const fallbackSelectors = buildFallbackSummaries(results);
@@ -1229,7 +1270,7 @@ export class LinkedInSelectorAuditService {
       reportPath,
       failedSelectors,
       fallbackSelectors,
-      pageWarnings
+      pageWarnings,
     });
     const report: SelectorAuditReport = {
       run_id: this.runtime.runId,
@@ -1248,7 +1289,7 @@ export class LinkedInSelectorAuditService {
       failed_selectors: failedSelectors,
       fallback_selectors: fallbackSelectors,
       recommended_actions: recommendedActions,
-      results
+      results,
     };
 
     this.runtime.artifacts.writeJson(
@@ -1259,8 +1300,8 @@ export class LinkedInSelectorAuditService {
         checked_at: checkedAt,
         pass_count: report.pass_count,
         fail_count: report.fail_count,
-        fallback_count: report.fallback_count
-      }
+        fallback_count: report.fallback_count,
+      },
     );
 
     this.runtime.logger.log("info", "selector.audit.done", {
@@ -1269,7 +1310,7 @@ export class LinkedInSelectorAuditService {
       passCount: report.pass_count,
       failCount: report.fail_count,
       fallbackCount: report.fallback_count,
-      reportPath
+      reportPath,
     });
 
     return report;
@@ -1277,39 +1318,46 @@ export class LinkedInSelectorAuditService {
 
   private async auditPage(
     page: Page,
-    pageDefinition: SelectorAuditPageDefinition
+    pageDefinition: SelectorAuditPageDefinition,
   ): Promise<SelectorAuditResult[]> {
     const pageWarnings: string[] = [];
 
     try {
       await page.goto(pageDefinition.url, {
         waitUntil: "domcontentloaded",
-        timeout: this.pageNavigationTimeoutMs
+        timeout: this.pageNavigationTimeoutMs,
       });
 
       const networkIdleReached = await waitForNetworkIdleBestEffort(
         page,
-        DEFAULT_SELECTOR_AUDIT_NETWORK_IDLE_TIMEOUT_MS
+        DEFAULT_SELECTOR_AUDIT_NETWORK_IDLE_TIMEOUT_MS,
       );
       if (!networkIdleReached) {
         const warning = createNetworkIdleWarning(pageDefinition);
         pageWarnings.push(warning);
-        this.runtime.logger.log("warn", "selector.audit.page.network_idle_timeout", {
-          page: pageDefinition.page,
-          url: pageDefinition.url,
-          timeout_ms: DEFAULT_SELECTOR_AUDIT_NETWORK_IDLE_TIMEOUT_MS,
-          warning
-        });
+        this.runtime.logger.log(
+          "warn",
+          "selector.audit.page.network_idle_timeout",
+          {
+            page: pageDefinition.page,
+            url: pageDefinition.url,
+            timeout_ms: DEFAULT_SELECTOR_AUDIT_NETWORK_IDLE_TIMEOUT_MS,
+            warning,
+          },
+        );
       }
 
-      const pageReadyFailures = await this.waitForPageReady(page, pageDefinition);
+      const pageReadyFailures = await this.waitForPageReady(
+        page,
+        pageDefinition,
+      );
       if (pageReadyFailures !== null) {
         // Page-readiness is advisory instead of fatal so the audit can still
         // collect selector drift evidence from the current DOM state.
         const warning = createPageReadinessWarning(
           pageDefinition,
           this.pageReadyTimeoutMs,
-          pageReadyFailures
+          pageReadyFailures,
         );
         pageWarnings.push(warning);
         this.runtime.logger.log("warn", "selector.audit.page.not_ready", {
@@ -1317,20 +1365,20 @@ export class LinkedInSelectorAuditService {
           url: pageDefinition.url,
           timeout_ms: this.pageReadyTimeoutMs,
           warning,
-          ready_checks: createStrategyResults(pageReadyFailures)
+          ready_checks: createStrategyResults(pageReadyFailures),
         });
       }
     } catch (error) {
       const pageLoadError = createPageLoadError(
         pageDefinition,
         this.pageNavigationTimeoutMs,
-        error
+        error,
       );
       this.runtime.logger.log("warn", "selector.audit.page.failed", {
         page: pageDefinition.page,
         url: pageDefinition.url,
         code: pageLoadError.code,
-        error: pageLoadError.message
+        error: pageLoadError.message,
       });
 
       const failedResults: SelectorAuditResult[] = [];
@@ -1341,8 +1389,8 @@ export class LinkedInSelectorAuditService {
             pageDefinition,
             selectorDefinition,
             pageLoadError,
-            pageWarnings
-          )
+            pageWarnings,
+          ),
         );
       }
 
@@ -1357,20 +1405,20 @@ export class LinkedInSelectorAuditService {
             page,
             pageDefinition,
             selectorDefinition,
-            pageWarnings
-          )
+            pageWarnings,
+          ),
         );
       } catch (error) {
         const selectorError = createSelectorEvaluationError(
           pageDefinition,
           selectorDefinition,
-          error
+          error,
         );
         this.runtime.logger.log("warn", "selector.audit.selector.failed", {
           page: pageDefinition.page,
           selector_key: selectorDefinition.key,
           code: selectorError.code,
-          error: selectorError.message
+          error: selectorError.message,
         });
         results.push(
           await this.createFailedResult(
@@ -1378,8 +1426,8 @@ export class LinkedInSelectorAuditService {
             pageDefinition,
             selectorDefinition,
             selectorError,
-            pageWarnings
-          )
+            pageWarnings,
+          ),
         );
       }
     }
@@ -1389,17 +1437,19 @@ export class LinkedInSelectorAuditService {
 
   private async waitForPageReady(
     page: Page,
-    pageDefinition: SelectorAuditPageDefinition
+    pageDefinition: SelectorAuditPageDefinition,
   ): Promise<SelectorAuditStrategyResult[] | null> {
     const readyCandidates =
-      pageDefinition.readyCandidates ?? pageDefinition.selectors[0]?.candidates ?? [];
+      pageDefinition.readyCandidates ??
+      pageDefinition.selectors[0]?.candidates ??
+      [];
     const readinessResults: SelectorAuditStrategyResult[] = [];
 
     for (const candidate of readyCandidates) {
       const result = await this.evaluateCandidate(
         page,
         candidate,
-        this.pageReadyTimeoutMs
+        this.pageReadyTimeoutMs,
       );
       readinessResults.push(result);
       if (result.status === "pass") {
@@ -1414,7 +1464,7 @@ export class LinkedInSelectorAuditService {
     page: Page,
     pageDefinition: SelectorAuditPageDefinition,
     selectorDefinition: SelectorAuditSelectorDefinition,
-    pageWarnings: readonly string[] = []
+    pageWarnings: readonly string[] = [],
   ): Promise<SelectorAuditResult> {
     const strategyResults: SelectorAuditStrategyResult[] = [];
 
@@ -1422,12 +1472,17 @@ export class LinkedInSelectorAuditService {
       strategyResults.push(await this.evaluateCandidate(page, candidate));
     }
 
-    const matchedResult = strategyResults.find((result) => result.status === "pass") ?? null;
+    const matchedResult =
+      strategyResults.find((result) => result.status === "pass") ?? null;
     const failureArtifacts =
       // Failure artifacts are intentionally captured only when every candidate
       // misses so successful audits stay lightweight and focused.
       matchedResult === null
-        ? await this.captureFailureArtifacts(page, pageDefinition, selectorDefinition)
+        ? await this.captureFailureArtifacts(
+            page,
+            pageDefinition,
+            selectorDefinition,
+          )
         : {};
     const warnings = pageWarnings.length > 0 ? [...pageWarnings] : undefined;
 
@@ -1453,15 +1508,18 @@ export class LinkedInSelectorAuditService {
       ...(matchedResult
         ? {}
         : {
-            error: createSelectorDefinitionFailureMessage(pageDefinition, selectorDefinition)
-          })
+            error: createSelectorDefinitionFailureMessage(
+              pageDefinition,
+              selectorDefinition,
+            ),
+          }),
     };
   }
 
   private async evaluateCandidate(
     page: Page,
     candidate: SelectorAuditCandidate,
-    timeoutMs: number = this.candidateTimeoutMs
+    timeoutMs: number = this.candidateTimeoutMs,
   ): Promise<SelectorAuditStrategyResult> {
     try {
       const locator = candidate.locatorFactory(page);
@@ -1476,14 +1534,14 @@ export class LinkedInSelectorAuditService {
 
       await firstLocator.waitFor({
         state: "visible",
-        timeout: timeoutMs
+        timeout: timeoutMs,
       });
 
       return {
         strategy: candidate.strategy,
         status: "pass",
         selector_key: candidate.key,
-        selector_hint: candidate.selectorHint
+        selector_hint: candidate.selectorHint,
       };
     } catch (error) {
       return {
@@ -1491,7 +1549,7 @@ export class LinkedInSelectorAuditService {
         status: "fail",
         selector_key: candidate.key,
         selector_hint: candidate.selectorHint,
-        error: createCandidateErrorMessage(candidate, timeoutMs, error)
+        error: createCandidateErrorMessage(candidate, timeoutMs, error),
       };
     }
   }
@@ -1501,7 +1559,7 @@ export class LinkedInSelectorAuditService {
     pageDefinition: SelectorAuditPageDefinition,
     selectorDefinition: SelectorAuditSelectorDefinition,
     error: unknown,
-    pageWarnings: readonly string[] = []
+    pageWarnings: readonly string[] = [],
   ): Promise<SelectorAuditResult> {
     const errorMessage = getErrorMessage(error);
     const strategyResults = selectorDefinition.candidates.map((candidate) => ({
@@ -1509,14 +1567,14 @@ export class LinkedInSelectorAuditService {
       status: "fail" as const,
       selector_key: candidate.key,
       selector_hint: candidate.selectorHint,
-      error: errorMessage
+      error: errorMessage,
     }));
     const warnings = pageWarnings.length > 0 ? [...pageWarnings] : undefined;
 
     const failureArtifacts = await this.captureFailureArtifacts(
       page,
       pageDefinition,
-      selectorDefinition
+      selectorDefinition,
     );
 
     return {
@@ -1532,21 +1590,21 @@ export class LinkedInSelectorAuditService {
       strategies: createStrategyResults(strategyResults),
       failure_artifacts: failureArtifacts,
       ...(warnings ? { warnings } : {}),
-      error: errorMessage
+      error: errorMessage,
     };
   }
 
   private async captureFailureArtifacts(
     page: Page,
     pageDefinition: SelectorAuditPageDefinition,
-    selectorDefinition: SelectorAuditSelectorDefinition
+    selectorDefinition: SelectorAuditSelectorDefinition,
   ): Promise<SelectorAuditFailureArtifacts> {
     // Timestamped file names avoid collisions when the same selector key fails
     // multiple times during one run or across quick successive reruns.
     const prefix = path.join(
       SELECTOR_AUDIT_ARTIFACT_DIR,
       sanitizePathSegment(pageDefinition.page),
-      `${sanitizePathSegment(selectorDefinition.key)}-${Date.now()}`
+      `${sanitizePathSegment(selectorDefinition.key)}-${Date.now()}`,
     );
 
     const screenshotPath = `${prefix}.png`;
@@ -1557,13 +1615,14 @@ export class LinkedInSelectorAuditService {
     const captureWarnings: string[] = [];
 
     try {
-      const absoluteScreenshotPath = this.runtime.artifacts.resolve(screenshotPath);
+      const absoluteScreenshotPath =
+        this.runtime.artifacts.resolve(screenshotPath);
       mkdirSync(path.dirname(absoluteScreenshotPath), { recursive: true });
       await page.screenshot({ path: absoluteScreenshotPath, fullPage: true });
       this.runtime.artifacts.registerArtifact(screenshotPath, "image/png", {
         page: pageDefinition.page,
         selector_key: selectorDefinition.key,
-        artifact_kind: "selector_audit_failure_screenshot"
+        artifact_kind: "selector_audit_failure_screenshot",
       });
       failureArtifacts.screenshot_path = absoluteScreenshotPath;
     } catch (error) {
@@ -1571,15 +1630,19 @@ export class LinkedInSelectorAuditService {
         "screenshot",
         pageDefinition,
         selectorDefinition,
-        error
+        error,
       );
       captureWarnings.push(warning);
-      this.runtime.logger.log("warn", "selector.audit.artifact.capture_failed", {
-        page: pageDefinition.page,
-        selector_key: selectorDefinition.key,
-        artifact_kind: "screenshot",
-        warning
-      });
+      this.runtime.logger.log(
+        "warn",
+        "selector.audit.artifact.capture_failed",
+        {
+          page: pageDefinition.page,
+          selector_key: selectorDefinition.key,
+          artifact_kind: "screenshot",
+          warning,
+        },
+      );
     }
 
     try {
@@ -1587,49 +1650,61 @@ export class LinkedInSelectorAuditService {
       this.runtime.artifacts.writeText(domSnapshotPath, html, "text/html", {
         page: pageDefinition.page,
         selector_key: selectorDefinition.key,
-        artifact_kind: "selector_audit_dom_snapshot"
+        artifact_kind: "selector_audit_dom_snapshot",
       });
-      failureArtifacts.dom_snapshot_path = this.runtime.artifacts.resolve(domSnapshotPath);
+      failureArtifacts.dom_snapshot_path =
+        this.runtime.artifacts.resolve(domSnapshotPath);
     } catch (error) {
       const warning = createArtifactCaptureWarning(
         "DOM snapshot",
         pageDefinition,
         selectorDefinition,
-        error
+        error,
       );
       captureWarnings.push(warning);
-      this.runtime.logger.log("warn", "selector.audit.artifact.capture_failed", {
-        page: pageDefinition.page,
-        selector_key: selectorDefinition.key,
-        artifact_kind: "dom_snapshot",
-        warning
-      });
+      this.runtime.logger.log(
+        "warn",
+        "selector.audit.artifact.capture_failed",
+        {
+          page: pageDefinition.page,
+          selector_key: selectorDefinition.key,
+          artifact_kind: "dom_snapshot",
+          warning,
+        },
+      );
     }
 
     try {
       const accessibilitySnapshot = await getAccessibilitySnapshot(page);
-      this.runtime.artifacts.writeJson(accessibilitySnapshotPath, accessibilitySnapshot, {
-        page: pageDefinition.page,
-        selector_key: selectorDefinition.key,
-        artifact_kind: "selector_audit_accessibility_snapshot"
-      });
-      failureArtifacts.accessibility_snapshot_path = this.runtime.artifacts.resolve(
-        accessibilitySnapshotPath
+      this.runtime.artifacts.writeJson(
+        accessibilitySnapshotPath,
+        accessibilitySnapshot,
+        {
+          page: pageDefinition.page,
+          selector_key: selectorDefinition.key,
+          artifact_kind: "selector_audit_accessibility_snapshot",
+        },
       );
+      failureArtifacts.accessibility_snapshot_path =
+        this.runtime.artifacts.resolve(accessibilitySnapshotPath);
     } catch (error) {
       const warning = createArtifactCaptureWarning(
         "accessibility snapshot",
         pageDefinition,
         selectorDefinition,
-        error
+        error,
       );
       captureWarnings.push(warning);
-      this.runtime.logger.log("warn", "selector.audit.artifact.capture_failed", {
-        page: pageDefinition.page,
-        selector_key: selectorDefinition.key,
-        artifact_kind: "accessibility_snapshot",
-        warning
-      });
+      this.runtime.logger.log(
+        "warn",
+        "selector.audit.artifact.capture_failed",
+        {
+          page: pageDefinition.page,
+          selector_key: selectorDefinition.key,
+          artifact_kind: "accessibility_snapshot",
+          warning,
+        },
+      );
     }
 
     if (captureWarnings.length > 0) {
@@ -1639,16 +1714,22 @@ export class LinkedInSelectorAuditService {
     return failureArtifacts;
   }
 
-  private buildPageSummaries(results: SelectorAuditResult[]): SelectorAuditPageSummary[] {
-    const pageSummaries = new Map<LinkedInSelectorAuditPage, SelectorAuditPageSummary>(
+  private buildPageSummaries(
+    results: SelectorAuditResult[],
+  ): SelectorAuditPageSummary[] {
+    const pageSummaries = new Map<
+      LinkedInSelectorAuditPage,
+      SelectorAuditPageSummary
+    >(
       this.registry.map((pageDefinition) => [
         pageDefinition.page,
-        createEmptyPageSummary(pageDefinition.page)
-      ])
+        createEmptyPageSummary(pageDefinition.page),
+      ]),
     );
 
     for (const result of results) {
-      const summary = pageSummaries.get(result.page) ?? createEmptyPageSummary(result.page);
+      const summary =
+        pageSummaries.get(result.page) ?? createEmptyPageSummary(result.page);
       summary.total_count += 1;
       summary.pass_count += result.status === "pass" ? 1 : 0;
       summary.fail_count += result.status === "fail" ? 1 : 0;
@@ -1667,7 +1748,7 @@ export class LinkedInSelectorAuditService {
  * to {@link LinkedInSelectorAuditServiceOptions.registry}.
  */
 export function createLinkedInSelectorAuditRegistry(
-  selectorLocale: LinkedInSelectorLocale = DEFAULT_LINKEDIN_SELECTOR_LOCALE
+  selectorLocale: LinkedInSelectorLocale = DEFAULT_LINKEDIN_SELECTOR_LOCALE,
 ): SelectorAuditPageDefinition[] {
   return createDefaultSelectorAuditRegistry(selectorLocale);
 }

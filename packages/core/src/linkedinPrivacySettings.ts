@@ -1,12 +1,9 @@
-import { type BrowserContext, type Locator, type Page } from "playwright-core";
+import { type Locator, type Page } from "playwright-core";
 import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
 import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
 import type { ConfirmFailureArtifactConfig } from "./config.js";
-import {
-  LinkedInBuddyError,
-  asLinkedInBuddyError
-} from "./errors.js";
+import { LinkedInBuddyError, asLinkedInBuddyError } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
@@ -15,20 +12,21 @@ import {
   createConfirmRateLimitMessage,
   peekRateLimitPreview,
   type ConsumeRateLimitInput,
-  type RateLimiter
+  type RateLimiter,
 } from "./rateLimiter.js";
+import { escapeRegExp, getOrCreatePage, normalizeText } from "./shared.js";
 import type { LinkedInSelectorLocale } from "./selectorLocale.js";
 import type {
   ActionExecutor,
   ActionExecutorInput,
   ActionExecutorResult,
-  TwoPhaseCommitService
+  TwoPhaseCommitService,
 } from "./twoPhaseCommit.js";
 
 export const LINKEDIN_PRIVACY_SETTING_KEYS = [
   "profile_viewing_mode",
   "connections_visibility",
-  "last_name_visibility"
+  "last_name_visibility",
 ] as const;
 
 export type LinkedInPrivacySettingKey =
@@ -52,8 +50,7 @@ export interface LinkedInPrivacySettingDefinition {
   allowed_values: readonly string[];
 }
 
-export interface LinkedInPrivacySettingState
-  extends LinkedInPrivacySettingDefinition {
+export interface LinkedInPrivacySettingState extends LinkedInPrivacySettingDefinition {
   current_value: string | null;
   status: "available" | "unavailable";
   source_url: string | null;
@@ -72,8 +69,7 @@ export interface LinkedInPrivacySettingsExecutorRuntime {
   confirmFailureArtifacts: ConfirmFailureArtifactConfig;
 }
 
-export interface LinkedInPrivacySettingsRuntime
-  extends LinkedInPrivacySettingsExecutorRuntime {
+export interface LinkedInPrivacySettingsRuntime extends LinkedInPrivacySettingsExecutorRuntime {
   twoPhaseCommit: Pick<
     TwoPhaseCommitService<LinkedInPrivacySettingsExecutorRuntime>,
     "prepare"
@@ -85,7 +81,7 @@ export const UPDATE_PRIVACY_SETTING_ACTION_TYPE = "privacy.update_setting";
 const UPDATE_PRIVACY_SETTING_RATE_LIMIT_CONFIG = {
   counterKey: "linkedin.privacy.update_setting",
   windowSizeMs: 24 * 60 * 60 * 1000,
-  limit: 10
+  limit: 10,
 } as const satisfies ConsumeRateLimitInput;
 
 interface VisibleLocatorCandidate {
@@ -124,38 +120,30 @@ interface LinkedInPrivacySettingDescriptor {
   urls: readonly string[];
   read: (
     page: Page,
-    selectorLocale: LinkedInSelectorLocale
+    selectorLocale: LinkedInSelectorLocale,
   ) => Promise<LinkedInPrivacySettingReadResult>;
   apply: (
     page: Page,
     selectorLocale: LinkedInSelectorLocale,
-    value: string
+    value: string,
   ) => Promise<Omit<LinkedInPrivacySettingApplyResult, "sourceUrl">>;
 }
 
 const PROFILE_VIEWING_MODE_VALUE_ORDER = [
   "full_profile",
   "private_profile_characteristics",
-  "private_mode"
+  "private_mode",
 ] as const;
 
 const TOGGLE_ON_VALUE_MAP = {
   connections_visibility: "visible",
-  last_name_visibility: "full_last_name"
+  last_name_visibility: "full_last_name",
 } as const;
 
 const TOGGLE_OFF_VALUE_MAP = {
   connections_visibility: "hidden",
-  last_name_visibility: "last_initial"
+  last_name_visibility: "last_initial",
 } as const;
-
-function normalizeText(value: string | null | undefined): string {
-  return (value ?? "").replace(/\s+/g, " ").trim();
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 function dedupePhrases(values: readonly string[]): string[] {
   const seen = new Set<string>();
@@ -177,10 +165,11 @@ function dedupePhrases(values: readonly string[]): string[] {
 
 function buildPhraseRegex(
   phrases: readonly string[],
-  options: { exact?: boolean } = {}
+  options: { exact?: boolean } = {},
 ): RegExp {
   const normalizedPhrases = dedupePhrases(phrases);
-  const body = normalizedPhrases.map((phrase) => escapeRegExp(phrase)).join("|") || "^$";
+  const body =
+    normalizedPhrases.map((phrase) => escapeRegExp(phrase)).join("|") || "^$";
   const pattern = options.exact ? `^(?:${body})$` : `(?:${body})`;
   return new RegExp(pattern, "iu");
 }
@@ -194,7 +183,7 @@ function getProfileViewingModeDisplayLabel(value: string): string {
 
 function normalizeLinkedInPrivacySettingDescriptorValue(
   settingKey: LinkedInPrivacySettingKey,
-  value: string
+  value: string,
 ): string {
   const descriptor = LINKEDIN_PRIVACY_SETTING_DESCRIPTORS[settingKey];
   const normalizedValue = normalizeText(value).toLowerCase();
@@ -208,14 +197,14 @@ function normalizeLinkedInPrivacySettingDescriptorValue(
 
   throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
-    `${settingKey} value must be one of: ${descriptor.allowedValues.join(", ")}.`
+    `${settingKey} value must be one of: ${descriptor.allowedValues.join(", ")}.`,
   );
 }
 
 async function waitForCondition(
   condition: () => Promise<boolean>,
   timeoutMs: number,
-  intervalMs = 250
+  intervalMs = 250,
 ): Promise<boolean> {
   const deadline = Date.now() + Math.max(0, timeoutMs);
 
@@ -232,25 +221,16 @@ async function waitForCondition(
   return condition();
 }
 
-async function getOrCreatePage(context: BrowserContext): Promise<Page> {
-  const existing = context.pages()[0];
-  if (existing) {
-    return existing;
-  }
-
-  return context.newPage();
-}
-
 async function findVisibleLocator(
   root: Page | Locator,
-  candidates: readonly VisibleLocatorCandidate[]
+  candidates: readonly VisibleLocatorCandidate[],
 ): Promise<{ locator: Locator; key: string } | null> {
   for (const candidate of candidates) {
     const locator = candidate.locatorFactory(root).first();
     if (await locator.isVisible().catch(() => false)) {
       return {
         locator,
-        key: candidate.key
+        key: candidate.key,
       };
     }
   }
@@ -260,7 +240,7 @@ async function findVisibleLocator(
 
 async function findVisibleToggleControl(
   page: Page,
-  candidates: readonly ToggleControlCandidate[]
+  candidates: readonly ToggleControlCandidate[],
 ): Promise<ToggleControlMatch | null> {
   for (const candidate of candidates) {
     const locator = candidate.locatorFactory(page).first();
@@ -271,7 +251,7 @@ async function findVisibleToggleControl(
     return {
       locator,
       key: candidate.key,
-      state: await candidate.readState(locator)
+      state: await candidate.readState(locator),
     };
   }
 
@@ -288,28 +268,32 @@ function createSettingsSaveButtonCandidates(): VisibleLocatorCandidate[] {
       selectorHint: "getByRole(button, /^(?:Save|Done)$/iu)",
       locatorFactory: (root) =>
         root.getByRole("button", {
-          name: exactRegex
-        })
+          name: exactRegex,
+        }),
     },
     {
       key: "settings-save-text",
       selectorHint: "button hasText /(?:Save changes|Save|Done)/iu",
       locatorFactory: (root) =>
         root.locator("button").filter({
-          hasText: textRegex
-        })
+          hasText: textRegex,
+        }),
     },
     {
       key: "settings-save-primary",
       selectorHint: "button.artdeco-button--primary",
-      locatorFactory: (root) =>
-        root.locator("button.artdeco-button--primary")
-    }
+      locatorFactory: (root) => root.locator("button.artdeco-button--primary"),
+    },
   ];
 }
 
-async function maybeClickSettingsSaveButton(page: Page): Promise<string | null> {
-  const button = await findVisibleLocator(page, createSettingsSaveButtonCandidates());
+async function maybeClickSettingsSaveButton(
+  page: Page,
+): Promise<string | null> {
+  const button = await findVisibleLocator(
+    page,
+    createSettingsSaveButtonCandidates(),
+  );
   if (!button) {
     return null;
   }
@@ -320,7 +304,7 @@ async function maybeClickSettingsSaveButton(page: Page): Promise<string | null> 
 }
 
 function createProfileViewingModeOptionCandidates(
-  value: (typeof PROFILE_VIEWING_MODE_VALUE_ORDER)[number]
+  value: (typeof PROFILE_VIEWING_MODE_VALUE_ORDER)[number],
 ): VisibleLocatorCandidate[] {
   const label =
     value === "full_profile"
@@ -337,25 +321,25 @@ function createProfileViewingModeOptionCandidates(
       selectorHint: `getByRole(radio, /^(?:${escapeRegExp(label)})$/iu)`,
       locatorFactory: (root) =>
         root.getByRole("radio", {
-          name: exactRegex
-        })
+          name: exactRegex,
+        }),
     },
     {
       key: `profile-viewing-mode-${value}-role-button`,
       selectorHint: `getByRole(button, /^(?:${escapeRegExp(label)})$/iu)`,
       locatorFactory: (root) =>
         root.getByRole("button", {
-          name: exactRegex
-        })
+          name: exactRegex,
+        }),
     },
     {
       key: `profile-viewing-mode-${value}-label-text`,
       selectorHint: `label hasText /(?:${escapeRegExp(label)})/iu`,
       locatorFactory: (root) =>
         root.locator("label").filter({
-          hasText: textRegex
-        })
-    }
+          hasText: textRegex,
+        }),
+    },
   ];
 }
 
@@ -374,7 +358,7 @@ function createToggleControlCandidates(): ToggleControlCandidate[] {
           return false;
         }
         return null;
-      }
+      },
     },
     {
       key: "toggle-role-checkbox",
@@ -389,13 +373,13 @@ function createToggleControlCandidates(): ToggleControlCandidate[] {
           return false;
         }
         return null;
-      }
+      },
     },
     {
       key: "toggle-input-checkbox",
       selectorHint: "input[type='checkbox']",
       locatorFactory: (root) => root.locator("input[type='checkbox']"),
-      readState: async (locator) => locator.isChecked().catch(() => null)
+      readState: async (locator) => locator.isChecked().catch(() => null),
     },
     {
       key: "toggle-button-aria-pressed",
@@ -410,7 +394,7 @@ function createToggleControlCandidates(): ToggleControlCandidate[] {
           return false;
         }
         return null;
-      }
+      },
     },
     {
       key: "toggle-button-aria-checked",
@@ -425,16 +409,16 @@ function createToggleControlCandidates(): ToggleControlCandidate[] {
           return false;
         }
         return null;
-      }
-    }
+      },
+    },
   ];
 }
 
 async function readProfileViewingModeState(
-  page: Page
+  page: Page,
 ): Promise<LinkedInPrivacySettingReadResult> {
   const radioInputs = page.locator(
-    "main input[type='radio'], [role='main'] input[type='radio'], form input[type='radio']"
+    "main input[type='radio'], [role='main'] input[type='radio'], form input[type='radio']",
   );
   const radioInputCount = await radioInputs.count();
 
@@ -443,16 +427,21 @@ async function readProfileViewingModeState(
     index < Math.min(radioInputCount, PROFILE_VIEWING_MODE_VALUE_ORDER.length);
     index += 1
   ) {
-    if (await radioInputs.nth(index).isChecked().catch(() => false)) {
+    if (
+      await radioInputs
+        .nth(index)
+        .isChecked()
+        .catch(() => false)
+    ) {
       return {
         currentValue: PROFILE_VIEWING_MODE_VALUE_ORDER[index]!,
-        selectorKey: `profile-viewing-mode-input-index-${index}`
+        selectorKey: `profile-viewing-mode-input-index-${index}`,
       };
     }
   }
 
   const roleRadios = page.locator(
-    "main [role='radio'], [role='main'] [role='radio'], form [role='radio']"
+    "main [role='radio'], [role='main'] [role='radio'], form [role='radio']",
   );
   const roleRadioCount = await roleRadios.count();
 
@@ -466,7 +455,7 @@ async function readProfileViewingModeState(
     if (ariaChecked === "true") {
       return {
         currentValue: PROFILE_VIEWING_MODE_VALUE_ORDER[index]!,
-        selectorKey: `profile-viewing-mode-role-index-${index}`
+        selectorKey: `profile-viewing-mode-role-index-${index}`,
       };
     }
   }
@@ -481,32 +470,32 @@ async function readProfileViewingModeState(
         "form input[type='radio']",
         "main [role='radio']",
         "[role='main'] [role='radio']",
-        "form [role='radio']"
-      ]
-    }
+        "form [role='radio']",
+      ],
+    },
   );
 }
 
 async function applyProfileViewingMode(
   page: Page,
-  value: string
+  value: string,
 ): Promise<Omit<LinkedInPrivacySettingApplyResult, "sourceUrl">> {
   const targetValue = normalizeLinkedInPrivacySettingDescriptorValue(
     "profile_viewing_mode",
-    value
+    value,
   ) as (typeof PROFILE_VIEWING_MODE_VALUE_ORDER)[number];
   const before = await readProfileViewingModeState(page);
   if (before.currentValue === targetValue) {
     return {
       previousValue: before.currentValue,
       currentValue: before.currentValue,
-      selectorKey: before.selectorKey
+      selectorKey: before.selectorKey,
     };
   }
 
   const explicitOption = await findVisibleLocator(
     page,
-    createProfileViewingModeOptionCandidates(targetValue)
+    createProfileViewingModeOptionCandidates(targetValue),
   );
 
   if (explicitOption) {
@@ -514,13 +503,13 @@ async function applyProfileViewingMode(
   } else {
     const fallbackIndex = PROFILE_VIEWING_MODE_VALUE_ORDER.indexOf(targetValue);
     const roleRadios = page.locator(
-      "main [role='radio'], [role='main'] [role='radio'], form [role='radio']"
+      "main [role='radio'], [role='main'] [role='radio'], form [role='radio']",
     );
     if ((await roleRadios.count()) >= PROFILE_VIEWING_MODE_VALUE_ORDER.length) {
       await roleRadios.nth(fallbackIndex).click({ timeout: 5_000 });
     } else {
       const fallbackLabels = page.locator(
-        "main label, [role='main'] label, form label"
+        "main label, [role='main'] label, form label",
       );
       if ((await fallbackLabels.count()) <= fallbackIndex) {
         throw new LinkedInBuddyError(
@@ -528,9 +517,9 @@ async function applyProfileViewingMode(
           `Could not find the ${getProfileViewingModeDisplayLabel(targetValue)} profile viewing mode option.`,
           {
             attempted_selectors: createProfileViewingModeOptionCandidates(
-              targetValue
-            ).map((candidate) => candidate.selectorHint)
-          }
+              targetValue,
+            ).map((candidate) => candidate.selectorHint),
+          },
         );
       }
 
@@ -550,8 +539,8 @@ async function applyProfileViewingMode(
       `LinkedIn profile viewing mode could not be updated to ${targetValue}.`,
       {
         requested_value: targetValue,
-        save_selector_key: saveSelectorKey
-      }
+        save_selector_key: saveSelectorKey,
+      },
     );
   }
 
@@ -563,24 +552,27 @@ async function applyProfileViewingMode(
       ? saveSelectorKey
         ? `${explicitOption.key}:${saveSelectorKey}`
         : explicitOption.key
-      : saveSelectorKey
+      : saveSelectorKey,
   };
 }
 
 async function readToggleSettingState(
   page: Page,
-  settingKey: keyof typeof TOGGLE_ON_VALUE_MAP
+  settingKey: keyof typeof TOGGLE_ON_VALUE_MAP,
 ): Promise<LinkedInPrivacySettingReadResult> {
-  const toggle = await findVisibleToggleControl(page, createToggleControlCandidates());
+  const toggle = await findVisibleToggleControl(
+    page,
+    createToggleControlCandidates(),
+  );
   if (!toggle || typeof toggle.state !== "boolean") {
     throw new LinkedInBuddyError(
       "UI_CHANGED_SELECTOR_FAILED",
       `Could not find the ${settingKey} toggle on the LinkedIn settings page.`,
       {
         attempted_selectors: createToggleControlCandidates().map(
-          (candidate) => candidate.selectorHint
-        )
-      }
+          (candidate) => candidate.selectorHint,
+        ),
+      },
     );
   }
 
@@ -588,45 +580,50 @@ async function readToggleSettingState(
     currentValue: toggle.state
       ? TOGGLE_ON_VALUE_MAP[settingKey]
       : TOGGLE_OFF_VALUE_MAP[settingKey],
-    selectorKey: toggle.key
+    selectorKey: toggle.key,
   };
 }
 
 async function applyToggleSetting(
   page: Page,
   settingKey: keyof typeof TOGGLE_ON_VALUE_MAP,
-  value: string
+  value: string,
 ): Promise<Omit<LinkedInPrivacySettingApplyResult, "sourceUrl">> {
   const requestedValue = normalizeLinkedInPrivacySettingDescriptorValue(
     settingKey,
-    value
+    value,
   );
   const before = await readToggleSettingState(page, settingKey);
   if (before.currentValue === requestedValue) {
     return {
       previousValue: before.currentValue,
       currentValue: before.currentValue,
-      selectorKey: before.selectorKey
+      selectorKey: before.selectorKey,
     };
   }
 
-  const toggle = await findVisibleToggleControl(page, createToggleControlCandidates());
+  const toggle = await findVisibleToggleControl(
+    page,
+    createToggleControlCandidates(),
+  );
   if (!toggle) {
     throw new LinkedInBuddyError(
       "UI_CHANGED_SELECTOR_FAILED",
       `Could not find the ${settingKey} toggle on the LinkedIn settings page.`,
       {
         attempted_selectors: createToggleControlCandidates().map(
-          (candidate) => candidate.selectorHint
-        )
-      }
+          (candidate) => candidate.selectorHint,
+        ),
+      },
     );
   }
 
   await toggle.locator.click({ timeout: 5_000 });
   const saveSelectorKey = await maybeClickSettingsSaveButton(page);
   const updated = await waitForCondition(async () => {
-    const state = await readToggleSettingState(page, settingKey).catch(() => null);
+    const state = await readToggleSettingState(page, settingKey).catch(
+      () => null,
+    );
     return state?.currentValue === requestedValue;
   }, 5_000);
 
@@ -637,8 +634,8 @@ async function applyToggleSetting(
       {
         requested_value: requestedValue,
         toggle_selector_key: toggle.key,
-        save_selector_key: saveSelectorKey
-      }
+        save_selector_key: saveSelectorKey,
+      },
     );
   }
 
@@ -646,7 +643,9 @@ async function applyToggleSetting(
   return {
     previousValue: before.currentValue,
     currentValue: after.currentValue,
-    selectorKey: saveSelectorKey ? `${toggle.key}:${saveSelectorKey}` : toggle.key
+    selectorKey: saveSelectorKey
+      ? `${toggle.key}:${saveSelectorKey}`
+      : toggle.key,
   };
 }
 
@@ -657,22 +656,22 @@ const LINKEDIN_PRIVACY_SETTING_DEFINITIONS: readonly LinkedInPrivacySettingDefin
       label: "Profile viewing mode",
       description:
         "Controls how your profile appears when you browse other LinkedIn members.",
-      allowed_values: PROFILE_VIEWING_MODE_VALUE_ORDER
+      allowed_values: PROFILE_VIEWING_MODE_VALUE_ORDER,
     },
     {
       key: "connections_visibility",
       label: "Connections visibility",
       description:
         "Controls whether other LinkedIn members can see your connections list.",
-      allowed_values: ["visible", "hidden"]
+      allowed_values: ["visible", "hidden"],
     },
     {
       key: "last_name_visibility",
       label: "Last name visibility",
       description:
         "Controls whether LinkedIn shows your full last name or only the initial.",
-      allowed_values: ["full_last_name", "last_initial"]
-    }
+      allowed_values: ["full_last_name", "last_initial"],
+    },
   ]);
 
 const LINKEDIN_PRIVACY_SETTING_DESCRIPTORS: Record<
@@ -687,11 +686,11 @@ const LINKEDIN_PRIVACY_SETTING_DESCRIPTORS: Record<
     allowedValues: PROFILE_VIEWING_MODE_VALUE_ORDER,
     urls: [
       "https://www.linkedin.com/mypreferences/d/profile-viewing-options",
-      "https://www.linkedin.com/mypreferences/d/visibility/profile-viewing-options"
+      "https://www.linkedin.com/mypreferences/d/visibility/profile-viewing-options",
     ],
     read: async (page) => readProfileViewingModeState(page),
     apply: async (page, _selectorLocale, value) =>
-      applyProfileViewingMode(page, value)
+      applyProfileViewingMode(page, value),
   },
   connections_visibility: {
     key: "connections_visibility",
@@ -701,11 +700,12 @@ const LINKEDIN_PRIVACY_SETTING_DESCRIPTORS: Record<
     allowedValues: ["visible", "hidden"],
     urls: [
       "https://www.linkedin.com/mypreferences/d/connections-visibility",
-      "https://www.linkedin.com/mypreferences/d/visibility/connections-visibility"
+      "https://www.linkedin.com/mypreferences/d/visibility/connections-visibility",
     ],
-    read: async (page) => readToggleSettingState(page, "connections_visibility"),
+    read: async (page) =>
+      readToggleSettingState(page, "connections_visibility"),
     apply: async (page, _selectorLocale, value) =>
-      applyToggleSetting(page, "connections_visibility", value)
+      applyToggleSetting(page, "connections_visibility", value),
   },
   last_name_visibility: {
     key: "last_name_visibility",
@@ -717,18 +717,18 @@ const LINKEDIN_PRIVACY_SETTING_DESCRIPTORS: Record<
       "https://www.linkedin.com/mypreferences/d/last-name-visibility",
       "https://www.linkedin.com/mypreferences/d/name-visibility",
       "https://www.linkedin.com/mypreferences/d/visibility/last-name-visibility",
-      "https://www.linkedin.com/mypreferences/d/visibility/name-visibility"
+      "https://www.linkedin.com/mypreferences/d/visibility/name-visibility",
     ],
     read: async (page) => readToggleSettingState(page, "last_name_visibility"),
     apply: async (page, _selectorLocale, value) =>
-      applyToggleSetting(page, "last_name_visibility", value)
-  }
+      applyToggleSetting(page, "last_name_visibility", value),
+  },
 };
 
 async function withPrivacySettingsPage<T>(
   page: Page,
   descriptor: LinkedInPrivacySettingDescriptor,
-  action: (page: Page, sourceUrl: string) => Promise<T>
+  action: (page: Page, sourceUrl: string) => Promise<T>,
 ): Promise<T> {
   const errors: Array<Record<string, string>> = [];
 
@@ -740,7 +740,7 @@ async function withPrivacySettingsPage<T>(
     } catch (error) {
       errors.push({
         url,
-        message: error instanceof Error ? error.message : String(error)
+        message: error instanceof Error ? error.message : String(error),
       });
     }
   }
@@ -751,18 +751,17 @@ async function withPrivacySettingsPage<T>(
     {
       setting_key: descriptor.key,
       attempted_urls: descriptor.urls,
-      errors
-    }
+      errors,
+    },
   );
 }
 
-export function getLinkedInPrivacySettingDefinitions():
-  readonly LinkedInPrivacySettingDefinition[] {
+export function getLinkedInPrivacySettingDefinitions(): readonly LinkedInPrivacySettingDefinition[] {
   return LINKEDIN_PRIVACY_SETTING_DEFINITIONS;
 }
 
 export function normalizeLinkedInPrivacySettingKey(
-  value: string
+  value: string,
 ): LinkedInPrivacySettingKey {
   const normalizedValue = normalizeText(value).toLowerCase();
   const matchedKey = LINKEDIN_PRIVACY_SETTING_KEYS.find((candidate) => {
@@ -775,13 +774,13 @@ export function normalizeLinkedInPrivacySettingKey(
 
   throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
-    `settingKey must be one of: ${LINKEDIN_PRIVACY_SETTING_KEYS.join(", ")}.`
+    `settingKey must be one of: ${LINKEDIN_PRIVACY_SETTING_KEYS.join(", ")}.`,
   );
 }
 
 export function normalizeLinkedInPrivacySettingValue(
   settingKey: LinkedInPrivacySettingKey,
-  value: string
+  value: string,
 ): string {
   return normalizeLinkedInPrivacySettingDescriptorValue(settingKey, value);
 }
@@ -790,15 +789,15 @@ async function executeUpdatePrivacySetting(
   runtime: LinkedInPrivacySettingsExecutorRuntime,
   actionId: string,
   target: Record<string, unknown>,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
 ): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
   const profileName = String(target.profile_name ?? "default");
   const settingKey = normalizeLinkedInPrivacySettingKey(
-    String(target.setting_key ?? payload.setting_key ?? "")
+    String(target.setting_key ?? payload.setting_key ?? ""),
   );
   const requestedValue = normalizeLinkedInPrivacySettingDescriptorValue(
     settingKey,
-    String(payload.value ?? "")
+    String(payload.value ?? ""),
   );
   const descriptor = LINKEDIN_PRIVACY_SETTING_DESCRIPTORS[settingKey];
 
@@ -806,7 +805,7 @@ async function executeUpdatePrivacySetting(
     {
       cdpUrl: runtime.cdpUrl,
       profileName,
-      headless: true
+      headless: true,
     },
     async (context) => {
       const page = await getOrCreatePage(context);
@@ -820,30 +819,30 @@ async function executeUpdatePrivacySetting(
         targetUrl: descriptor.urls[0],
         metadata: {
           setting_key: settingKey,
-          requested_value: requestedValue
+          requested_value: requestedValue,
         },
         errorDetails: {
           setting_key: settingKey,
-          requested_value: requestedValue
+          requested_value: requestedValue,
         },
         beforeExecute: () =>
           consumeRateLimitOrThrow(runtime.rateLimiter, {
             config: UPDATE_PRIVACY_SETTING_RATE_LIMIT_CONFIG,
             message: createConfirmRateLimitMessage(
-              UPDATE_PRIVACY_SETTING_ACTION_TYPE
+              UPDATE_PRIVACY_SETTING_ACTION_TYPE,
             ),
             details: {
               action_id: actionId,
               profile_name: profileName,
               setting_key: settingKey,
-              requested_value: requestedValue
-            }
+              requested_value: requestedValue,
+            },
           }),
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
             "UNKNOWN",
-            `Failed to execute LinkedIn privacy setting update for ${settingKey}.`
+            `Failed to execute LinkedIn privacy setting update for ${settingKey}.`,
           ),
         execute: async () => {
           const update = await withPrivacySettingsPage(
@@ -853,13 +852,13 @@ async function executeUpdatePrivacySetting(
               const result = await descriptor.apply(
                 currentPage,
                 runtime.selectorLocale,
-                requestedValue
+                requestedValue,
               );
               return {
                 ...result,
-                sourceUrl
+                sourceUrl,
               };
-            }
+            },
           );
 
           return {
@@ -870,32 +869,30 @@ async function executeUpdatePrivacySetting(
               previous_value: update.previousValue,
               value: update.currentValue,
               source_url: update.sourceUrl,
-              selector_key: update.selectorKey
+              selector_key: update.selectorKey,
             },
-            artifacts: []
+            artifacts: [],
           };
-        }
+        },
       });
-    }
+    },
   );
 }
 
-export class UpdatePrivacySettingActionExecutor
-  implements ActionExecutor<LinkedInPrivacySettingsExecutorRuntime>
-{
+export class UpdatePrivacySettingActionExecutor implements ActionExecutor<LinkedInPrivacySettingsExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInPrivacySettingsExecutorRuntime>
+    input: ActionExecutorInput<LinkedInPrivacySettingsExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const { result, artifacts } = await executeUpdatePrivacySetting(
       input.runtime,
       input.action.id,
       input.action.target,
-      input.action.payload
+      input.action.payload,
     );
     return {
       ok: true,
       result,
-      artifacts
+      artifacts,
     };
   }
 }
@@ -906,7 +903,7 @@ export function createPrivacySettingActionExecutors(): Record<
 > {
   return {
     [UPDATE_PRIVACY_SETTING_ACTION_TYPE]:
-      new UpdatePrivacySettingActionExecutor()
+      new UpdatePrivacySettingActionExecutor(),
   };
 }
 
@@ -914,20 +911,20 @@ export class LinkedInPrivacySettingsService {
   constructor(private readonly runtime: LinkedInPrivacySettingsRuntime) {}
 
   async getSettings(
-    input: GetLinkedInPrivacySettingsInput = {}
+    input: GetLinkedInPrivacySettingsInput = {},
   ): Promise<LinkedInPrivacySettingState[]> {
     const profileName = input.profileName ?? "default";
 
     await this.runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: this.runtime.cdpUrl
+      cdpUrl: this.runtime.cdpUrl,
     });
 
     return this.runtime.profileManager.runWithContext(
       {
         cdpUrl: this.runtime.cdpUrl,
         profileName,
-        headless: true
+        headless: true,
       },
       async (context) => {
         const page = await getOrCreatePage(context);
@@ -944,13 +941,13 @@ export class LinkedInPrivacySettingsService {
               async (currentPage, sourceUrl) => {
                 const result = await descriptor.read(
                   currentPage,
-                  this.runtime.selectorLocale
+                  this.runtime.selectorLocale,
                 );
                 return {
                   ...result,
-                  sourceUrl
+                  sourceUrl,
                 };
-              }
+              },
             );
 
             settings.push({
@@ -959,17 +956,18 @@ export class LinkedInPrivacySettingsService {
               status: "available",
               source_url: state.sourceUrl,
               selector_key: state.selectorKey,
-              message: null
+              message: null,
             });
           } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message =
+              error instanceof Error ? error.message : String(error);
             settings.push({
               ...definition,
               current_value: null,
               status: "unavailable",
               source_url: null,
               selector_key: null,
-              message
+              message,
             });
             this.runtime.logger.log(
               "warn",
@@ -977,20 +975,18 @@ export class LinkedInPrivacySettingsService {
               {
                 profile_name: profileName,
                 setting_key: definition.key,
-                message
-              }
+                message,
+              },
             );
           }
         }
 
         return settings;
-      }
+      },
     );
   }
 
-  prepareUpdateSetting(
-    input: PrepareUpdateLinkedInPrivacySettingInput
-  ): {
+  prepareUpdateSetting(input: PrepareUpdateLinkedInPrivacySettingInput): {
     preparedActionId: string;
     confirmToken: string;
     expiresAtMs: number;
@@ -1000,12 +996,12 @@ export class LinkedInPrivacySettingsService {
     const settingKey = normalizeLinkedInPrivacySettingKey(input.settingKey);
     const value = normalizeLinkedInPrivacySettingDescriptorValue(
       settingKey,
-      input.value
+      input.value,
     );
     const descriptor = LINKEDIN_PRIVACY_SETTING_DESCRIPTORS[settingKey];
     const target = {
       profile_name: profileName,
-      setting_key: settingKey
+      setting_key: settingKey,
     };
 
     return this.runtime.twoPhaseCommit.prepare({
@@ -1013,7 +1009,7 @@ export class LinkedInPrivacySettingsService {
       target,
       payload: {
         setting_key: settingKey,
-        value
+        value,
       },
       preview: {
         summary: `Update LinkedIn privacy setting ${settingKey} to ${value}`,
@@ -1022,14 +1018,14 @@ export class LinkedInPrivacySettingsService {
           key: settingKey,
           label: descriptor.label,
           description: descriptor.description,
-          value
+          value,
         },
         rate_limit: peekRateLimitPreview(
           this.runtime.rateLimiter,
-          UPDATE_PRIVACY_SETTING_RATE_LIMIT_CONFIG
-        )
+          UPDATE_PRIVACY_SETTING_RATE_LIMIT_CONFIG,
+        ),
       },
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 }

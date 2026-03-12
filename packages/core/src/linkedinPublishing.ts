@@ -2,14 +2,11 @@ import {
   errors as playwrightErrors,
   type BrowserContext,
   type Locator,
-  type Page
+  type Page,
 } from "playwright-core";
 import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
-import {
-  LinkedInBuddyError,
-  asLinkedInBuddyError
-} from "./errors.js";
+import { LinkedInBuddyError, asLinkedInBuddyError } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
@@ -18,8 +15,14 @@ import {
   createConfirmRateLimitMessage,
   peekRateLimitPreview,
   type ConsumeRateLimitInput,
-  type RateLimiter
+  type RateLimiter,
 } from "./rateLimiter.js";
+import {
+  escapeCssAttributeValue,
+  escapeRegExp,
+  getOrCreatePage,
+  normalizeText,
+} from "./shared.js";
 import type { LinkedInSelectorLocale } from "./selectorLocale.js";
 import type {
   ActionExecutor,
@@ -27,7 +30,7 @@ import type {
   ActionExecutorRegistry,
   ActionExecutorResult,
   PreparedActionResult,
-  TwoPhaseCommitService
+  TwoPhaseCommitService,
 } from "./twoPhaseCommit.js";
 
 const LINKEDIN_FEED_URL = "https://www.linkedin.com/feed/";
@@ -41,30 +44,30 @@ const PUBLISHING_RATE_LIMIT_CONFIGS = {
   [CREATE_ARTICLE_ACTION_TYPE]: {
     counterKey: "linkedin.article.create",
     windowSizeMs: 24 * 60 * 60 * 1000,
-    limit: 1
+    limit: 1,
   },
   [PUBLISH_ARTICLE_ACTION_TYPE]: {
     counterKey: "linkedin.article.publish",
     windowSizeMs: 24 * 60 * 60 * 1000,
-    limit: 1
+    limit: 1,
   },
   [CREATE_NEWSLETTER_ACTION_TYPE]: {
     counterKey: "linkedin.newsletter.create",
     windowSizeMs: 24 * 60 * 60 * 1000,
-    limit: 1
+    limit: 1,
   },
   [PUBLISH_NEWSLETTER_ISSUE_ACTION_TYPE]: {
     counterKey: "linkedin.newsletter.publish_issue",
     windowSizeMs: 24 * 60 * 60 * 1000,
-    limit: 1
-  }
+    limit: 1,
+  },
 } as const satisfies Record<string, ConsumeRateLimitInput>;
 
 export const LINKEDIN_NEWSLETTER_CADENCE_TYPES = [
   "daily",
   "weekly",
   "biweekly",
-  "monthly"
+  "monthly",
 ] as const;
 
 export type LinkedInNewsletterCadence =
@@ -76,20 +79,20 @@ const LINKEDIN_NEWSLETTER_CADENCE_LABELS: Record<
 > = {
   daily: {
     label: "Daily",
-    aliases: ["daily", "every day"]
+    aliases: ["daily", "every day"],
   },
   weekly: {
     label: "Weekly",
-    aliases: ["weekly", "every week"]
+    aliases: ["weekly", "every week"],
   },
   biweekly: {
     label: "Biweekly",
-    aliases: ["biweekly", "bi-weekly", "every two weeks", "fortnightly"]
+    aliases: ["biweekly", "bi-weekly", "every two weeks", "fortnightly"],
   },
   monthly: {
     label: "Monthly",
-    aliases: ["monthly", "every month"]
-  }
+    aliases: ["monthly", "every month"],
+  },
 };
 
 export const ARTICLE_TITLE_MAX_LENGTH = 150;
@@ -152,8 +155,7 @@ export interface LinkedInPublishingExecutorRuntime {
   artifacts: ArtifactHelpers;
 }
 
-export interface LinkedInPublishingRuntime
-  extends LinkedInPublishingExecutorRuntime {
+export interface LinkedInPublishingRuntime extends LinkedInPublishingExecutorRuntime {
   twoPhaseCommit: Pick<
     TwoPhaseCommitService<LinkedInPublishingExecutorRuntime>,
     "prepare"
@@ -179,12 +181,8 @@ interface EditorSurface {
   triggerKey: string;
 }
 
-function normalizeText(value: string | null | undefined): string {
-  return (value ?? "").replace(/\s+/gu, " ").trim();
-}
-
 function getPublishingRateLimitConfig(
-  actionType: string
+  actionType: string,
 ): ConsumeRateLimitInput {
   const config = (
     PUBLISHING_RATE_LIMIT_CONFIGS as Record<string, ConsumeRateLimitInput>
@@ -192,7 +190,7 @@ function getPublishingRateLimitConfig(
 
   if (!config) {
     throw new LinkedInBuddyError("UNKNOWN", "Missing rate limit policy.", {
-      action_type: actionType
+      action_type: actionType,
     });
   }
 
@@ -212,8 +210,8 @@ function enforcePublishingRateLimit(input: {
     details: {
       action_id: input.actionId,
       profile_name: input.profileName,
-      ...(input.details ?? {})
-    }
+      ...(input.details ?? {}),
+    },
   });
 }
 
@@ -225,7 +223,7 @@ function preparePublishingAction(
     payload: Record<string, unknown>;
     preview: Record<string, unknown>;
     operatorNote?: string;
-  }
+  },
 ): PreparedActionResult {
   return runtime.twoPhaseCommit.prepare({
     actionType: input.actionType,
@@ -235,10 +233,10 @@ function preparePublishingAction(
       ...input.preview,
       rate_limit: peekRateLimitPreview(
         runtime.rateLimiter,
-        getPublishingRateLimitConfig(input.actionType)
-      )
+        getPublishingRateLimitConfig(input.actionType),
+      ),
     },
-    ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
   });
 }
 
@@ -256,22 +254,17 @@ function containsUnsupportedControlCharacters(value: string): boolean {
 }
 
 function normalizeLine(value: string): string {
-  return value.replace(/[ \t]+\n/gu, "\n").replace(/[ \t]+$/gu, "").trim();
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-}
-
-function escapeCssAttributeValue(value: string): string {
-  return value.replace(/\\/gu, "\\\\").replace(/"/gu, '\\"');
+  return value
+    .replace(/[ \t]+\n/gu, "\n")
+    .replace(/[ \t]+$/gu, "")
+    .trim();
 }
 
 function buildLocalizedRegex(
   selectorLocale: LinkedInSelectorLocale,
   english: readonly string[],
   danish: readonly string[] = english,
-  options: { exact?: boolean } = {}
+  options: { exact?: boolean } = {},
 ): RegExp {
   const phrases =
     selectorLocale === "da" ? [...danish, ...english] : [...english, ...danish];
@@ -286,30 +279,29 @@ function requireSingleLineText(
   options: {
     allowUrl?: boolean;
     maxLength?: number;
-  } = {}
+  } = {},
 ): string {
   const normalizedValue = normalizeText(value);
   if (!normalizedValue) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      `${label} must not be empty.`
+      `${label} must not be empty.`,
     );
   }
 
   if (!options.allowUrl && /^https?:\/\//iu.test(normalizedValue)) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      `${label} must be descriptive text, not a URL.`
+      `${label} must be descriptive text, not a URL.`,
     );
   }
 
   if (containsUnsupportedControlCharacters(normalizedValue)) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      `${label} contains unsupported control characters.`
+      `${label} contains unsupported control characters.`,
     );
   }
-
 
   if (options.maxLength && normalizedValue.length > options.maxLength) {
     throw new LinkedInBuddyError(
@@ -326,23 +318,22 @@ function requireLongFormText(
   options: { maxLength?: number } = {},
 ): string {
   const normalizedValue = normalizeLine(
-    value.replace(/\r\n/gu, "\n").replace(/\r/gu, "\n")
+    value.replace(/\r\n/gu, "\n").replace(/\r/gu, "\n"),
   );
 
   if (!normalizedValue) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      `${label} must not be empty.`
+      `${label} must not be empty.`,
     );
   }
 
   if (containsUnsupportedControlCharacters(normalizedValue)) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      `${label} contains unsupported control characters.`
+      `${label} contains unsupported control characters.`,
     );
   }
-
 
   if (options.maxLength && normalizedValue.length > options.maxLength) {
     throw new LinkedInBuddyError(
@@ -354,7 +345,7 @@ function requireLongFormText(
 }
 
 function normalizeNewsletterCadence(
-  value: LinkedInNewsletterCadence | string
+  value: LinkedInNewsletterCadence | string,
 ): LinkedInNewsletterCadence {
   const normalizedValue = normalizeText(value)
     .toLowerCase()
@@ -363,7 +354,7 @@ function normalizeNewsletterCadence(
   for (const cadence of LINKEDIN_NEWSLETTER_CADENCE_TYPES) {
     const config = LINKEDIN_NEWSLETTER_CADENCE_LABELS[cadence];
     const aliases = [cadence, ...config.aliases].map((alias) =>
-      alias.replace(/[\s_-]+/gu, "")
+      alias.replace(/[\s_-]+/gu, ""),
     );
     if (aliases.includes(normalizedValue)) {
       return cadence;
@@ -372,13 +363,13 @@ function normalizeNewsletterCadence(
 
   throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
-    `cadence must be one of: ${LINKEDIN_NEWSLETTER_CADENCE_TYPES.join(", ")}.`
+    `cadence must be one of: ${LINKEDIN_NEWSLETTER_CADENCE_TYPES.join(", ")}.`,
   );
 }
 
 function normalizeLinkedInUrl(value: string, label: string): string {
   const normalizedValue = requireSingleLineText(value, label, {
-    allowUrl: true
+    allowUrl: true,
   });
 
   let parsedUrl: URL;
@@ -388,14 +379,14 @@ function normalizeLinkedInUrl(value: string, label: string): string {
     throw asLinkedInBuddyError(
       error,
       "ACTION_PRECONDITION_FAILED",
-      `${label} must be a valid absolute URL.`
+      `${label} must be a valid absolute URL.`,
     );
   }
 
   if (!LINKEDIN_HOST_PATTERN.test(parsedUrl.hostname)) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      `${label} must point to linkedin.com.`
+      `${label} must point to linkedin.com.`,
     );
   }
 
@@ -448,7 +439,7 @@ function getRequiredStringField(
   source: Record<string, unknown>,
   key: string,
   actionId: string,
-  location: "target" | "payload"
+  location: "target" | "payload",
 ): string {
   const value = source[key];
   if (typeof value === "string" && value.trim().length > 0) {
@@ -461,50 +452,45 @@ function getRequiredStringField(
     {
       action_id: actionId,
       location,
-      key
-    }
+      key,
+    },
   );
 }
 
 function toAutomationError(
   error: unknown,
   message: string,
-  details: Record<string, unknown>
+  details: Record<string, unknown>,
 ): LinkedInBuddyError {
   if (error instanceof LinkedInBuddyError) {
     return error;
   }
 
   if (error instanceof playwrightErrors.TimeoutError) {
-    return new LinkedInBuddyError("TIMEOUT", message, details, { cause: error });
+    return new LinkedInBuddyError("TIMEOUT", message, details, {
+      cause: error,
+    });
   }
 
   if (
     error instanceof Error &&
-    /(net::|ERR_|ECONN|ENOTFOUND|EAI_AGAIN|socket hang up)/iu.test(error.message)
+    /(net::|ERR_|ECONN|ENOTFOUND|EAI_AGAIN|socket hang up)/iu.test(
+      error.message,
+    )
   ) {
     return new LinkedInBuddyError("NETWORK_ERROR", message, details, {
-      cause: error
+      cause: error,
     });
   }
 
   return asLinkedInBuddyError(error, "UNKNOWN", message);
 }
 
-async function getOrCreatePage(context: BrowserContext): Promise<Page> {
-  const existing = context.pages()[0];
-  if (existing) {
-    return existing;
-  }
-
-  return context.newPage();
-}
-
 async function captureScreenshotArtifact(
   runtime: LinkedInPublishingExecutorRuntime,
   page: Page,
   relativePath: string,
-  metadata: Record<string, unknown> = {}
+  metadata: Record<string, unknown> = {},
 ): Promise<string> {
   const absolutePath = runtime.artifacts.resolve(relativePath);
   await page.screenshot({ path: absolutePath, fullPage: true });
@@ -515,7 +501,7 @@ async function captureScreenshotArtifact(
 function registerTraceArtifact(
   runtime: LinkedInPublishingExecutorRuntime,
   relativePath: string,
-  metadata: Record<string, unknown>
+  metadata: Record<string, unknown>,
 ): void {
   runtime.artifacts.registerArtifact(relativePath, "application/zip", metadata);
 }
@@ -523,7 +509,7 @@ function registerTraceArtifact(
 async function waitForCondition(
   condition: () => Promise<boolean>,
   timeoutMs: number,
-  intervalMs = 250
+  intervalMs = 250,
 ): Promise<boolean> {
   const deadline = Date.now() + Math.max(0, timeoutMs);
 
@@ -552,7 +538,7 @@ async function findVisibleLocatorOrThrow(
   page: Page,
   candidates: SelectorCandidate[],
   selectorKey: string,
-  artifactPaths: string[]
+  artifactPaths: string[],
 ): Promise<{ locator: Locator; key: string }> {
   for (const candidate of candidates) {
     const locator = candidate.locatorFactory(page).first();
@@ -570,9 +556,11 @@ async function findVisibleLocatorOrThrow(
     {
       selector_key: selectorKey,
       current_url: page.url(),
-      attempted_selectors: candidates.map((candidate) => candidate.selectorHint),
-      artifact_paths: artifactPaths
-    }
+      attempted_selectors: candidates.map(
+        (candidate) => candidate.selectorHint,
+      ),
+      artifact_paths: artifactPaths,
+    },
   );
 }
 
@@ -581,7 +569,7 @@ async function findVisibleScopedLocatorOrThrow(
   candidates: ScopedSelectorCandidate[],
   selectorKey: string,
   artifactPaths: string[],
-  currentUrl: string
+  currentUrl: string,
 ): Promise<{ locator: Locator; key: string }> {
   for (const candidate of candidates) {
     const locator = candidate.locatorFactory(root).first();
@@ -599,15 +587,17 @@ async function findVisibleScopedLocatorOrThrow(
     {
       selector_key: selectorKey,
       current_url: currentUrl,
-      attempted_selectors: candidates.map((candidate) => candidate.selectorHint),
-      artifact_paths: artifactPaths
-    }
+      attempted_selectors: candidates.map(
+        (candidate) => candidate.selectorHint,
+      ),
+      artifact_paths: artifactPaths,
+    },
   );
 }
 
 async function findOptionalVisibleLocator(
   page: Page,
-  candidates: SelectorCandidate[]
+  candidates: SelectorCandidate[],
 ): Promise<{ locator: Locator; key: string } | null> {
   for (const candidate of candidates) {
     const locator = candidate.locatorFactory(page).first();
@@ -639,18 +629,18 @@ async function fillEditable(locator: Locator, value: string): Promise<void> {
 
 function createTextControlCandidates(
   keyPrefix: string,
-  regex: RegExp
+  regex: RegExp,
 ): SelectorCandidate[] {
   return [
     {
       key: `${keyPrefix}-button`,
       selectorHint: `button name ${regex}`,
-      locatorFactory: (page) => page.getByRole("button", { name: regex })
+      locatorFactory: (page) => page.getByRole("button", { name: regex }),
     },
     {
       key: `${keyPrefix}-link`,
       selectorHint: `link name ${regex}`,
-      locatorFactory: (page) => page.getByRole("link", { name: regex })
+      locatorFactory: (page) => page.getByRole("link", { name: regex }),
     },
     {
       key: `${keyPrefix}-generic-text`,
@@ -658,22 +648,22 @@ function createTextControlCandidates(
       locatorFactory: (page) =>
         page
           .locator(
-            "button, a, [role='button'], [role='menuitem'], [role='option']"
+            "button, a, [role='button'], [role='menuitem'], [role='option']",
           )
-          .filter({ hasText: regex })
-    }
+          .filter({ hasText: regex }),
+    },
   ];
 }
 
 function createScopedTextControlCandidates(
   keyPrefix: string,
-  regex: RegExp
+  regex: RegExp,
 ): ScopedSelectorCandidate[] {
   return [
     {
       key: `${keyPrefix}-button`,
       selectorHint: `button name ${regex}`,
-      locatorFactory: (root) => root.getByRole("button", { name: regex })
+      locatorFactory: (root) => root.getByRole("button", { name: regex }),
     },
     {
       key: `${keyPrefix}-generic-text`,
@@ -681,27 +671,27 @@ function createScopedTextControlCandidates(
       locatorFactory: (root) =>
         root
           .locator(
-            "button, a, [role='button'], [role='menuitem'], [role='option']"
+            "button, a, [role='button'], [role='menuitem'], [role='option']",
           )
-          .filter({ hasText: regex })
-    }
+          .filter({ hasText: regex }),
+    },
   ];
 }
 
 function createEditorTitleCandidates(
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): SelectorCandidate[] {
   const titleRegex = buildLocalizedRegex(
     selectorLocale,
     ["Title", "Headline"],
-    ["Titel", "Overskrift"]
+    ["Titel", "Overskrift"],
   );
 
   return [
     {
       key: "editor-title-role-textbox",
       selectorHint: `textbox name ${titleRegex}`,
-      locatorFactory: (page) => page.getByRole("textbox", { name: titleRegex })
+      locatorFactory: (page) => page.getByRole("textbox", { name: titleRegex }),
     },
     {
       key: "editor-title-placeholder-input",
@@ -724,9 +714,9 @@ function createEditorTitleCandidates(
             "textarea[aria-label*='Title']",
             "textarea[aria-label*='title']",
             "textarea[aria-label*='Headline']",
-            "textarea[aria-label*='headline']"
-          ].join(", ")
-        )
+            "textarea[aria-label*='headline']",
+          ].join(", "),
+        ),
     },
     {
       key: "editor-title-contenteditable",
@@ -742,27 +732,27 @@ function createEditorTitleCandidates(
             "[contenteditable='true'][aria-label*='Title']",
             "[contenteditable='true'][aria-label*='title']",
             "[contenteditable='true'][aria-label*='Headline']",
-            "[contenteditable='true'][aria-label*='headline']"
-          ].join(", ")
-        )
-    }
+            "[contenteditable='true'][aria-label*='headline']",
+          ].join(", "),
+        ),
+    },
   ];
 }
 
 function createEditorBodyCandidates(
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): SelectorCandidate[] {
   const bodyRegex = buildLocalizedRegex(
     selectorLocale,
     ["Write here", "Tell your story", "Body", "Content"],
-    ["Skriv her", "Fortæl din historie", "Brødtekst", "Indhold"]
+    ["Skriv her", "Fortæl din historie", "Brødtekst", "Indhold"],
   );
 
   return [
     {
       key: "editor-body-role-textbox",
       selectorHint: `textbox name ${bodyRegex}`,
-      locatorFactory: (page) => page.getByRole("textbox", { name: bodyRegex })
+      locatorFactory: (page) => page.getByRole("textbox", { name: bodyRegex }),
     },
     {
       key: "editor-body-contenteditable-prompt",
@@ -783,16 +773,20 @@ function createEditorBodyCandidates(
             "[contenteditable='true'][aria-label*='Body']",
             "[contenteditable='true'][aria-label*='body']",
             "[contenteditable='true'][aria-label*='Content']",
-            "[contenteditable='true'][aria-label*='content']"
-          ].join(", ")
-        )
+            "[contenteditable='true'][aria-label*='content']",
+          ].join(", "),
+        ),
     },
     {
       key: "editor-body-last-contenteditable",
       selectorHint: "last contenteditable element",
       locatorFactory: (page) =>
-        page.locator("[role='textbox'][contenteditable='true'], [contenteditable='true']").last()
-    }
+        page
+          .locator(
+            "[role='textbox'][contenteditable='true'], [contenteditable='true']",
+          )
+          .last(),
+    },
   ];
 }
 
@@ -801,19 +795,19 @@ function createDialogRootCandidates(): SelectorCandidate[] {
     {
       key: "dialog-role",
       selectorHint: "[role='dialog']",
-      locatorFactory: (page) => page.locator("[role='dialog']")
+      locatorFactory: (page) => page.locator("[role='dialog']"),
     },
     {
       key: "dialog-element",
       selectorHint: "dialog element",
-      locatorFactory: (page) => page.locator("dialog")
+      locatorFactory: (page) => page.locator("dialog"),
     },
     {
       key: "dialog-artdeco",
       selectorHint: ".artdeco-modal, .artdeco-modal__content",
       locatorFactory: (page) =>
-        page.locator(".artdeco-modal, .artdeco-modal__content")
-    }
+        page.locator(".artdeco-modal, .artdeco-modal__content"),
+    },
   ];
 }
 
@@ -821,7 +815,7 @@ function createDialogTextInputCandidates(
   keyPrefix: string,
   selectorLocale: LinkedInSelectorLocale,
   english: readonly string[],
-  danish: readonly string[] = english
+  danish: readonly string[] = english,
 ): ScopedSelectorCandidate[] {
   const labelRegex = buildLocalizedRegex(selectorLocale, english, danish);
   const phrases =
@@ -838,46 +832,47 @@ function createDialogTextInputCandidates(
             `input[placeholder*="${escapedValue}"]`,
             `textarea[placeholder*="${escapedValue}"]`,
             `[contenteditable='true'][aria-label*="${escapedValue}"]`,
-            `[contenteditable='true'][data-placeholder*="${escapedValue}"]`
+            `[contenteditable='true'][data-placeholder*="${escapedValue}"]`,
           ];
         });
-      })
-    )
+      }),
+    ),
   ).join(", ");
 
   return [
     {
       key: `${keyPrefix}-textbox`,
       selectorHint: `textbox name ${labelRegex}`,
-      locatorFactory: (root) => root.getByRole("textbox", { name: labelRegex })
+      locatorFactory: (root) => root.getByRole("textbox", { name: labelRegex }),
     },
     {
       key: `${keyPrefix}-label`,
       selectorHint: `label ${labelRegex}`,
-      locatorFactory: (root) => root.getByLabel(labelRegex)
+      locatorFactory: (root) => root.getByLabel(labelRegex),
     },
     {
       key: `${keyPrefix}-attribute`,
       selectorHint: `input/textarea/contenteditable placeholder or aria-label ${labelRegex}`,
-      locatorFactory: (root) => root.locator(attributeSelectors)
-    }
+      locatorFactory: (root) => root.locator(attributeSelectors),
+    },
   ];
 }
 
 function createNewsletterFrequencyCandidates(
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): ScopedSelectorCandidate[] {
   const frequencyRegex = buildLocalizedRegex(
     selectorLocale,
     ["Frequency", "Cadence"],
-    ["Hyppighed", "Kadence"]
+    ["Hyppighed", "Kadence"],
   );
 
   return [
     {
       key: "newsletter-frequency-combobox",
       selectorHint: `combobox name ${frequencyRegex}`,
-      locatorFactory: (root) => root.getByRole("combobox", { name: frequencyRegex })
+      locatorFactory: (root) =>
+        root.getByRole("combobox", { name: frequencyRegex }),
     },
     {
       key: "newsletter-frequency-select",
@@ -888,104 +883,104 @@ function createNewsletterFrequencyCandidates(
             "select[aria-label*='Frequency']",
             "select[aria-label*='frequency']",
             "select[aria-label*='Cadence']",
-            "select[aria-label*='cadence']"
-          ].join(", ")
-        )
+            "select[aria-label*='cadence']",
+          ].join(", "),
+        ),
     },
     {
       key: "newsletter-frequency-any-select",
       selectorHint: "select, [role='combobox']",
-      locatorFactory: (root) => root.locator("select, [role='combobox']")
-    }
+      locatorFactory: (root) => root.locator("select, [role='combobox']"),
+    },
   ];
 }
 
 function createWriteArticleTriggerCandidates(
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): SelectorCandidate[] {
   const regex = buildLocalizedRegex(
     selectorLocale,
     ["Write article", "Write an article"],
-    ["Skriv artikel", "Skriv en artikel"]
+    ["Skriv artikel", "Skriv en artikel"],
   );
 
   return createTextControlCandidates("write-article", regex);
 }
 
 function createManageCandidates(
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): SelectorCandidate[] {
   const regex = buildLocalizedRegex(
     selectorLocale,
     ["Manage"],
-    ["Administrer"]
+    ["Administrer"],
   );
 
   return createTextControlCandidates("manage", regex);
 }
 
 function createCreateNewsletterCandidates(
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): SelectorCandidate[] {
   const regex = buildLocalizedRegex(
     selectorLocale,
     ["Create a newsletter", "Create newsletter"],
-    ["Opret et nyhedsbrev"]
+    ["Opret et nyhedsbrev"],
   );
 
   return createTextControlCandidates("create-newsletter", regex);
 }
 
 function createNextCandidates(
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): SelectorCandidate[] {
   const regex = buildLocalizedRegex(selectorLocale, ["Next"], ["Næste"]);
   return createTextControlCandidates("next", regex);
 }
 
 function createPublishCandidates(
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): SelectorCandidate[] {
   const regex = buildLocalizedRegex(
     selectorLocale,
     ["Publish"],
-    ["Udgiv", "Publicer"]
+    ["Udgiv", "Publicer"],
   );
 
   return createTextControlCandidates("publish", regex);
 }
 
 function createScopedPublishCandidates(
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): ScopedSelectorCandidate[] {
   const regex = buildLocalizedRegex(
     selectorLocale,
     ["Publish"],
-    ["Udgiv", "Publicer"]
+    ["Udgiv", "Publicer"],
   );
 
   return createScopedTextControlCandidates("publish", regex);
 }
 
 function createDoneCandidates(
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): ScopedSelectorCandidate[] {
   const regex = buildLocalizedRegex(
     selectorLocale,
     ["Done"],
-    ["Færdig", "Udført"]
+    ["Færdig", "Udført"],
   );
 
   return createScopedTextControlCandidates("done", regex);
 }
 
 function createPublishTargetCandidates(
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): SelectorCandidate[] {
   const regex = buildLocalizedRegex(
     selectorLocale,
     ["Individual article", "Newsletter", "Article"],
-    ["Individuel artikel", "Nyhedsbrev", "Artikel"]
+    ["Individuel artikel", "Nyhedsbrev", "Artikel"],
   );
 
   return [
@@ -995,23 +990,23 @@ function createPublishTargetCandidates(
       locatorFactory: (page) =>
         page
           .locator("header button, header [role='button']")
-          .filter({ hasText: regex })
+          .filter({ hasText: regex }),
     },
     {
       key: "publish-target-generic-button",
       selectorHint: `button hasText ${regex}`,
       locatorFactory: (page) =>
-        page.locator("button, [role='button']").filter({ hasText: regex })
-    }
+        page.locator("button, [role='button']").filter({ hasText: regex }),
+    },
   ];
 }
 
 function createNewsletterOptionCandidates(
   selectorLocale: LinkedInSelectorLocale,
-  title: string
+  title: string,
 ): SelectorCandidate[] {
   const exactRegex = buildLocalizedRegex(selectorLocale, [title], [title], {
-    exact: true
+    exact: true,
   });
 
   return [
@@ -1020,9 +1015,9 @@ function createNewsletterOptionCandidates(
       selectorHint: `option/menuitem/button name ${exactRegex}`,
       locatorFactory: (page) =>
         page.locator("[role='option'], [role='menuitem'], button, a").filter({
-          hasText: exactRegex
-        })
-    }
+          hasText: exactRegex,
+        }),
+    },
   ];
 }
 
@@ -1030,7 +1025,7 @@ async function waitForPublishingEditor(
   page: Page,
   selectorLocale: LinkedInSelectorLocale,
   artifactPaths: string[],
-  triggerKey: string
+  triggerKey: string,
 ): Promise<EditorSurface> {
   await page.waitForLoadState("domcontentloaded").catch(() => undefined);
   await waitForNetworkIdleBestEffort(page, 10_000);
@@ -1039,20 +1034,20 @@ async function waitForPublishingEditor(
     page,
     createEditorTitleCandidates(selectorLocale),
     "article_editor_title",
-    artifactPaths
+    artifactPaths,
   );
   const body = await findVisibleLocatorOrThrow(
     page,
     createEditorBodyCandidates(selectorLocale),
     "article_editor_body",
-    artifactPaths
+    artifactPaths,
   );
 
   return {
     page,
     titleKey: title.key,
     bodyKey: body.key,
-    triggerKey
+    triggerKey,
   };
 }
 
@@ -1060,7 +1055,7 @@ async function openPublishingEditor(
   context: BrowserContext,
   basePage: Page,
   selectorLocale: LinkedInSelectorLocale,
-  artifactPaths: string[]
+  artifactPaths: string[],
 ): Promise<EditorSurface> {
   await basePage.goto(LINKEDIN_FEED_URL, { waitUntil: "domcontentloaded" });
   await waitForNetworkIdleBestEffort(basePage, 10_000);
@@ -1069,9 +1064,11 @@ async function openPublishingEditor(
     basePage,
     createWriteArticleTriggerCandidates(selectorLocale),
     "write_article_trigger",
-    artifactPaths
+    artifactPaths,
   );
-  const popupPromise = context.waitForEvent("page", { timeout: 5_000 }).catch(() => null);
+  const popupPromise = context
+    .waitForEvent("page", { timeout: 5_000 })
+    .catch(() => null);
 
   await trigger.locator.click({ timeout: 5_000 });
 
@@ -1086,7 +1083,7 @@ async function openPublishingEditor(
     editorPage,
     selectorLocale,
     artifactPaths,
-    trigger.key
+    trigger.key,
   );
 }
 
@@ -1095,19 +1092,19 @@ async function fillDraftTitleAndBody(
   selectorLocale: LinkedInSelectorLocale,
   title: string,
   body: string,
-  artifactPaths: string[]
+  artifactPaths: string[],
 ): Promise<{ titleKey: string; bodyKey: string }> {
   const titleLocator = await findVisibleLocatorOrThrow(
     page,
     createEditorTitleCandidates(selectorLocale),
     "article_editor_title",
-    artifactPaths
+    artifactPaths,
   );
   const bodyLocator = await findVisibleLocatorOrThrow(
     page,
     createEditorBodyCandidates(selectorLocale),
     "article_editor_body",
-    artifactPaths
+    artifactPaths,
   );
 
   await fillEditable(titleLocator.locator, title);
@@ -1115,20 +1112,20 @@ async function fillDraftTitleAndBody(
 
   return {
     titleKey: titleLocator.key,
-    bodyKey: bodyLocator.key
+    bodyKey: bodyLocator.key,
   };
 }
 
 async function openManageMenu(
   page: Page,
   selectorLocale: LinkedInSelectorLocale,
-  artifactPaths: string[]
+  artifactPaths: string[],
 ): Promise<{ locator: Locator; key: string }> {
   const manageButton = await findVisibleLocatorOrThrow(
     page,
     createManageCandidates(selectorLocale),
     "publishing_manage_button",
-    artifactPaths
+    artifactPaths,
   );
   await manageButton.locator.click({ timeout: 5_000 });
   return manageButton;
@@ -1137,14 +1134,18 @@ async function openManageMenu(
 async function openNewsletterCreateDialog(
   page: Page,
   selectorLocale: LinkedInSelectorLocale,
-  artifactPaths: string[]
+  artifactPaths: string[],
 ): Promise<{ dialog: Locator; manageKey: string; createKey: string }> {
-  const manageButton = await openManageMenu(page, selectorLocale, artifactPaths);
+  const manageButton = await openManageMenu(
+    page,
+    selectorLocale,
+    artifactPaths,
+  );
   const createAction = await findVisibleLocatorOrThrow(
     page,
     createCreateNewsletterCandidates(selectorLocale),
     "create_newsletter_action",
-    artifactPaths
+    artifactPaths,
   );
   await createAction.locator.click({ timeout: 5_000 });
 
@@ -1152,13 +1153,13 @@ async function openNewsletterCreateDialog(
     page,
     createDialogRootCandidates(),
     "newsletter_create_dialog",
-    artifactPaths
+    artifactPaths,
   );
 
   return {
     dialog: dialog.locator,
     manageKey: manageButton.key,
-    createKey: createAction.key
+    createKey: createAction.key,
   };
 }
 
@@ -1169,7 +1170,7 @@ async function fillNewsletterCreateDialog(
   title: string,
   description: string,
   cadence: LinkedInNewsletterCadence,
-  artifactPaths: string[]
+  artifactPaths: string[],
 ): Promise<{
   titleKey: string;
   descriptionKey: string;
@@ -1182,11 +1183,11 @@ async function fillNewsletterCreateDialog(
       "newsletter-title",
       selectorLocale,
       ["Title", "Name"],
-      ["Titel", "Navn"]
+      ["Titel", "Navn"],
     ),
     "newsletter_dialog_title",
     artifactPaths,
-    page.url()
+    page.url(),
   );
   await fillEditable(titleField.locator, title);
 
@@ -1196,11 +1197,11 @@ async function fillNewsletterCreateDialog(
       "newsletter-description",
       selectorLocale,
       ["Description"],
-      ["Beskrivelse"]
+      ["Beskrivelse"],
     ),
     "newsletter_dialog_description",
     artifactPaths,
-    page.url()
+    page.url(),
   );
   await fillEditable(descriptionField.locator, description);
 
@@ -1209,7 +1210,7 @@ async function fillNewsletterCreateDialog(
     createNewsletterFrequencyCandidates(selectorLocale),
     "newsletter_dialog_frequency",
     artifactPaths,
-    page.url()
+    page.url(),
   );
   const cadenceLabel = LINKEDIN_NEWSLETTER_CADENCE_LABELS[cadence].label;
   const cadenceTagName = await cadenceField.locator
@@ -1225,11 +1226,11 @@ async function fillNewsletterCreateDialog(
       createTextControlCandidates(
         "newsletter-frequency-option",
         buildLocalizedRegex(selectorLocale, [cadenceLabel], [cadenceLabel], {
-          exact: true
-        })
+          exact: true,
+        }),
       ),
       "newsletter_frequency_option",
-      artifactPaths
+      artifactPaths,
     );
     await cadenceOption.locator.click({ timeout: 5_000 });
   }
@@ -1239,7 +1240,7 @@ async function fillNewsletterCreateDialog(
     createDoneCandidates(selectorLocale),
     "newsletter_dialog_done",
     artifactPaths,
-    page.url()
+    page.url(),
   );
   await doneButton.locator.click({ timeout: 5_000 });
   await waitForCondition(async () => !(await isLocatorVisible(dialog)), 10_000);
@@ -1248,27 +1249,29 @@ async function fillNewsletterCreateDialog(
     titleKey: titleField.key,
     descriptionKey: descriptionField.key,
     cadenceKey: cadenceField.key,
-    doneKey: doneButton.key
+    doneKey: doneButton.key,
   };
 }
 
 async function openPublishTargetMenu(
   page: Page,
   selectorLocale: LinkedInSelectorLocale,
-  artifactPaths: string[]
+  artifactPaths: string[],
 ): Promise<{ locator: Locator; key: string; currentLabel: string }> {
   const dropdown = await findVisibleLocatorOrThrow(
     page,
     createPublishTargetCandidates(selectorLocale),
     "publish_target_dropdown",
-    artifactPaths
+    artifactPaths,
   );
-  const currentLabel = normalizeText(await dropdown.locator.innerText().catch(() => ""));
+  const currentLabel = normalizeText(
+    await dropdown.locator.innerText().catch(() => ""),
+  );
   await dropdown.locator.click({ timeout: 5_000 });
   return {
     locator: dropdown.locator,
     key: dropdown.key,
-    currentLabel
+    currentLabel,
   };
 }
 
@@ -1276,14 +1279,18 @@ async function selectNewsletterTarget(
   page: Page,
   selectorLocale: LinkedInSelectorLocale,
   newsletterTitle: string,
-  artifactPaths: string[]
+  artifactPaths: string[],
 ): Promise<{ dropdownKey: string; optionKey: string | null }> {
-  const dropdown = await openPublishTargetMenu(page, selectorLocale, artifactPaths);
+  const dropdown = await openPublishTargetMenu(
+    page,
+    selectorLocale,
+    artifactPaths,
+  );
   if (normalizeText(dropdown.currentLabel) === newsletterTitle) {
     await page.keyboard.press("Escape").catch(() => undefined);
     return {
       dropdownKey: dropdown.key,
-      optionKey: null
+      optionKey: null,
     };
   }
 
@@ -1291,14 +1298,14 @@ async function selectNewsletterTarget(
     page,
     createNewsletterOptionCandidates(selectorLocale, newsletterTitle),
     "newsletter_target_option",
-    artifactPaths
+    artifactPaths,
   );
   await option.locator.click({ timeout: 5_000 });
   await waitForNetworkIdleBestEffort(page, 5_000);
 
   return {
     dropdownKey: dropdown.key,
-    optionKey: option.key
+    optionKey: option.key,
   };
 }
 
@@ -1329,7 +1336,7 @@ function normalizeNewsletterMenuTitle(value: string): string | null {
 
 async function extractVisibleNewsletterTitles(
   page: Page,
-  selectedLabel: string
+  selectedLabel: string,
 ): Promise<LinkedInNewsletterSummary[]> {
   const rawTexts = await page
     .locator(
@@ -1339,8 +1346,8 @@ async function extractVisibleNewsletterTitles(
         ".artdeco-dropdown__content button",
         ".artdeco-dropdown__content a",
         ".artdeco-popover__content button",
-        ".artdeco-popover__content a"
-      ].join(", ")
+        ".artdeco-popover__content a",
+      ].join(", "),
     )
     .allInnerTexts()
     .catch(() => []);
@@ -1357,7 +1364,7 @@ async function extractVisibleNewsletterTitles(
     seen.add(title.toLowerCase());
     newsletters.push({
       title,
-      selected: normalizeText(selectedLabel) === title
+      selected: normalizeText(selectedLabel) === title,
     });
   }
 
@@ -1367,7 +1374,7 @@ async function extractVisibleNewsletterTitles(
 async function publishCurrentLongFormDraft(
   page: Page,
   selectorLocale: LinkedInSelectorLocale,
-  artifactPaths: string[]
+  artifactPaths: string[],
 ): Promise<{
   nextKey: string | null;
   publishKey: string;
@@ -1375,7 +1382,7 @@ async function publishCurrentLongFormDraft(
 }> {
   const nextButton = await findOptionalVisibleLocator(
     page,
-    createNextCandidates(selectorLocale)
+    createNextCandidates(selectorLocale),
   );
 
   if (nextButton) {
@@ -1383,20 +1390,23 @@ async function publishCurrentLongFormDraft(
     await waitForNetworkIdleBestEffort(page, 5_000);
   }
 
-  const dialog = await findOptionalVisibleLocator(page, createDialogRootCandidates());
+  const dialog = await findOptionalVisibleLocator(
+    page,
+    createDialogRootCandidates(),
+  );
   const publishButton = dialog
     ? await findVisibleScopedLocatorOrThrow(
         dialog.locator,
         createScopedPublishCandidates(selectorLocale),
         "publish_dialog_button",
         artifactPaths,
-        page.url()
+        page.url(),
       )
     : await findVisibleLocatorOrThrow(
         page,
         createPublishCandidates(selectorLocale),
         "publish_button",
-        artifactPaths
+        artifactPaths,
       );
 
   await publishButton.locator.click({ timeout: 5_000 });
@@ -1413,15 +1423,15 @@ async function publishCurrentLongFormDraft(
       "LinkedIn did not navigate away from the draft editor after publish.",
       {
         current_url: page.url(),
-        artifact_paths: artifactPaths
-      }
+        artifact_paths: artifactPaths,
+      },
     );
   }
 
   return {
     nextKey: nextButton?.key ?? null,
     publishKey: publishButton.key,
-    publishedUrl: resolvePublishedUrl(page.url())
+    publishedUrl: resolvePublishedUrl(page.url()),
   };
 }
 
@@ -1435,17 +1445,21 @@ export class LinkedInArticlesService {
   constructor(private readonly runtime: LinkedInPublishingRuntime) {}
 
   async prepareCreate(
-    input: PrepareCreateArticleInput
+    input: PrepareCreateArticleInput,
   ): Promise<PreparedActionResult> {
     const profileName = input.profileName ?? "default";
-    const title = requireSingleLineText(input.title, "Article title", { maxLength: ARTICLE_TITLE_MAX_LENGTH });
-    const body = requireLongFormText(input.body, "Article body", { maxLength: ARTICLE_BODY_MAX_LENGTH });
+    const title = requireSingleLineText(input.title, "Article title", {
+      maxLength: ARTICLE_TITLE_MAX_LENGTH,
+    });
+    const body = requireLongFormText(input.body, "Article body", {
+      maxLength: ARTICLE_BODY_MAX_LENGTH,
+    });
     const tracePath = `linkedin/trace-article-prepare-${Date.now()}.zip`;
     const artifactPaths: string[] = [tracePath];
 
     await this.runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: this.runtime.cdpUrl
+      cdpUrl: this.runtime.cdpUrl,
     });
 
     try {
@@ -1453,7 +1467,7 @@ export class LinkedInArticlesService {
         {
           cdpUrl: this.runtime.cdpUrl,
           profileName,
-          headless: true
+          headless: true,
         },
         async (context) => {
           let currentPage = await getOrCreatePage(context);
@@ -1463,7 +1477,7 @@ export class LinkedInArticlesService {
             await context.tracing.start({
               screenshots: true,
               snapshots: true,
-              sources: true
+              sources: true,
             });
             tracingStarted = true;
 
@@ -1471,41 +1485,46 @@ export class LinkedInArticlesService {
               context,
               currentPage,
               this.runtime.selectorLocale,
-              artifactPaths
+              artifactPaths,
             );
             currentPage = editor.page;
 
             const screenshotPath = `linkedin/screenshot-article-prepare-${Date.now()}.png`;
-            await captureScreenshotArtifact(this.runtime, currentPage, screenshotPath, {
-              action: "prepare_create_article",
-              profile_name: profileName,
-              trigger_selector_key: editor.triggerKey,
-              title_selector_key: editor.titleKey,
-              body_selector_key: editor.bodyKey
-            });
+            await captureScreenshotArtifact(
+              this.runtime,
+              currentPage,
+              screenshotPath,
+              {
+                action: "prepare_create_article",
+                profile_name: profileName,
+                trigger_selector_key: editor.triggerKey,
+                title_selector_key: editor.titleKey,
+                body_selector_key: editor.bodyKey,
+              },
+            );
             artifactPaths.push(screenshotPath);
 
             const target = {
               profile_name: profileName,
               compose_url: LINKEDIN_FEED_URL,
-              content_type: "article"
+              content_type: "article",
             };
             const preview = {
               summary: `Create LinkedIn article draft "${title}"`,
               target,
               outbound: {
                 title,
-                body
+                body,
               },
               validation: {
                 title_length: title.length,
                 body_length: body.length,
-                body_paragraph_count: body.split(/\n{2,}/u).length
+                body_paragraph_count: body.split(/\n{2,}/u).length,
               },
               artifacts: artifactPaths.map((path) => ({
                 type: path.endsWith(".zip") ? "trace" : "screenshot",
-                path
-              }))
+                path,
+              })),
             } satisfies Record<string, unknown>;
 
             return preparePublishingAction(this.runtime, {
@@ -1513,10 +1532,12 @@ export class LinkedInArticlesService {
               target,
               payload: {
                 title,
-                body
+                body,
               },
               preview,
-              ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+              ...(input.operatorNote
+                ? { operatorNote: input.operatorNote }
+                : {}),
             });
           } catch (error) {
             const failureScreenshot = `linkedin/screenshot-article-prepare-error-${Date.now()}.png`;
@@ -1527,50 +1548,64 @@ export class LinkedInArticlesService {
                 failureScreenshot,
                 {
                   action: "prepare_create_article_error",
-                  profile_name: profileName
-                }
+                  profile_name: profileName,
+                },
               );
               artifactPaths.push(failureScreenshot);
             } catch {
               // Best effort.
             }
 
-            throw toAutomationError(error, "Failed to prepare LinkedIn article creation.", {
-              profile_name: profileName,
-              current_url: currentPage.url(),
-              artifact_paths: artifactPaths
-            });
+            throw toAutomationError(
+              error,
+              "Failed to prepare LinkedIn article creation.",
+              {
+                profile_name: profileName,
+                current_url: currentPage.url(),
+                artifact_paths: artifactPaths,
+              },
+            );
           } finally {
             if (tracingStarted) {
               try {
-                const absoluteTracePath = this.runtime.artifacts.resolve(tracePath);
+                const absoluteTracePath =
+                  this.runtime.artifacts.resolve(tracePath);
                 await context.tracing.stop({ path: absoluteTracePath });
                 registerTraceArtifact(this.runtime, tracePath, {
                   action: "prepare_create_article",
-                  profile_name: profileName
+                  profile_name: profileName,
                 });
               } catch (error) {
-                this.runtime.logger.log("warn", "linkedin.article.prepare.trace.stop_failed", {
-                  profile_name: profileName,
-                  message: error instanceof Error ? error.message : String(error)
-                });
+                this.runtime.logger.log(
+                  "warn",
+                  "linkedin.article.prepare.trace.stop_failed",
+                  {
+                    profile_name: profileName,
+                    message:
+                      error instanceof Error ? error.message : String(error),
+                  },
+                );
               }
             }
           }
-        }
+        },
       );
 
       return prepared;
     } catch (error) {
-      throw toAutomationError(error, "Failed to prepare LinkedIn article creation.", {
-        profile_name: profileName,
-        artifact_paths: artifactPaths
-      });
+      throw toAutomationError(
+        error,
+        "Failed to prepare LinkedIn article creation.",
+        {
+          profile_name: profileName,
+          artifact_paths: artifactPaths,
+        },
+      );
     }
   }
 
   async preparePublish(
-    input: PreparePublishArticleInput
+    input: PreparePublishArticleInput,
   ): Promise<PreparedActionResult> {
     const profileName = input.profileName ?? "default";
     const draftUrl = normalizeLinkedInUrl(input.draftUrl, "draftUrl");
@@ -1579,7 +1614,7 @@ export class LinkedInArticlesService {
 
     await this.runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: this.runtime.cdpUrl
+      cdpUrl: this.runtime.cdpUrl,
     });
 
     try {
@@ -1587,7 +1622,7 @@ export class LinkedInArticlesService {
         {
           cdpUrl: this.runtime.cdpUrl,
           profileName,
-          headless: true
+          headless: true,
         },
         async (context) => {
           const page = await getOrCreatePage(context);
@@ -1597,7 +1632,7 @@ export class LinkedInArticlesService {
             await context.tracing.start({
               screenshots: true,
               snapshots: true,
-              sources: true
+              sources: true,
             });
             tracingStarted = true;
 
@@ -1608,92 +1643,108 @@ export class LinkedInArticlesService {
               page,
               createEditorTitleCandidates(this.runtime.selectorLocale),
               "article_editor_title",
-              artifactPaths
+              artifactPaths,
             );
             const body = await findVisibleLocatorOrThrow(
               page,
               createEditorBodyCandidates(this.runtime.selectorLocale),
               "article_editor_body",
-              artifactPaths
+              artifactPaths,
             );
             const publishButton = await findOptionalVisibleLocator(
               page,
-              createPublishCandidates(this.runtime.selectorLocale)
+              createPublishCandidates(this.runtime.selectorLocale),
             );
             const nextButton = await findOptionalVisibleLocator(
               page,
-              createNextCandidates(this.runtime.selectorLocale)
+              createNextCandidates(this.runtime.selectorLocale),
             );
 
             const currentTitle = await resolveEditableText(title.locator);
             const screenshotPath = `linkedin/screenshot-article-publish-prepare-${Date.now()}.png`;
-            await captureScreenshotArtifact(this.runtime, page, screenshotPath, {
-              action: "prepare_publish_article",
-              profile_name: profileName,
-              draft_url: draftUrl,
-              title_selector_key: title.key,
-              body_selector_key: body.key,
-              publish_selector_key: publishButton?.key ?? null,
-              next_selector_key: nextButton?.key ?? null
-            });
+            await captureScreenshotArtifact(
+              this.runtime,
+              page,
+              screenshotPath,
+              {
+                action: "prepare_publish_article",
+                profile_name: profileName,
+                draft_url: draftUrl,
+                title_selector_key: title.key,
+                body_selector_key: body.key,
+                publish_selector_key: publishButton?.key ?? null,
+                next_selector_key: nextButton?.key ?? null,
+              },
+            );
             artifactPaths.push(screenshotPath);
 
             const target = {
               profile_name: profileName,
               draft_url: draftUrl,
-              content_type: "article"
+              content_type: "article",
             };
             const preview = {
               summary: `Publish LinkedIn article draft${currentTitle ? ` "${currentTitle}"` : ""}`,
               target,
               current_state: {
                 title: currentTitle || null,
-                editor_url: page.url()
+                editor_url: page.url(),
               },
               artifacts: artifactPaths.map((path) => ({
                 type: path.endsWith(".zip") ? "trace" : "screenshot",
-                path
-              }))
+                path,
+              })),
             } satisfies Record<string, unknown>;
 
             return preparePublishingAction(this.runtime, {
               actionType: PUBLISH_ARTICLE_ACTION_TYPE,
               target,
               payload: {
-                draft_url: draftUrl
+                draft_url: draftUrl,
               },
               preview,
-              ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+              ...(input.operatorNote
+                ? { operatorNote: input.operatorNote }
+                : {}),
             });
           } catch (error) {
-            const failureScreenshot =
-              `linkedin/screenshot-article-publish-prepare-error-${Date.now()}.png`;
+            const failureScreenshot = `linkedin/screenshot-article-publish-prepare-error-${Date.now()}.png`;
             try {
-              await captureScreenshotArtifact(this.runtime, page, failureScreenshot, {
-                action: "prepare_publish_article_error",
-                profile_name: profileName,
-                draft_url: draftUrl
-              });
+              await captureScreenshotArtifact(
+                this.runtime,
+                page,
+                failureScreenshot,
+                {
+                  action: "prepare_publish_article_error",
+                  profile_name: profileName,
+                  draft_url: draftUrl,
+                },
+              );
               artifactPaths.push(failureScreenshot);
             } catch {
               // Best effort.
             }
 
-            throw toAutomationError(error, "Failed to prepare LinkedIn article publish.", {
-              profile_name: profileName,
-              current_url: page.url(),
-              draft_url: draftUrl,
-              artifact_paths: artifactPaths
-            });
+            throw toAutomationError(
+              error,
+              "Failed to prepare LinkedIn article publish.",
+              {
+                profile_name: profileName,
+                current_url: page.url(),
+                draft_url: draftUrl,
+                artifact_paths: artifactPaths,
+              },
+            );
           } finally {
             if (tracingStarted) {
               try {
-                const absoluteTracePath = this.runtime.artifacts.resolve(tracePath);
+                const absoluteTracePath =
+                  this.runtime.artifacts.resolve(tracePath);
                 await context.tracing.stop({ path: absoluteTracePath });
                 registerTraceArtifact(this.runtime, tracePath, {
                   action: "prepare_publish_article",
                   profile_name: profileName,
-                  draft_url: draftUrl
+                  draft_url: draftUrl,
                 });
               } catch (error) {
                 this.runtime.logger.log(
@@ -1701,22 +1752,27 @@ export class LinkedInArticlesService {
                   "linkedin.article.prepare_publish.trace.stop_failed",
                   {
                     profile_name: profileName,
-                    message: error instanceof Error ? error.message : String(error)
-                  }
+                    message:
+                      error instanceof Error ? error.message : String(error),
+                  },
                 );
               }
             }
           }
-        }
+        },
       );
 
       return prepared;
     } catch (error) {
-      throw toAutomationError(error, "Failed to prepare LinkedIn article publish.", {
-        profile_name: profileName,
-        draft_url: draftUrl,
-        artifact_paths: artifactPaths
-      });
+      throw toAutomationError(
+        error,
+        "Failed to prepare LinkedIn article publish.",
+        {
+          profile_name: profileName,
+          draft_url: draftUrl,
+          artifact_paths: artifactPaths,
+        },
+      );
     }
   }
 }
@@ -1725,14 +1781,16 @@ export class LinkedInNewslettersService {
   constructor(private readonly runtime: LinkedInPublishingRuntime) {}
 
   async prepareCreate(
-    input: PrepareCreateNewsletterInput
+    input: PrepareCreateNewsletterInput,
   ): Promise<PreparedActionResult> {
     const profileName = input.profileName ?? "default";
-    const title = requireSingleLineText(input.title, "Newsletter title", { maxLength: NEWSLETTER_TITLE_MAX_LENGTH });
+    const title = requireSingleLineText(input.title, "Newsletter title", {
+      maxLength: NEWSLETTER_TITLE_MAX_LENGTH,
+    });
     const description = requireSingleLineText(
       input.description,
       "Newsletter description",
-      { maxLength: NEWSLETTER_DESCRIPTION_MAX_LENGTH }
+      { maxLength: NEWSLETTER_DESCRIPTION_MAX_LENGTH },
     );
     const cadence = normalizeNewsletterCadence(input.cadence);
     const tracePath = `linkedin/trace-newsletter-prepare-${Date.now()}.zip`;
@@ -1740,7 +1798,7 @@ export class LinkedInNewslettersService {
 
     await this.runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: this.runtime.cdpUrl
+      cdpUrl: this.runtime.cdpUrl,
     });
 
     try {
@@ -1748,7 +1806,7 @@ export class LinkedInNewslettersService {
         {
           cdpUrl: this.runtime.cdpUrl,
           profileName,
-          headless: true
+          headless: true,
         },
         async (context) => {
           let currentPage = await getOrCreatePage(context);
@@ -1758,7 +1816,7 @@ export class LinkedInNewslettersService {
             await context.tracing.start({
               screenshots: true,
               snapshots: true,
-              sources: true
+              sources: true,
             });
             tracingStarted = true;
 
@@ -1766,30 +1824,35 @@ export class LinkedInNewslettersService {
               context,
               currentPage,
               this.runtime.selectorLocale,
-              artifactPaths
+              artifactPaths,
             );
             currentPage = editor.page;
 
             const dialogState = await openNewsletterCreateDialog(
               currentPage,
               this.runtime.selectorLocale,
-              artifactPaths
+              artifactPaths,
             );
 
             const screenshotPath = `linkedin/screenshot-newsletter-prepare-${Date.now()}.png`;
-            await captureScreenshotArtifact(this.runtime, currentPage, screenshotPath, {
-              action: "prepare_create_newsletter",
-              profile_name: profileName,
-              trigger_selector_key: editor.triggerKey,
-              manage_selector_key: dialogState.manageKey,
-              create_selector_key: dialogState.createKey
-            });
+            await captureScreenshotArtifact(
+              this.runtime,
+              currentPage,
+              screenshotPath,
+              {
+                action: "prepare_create_newsletter",
+                profile_name: profileName,
+                trigger_selector_key: editor.triggerKey,
+                manage_selector_key: dialogState.manageKey,
+                create_selector_key: dialogState.createKey,
+              },
+            );
             artifactPaths.push(screenshotPath);
 
             const target = {
               profile_name: profileName,
               compose_url: LINKEDIN_FEED_URL,
-              content_type: "newsletter"
+              content_type: "newsletter",
             };
             const preview = {
               summary: `Create LinkedIn newsletter "${title}"`,
@@ -1797,17 +1860,18 @@ export class LinkedInNewslettersService {
               outbound: {
                 title,
                 description,
-                cadence
+                cadence,
               },
               validation: {
                 title_length: title.length,
                 description_length: description.length,
-                cadence_label: LINKEDIN_NEWSLETTER_CADENCE_LABELS[cadence].label
+                cadence_label:
+                  LINKEDIN_NEWSLETTER_CADENCE_LABELS[cadence].label,
               },
               artifacts: artifactPaths.map((path) => ({
                 type: path.endsWith(".zip") ? "trace" : "screenshot",
-                path
-              }))
+                path,
+              })),
             } satisfies Record<string, unknown>;
 
             return preparePublishingAction(this.runtime, {
@@ -1816,14 +1880,15 @@ export class LinkedInNewslettersService {
               payload: {
                 title,
                 description,
-                cadence
+                cadence,
               },
               preview,
-              ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+              ...(input.operatorNote
+                ? { operatorNote: input.operatorNote }
+                : {}),
             });
           } catch (error) {
-            const failureScreenshot =
-              `linkedin/screenshot-newsletter-prepare-error-${Date.now()}.png`;
+            const failureScreenshot = `linkedin/screenshot-newsletter-prepare-error-${Date.now()}.png`;
             try {
               await captureScreenshotArtifact(
                 this.runtime,
@@ -1831,8 +1896,8 @@ export class LinkedInNewslettersService {
                 failureScreenshot,
                 {
                   action: "prepare_create_newsletter_error",
-                  profile_name: profileName
-                }
+                  profile_name: profileName,
+                },
               );
               artifactPaths.push(failureScreenshot);
             } catch {
@@ -1845,17 +1910,18 @@ export class LinkedInNewslettersService {
               {
                 profile_name: profileName,
                 current_url: currentPage.url(),
-                artifact_paths: artifactPaths
-              }
+                artifact_paths: artifactPaths,
+              },
             );
           } finally {
             if (tracingStarted) {
               try {
-                const absoluteTracePath = this.runtime.artifacts.resolve(tracePath);
+                const absoluteTracePath =
+                  this.runtime.artifacts.resolve(tracePath);
                 await context.tracing.stop({ path: absoluteTracePath });
                 registerTraceArtifact(this.runtime, tracePath, {
                   action: "prepare_create_newsletter",
-                  profile_name: profileName
+                  profile_name: profileName,
                 });
               } catch (error) {
                 this.runtime.logger.log(
@@ -1863,13 +1929,14 @@ export class LinkedInNewslettersService {
                   "linkedin.newsletter.prepare.trace.stop_failed",
                   {
                     profile_name: profileName,
-                    message: error instanceof Error ? error.message : String(error)
-                  }
+                    message:
+                      error instanceof Error ? error.message : String(error),
+                  },
                 );
               }
             }
           }
-        }
+        },
       );
 
       return prepared;
@@ -1879,25 +1946,29 @@ export class LinkedInNewslettersService {
         "Failed to prepare LinkedIn newsletter creation.",
         {
           profile_name: profileName,
-          artifact_paths: artifactPaths
-        }
+          artifact_paths: artifactPaths,
+        },
       );
     }
   }
 
   async preparePublishIssue(
-    input: PreparePublishNewsletterIssueInput
+    input: PreparePublishNewsletterIssueInput,
   ): Promise<PreparedActionResult> {
     const profileName = input.profileName ?? "default";
     const newsletter = requireSingleLineText(input.newsletter, "newsletter");
-    const title = requireSingleLineText(input.title, "Issue title", { maxLength: NEWSLETTER_ISSUE_TITLE_MAX_LENGTH });
-    const body = requireLongFormText(input.body, "Issue body", { maxLength: NEWSLETTER_ISSUE_BODY_MAX_LENGTH });
+    const title = requireSingleLineText(input.title, "Issue title", {
+      maxLength: NEWSLETTER_ISSUE_TITLE_MAX_LENGTH,
+    });
+    const body = requireLongFormText(input.body, "Issue body", {
+      maxLength: NEWSLETTER_ISSUE_BODY_MAX_LENGTH,
+    });
     const tracePath = `linkedin/trace-newsletter-issue-prepare-${Date.now()}.zip`;
     const artifactPaths: string[] = [tracePath];
 
     await this.runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: this.runtime.cdpUrl
+      cdpUrl: this.runtime.cdpUrl,
     });
 
     try {
@@ -1905,7 +1976,7 @@ export class LinkedInNewslettersService {
         {
           cdpUrl: this.runtime.cdpUrl,
           profileName,
-          headless: true
+          headless: true,
         },
         async (context) => {
           let currentPage = await getOrCreatePage(context);
@@ -1915,7 +1986,7 @@ export class LinkedInNewslettersService {
             await context.tracing.start({
               screenshots: true,
               snapshots: true,
-              sources: true
+              sources: true,
             });
             tracingStarted = true;
 
@@ -1923,58 +1994,65 @@ export class LinkedInNewslettersService {
               context,
               currentPage,
               this.runtime.selectorLocale,
-              artifactPaths
+              artifactPaths,
             );
             currentPage = editor.page;
 
             const dropdown = await openPublishTargetMenu(
               currentPage,
               this.runtime.selectorLocale,
-              artifactPaths
+              artifactPaths,
             );
             if (normalizeText(dropdown.currentLabel) !== newsletter) {
               await findVisibleLocatorOrThrow(
                 currentPage,
-                createNewsletterOptionCandidates(this.runtime.selectorLocale, newsletter),
+                createNewsletterOptionCandidates(
+                  this.runtime.selectorLocale,
+                  newsletter,
+                ),
                 "newsletter_target_option",
-                artifactPaths
+                artifactPaths,
               );
             }
             await currentPage.keyboard.press("Escape").catch(() => undefined);
 
-            const screenshotPath =
-              `linkedin/screenshot-newsletter-issue-prepare-${Date.now()}.png`;
-            await captureScreenshotArtifact(this.runtime, currentPage, screenshotPath, {
-              action: "prepare_publish_newsletter_issue",
-              profile_name: profileName,
-              newsletter_title: newsletter,
-              trigger_selector_key: editor.triggerKey,
-              dropdown_selector_key: dropdown.key
-            });
+            const screenshotPath = `linkedin/screenshot-newsletter-issue-prepare-${Date.now()}.png`;
+            await captureScreenshotArtifact(
+              this.runtime,
+              currentPage,
+              screenshotPath,
+              {
+                action: "prepare_publish_newsletter_issue",
+                profile_name: profileName,
+                newsletter_title: newsletter,
+                trigger_selector_key: editor.triggerKey,
+                dropdown_selector_key: dropdown.key,
+              },
+            );
             artifactPaths.push(screenshotPath);
 
             const target = {
               profile_name: profileName,
               newsletter_title: newsletter,
               compose_url: LINKEDIN_FEED_URL,
-              content_type: "newsletter_issue"
+              content_type: "newsletter_issue",
             };
             const preview = {
               summary: `Publish LinkedIn newsletter issue "${title}" in ${newsletter}`,
               target,
               outbound: {
                 title,
-                body
+                body,
               },
               validation: {
                 title_length: title.length,
                 body_length: body.length,
-                body_paragraph_count: body.split(/\n{2,}/u).length
+                body_paragraph_count: body.split(/\n{2,}/u).length,
               },
               artifacts: artifactPaths.map((path) => ({
                 type: path.endsWith(".zip") ? "trace" : "screenshot",
-                path
-              }))
+                path,
+              })),
             } satisfies Record<string, unknown>;
 
             return preparePublishingAction(this.runtime, {
@@ -1983,14 +2061,15 @@ export class LinkedInNewslettersService {
               payload: {
                 newsletter_title: newsletter,
                 title,
-                body
+                body,
               },
               preview,
-              ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+              ...(input.operatorNote
+                ? { operatorNote: input.operatorNote }
+                : {}),
             });
           } catch (error) {
-            const failureScreenshot =
-              `linkedin/screenshot-newsletter-issue-prepare-error-${Date.now()}.png`;
+            const failureScreenshot = `linkedin/screenshot-newsletter-issue-prepare-error-${Date.now()}.png`;
             try {
               await captureScreenshotArtifact(
                 this.runtime,
@@ -1999,8 +2078,8 @@ export class LinkedInNewslettersService {
                 {
                   action: "prepare_publish_newsletter_issue_error",
                   profile_name: profileName,
-                  newsletter_title: newsletter
-                }
+                  newsletter_title: newsletter,
+                },
               );
               artifactPaths.push(failureScreenshot);
             } catch {
@@ -2014,18 +2093,19 @@ export class LinkedInNewslettersService {
                 profile_name: profileName,
                 current_url: currentPage.url(),
                 newsletter_title: newsletter,
-                artifact_paths: artifactPaths
-              }
+                artifact_paths: artifactPaths,
+              },
             );
           } finally {
             if (tracingStarted) {
               try {
-                const absoluteTracePath = this.runtime.artifacts.resolve(tracePath);
+                const absoluteTracePath =
+                  this.runtime.artifacts.resolve(tracePath);
                 await context.tracing.stop({ path: absoluteTracePath });
                 registerTraceArtifact(this.runtime, tracePath, {
                   action: "prepare_publish_newsletter_issue",
                   profile_name: profileName,
-                  newsletter_title: newsletter
+                  newsletter_title: newsletter,
                 });
               } catch (error) {
                 this.runtime.logger.log(
@@ -2033,13 +2113,14 @@ export class LinkedInNewslettersService {
                   "linkedin.newsletter.prepare_issue.trace.stop_failed",
                   {
                     profile_name: profileName,
-                    message: error instanceof Error ? error.message : String(error)
-                  }
+                    message:
+                      error instanceof Error ? error.message : String(error),
+                  },
                 );
               }
             }
           }
-        }
+        },
       );
 
       return prepared;
@@ -2050,8 +2131,8 @@ export class LinkedInNewslettersService {
         {
           profile_name: profileName,
           newsletter_title: newsletter,
-          artifact_paths: artifactPaths
-        }
+          artifact_paths: artifactPaths,
+        },
       );
     }
   }
@@ -2061,14 +2142,14 @@ export class LinkedInNewslettersService {
 
     await this.runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: this.runtime.cdpUrl
+      cdpUrl: this.runtime.cdpUrl,
     });
 
     return this.runtime.profileManager.runWithContext(
       {
         cdpUrl: this.runtime.cdpUrl,
         profileName,
-        headless: true
+        headless: true,
       },
       async (context) => {
         const page = await getOrCreatePage(context);
@@ -2076,53 +2157,61 @@ export class LinkedInNewslettersService {
           context,
           page,
           this.runtime.selectorLocale,
-          []
+          [],
         );
         const dropdown = await openPublishTargetMenu(
           editor.page,
           this.runtime.selectorLocale,
-          []
+          [],
         );
         const newsletters = await extractVisibleNewsletterTitles(
           editor.page,
-          dropdown.currentLabel
+          dropdown.currentLabel,
         );
 
         await editor.page.keyboard.press("Escape").catch(() => undefined);
 
         return {
           count: newsletters.length,
-          newsletters
+          newsletters,
         };
-      }
+      },
     );
   }
 }
 
-class CreateArticleActionExecutor
-  implements ActionExecutor<LinkedInPublishingExecutorRuntime>
-{
+class CreateArticleActionExecutor implements ActionExecutor<LinkedInPublishingExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInPublishingExecutorRuntime>
+    input: ActionExecutorInput<LinkedInPublishingExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const runtime = input.runtime;
     const action = input.action;
     const profileName = getProfileName(action.target);
-    const title = getRequiredStringField(action.payload, "title", action.id, "payload");
-    const body = getRequiredStringField(action.payload, "body", action.id, "payload");
+    const title = getRequiredStringField(
+      action.payload,
+      "title",
+      action.id,
+      "payload",
+    );
+    const body = getRequiredStringField(
+      action.payload,
+      "body",
+      action.id,
+      "payload",
+    );
     const tracePath = `linkedin/trace-article-confirm-${Date.now()}.zip`;
     const artifactPaths: string[] = [tracePath];
 
     await runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: runtime.cdpUrl
+      cdpUrl: runtime.cdpUrl,
     });
 
     return runtime.profileManager.runWithContext(
       {
         cdpUrl: runtime.cdpUrl,
         profileName,
-        headless: true
+        headless: true,
       },
       async (context) => {
         let currentPage = await getOrCreatePage(context);
@@ -2132,7 +2221,7 @@ class CreateArticleActionExecutor
           await context.tracing.start({
             screenshots: true,
             snapshots: true,
-            sources: true
+            sources: true,
           });
           tracingStarted = true;
 
@@ -2142,15 +2231,15 @@ class CreateArticleActionExecutor
             actionId: action.id,
             profileName,
             details: {
-              title
-            }
+              title,
+            },
           });
 
           const editor = await openPublishingEditor(
             context,
             currentPage,
             runtime.selectorLocale,
-            artifactPaths
+            artifactPaths,
           );
           currentPage = editor.page;
           const fields = await fillDraftTitleAndBody(
@@ -2158,24 +2247,31 @@ class CreateArticleActionExecutor
             runtime.selectorLocale,
             title,
             body,
-            artifactPaths
+            artifactPaths,
           );
           await waitForNetworkIdleBestEffort(currentPage, 5_000);
           await pauseForAutosave();
 
           const draftUrl = normalizeLinkedInUrl(
-            isEditorUrl(currentPage.url()) ? currentPage.url() : resolvePublishedUrl(currentPage.url()),
-            "Draft URL"
+            isEditorUrl(currentPage.url())
+              ? currentPage.url()
+              : resolvePublishedUrl(currentPage.url()),
+            "Draft URL",
           );
           const screenshotPath = `linkedin/screenshot-article-confirm-${Date.now()}.png`;
-          await captureScreenshotArtifact(runtime, currentPage, screenshotPath, {
-            action: CREATE_ARTICLE_ACTION_TYPE,
-            profile_name: profileName,
-            draft_url: draftUrl,
-            trigger_selector_key: editor.triggerKey,
-            title_selector_key: fields.titleKey,
-            body_selector_key: fields.bodyKey
-          });
+          await captureScreenshotArtifact(
+            runtime,
+            currentPage,
+            screenshotPath,
+            {
+              action: CREATE_ARTICLE_ACTION_TYPE,
+              profile_name: profileName,
+              draft_url: draftUrl,
+              trigger_selector_key: editor.triggerKey,
+              title_selector_key: fields.titleKey,
+              body_selector_key: fields.bodyKey,
+            },
+          );
           artifactPaths.push(screenshotPath);
 
           return {
@@ -2184,28 +2280,37 @@ class CreateArticleActionExecutor
               draft_created: true,
               draft_url: draftUrl,
               title,
-              verification_snippet: createVerificationSnippet(body)
+              verification_snippet: createVerificationSnippet(body),
             },
-            artifacts: artifactPaths
+            artifacts: artifactPaths,
           };
         } catch (error) {
           const failureScreenshot = `linkedin/screenshot-article-confirm-error-${Date.now()}.png`;
           try {
-            await captureScreenshotArtifact(runtime, currentPage, failureScreenshot, {
-              action: `${CREATE_ARTICLE_ACTION_TYPE}_error`,
-              profile_name: profileName
-            });
+            await captureScreenshotArtifact(
+              runtime,
+              currentPage,
+              failureScreenshot,
+              {
+                action: `${CREATE_ARTICLE_ACTION_TYPE}_error`,
+                profile_name: profileName,
+              },
+            );
             artifactPaths.push(failureScreenshot);
           } catch {
             // Best effort.
           }
 
-          throw toAutomationError(error, "Failed to execute LinkedIn article creation.", {
-            action_id: action.id,
-            profile_name: profileName,
-            current_url: currentPage.url(),
-            artifact_paths: artifactPaths
-          });
+          throw toAutomationError(
+            error,
+            "Failed to execute LinkedIn article creation.",
+            {
+              action_id: action.id,
+              profile_name: profileName,
+              current_url: currentPage.url(),
+              artifact_paths: artifactPaths,
+            },
+          );
         } finally {
           if (tracingStarted) {
             try {
@@ -2213,47 +2318,50 @@ class CreateArticleActionExecutor
               await context.tracing.stop({ path: absoluteTracePath });
               registerTraceArtifact(runtime, tracePath, {
                 action: CREATE_ARTICLE_ACTION_TYPE,
-                profile_name: profileName
+                profile_name: profileName,
               });
             } catch (error) {
-              runtime.logger.log("warn", "linkedin.article.confirm.trace.stop_failed", {
-                action_id: action.id,
-                message: error instanceof Error ? error.message : String(error)
-              });
+              runtime.logger.log(
+                "warn",
+                "linkedin.article.confirm.trace.stop_failed",
+                {
+                  action_id: action.id,
+                  message:
+                    error instanceof Error ? error.message : String(error),
+                },
+              );
             }
           }
         }
-      }
+      },
     );
   }
 }
 
-class PublishArticleActionExecutor
-  implements ActionExecutor<LinkedInPublishingExecutorRuntime>
-{
+class PublishArticleActionExecutor implements ActionExecutor<LinkedInPublishingExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInPublishingExecutorRuntime>
+    input: ActionExecutorInput<LinkedInPublishingExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const runtime = input.runtime;
     const action = input.action;
     const profileName = getProfileName(action.target);
     const draftUrl = normalizeLinkedInUrl(
       getRequiredStringField(action.payload, "draft_url", action.id, "payload"),
-      "draft_url"
+      "draft_url",
     );
     const tracePath = `linkedin/trace-article-publish-confirm-${Date.now()}.zip`;
     const artifactPaths: string[] = [tracePath];
 
     await runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: runtime.cdpUrl
+      cdpUrl: runtime.cdpUrl,
     });
 
     return runtime.profileManager.runWithContext(
       {
         cdpUrl: runtime.cdpUrl,
         profileName,
-        headless: true
+        headless: true,
       },
       async (context) => {
         const page = await getOrCreatePage(context);
@@ -2263,7 +2371,7 @@ class PublishArticleActionExecutor
           await context.tracing.start({
             screenshots: true,
             snapshots: true,
-            sources: true
+            sources: true,
           });
           tracingStarted = true;
 
@@ -2273,8 +2381,8 @@ class PublishArticleActionExecutor
             actionId: action.id,
             profileName,
             details: {
-              draft_url: draftUrl
-            }
+              draft_url: draftUrl,
+            },
           });
 
           await page.goto(draftUrl, { waitUntil: "domcontentloaded" });
@@ -2283,7 +2391,7 @@ class PublishArticleActionExecutor
           const publishState = await publishCurrentLongFormDraft(
             page,
             runtime.selectorLocale,
-            artifactPaths
+            artifactPaths,
           );
           const screenshotPath = `linkedin/screenshot-article-publish-confirm-${Date.now()}.png`;
           await captureScreenshotArtifact(runtime, page, screenshotPath, {
@@ -2292,7 +2400,7 @@ class PublishArticleActionExecutor
             draft_url: draftUrl,
             next_selector_key: publishState.nextKey,
             publish_selector_key: publishState.publishKey,
-            article_url: publishState.publishedUrl
+            article_url: publishState.publishedUrl,
           });
           artifactPaths.push(screenshotPath);
 
@@ -2301,31 +2409,34 @@ class PublishArticleActionExecutor
             result: {
               published: true,
               draft_url: draftUrl,
-              article_url: publishState.publishedUrl
+              article_url: publishState.publishedUrl,
             },
-            artifacts: artifactPaths
+            artifacts: artifactPaths,
           };
         } catch (error) {
-          const failureScreenshot =
-            `linkedin/screenshot-article-publish-confirm-error-${Date.now()}.png`;
+          const failureScreenshot = `linkedin/screenshot-article-publish-confirm-error-${Date.now()}.png`;
           try {
             await captureScreenshotArtifact(runtime, page, failureScreenshot, {
               action: `${PUBLISH_ARTICLE_ACTION_TYPE}_error`,
               profile_name: profileName,
-              draft_url: draftUrl
+              draft_url: draftUrl,
             });
             artifactPaths.push(failureScreenshot);
           } catch {
             // Best effort.
           }
 
-          throw toAutomationError(error, "Failed to publish LinkedIn article.", {
-            action_id: action.id,
-            profile_name: profileName,
-            current_url: page.url(),
-            draft_url: draftUrl,
-            artifact_paths: artifactPaths
-          });
+          throw toAutomationError(
+            error,
+            "Failed to publish LinkedIn article.",
+            {
+              action_id: action.id,
+              profile_name: profileName,
+              current_url: page.url(),
+              draft_url: draftUrl,
+              artifact_paths: artifactPaths,
+            },
+          );
         } finally {
           if (tracingStarted) {
             try {
@@ -2334,7 +2445,7 @@ class PublishArticleActionExecutor
               registerTraceArtifact(runtime, tracePath, {
                 action: PUBLISH_ARTICLE_ACTION_TYPE,
                 profile_name: profileName,
-                draft_url: draftUrl
+                draft_url: draftUrl,
               });
             } catch (error) {
               runtime.logger.log(
@@ -2342,49 +2453,53 @@ class PublishArticleActionExecutor
                 "linkedin.article.confirm_publish.trace.stop_failed",
                 {
                   action_id: action.id,
-                  message: error instanceof Error ? error.message : String(error)
-                }
+                  message:
+                    error instanceof Error ? error.message : String(error),
+                },
               );
             }
           }
         }
-      }
+      },
     );
   }
 }
 
-class CreateNewsletterActionExecutor
-  implements ActionExecutor<LinkedInPublishingExecutorRuntime>
-{
+class CreateNewsletterActionExecutor implements ActionExecutor<LinkedInPublishingExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInPublishingExecutorRuntime>
+    input: ActionExecutorInput<LinkedInPublishingExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const runtime = input.runtime;
     const action = input.action;
     const profileName = getProfileName(action.target);
-    const title = getRequiredStringField(action.payload, "title", action.id, "payload");
+    const title = getRequiredStringField(
+      action.payload,
+      "title",
+      action.id,
+      "payload",
+    );
     const description = getRequiredStringField(
       action.payload,
       "description",
       action.id,
-      "payload"
+      "payload",
     );
     const cadence = normalizeNewsletterCadence(
-      getRequiredStringField(action.payload, "cadence", action.id, "payload")
+      getRequiredStringField(action.payload, "cadence", action.id, "payload"),
     );
     const tracePath = `linkedin/trace-newsletter-confirm-${Date.now()}.zip`;
     const artifactPaths: string[] = [tracePath];
 
     await runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: runtime.cdpUrl
+      cdpUrl: runtime.cdpUrl,
     });
 
     return runtime.profileManager.runWithContext(
       {
         cdpUrl: runtime.cdpUrl,
         profileName,
-        headless: true
+        headless: true,
       },
       async (context) => {
         let currentPage = await getOrCreatePage(context);
@@ -2394,7 +2509,7 @@ class CreateNewsletterActionExecutor
           await context.tracing.start({
             screenshots: true,
             snapshots: true,
-            sources: true
+            sources: true,
           });
           tracingStarted = true;
 
@@ -2404,21 +2519,21 @@ class CreateNewsletterActionExecutor
             actionId: action.id,
             profileName,
             details: {
-              title
-            }
+              title,
+            },
           });
 
           const editor = await openPublishingEditor(
             context,
             currentPage,
             runtime.selectorLocale,
-            artifactPaths
+            artifactPaths,
           );
           currentPage = editor.page;
           const dialogState = await openNewsletterCreateDialog(
             currentPage,
             runtime.selectorLocale,
-            artifactPaths
+            artifactPaths,
           );
           const dialogResult = await fillNewsletterCreateDialog(
             currentPage,
@@ -2427,25 +2542,33 @@ class CreateNewsletterActionExecutor
             title,
             description,
             cadence,
-            artifactPaths
+            artifactPaths,
           );
           await waitForNetworkIdleBestEffort(currentPage, 5_000);
           await pauseForAutosave();
 
-          const editorUrl = normalizeLinkedInUrl(currentPage.url(), "Editor URL");
+          const editorUrl = normalizeLinkedInUrl(
+            currentPage.url(),
+            "Editor URL",
+          );
           const screenshotPath = `linkedin/screenshot-newsletter-confirm-${Date.now()}.png`;
-          await captureScreenshotArtifact(runtime, currentPage, screenshotPath, {
-            action: CREATE_NEWSLETTER_ACTION_TYPE,
-            profile_name: profileName,
-            editor_url: editorUrl,
-            trigger_selector_key: editor.triggerKey,
-            manage_selector_key: dialogState.manageKey,
-            create_selector_key: dialogState.createKey,
-            title_selector_key: dialogResult.titleKey,
-            description_selector_key: dialogResult.descriptionKey,
-            cadence_selector_key: dialogResult.cadenceKey,
-            done_selector_key: dialogResult.doneKey
-          });
+          await captureScreenshotArtifact(
+            runtime,
+            currentPage,
+            screenshotPath,
+            {
+              action: CREATE_NEWSLETTER_ACTION_TYPE,
+              profile_name: profileName,
+              editor_url: editorUrl,
+              trigger_selector_key: editor.triggerKey,
+              manage_selector_key: dialogState.manageKey,
+              create_selector_key: dialogState.createKey,
+              title_selector_key: dialogResult.titleKey,
+              description_selector_key: dialogResult.descriptionKey,
+              cadence_selector_key: dialogResult.cadenceKey,
+              done_selector_key: dialogResult.doneKey,
+            },
+          );
           artifactPaths.push(screenshotPath);
 
           return {
@@ -2454,29 +2577,37 @@ class CreateNewsletterActionExecutor
               newsletter_created: true,
               newsletter_title: title,
               cadence,
-              editor_url: editorUrl
+              editor_url: editorUrl,
             },
-            artifacts: artifactPaths
+            artifacts: artifactPaths,
           };
         } catch (error) {
-          const failureScreenshot =
-            `linkedin/screenshot-newsletter-confirm-error-${Date.now()}.png`;
+          const failureScreenshot = `linkedin/screenshot-newsletter-confirm-error-${Date.now()}.png`;
           try {
-            await captureScreenshotArtifact(runtime, currentPage, failureScreenshot, {
-              action: `${CREATE_NEWSLETTER_ACTION_TYPE}_error`,
-              profile_name: profileName
-            });
+            await captureScreenshotArtifact(
+              runtime,
+              currentPage,
+              failureScreenshot,
+              {
+                action: `${CREATE_NEWSLETTER_ACTION_TYPE}_error`,
+                profile_name: profileName,
+              },
+            );
             artifactPaths.push(failureScreenshot);
           } catch {
             // Best effort.
           }
 
-          throw toAutomationError(error, "Failed to create LinkedIn newsletter.", {
-            action_id: action.id,
-            profile_name: profileName,
-            current_url: currentPage.url(),
-            artifact_paths: artifactPaths
-          });
+          throw toAutomationError(
+            error,
+            "Failed to create LinkedIn newsletter.",
+            {
+              action_id: action.id,
+              profile_name: profileName,
+              current_url: currentPage.url(),
+              artifact_paths: artifactPaths,
+            },
+          );
         } finally {
           if (tracingStarted) {
             try {
@@ -2484,7 +2615,7 @@ class CreateNewsletterActionExecutor
               await context.tracing.stop({ path: absoluteTracePath });
               registerTraceArtifact(runtime, tracePath, {
                 action: CREATE_NEWSLETTER_ACTION_TYPE,
-                profile_name: profileName
+                profile_name: profileName,
               });
             } catch (error) {
               runtime.logger.log(
@@ -2492,22 +2623,21 @@ class CreateNewsletterActionExecutor
                 "linkedin.newsletter.confirm.trace.stop_failed",
                 {
                   action_id: action.id,
-                  message: error instanceof Error ? error.message : String(error)
-                }
+                  message:
+                    error instanceof Error ? error.message : String(error),
+                },
               );
             }
           }
         }
-      }
+      },
     );
   }
 }
 
-class PublishNewsletterIssueActionExecutor
-  implements ActionExecutor<LinkedInPublishingExecutorRuntime>
-{
+class PublishNewsletterIssueActionExecutor implements ActionExecutor<LinkedInPublishingExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInPublishingExecutorRuntime>
+    input: ActionExecutorInput<LinkedInPublishingExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const runtime = input.runtime;
     const action = input.action;
@@ -2516,23 +2646,33 @@ class PublishNewsletterIssueActionExecutor
       action.payload,
       "newsletter_title",
       action.id,
-      "payload"
+      "payload",
     );
-    const title = getRequiredStringField(action.payload, "title", action.id, "payload");
-    const body = getRequiredStringField(action.payload, "body", action.id, "payload");
+    const title = getRequiredStringField(
+      action.payload,
+      "title",
+      action.id,
+      "payload",
+    );
+    const body = getRequiredStringField(
+      action.payload,
+      "body",
+      action.id,
+      "payload",
+    );
     const tracePath = `linkedin/trace-newsletter-issue-confirm-${Date.now()}.zip`;
     const artifactPaths: string[] = [tracePath];
 
     await runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: runtime.cdpUrl
+      cdpUrl: runtime.cdpUrl,
     });
 
     return runtime.profileManager.runWithContext(
       {
         cdpUrl: runtime.cdpUrl,
         profileName,
-        headless: true
+        headless: true,
       },
       async (context) => {
         let currentPage = await getOrCreatePage(context);
@@ -2542,7 +2682,7 @@ class PublishNewsletterIssueActionExecutor
           await context.tracing.start({
             screenshots: true,
             snapshots: true,
-            sources: true
+            sources: true,
           });
           tracingStarted = true;
 
@@ -2553,15 +2693,15 @@ class PublishNewsletterIssueActionExecutor
             profileName,
             details: {
               newsletter_title: newsletterTitle,
-              title
-            }
+              title,
+            },
           });
 
           const editor = await openPublishingEditor(
             context,
             currentPage,
             runtime.selectorLocale,
-            artifactPaths
+            artifactPaths,
           );
           currentPage = editor.page;
 
@@ -2569,14 +2709,14 @@ class PublishNewsletterIssueActionExecutor
             currentPage,
             runtime.selectorLocale,
             newsletterTitle,
-            artifactPaths
+            artifactPaths,
           );
           const fields = await fillDraftTitleAndBody(
             currentPage,
             runtime.selectorLocale,
             title,
             body,
-            artifactPaths
+            artifactPaths,
           );
           await waitForNetworkIdleBestEffort(currentPage, 5_000);
           await pauseForAutosave();
@@ -2584,23 +2724,27 @@ class PublishNewsletterIssueActionExecutor
           const publishState = await publishCurrentLongFormDraft(
             currentPage,
             runtime.selectorLocale,
-            artifactPaths
+            artifactPaths,
           );
-          const screenshotPath =
-            `linkedin/screenshot-newsletter-issue-confirm-${Date.now()}.png`;
-          await captureScreenshotArtifact(runtime, currentPage, screenshotPath, {
-            action: PUBLISH_NEWSLETTER_ISSUE_ACTION_TYPE,
-            profile_name: profileName,
-            newsletter_title: newsletterTitle,
-            title_selector_key: fields.titleKey,
-            body_selector_key: fields.bodyKey,
-            trigger_selector_key: editor.triggerKey,
-            dropdown_selector_key: selection.dropdownKey,
-            option_selector_key: selection.optionKey,
-            next_selector_key: publishState.nextKey,
-            publish_selector_key: publishState.publishKey,
-            issue_url: publishState.publishedUrl
-          });
+          const screenshotPath = `linkedin/screenshot-newsletter-issue-confirm-${Date.now()}.png`;
+          await captureScreenshotArtifact(
+            runtime,
+            currentPage,
+            screenshotPath,
+            {
+              action: PUBLISH_NEWSLETTER_ISSUE_ACTION_TYPE,
+              profile_name: profileName,
+              newsletter_title: newsletterTitle,
+              title_selector_key: fields.titleKey,
+              body_selector_key: fields.bodyKey,
+              trigger_selector_key: editor.triggerKey,
+              dropdown_selector_key: selection.dropdownKey,
+              option_selector_key: selection.optionKey,
+              next_selector_key: publishState.nextKey,
+              publish_selector_key: publishState.publishKey,
+              issue_url: publishState.publishedUrl,
+            },
+          );
           artifactPaths.push(screenshotPath);
 
           return {
@@ -2609,19 +2753,23 @@ class PublishNewsletterIssueActionExecutor
               published: true,
               newsletter_title: newsletterTitle,
               issue_url: publishState.publishedUrl,
-              verification_snippet: createVerificationSnippet(body)
+              verification_snippet: createVerificationSnippet(body),
             },
-            artifacts: artifactPaths
+            artifacts: artifactPaths,
           };
         } catch (error) {
-          const failureScreenshot =
-            `linkedin/screenshot-newsletter-issue-confirm-error-${Date.now()}.png`;
+          const failureScreenshot = `linkedin/screenshot-newsletter-issue-confirm-error-${Date.now()}.png`;
           try {
-            await captureScreenshotArtifact(runtime, currentPage, failureScreenshot, {
-              action: `${PUBLISH_NEWSLETTER_ISSUE_ACTION_TYPE}_error`,
-              profile_name: profileName,
-              newsletter_title: newsletterTitle
-            });
+            await captureScreenshotArtifact(
+              runtime,
+              currentPage,
+              failureScreenshot,
+              {
+                action: `${PUBLISH_NEWSLETTER_ISSUE_ACTION_TYPE}_error`,
+                profile_name: profileName,
+                newsletter_title: newsletterTitle,
+              },
+            );
             artifactPaths.push(failureScreenshot);
           } catch {
             // Best effort.
@@ -2635,8 +2783,8 @@ class PublishNewsletterIssueActionExecutor
               profile_name: profileName,
               current_url: currentPage.url(),
               newsletter_title: newsletterTitle,
-              artifact_paths: artifactPaths
-            }
+              artifact_paths: artifactPaths,
+            },
           );
         } finally {
           if (tracingStarted) {
@@ -2646,7 +2794,7 @@ class PublishNewsletterIssueActionExecutor
               registerTraceArtifact(runtime, tracePath, {
                 action: PUBLISH_NEWSLETTER_ISSUE_ACTION_TYPE,
                 profile_name: profileName,
-                newsletter_title: newsletterTitle
+                newsletter_title: newsletterTitle,
               });
             } catch (error) {
               runtime.logger.log(
@@ -2654,13 +2802,14 @@ class PublishNewsletterIssueActionExecutor
                 "linkedin.newsletter.confirm_issue.trace.stop_failed",
                 {
                   action_id: action.id,
-                  message: error instanceof Error ? error.message : String(error)
-                }
+                  message:
+                    error instanceof Error ? error.message : String(error),
+                },
               );
             }
           }
         }
-      }
+      },
     );
   }
 }
@@ -2671,6 +2820,6 @@ export function createPublishingActionExecutors(): ActionExecutorRegistry<Linked
     [PUBLISH_ARTICLE_ACTION_TYPE]: new PublishArticleActionExecutor(),
     [CREATE_NEWSLETTER_ACTION_TYPE]: new CreateNewsletterActionExecutor(),
     [PUBLISH_NEWSLETTER_ISSUE_ACTION_TYPE]:
-      new PublishNewsletterIssueActionExecutor()
+      new PublishNewsletterIssueActionExecutor(),
   };
 }

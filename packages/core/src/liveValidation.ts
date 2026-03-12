@@ -7,26 +7,27 @@ import {
   type BrowserContext,
   type Page,
   type Request,
-  type Route
+  type Route,
 } from "playwright-core";
 import { ArtifactHelpers } from "./artifacts.js";
 import {
   ensureConfigPaths,
   resolveConfigPaths,
-  type ConfigPaths
+  type ConfigPaths,
 } from "./config.js";
 import {
   LinkedInBuddyError,
   asLinkedInBuddyError,
-  type LinkedInBuddyErrorCode
+  type LinkedInBuddyErrorCode,
 } from "./errors.js";
 import { JsonEventLogger, type JsonLogEntry } from "./logging.js";
 import { wrapLinkedInBrowserContext } from "./linkedinPage.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import { createRunId } from "./run.js";
+import { getOrCreatePage } from "./shared.js";
 import {
   LinkedInSessionStore,
-  type LoadStoredLinkedInSessionResult
+  type LoadStoredLinkedInSessionResult,
 } from "./auth/sessionStore.js";
 import { inspectLinkedInSession } from "./auth/sessionInspection.js";
 
@@ -39,24 +40,25 @@ import { inspectLinkedInSession } from "./auth/sessionInspection.js";
 export const LINKEDIN_READ_ONLY_VALIDATION_OPERATIONS = [
   {
     id: "feed",
-    summary: "Load the LinkedIn feed and verify the main feed surface."
+    summary: "Load the LinkedIn feed and verify the main feed surface.",
   },
   {
     id: "profile",
-    summary: "Open the signed-in profile and verify the header selectors."
+    summary: "Open the signed-in profile and verify the header selectors.",
   },
   {
     id: "notifications",
-    summary: "Open notifications and verify the notifications surface."
+    summary: "Open notifications and verify the notifications surface.",
   },
   {
     id: "inbox",
-    summary: "Open messaging and verify the inbox plus one readable thread when available."
+    summary:
+      "Open messaging and verify the inbox plus one readable thread when available.",
   },
   {
     id: "connections",
-    summary: "Open connections and verify the connections list surface."
-  }
+    summary: "Open connections and verify the connections list surface.",
+  },
 ] as const;
 
 /**
@@ -232,7 +234,7 @@ export interface RunReadOnlyValidationOptions {
 
   /** Called before each operation so the CLI can prompt or pause the run. */
   onBeforeOperation?: (
-    operation: LinkedInReadOnlyValidationOperation
+    operation: LinkedInReadOnlyValidationOperation,
   ) => Promise<void>;
 
   /** Receives structured log events as the run progresses. */
@@ -266,116 +268,130 @@ const READ_ONLY_REPORT_DIR = "live-readonly";
 const READ_ONLY_LATEST_REPORT_NAME = "latest-report.json";
 const ALLOWED_LINKEDIN_HOST_SUFFIXES = ["linkedin.com", "licdn.com"] as const;
 
-const READ_ONLY_OPERATION_REGISTRY: ReadonlyArray<ReadOnlyOperationDefinition> = [
-  {
-    id: "feed",
-    summary: "Load the LinkedIn feed and verify the main feed surface.",
-    url: "https://www.linkedin.com/feed/",
-    expectedPath: /^\/feed\//u,
-    selectors: [
-      {
-        key: "feed_surface",
-        description: "Feed content surface",
-        candidates: [
-          { key: "feed-update-card", selector: "div.feed-shared-update-v2" },
-          { key: "feed-data-urn", selector: "main [data-urn]" },
-          { key: "feed-main", selector: "main[role='main']" }
-        ]
-      },
-      {
-        key: "global_nav",
-        description: "Authenticated global navigation",
-        candidates: [
-          { key: "global-nav", selector: "nav.global-nav" },
-          { key: "header-nav", selector: "header nav" },
-          { key: "global-nav-link", selector: "a[href='/feed/']" }
-        ]
-      }
-    ]
-  },
-  {
-    id: "profile",
-    summary: "Open the signed-in profile and verify the header selectors.",
-    url: "https://www.linkedin.com/in/me/",
-    expectedPath: /^\/in\//u,
-    selectors: [
-      {
-        key: "profile_header",
-        description: "Profile headline card",
-        candidates: [
-          { key: "profile-h1", selector: "main h1" },
-          { key: "profile-heading", selector: "h1.text-heading-xlarge" },
-          { key: "profile-card", selector: "main section.artdeco-card" }
-        ]
-      },
-      {
-        key: "profile_main",
-        description: "Profile main content area",
-        candidates: [
-          { key: "profile-main", selector: "main" },
-          { key: "profile-top-card", selector: "section.artdeco-card" },
-          { key: "profile-about", selector: "#about" }
-        ]
-      }
-    ]
-  },
-  {
-    id: "notifications",
-    summary: "Open notifications and verify the notifications surface.",
-    url: "https://www.linkedin.com/notifications/",
-    expectedPath: /^\/notifications\//u,
-    selectors: [
-      {
-        key: "notification_surface",
-        description: "Notifications list or container",
-        candidates: [
-          { key: "notification-list", selector: "main ul[role='list']" },
-          { key: "notification-card", selector: "main li.notification-card" },
-          { key: "notification-main", selector: "main" }
-        ]
-      },
-      {
-        key: "notification_link",
-        description: "Notification entry link",
-        candidates: [
-          { key: "notification-anchor", selector: "a[href*='/notifications/']" },
-          { key: "notification-update-link", selector: "a[href*='/feed/update/']" },
-          { key: "notification-list-item", selector: "main li" }
-        ]
-      }
-    ]
-  },
-  {
-    id: "connections",
-    summary: "Open connections and verify the connections list surface.",
-    url: "https://www.linkedin.com/mynetwork/invite-connect/connections/",
-    expectedPath: /^\/mynetwork\/invite-connect\/connections\//u,
-    selectors: [
-      {
-        key: "connections_surface",
-        description: "Connections list or container",
-        candidates: [
-          { key: "connections-list", selector: "main ul[role='list']" },
-          { key: "connection-card", selector: "main li.mn-connection-card" },
-          { key: "connections-main", selector: "main" }
-        ]
-      },
-      {
-        key: "connection_entry",
-        description: "Connection profile entry",
-        candidates: [
-          { key: "connection-profile-link", selector: "main a[href*='/in/']" },
-          { key: "connection-name", selector: "main span.mn-connection-card__name" },
-          { key: "connection-list-item", selector: "main li" }
-        ]
-      }
-    ]
-  }
-];
+const READ_ONLY_OPERATION_REGISTRY: ReadonlyArray<ReadOnlyOperationDefinition> =
+  [
+    {
+      id: "feed",
+      summary: "Load the LinkedIn feed and verify the main feed surface.",
+      url: "https://www.linkedin.com/feed/",
+      expectedPath: /^\/feed\//u,
+      selectors: [
+        {
+          key: "feed_surface",
+          description: "Feed content surface",
+          candidates: [
+            { key: "feed-update-card", selector: "div.feed-shared-update-v2" },
+            { key: "feed-data-urn", selector: "main [data-urn]" },
+            { key: "feed-main", selector: "main[role='main']" },
+          ],
+        },
+        {
+          key: "global_nav",
+          description: "Authenticated global navigation",
+          candidates: [
+            { key: "global-nav", selector: "nav.global-nav" },
+            { key: "header-nav", selector: "header nav" },
+            { key: "global-nav-link", selector: "a[href='/feed/']" },
+          ],
+        },
+      ],
+    },
+    {
+      id: "profile",
+      summary: "Open the signed-in profile and verify the header selectors.",
+      url: "https://www.linkedin.com/in/me/",
+      expectedPath: /^\/in\//u,
+      selectors: [
+        {
+          key: "profile_header",
+          description: "Profile headline card",
+          candidates: [
+            { key: "profile-h1", selector: "main h1" },
+            { key: "profile-heading", selector: "h1.text-heading-xlarge" },
+            { key: "profile-card", selector: "main section.artdeco-card" },
+          ],
+        },
+        {
+          key: "profile_main",
+          description: "Profile main content area",
+          candidates: [
+            { key: "profile-main", selector: "main" },
+            { key: "profile-top-card", selector: "section.artdeco-card" },
+            { key: "profile-about", selector: "#about" },
+          ],
+        },
+      ],
+    },
+    {
+      id: "notifications",
+      summary: "Open notifications and verify the notifications surface.",
+      url: "https://www.linkedin.com/notifications/",
+      expectedPath: /^\/notifications\//u,
+      selectors: [
+        {
+          key: "notification_surface",
+          description: "Notifications list or container",
+          candidates: [
+            { key: "notification-list", selector: "main ul[role='list']" },
+            { key: "notification-card", selector: "main li.notification-card" },
+            { key: "notification-main", selector: "main" },
+          ],
+        },
+        {
+          key: "notification_link",
+          description: "Notification entry link",
+          candidates: [
+            {
+              key: "notification-anchor",
+              selector: "a[href*='/notifications/']",
+            },
+            {
+              key: "notification-update-link",
+              selector: "a[href*='/feed/update/']",
+            },
+            { key: "notification-list-item", selector: "main li" },
+          ],
+        },
+      ],
+    },
+    {
+      id: "connections",
+      summary: "Open connections and verify the connections list surface.",
+      url: "https://www.linkedin.com/mynetwork/invite-connect/connections/",
+      expectedPath: /^\/mynetwork\/invite-connect\/connections\//u,
+      selectors: [
+        {
+          key: "connections_surface",
+          description: "Connections list or container",
+          candidates: [
+            { key: "connections-list", selector: "main ul[role='list']" },
+            { key: "connection-card", selector: "main li.mn-connection-card" },
+            { key: "connections-main", selector: "main" },
+          ],
+        },
+        {
+          key: "connection_entry",
+          description: "Connection profile entry",
+          candidates: [
+            {
+              key: "connection-profile-link",
+              selector: "main a[href*='/in/']",
+            },
+            {
+              key: "connection-name",
+              selector: "main span.mn-connection-card__name",
+            },
+            { key: "connection-list-item", selector: "main li" },
+          ],
+        },
+      ],
+    },
+  ];
 
 const INBOX_OPERATION: ReadOnlyOperationDefinition = {
   id: "inbox",
-  summary: "Open messaging and verify the inbox plus one readable thread when available.",
+  summary:
+    "Open messaging and verify the inbox plus one readable thread when available.",
   url: "https://www.linkedin.com/messaging/",
   expectedPath: /^\/messaging\//u,
   selectors: [
@@ -385,11 +401,14 @@ const INBOX_OPERATION: ReadOnlyOperationDefinition = {
       candidates: [
         {
           key: "conversation-list",
-          selector: ".msg-conversations-container__conversations-list"
+          selector: ".msg-conversations-container__conversations-list",
         },
-        { key: "conversation-thread-link", selector: "a[href*='/messaging/thread/']" },
-        { key: "messaging-main", selector: "main" }
-      ]
+        {
+          key: "conversation-thread-link",
+          selector: "a[href*='/messaging/thread/']",
+        },
+        { key: "messaging-main", selector: "main" },
+      ],
     },
     {
       key: "message_thread",
@@ -398,23 +417,31 @@ const INBOX_OPERATION: ReadOnlyOperationDefinition = {
         { key: "message-event", selector: "li.msg-s-message-list__event" },
         {
           key: "message-list-container",
-          selector: ".msg-s-message-list-container"
+          selector: ".msg-s-message-list-container",
         },
-        { key: "message-group", selector: ".msg-s-message-group__messages" }
-      ]
-    }
-  ]
+        { key: "message-group", selector: ".msg-s-message-group__messages" },
+      ],
+    },
+  ],
 };
 
 const READ_ONLY_OPERATION_MAP = new Map<
   LinkedInReadOnlyValidationOperationId,
   ReadOnlyOperationDefinition
->([...READ_ONLY_OPERATION_REGISTRY, INBOX_OPERATION].map((definition) => [definition.id, definition]));
+>(
+  [...READ_ONLY_OPERATION_REGISTRY, INBOX_OPERATION].map((definition) => [
+    definition.id,
+    definition,
+  ]),
+);
 
 function withPlaywrightInstallHint(error: unknown): Error {
-  if (error instanceof Error && error.message.includes("Executable doesn't exist")) {
+  if (
+    error instanceof Error &&
+    error.message.includes("Executable doesn't exist")
+  ) {
     return new Error(
-      'Playwright browser executable is missing. Install Chromium with "npx playwright install chromium" or set PLAYWRIGHT_EXECUTABLE_PATH.'
+      'Playwright browser executable is missing. Install Chromium with "npx playwright install chromium" or set PLAYWRIGHT_EXECUTABLE_PATH.',
     );
   }
 
@@ -451,7 +478,7 @@ function isTimeoutError(error: unknown): boolean {
 
 function isNetworkError(error: unknown): boolean {
   return /(net::|ERR_|ECONN|ENOTFOUND|EAI_AGAIN|socket hang up|disconnected)/iu.test(
-    getErrorMessage(error)
+    getErrorMessage(error),
   );
 }
 
@@ -466,7 +493,7 @@ function isFiniteNonNegativeNumber(value: number): boolean {
 function resolvePositiveInt(
   value: number | undefined,
   fallback: number,
-  label: string
+  label: string,
 ): number {
   if (typeof value === "undefined") {
     return fallback;
@@ -475,7 +502,7 @@ function resolvePositiveInt(
   if (!isFinitePositiveNumber(value)) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      `${label} must be a positive integer.`
+      `${label} must be a positive integer.`,
     );
   }
 
@@ -485,7 +512,7 @@ function resolvePositiveInt(
 function resolveNonNegativeInt(
   value: number | undefined,
   fallback: number,
-  label: string
+  label: string,
 ): number {
   if (typeof value === "undefined") {
     return fallback;
@@ -494,7 +521,7 @@ function resolveNonNegativeInt(
   if (!isFiniteNonNegativeNumber(value)) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      `${label} must be a non-negative integer.`
+      `${label} must be a non-negative integer.`,
     );
   }
 
@@ -506,7 +533,7 @@ function validateSessionName(sessionName: string | undefined): string {
   if (normalized.length === 0) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "sessionName must not be empty."
+      "sessionName must not be empty.",
     );
   }
 
@@ -515,8 +542,8 @@ function validateSessionName(sessionName: string | undefined): string {
       "ACTION_PRECONDITION_FAILED",
       "sessionName must not contain path separators or relative path segments.",
       {
-        session_name: normalized
-      }
+        session_name: normalized,
+      },
     );
   }
 
@@ -524,19 +551,23 @@ function validateSessionName(sessionName: string | undefined): string {
 }
 
 function validateRunReadOnlyValidationOptions(
-  options: RunReadOnlyValidationOptions | undefined
+  options: RunReadOnlyValidationOptions | undefined,
 ): RunReadOnlyValidationOptions {
   if (typeof options === "undefined") {
     return {};
   }
 
-  if (typeof options !== "object" || options === null || Array.isArray(options)) {
+  if (
+    typeof options !== "object" ||
+    options === null ||
+    Array.isArray(options)
+  ) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "read-only live validation options must be an object.",
       {
-        received_type: Array.isArray(options) ? "array" : typeof options
-      }
+        received_type: Array.isArray(options) ? "array" : typeof options,
+      },
     );
   }
 
@@ -546,21 +577,27 @@ function validateRunReadOnlyValidationOptions(
   ) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "onBeforeOperation must be a function when provided."
+      "onBeforeOperation must be a function when provided.",
     );
   }
 
-  if (typeof options.onLog !== "undefined" && typeof options.onLog !== "function") {
+  if (
+    typeof options.onLog !== "undefined" &&
+    typeof options.onLog !== "function"
+  ) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "onLog must be a function when provided."
+      "onLog must be a function when provided.",
     );
   }
 
-  if (typeof options.baseDir !== "undefined" && typeof options.baseDir !== "string") {
+  if (
+    typeof options.baseDir !== "undefined" &&
+    typeof options.baseDir !== "string"
+  ) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "baseDir must be a string when provided."
+      "baseDir must be a string when provided.",
     );
   }
 
@@ -570,7 +607,7 @@ function validateRunReadOnlyValidationOptions(
   ) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "sessionName must be a string when provided."
+      "sessionName must be a string when provided.",
     );
   }
 
@@ -580,9 +617,12 @@ function validateRunReadOnlyValidationOptions(
 function calculateRetryBackoffMs(
   attempt: number,
   retryBaseDelayMs: number,
-  retryMaxDelayMs: number
+  retryMaxDelayMs: number,
 ): number {
-  return Math.min(retryMaxDelayMs, retryBaseDelayMs * 2 ** Math.max(0, attempt - 1));
+  return Math.min(
+    retryMaxDelayMs,
+    retryBaseDelayMs * 2 ** Math.max(0, attempt - 1),
+  );
 }
 
 async function sleep(delayMs: number): Promise<void> {
@@ -592,7 +632,11 @@ async function sleep(delayMs: number): Promise<void> {
 }
 
 function resolveLatestReportPath(paths: ConfigPaths): string {
-  return path.join(paths.artifactsDir, READ_ONLY_REPORT_DIR, READ_ONLY_LATEST_REPORT_NAME);
+  return path.join(
+    paths.artifactsDir,
+    READ_ONLY_REPORT_DIR,
+    READ_ONLY_LATEST_REPORT_NAME,
+  );
 }
 
 async function writeJsonFile(filePath: string, value: unknown): Promise<void> {
@@ -613,7 +657,7 @@ function isAllowedLinkedInHost(hostname: string): boolean {
   const normalizedHost = hostname.toLowerCase();
   return ALLOWED_LINKEDIN_HOST_SUFFIXES.some(
     (suffix) =>
-      normalizedHost === suffix || normalizedHost.endsWith(`.${suffix}`)
+      normalizedHost === suffix || normalizedHost.endsWith(`.${suffix}`),
   );
 }
 
@@ -625,7 +669,7 @@ function isAllowedLinkedInHost(hostname: string): boolean {
  */
 export function isAllowedLinkedInReadOnlyRequest(
   urlString: string,
-  method: string
+  method: string,
 ): boolean {
   if (method.trim().toUpperCase() !== "GET") {
     return false;
@@ -644,30 +688,24 @@ export function isAllowedLinkedInReadOnlyRequest(
 }
 
 function getOperationDefinition(
-  operationId: LinkedInReadOnlyValidationOperationId
+  operationId: LinkedInReadOnlyValidationOperationId,
 ): ReadOnlyOperationDefinition {
   const definition = READ_ONLY_OPERATION_MAP.get(operationId);
 
   if (!definition) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      `Unsupported read-only live validation operation: ${operationId}.`
+      `Unsupported read-only live validation operation: ${operationId}.`,
     );
   }
 
   return definition;
 }
 
-async function getOrCreatePage(context: BrowserContext): Promise<Page> {
-  const existingPage = context.pages()[0];
-
-  return existingPage ?? context.newPage();
-}
-
 async function assertHealthyStoredSession(
   page: Page,
   sessionName: string,
-  operationId: LinkedInReadOnlyValidationOperationId
+  operationId: LinkedInReadOnlyValidationOperationId,
 ): Promise<void> {
   const status = await inspectLinkedInSession(page);
   if (status.authenticated) {
@@ -675,7 +713,8 @@ async function assertHealthyStoredSession(
   }
 
   const challengeDetected =
-    status.currentUrl.includes("/checkpoint") || status.currentUrl.includes("/challenge");
+    status.currentUrl.includes("/checkpoint") ||
+    status.currentUrl.includes("/challenge");
 
   throw new LinkedInBuddyError(
     challengeDetected ? "CAPTCHA_OR_CHALLENGE" : "AUTH_REQUIRED",
@@ -687,14 +726,14 @@ async function assertHealthyStoredSession(
       current_url: status.currentUrl,
       operation: operationId,
       reason: status.reason,
-      session_name: sessionName
-    }
+      session_name: sessionName,
+    },
   );
 }
 
 function assertExpectedOperationUrl(
   currentUrl: string,
-  definition: ReadOnlyOperationDefinition
+  definition: ReadOnlyOperationDefinition,
 ): void {
   let parsedUrl: URL;
 
@@ -706,23 +745,26 @@ function assertExpectedOperationUrl(
       `Unexpected redirect while running ${definition.id}: ${currentUrl}`,
       {
         current_url: currentUrl,
-        operation: definition.id
+        operation: definition.id,
       },
       {
-        cause: error instanceof Error ? error : undefined
-      }
+        cause: error instanceof Error ? error : undefined,
+      },
     );
   }
 
-  if (!isAllowedLinkedInHost(parsedUrl.hostname) || !definition.expectedPath.test(parsedUrl.pathname)) {
+  if (
+    !isAllowedLinkedInHost(parsedUrl.hostname) ||
+    !definition.expectedPath.test(parsedUrl.pathname)
+  ) {
     throw new LinkedInBuddyError(
       "NETWORK_ERROR",
       `Unexpected redirect while running ${definition.id}. Expected a LinkedIn ${definition.id} page but reached ${currentUrl}.`,
       {
         current_url: currentUrl,
         expected_path: definition.expectedPath.source,
-        operation: definition.id
-      }
+        operation: definition.id,
+      },
     );
   }
 }
@@ -736,7 +778,11 @@ function getCurrentPageUrl(page: Page): string {
 }
 
 function readNavigationStatus(response: unknown): number | null {
-  if (typeof response !== "object" || response === null || !("status" in response)) {
+  if (
+    typeof response !== "object" ||
+    response === null ||
+    !("status" in response)
+  ) {
     return null;
   }
 
@@ -756,19 +802,19 @@ function readNavigationStatus(response: unknown): number | null {
 function createNavigationStatusError(
   definition: ReadOnlyOperationDefinition,
   status: number,
-  currentUrl: string
+  currentUrl: string,
 ): LinkedInBuddyError {
   const details = {
     current_url: currentUrl,
     http_status: status,
-    operation: definition.id
+    operation: definition.id,
   };
 
   if (status === 401 || status === 403) {
     return new LinkedInBuddyError(
       "AUTH_REQUIRED",
       `LinkedIn rejected the stored session while loading ${definition.id}. Capture a fresh session and rerun the live validation.`,
-      details
+      details,
     );
   }
 
@@ -776,7 +822,7 @@ function createNavigationStatusError(
     return new LinkedInBuddyError(
       "RATE_LIMITED",
       `LinkedIn temporarily rate limited the ${definition.id} page (HTTP ${status}). Wait for the session to cool down, then rerun the live validation.`,
-      details
+      details,
     );
   }
 
@@ -784,20 +830,20 @@ function createNavigationStatusError(
     return new LinkedInBuddyError(
       "NETWORK_ERROR",
       `LinkedIn returned HTTP ${status} while loading ${definition.id}. Check connectivity and rerun the live validation.`,
-      details
+      details,
     );
   }
 
   return new LinkedInBuddyError(
     "UNKNOWN",
     `LinkedIn returned HTTP ${status} while loading ${definition.id}. Refresh the session and rerun the live validation.`,
-    details
+    details,
   );
 }
 
 function createNetworkIdleWarning(
   definition: Pick<ReadOnlyOperationDefinition, "id">,
-  timeoutMs: number
+  timeoutMs: number,
 ): string {
   return `The ${definition.id} page did not reach network idle within ${timeoutMs}ms. Selector checks continued with the current DOM state.`;
 }
@@ -806,7 +852,7 @@ function normalizeOperationError(
   definition: ReadOnlyOperationDefinition,
   timeoutMs: number,
   currentUrl: string,
-  error: unknown
+  error: unknown,
 ): LinkedInBuddyError {
   if (error instanceof LinkedInBuddyError) {
     return error;
@@ -815,7 +861,7 @@ function normalizeOperationError(
   const details = {
     current_url: currentUrl,
     operation: definition.id,
-    page_url: definition.url
+    page_url: definition.url,
   };
 
   if (isTimeoutError(error)) {
@@ -823,7 +869,7 @@ function normalizeOperationError(
       "TIMEOUT",
       `Timed out after ${timeoutMs}ms while running ${definition.id}. LinkedIn may be slow or the page may be incomplete; rerun the live validation or increase the timeout.`,
       details,
-      createErrorOptions(error)
+      createErrorOptions(error),
     );
   }
 
@@ -832,7 +878,7 @@ function normalizeOperationError(
       "NETWORK_ERROR",
       `Could not load the ${definition.id} page because the browser or network connection failed: ${getErrorMessage(error)}. Check connectivity and rerun the live validation.`,
       details,
-      createErrorOptions(error)
+      createErrorOptions(error),
     );
   }
 
@@ -840,7 +886,7 @@ function normalizeOperationError(
     "UNKNOWN",
     `Live validation failed while running ${definition.id}: ${getErrorMessage(error)}. Refresh the stored session or rerun the live validation.`,
     details,
-    createErrorOptions(error)
+    createErrorOptions(error),
   );
 }
 
@@ -849,12 +895,18 @@ function isRetryableOperationError(code: LinkedInBuddyErrorCode): boolean {
 }
 
 function isBlockingOperationErrorCode(code: LinkedInBuddyErrorCode): boolean {
-  return code === "AUTH_REQUIRED" || code === "CAPTCHA_OR_CHALLENGE" || code === "RATE_LIMITED";
+  return (
+    code === "AUTH_REQUIRED" ||
+    code === "CAPTCHA_OR_CHALLENGE" ||
+    code === "RATE_LIMITED"
+  );
 }
 
 function getOperationAttemptCount(error: LinkedInBuddyError): number {
   const attemptCount = error.details.attempt_count;
-  return typeof attemptCount === "number" && Number.isInteger(attemptCount) && attemptCount > 0
+  return typeof attemptCount === "number" &&
+    Number.isInteger(attemptCount) &&
+    attemptCount > 0
     ? attemptCount
     : 1;
 }
@@ -880,7 +932,7 @@ function buildRetryExhaustedWarning(attemptCount: number): string | null {
 async function resolveSelectorResult(
   page: Page,
   selectorDefinition: ReadOnlySelectorDefinition,
-  timeoutMs: number
+  timeoutMs: number,
 ): Promise<ReadOnlyValidationSelectorResult> {
   for (const [index, candidate] of selectorDefinition.candidates.entries()) {
     try {
@@ -895,7 +947,7 @@ async function resolveSelectorResult(
         matched_candidate_rank: index,
         matched_selector: candidate.selector,
         selector_key: selectorDefinition.key,
-        status: "pass"
+        status: "pass",
       };
     } catch {
       // Try the next selector candidate.
@@ -904,25 +956,25 @@ async function resolveSelectorResult(
 
   return createFailedSelectorResult(
     selectorDefinition,
-    `No selector candidate matched ${selectorDefinition.key}.`
+    `No selector candidate matched ${selectorDefinition.key}.`,
   );
 }
 
 async function resolveSelectorResults(
   page: Page,
   selectorDefinitions: readonly ReadOnlySelectorDefinition[],
-  timeoutMs: number
+  timeoutMs: number,
 ): Promise<ReadOnlyValidationSelectorResult[]> {
   return Promise.all(
     selectorDefinitions.map((selectorDefinition) =>
-      resolveSelectorResult(page, selectorDefinition, timeoutMs)
-    )
+      resolveSelectorResult(page, selectorDefinition, timeoutMs),
+    ),
   );
 }
 
 function createFailedSelectorResult(
   selectorDefinition: Pick<ReadOnlySelectorDefinition, "description" | "key">,
-  error: string
+  error: string,
 ): ReadOnlyValidationSelectorResult {
   return {
     description: selectorDefinition.description,
@@ -931,26 +983,26 @@ function createFailedSelectorResult(
     matched_candidate_rank: null,
     matched_selector: null,
     selector_key: selectorDefinition.key,
-    status: "fail"
+    status: "fail",
   };
 }
 
 function buildBlockedRequest(
   request: Request,
-  reason: ReadOnlyValidationBlockedRequest["reason"]
+  reason: ReadOnlyValidationBlockedRequest["reason"],
 ): ReadOnlyValidationBlockedRequest {
   return {
     blocked_at: new Date().toISOString(),
     method: request.method(),
     reason,
     resource_type: request.resourceType(),
-    url: request.url()
+    url: request.url(),
   };
 }
 
 async function installReadOnlyNetworkGuard(
   context: BrowserContext,
-  blockedRequests: ReadOnlyValidationBlockedRequest[]
+  blockedRequests: ReadOnlyValidationBlockedRequest[],
 ): Promise<void> {
   await context.route("**/*", async (route: Route) => {
     const request = route.request();
@@ -965,8 +1017,10 @@ async function installReadOnlyNetworkGuard(
     blockedRequests.push(
       buildBlockedRequest(
         request,
-        method.trim().toUpperCase() !== "GET" ? "non_get" : "non_linkedin_domain"
-      )
+        method.trim().toUpperCase() !== "GET"
+          ? "non_get"
+          : "non_linkedin_domain",
+      ),
     );
     await route.abort();
   });
@@ -985,24 +1039,24 @@ export class ReadOnlyOperationRateLimiter {
     private readonly minIntervalMs: number = DEFAULT_MIN_INTERVAL_MS,
     private readonly now: () => number = () => Date.now(),
     private readonly sleep: (delayMs: number) => Promise<void> = async (
-      delayMs
+      delayMs,
     ) => {
       await new Promise<void>((resolve) => {
         setTimeout(resolve, delayMs);
       });
-    }
+    },
   ) {
     if (!isFinitePositiveNumber(maxRequests)) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        "maxRequests must be a positive number."
+        "maxRequests must be a positive number.",
       );
     }
 
     if (!isFinitePositiveNumber(minIntervalMs)) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        "minIntervalMs must be a positive number."
+        "minIntervalMs must be a positive number.",
       );
     }
   }
@@ -1011,7 +1065,9 @@ export class ReadOnlyOperationRateLimiter {
    * Waits until the next request slot is available or throws `RATE_LIMITED`
    * when the request budget has already been exhausted.
    */
-  async waitTurn(operationId: LinkedInReadOnlyValidationOperationId): Promise<void> {
+  async waitTurn(
+    operationId: LinkedInReadOnlyValidationOperationId,
+  ): Promise<void> {
     if (this.requestCount >= this.maxRequests) {
       throw new LinkedInBuddyError(
         "RATE_LIMITED",
@@ -1019,8 +1075,8 @@ export class ReadOnlyOperationRateLimiter {
         {
           max_requests: this.maxRequests,
           operation: operationId,
-          used_requests: this.requestCount
-        }
+          used_requests: this.requestCount,
+        },
       );
     }
 
@@ -1054,18 +1110,22 @@ export class ReadOnlyOperationRateLimiter {
 
 function summarizeReport(
   operations: readonly ReadOnlyValidationOperationResult[],
-  diff: ReadOnlyValidationDiff
+  diff: ReadOnlyValidationDiff,
 ): string {
-  const passCount = operations.filter((operation) => operation.status === "pass").length;
+  const passCount = operations.filter(
+    (operation) => operation.status === "pass",
+  ).length;
   const failCount = operations.length - passCount;
-  const regressionSuffix = diff.regressions.length > 0
-    ? ` ${diff.regressions.length} selector regression${diff.regressions.length === 1 ? "" : "s"} detected versus the previous run.`
-    : "";
+  const regressionSuffix =
+    diff.regressions.length > 0
+      ? ` ${diff.regressions.length} selector regression${diff.regressions.length === 1 ? "" : "s"} detected versus the previous run.`
+      : "";
   const incompleteCount =
     LINKEDIN_READ_ONLY_VALIDATION_OPERATIONS.length - operations.length;
-  const partialSuffix = incompleteCount > 0
-    ? ` Validation stopped early; ${incompleteCount} operation${incompleteCount === 1 ? " did" : "s did"} not run after a blocking failure.`
-    : "";
+  const partialSuffix =
+    incompleteCount > 0
+      ? ` Validation stopped early; ${incompleteCount} operation${incompleteCount === 1 ? " did" : "s did"} not run after a blocking failure.`
+      : "";
 
   return `Checked ${operations.length} read-only LinkedIn operation${operations.length === 1 ? "" : "s"}. ${passCount} passed. ${failCount} failed.${regressionSuffix}${partialSuffix}`;
 }
@@ -1074,39 +1134,41 @@ function buildRecommendedActions(
   sessionName: string,
   reportPath: string,
   diff: ReadOnlyValidationDiff,
-  operations: readonly ReadOnlyValidationOperationResult[]
+  operations: readonly ReadOnlyValidationOperationResult[],
 ): string[] {
   const actions = [
-    `Open ${reportPath} to review selector matches, failures, timings, and blocked requests.`
+    `Open ${reportPath} to review selector matches, failures, timings, and blocked requests.`,
   ];
   const blockingFailure = operations.find(
-    (operation) => operation.error_code && isBlockingOperationErrorCode(operation.error_code)
+    (operation) =>
+      operation.error_code &&
+      isBlockingOperationErrorCode(operation.error_code),
   );
 
   if (operations.some((operation) => operation.status === "fail")) {
     actions.push(
-      `Capture a fresh session with "linkedin-buddy auth session --session ${sessionName}" if the report shows login or challenge redirects.`
+      `Capture a fresh session with "linkedin-buddy auth session --session ${sessionName}" if the report shows login or challenge redirects.`,
     );
     actions.push(
-      "Review failed selector groups and update the read-only validation selectors if LinkedIn changed the UI."
+      "Review failed selector groups and update the read-only validation selectors if LinkedIn changed the UI.",
     );
   }
 
   if (diff.regressions.length > 0 && diff.previous_report_path) {
     actions.push(
-      `Compare this run with ${diff.previous_report_path} to confirm whether the regression is a real UI change or environment-specific drift.`
+      `Compare this run with ${diff.previous_report_path} to confirm whether the regression is a real UI change or environment-specific drift.`,
     );
   }
 
   if (blockingFailure?.error_code === "RATE_LIMITED") {
     actions.push(
-      "Increase the request budget or rerun with a longer interval between checks if the read-only validation keeps hitting LinkedIn rate limits."
+      "Increase the request budget or rerun with a longer interval between checks if the read-only validation keeps hitting LinkedIn rate limits.",
     );
   }
 
   if (blockingFailure) {
     actions.push(
-      `Validation stopped early at ${blockingFailure.operation} [${blockingFailure.error_code}]. Address the blocking failure, then rerun the remaining checks.`
+      `Validation stopped early at ${blockingFailure.operation} [${blockingFailure.error_code}]. Address the blocking failure, then rerun the remaining checks.`,
     );
   }
 
@@ -1114,7 +1176,7 @@ function buildRecommendedActions(
 }
 
 function buildSelectorIndex(
-  report: Pick<ReadOnlyValidationReport, "operations">
+  report: Pick<ReadOnlyValidationReport, "operations">,
 ): Map<
   string,
   {
@@ -1139,8 +1201,8 @@ function buildSelectorIndex(
         {
           matchedCandidateKey: selectorResult.matched_candidate_key,
           matchedCandidateRank: selectorResult.matched_candidate_rank,
-          status: selectorResult.status
-        }
+          status: selectorResult.status,
+        },
       );
     }
   }
@@ -1150,12 +1212,14 @@ function buildSelectorIndex(
 
 function getSelectorResultKey(
   operationId: LinkedInReadOnlyValidationOperationId,
-  selectorKey: string
+  selectorKey: string,
 ): string {
   return `${operationId}:${selectorKey}`;
 }
 
-function isReadOnlyValidationReport(value: unknown): value is ReadOnlyValidationReport {
+function isReadOnlyValidationReport(
+  value: unknown,
+): value is ReadOnlyValidationReport {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -1170,9 +1234,10 @@ function isReadOnlyValidationReport(value: unknown): value is ReadOnlyValidation
  */
 export function computeReadOnlyValidationDiff(
   currentReport: Pick<ReadOnlyValidationReport, "operations">,
-  previousReport:
-    | Pick<ReadOnlyValidationReport, "operations" | "report_path">
-    | null
+  previousReport: Pick<
+    ReadOnlyValidationReport,
+    "operations" | "report_path"
+  > | null,
 ): ReadOnlyValidationDiff {
   if (!previousReport) {
     return {
@@ -1180,8 +1245,8 @@ export function computeReadOnlyValidationDiff(
       regressions: [],
       unchanged_count: currentReport.operations.reduce(
         (total, operation) => total + operation.selector_results.length,
-        0
-      )
+        0,
+      ),
     };
   }
 
@@ -1194,7 +1259,7 @@ export function computeReadOnlyValidationDiff(
     for (const selectorResult of operation.selector_results) {
       const entryKey = getSelectorResultKey(
         operation.operation,
-        selectorResult.selector_key
+        selectorResult.selector_key,
       );
       const previousEntry = previousIndex.get(entryKey);
       if (!previousEntry) {
@@ -1208,7 +1273,8 @@ export function computeReadOnlyValidationDiff(
           selectorResult.status === "pass" &&
           previousEntry.matchedCandidateRank !== null &&
           selectorResult.matched_candidate_rank !== null &&
-          selectorResult.matched_candidate_rank > previousEntry.matchedCandidateRank
+          selectorResult.matched_candidate_rank >
+            previousEntry.matchedCandidateRank
         ) {
           regressions.push({
             change: "fallback_drift",
@@ -1217,7 +1283,7 @@ export function computeReadOnlyValidationDiff(
             operation: operation.operation,
             previous_candidate_key: previousEntry.matchedCandidateKey,
             previous_status: previousEntry.status,
-            selector_key: selectorResult.selector_key
+            selector_key: selectorResult.selector_key,
           });
           continue;
         }
@@ -1234,7 +1300,7 @@ export function computeReadOnlyValidationDiff(
           operation: operation.operation,
           previous_candidate_key: previousEntry.matchedCandidateKey,
           previous_status: previousEntry.status,
-          selector_key: selectorResult.selector_key
+          selector_key: selectorResult.selector_key,
         });
         continue;
       }
@@ -1246,7 +1312,7 @@ export function computeReadOnlyValidationDiff(
         operation: operation.operation,
         previous_candidate_key: previousEntry.matchedCandidateKey,
         previous_status: previousEntry.status,
-        selector_key: selectorResult.selector_key
+        selector_key: selectorResult.selector_key,
       });
     }
   }
@@ -1255,7 +1321,7 @@ export function computeReadOnlyValidationDiff(
     previous_report_path: previousReport.report_path,
     recoveries,
     regressions,
-    unchanged_count: unchangedCount
+    unchanged_count: unchangedCount,
   };
 }
 
@@ -1268,20 +1334,27 @@ async function runGenericOperation(
   page: Page,
   definition: ReadOnlyOperationDefinition,
   sessionName: string,
-  timeoutMs: number
+  timeoutMs: number,
 ): Promise<ReadOnlyOperationExecutionResult> {
-  const selectorTimeoutMs = Math.min(timeoutMs, READ_ONLY_DOM_SETTLE_TIMEOUT_MS);
+  const selectorTimeoutMs = Math.min(
+    timeoutMs,
+    READ_ONLY_DOM_SETTLE_TIMEOUT_MS,
+  );
   const warnings = await loadValidatedOperationPage(
     page,
     definition,
     sessionName,
-    timeoutMs
+    timeoutMs,
   );
 
   return {
     additionalWarnings: warnings,
     finalUrl: page.url(),
-    selectorResults: await resolveSelectorResults(page, definition.selectors, selectorTimeoutMs)
+    selectorResults: await resolveSelectorResults(
+      page,
+      definition.selectors,
+      selectorTimeoutMs,
+    ),
   };
 }
 
@@ -1289,24 +1362,30 @@ async function loadValidatedOperationPage(
   page: Page,
   definition: ReadOnlyOperationDefinition,
   sessionName: string,
-  timeoutMs: number
+  timeoutMs: number,
 ): Promise<string[]> {
   const warnings: string[] = [];
   const response = await page.goto(definition.url, {
     timeout: timeoutMs,
-    waitUntil: "domcontentloaded"
+    waitUntil: "domcontentloaded",
   });
   const responseStatus = readNavigationStatus(response);
   if (responseStatus !== null && responseStatus >= 400) {
     throw createNavigationStatusError(
       definition,
       responseStatus,
-      getCurrentPageUrl(page)
+      getCurrentPageUrl(page),
     );
   }
 
-  const networkIdleTimeoutMs = Math.min(timeoutMs, READ_ONLY_DOM_SETTLE_TIMEOUT_MS);
-  const networkIdleReached = await waitForNetworkIdleBestEffort(page, networkIdleTimeoutMs);
+  const networkIdleTimeoutMs = Math.min(
+    timeoutMs,
+    READ_ONLY_DOM_SETTLE_TIMEOUT_MS,
+  );
+  const networkIdleReached = await waitForNetworkIdleBestEffort(
+    page,
+    networkIdleTimeoutMs,
+  );
   if (!networkIdleReached) {
     warnings.push(createNetworkIdleWarning(definition, networkIdleTimeoutMs));
   }
@@ -1316,10 +1395,13 @@ async function loadValidatedOperationPage(
   return warnings;
 }
 
-async function clickFirstVisibleThreadLink(page: Page, timeoutMs: number): Promise<boolean> {
+async function clickFirstVisibleThreadLink(
+  page: Page,
+  timeoutMs: number,
+): Promise<boolean> {
   const threadLinkSelectors = [
     "a[href*='/messaging/thread/']",
-    "a[href*='/messaging/detail/']"
+    "a[href*='/messaging/detail/']",
   ];
 
   for (const selector of threadLinkSelectors) {
@@ -1339,13 +1421,13 @@ async function clickFirstVisibleThreadLink(page: Page, timeoutMs: number): Promi
 async function runInboxOperation(
   page: Page,
   sessionName: string,
-  timeoutMs: number
+  timeoutMs: number,
 ): Promise<ReadOnlyOperationExecutionResult> {
   const warnings = await loadValidatedOperationPage(
     page,
     INBOX_OPERATION,
     sessionName,
-    timeoutMs
+    timeoutMs,
   );
 
   const conversationSelectorDefinition = INBOX_OPERATION.selectors[0];
@@ -1353,48 +1435,60 @@ async function runInboxOperation(
   if (!conversationSelectorDefinition || !messageSelectorDefinition) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "Inbox live validation is misconfigured because required selector groups are missing."
+      "Inbox live validation is misconfigured because required selector groups are missing.",
     );
   }
 
-  const selectorTimeoutMs = Math.min(timeoutMs, READ_ONLY_DOM_SETTLE_TIMEOUT_MS);
+  const selectorTimeoutMs = Math.min(
+    timeoutMs,
+    READ_ONLY_DOM_SETTLE_TIMEOUT_MS,
+  );
   const conversationSelector = await resolveSelectorResult(
     page,
     conversationSelectorDefinition,
-    selectorTimeoutMs
+    selectorTimeoutMs,
   );
 
-  const threadClicked = await clickFirstVisibleThreadLink(page, selectorTimeoutMs);
+  const threadClicked = await clickFirstVisibleThreadLink(
+    page,
+    selectorTimeoutMs,
+  );
   let threadUrl: string | undefined;
   if (threadClicked) {
     const threadNetworkIdleReached = await waitForNetworkIdleBestEffort(
       page,
-      selectorTimeoutMs
+      selectorTimeoutMs,
     );
     if (!threadNetworkIdleReached) {
-      warnings.push(createNetworkIdleWarning(INBOX_OPERATION, selectorTimeoutMs));
+      warnings.push(
+        createNetworkIdleWarning(INBOX_OPERATION, selectorTimeoutMs),
+      );
     }
     await assertHealthyStoredSession(page, sessionName, INBOX_OPERATION.id);
     assertExpectedOperationUrl(page.url(), INBOX_OPERATION);
     threadUrl = page.url();
   } else {
     warnings.push(
-      "No inbox thread was available to validate message-thread selectors; only the conversation list surface was checked."
+      "No inbox thread was available to validate message-thread selectors; only the conversation list surface was checked.",
     );
   }
 
   const messageSelector = threadClicked
-    ? await resolveSelectorResult(page, messageSelectorDefinition, selectorTimeoutMs)
+    ? await resolveSelectorResult(
+        page,
+        messageSelectorDefinition,
+        selectorTimeoutMs,
+      )
     : createFailedSelectorResult(
         messageSelectorDefinition,
-        "No inbox thread was available to validate message-thread selectors."
+        "No inbox thread was available to validate message-thread selectors.",
       );
 
   return {
     additionalWarnings: warnings,
     finalUrl: page.url(),
     selectorResults: [conversationSelector, messageSelector],
-    ...(threadUrl ? { threadUrl } : {})
+    ...(threadUrl ? { threadUrl } : {}),
   };
 }
 
@@ -1404,10 +1498,10 @@ function createOperationResult(
   completedAt: string,
   pageLoadMs: number,
   execution: ReadOnlyOperationExecutionResult,
-  attemptCount: number
+  attemptCount: number,
 ): ReadOnlyValidationOperationResult {
   const matchedCount = execution.selectorResults.filter(
-    (result) => result.status === "pass"
+    (result) => result.status === "pass",
   ).length;
   const failedCount = execution.selectorResults.length - matchedCount;
   const warnings = [...execution.additionalWarnings];
@@ -1430,7 +1524,7 @@ function createOperationResult(
     summary: definition.summary,
     ...(execution.threadUrl ? { thread_url: execution.threadUrl } : {}),
     url: definition.url,
-    warnings
+    warnings,
   };
 }
 
@@ -1441,7 +1535,7 @@ function createOperationFailureResult(
   pageLoadMs: number,
   finalUrl: string,
   error: LinkedInBuddyError,
-  attemptCount: number
+  attemptCount: number,
 ): ReadOnlyValidationOperationResult {
   const warnings: string[] = [];
   const retryWarning = buildRetryExhaustedWarning(attemptCount);
@@ -1460,13 +1554,13 @@ function createOperationFailureResult(
     operation: definition.id,
     page_load_ms: pageLoadMs,
     selector_results: definition.selectors.map((selectorDefinition) =>
-      createFailedSelectorResult(selectorDefinition, error.message)
+      createFailedSelectorResult(selectorDefinition, error.message),
     ),
     started_at: startedAt,
     status: "fail",
     summary: definition.summary,
     url: definition.url,
-    warnings
+    warnings,
   };
 }
 
@@ -1474,7 +1568,7 @@ async function runOperationOnce(
   page: Page,
   definition: ReadOnlyOperationDefinition,
   sessionName: string,
-  timeoutMs: number
+  timeoutMs: number,
 ): Promise<ReadOnlyOperationExecutionResult> {
   return definition.id === "inbox"
     ? await runInboxOperation(page, sessionName, timeoutMs)
@@ -1490,7 +1584,7 @@ async function runOperationWithRetries(
   maxRetries: number,
   retryBaseDelayMs: number,
   retryMaxDelayMs: number,
-  logger: ReadOnlyValidationLogger
+  logger: ReadOnlyValidationLogger,
 ): Promise<ReadOnlyRetriedOperationExecutionResult> {
   const maxAttempts = maxRetries + 1;
   let lastError: LinkedInBuddyError | undefined;
@@ -1500,41 +1594,49 @@ async function runOperationWithRetries(
       attempt,
       max_attempts: maxAttempts,
       operation: definition.id,
-      session_name: sessionName
+      session_name: sessionName,
     });
 
     try {
       await rateLimiter.waitTurn(definition.id);
-      const execution = await runOperationOnce(page, definition, sessionName, timeoutMs);
+      const execution = await runOperationOnce(
+        page,
+        definition,
+        sessionName,
+        timeoutMs,
+      );
       return {
         attemptCount: attempt,
-        execution
+        execution,
       };
     } catch (error) {
       const normalizedError = normalizeOperationError(
         definition,
         timeoutMs,
         getCurrentPageUrl(page),
-        error
+        error,
       );
       lastError = new LinkedInBuddyError(
         normalizedError.code,
         normalizedError.message,
         {
           ...normalizedError.details,
-          attempt_count: attempt
+          attempt_count: attempt,
         },
-        { cause: normalizedError }
+        { cause: normalizedError },
       );
 
-      if (!isRetryableOperationError(normalizedError.code) || attempt >= maxAttempts) {
+      if (
+        !isRetryableOperationError(normalizedError.code) ||
+        attempt >= maxAttempts
+      ) {
         throw lastError;
       }
 
       const backoffMs = calculateRetryBackoffMs(
         attempt,
         retryBaseDelayMs,
-        retryMaxDelayMs
+        retryMaxDelayMs,
       );
       logger.log("warn", "live_validation.operation.retry", {
         attempt,
@@ -1543,7 +1645,7 @@ async function runOperationWithRetries(
         error: normalizedError.message,
         max_attempts: maxAttempts,
         operation: definition.id,
-        session_name: sessionName
+        session_name: sessionName,
       });
       await sleep(backoffMs);
     }
@@ -1556,8 +1658,8 @@ async function runOperationWithRetries(
       `Read-only live validation exhausted retries for ${definition.id}.`,
       {
         operation: definition.id,
-        session_name: sessionName
-      }
+        session_name: sessionName,
+      },
     )
   );
 }
@@ -1565,17 +1667,17 @@ async function runOperationWithRetries(
 async function createBrowserContext(
   loadedSession: LoadStoredLinkedInSessionResult,
   timeoutMs: number,
-  blockedRequests: ReadOnlyValidationBlockedRequest[]
+  blockedRequests: ReadOnlyValidationBlockedRequest[],
 ): Promise<{ browser: Browser; context: BrowserContext }> {
   const executablePath = process.env.PLAYWRIGHT_EXECUTABLE_PATH;
   const browser = await chromium.launch({
     headless: true,
-    ...(executablePath ? { executablePath } : {})
+    ...(executablePath ? { executablePath } : {}),
   });
 
   try {
     const context = await browser.newContext({
-      storageState: loadedSession.storageState
+      storageState: loadedSession.storageState,
     });
     context.setDefaultNavigationTimeout(timeoutMs);
     context.setDefaultTimeout(timeoutMs);
@@ -1598,39 +1700,39 @@ async function createBrowserContext(
  * `latest-report.json` snapshot.
  */
 export async function runReadOnlyLinkedInLiveValidation(
-  options: RunReadOnlyValidationOptions = {}
+  options: RunReadOnlyValidationOptions = {},
 ): Promise<ReadOnlyValidationReport> {
   const validatedOptions = validateRunReadOnlyValidationOptions(options);
   const sessionName = validateSessionName(validatedOptions.sessionName);
   const timeoutMs = resolvePositiveInt(
     validatedOptions.timeoutMs,
     DEFAULT_OPERATION_TIMEOUT_MS,
-    "timeoutMs"
+    "timeoutMs",
   );
   const maxRequests = resolvePositiveInt(
     validatedOptions.maxRequests,
     DEFAULT_MAX_REQUESTS,
-    "maxRequests"
+    "maxRequests",
   );
   const minIntervalMs = resolvePositiveInt(
     validatedOptions.minIntervalMs,
     DEFAULT_MIN_INTERVAL_MS,
-    "minIntervalMs"
+    "minIntervalMs",
   );
   const maxRetries = resolveNonNegativeInt(
     validatedOptions.maxRetries,
     DEFAULT_MAX_RETRIES,
-    "maxRetries"
+    "maxRetries",
   );
   const retryBaseDelayMs = resolvePositiveInt(
     validatedOptions.retryBaseDelayMs,
     DEFAULT_RETRY_BASE_DELAY_MS,
-    "retryBaseDelayMs"
+    "retryBaseDelayMs",
   );
   const retryMaxDelayMs = resolvePositiveInt(
     validatedOptions.retryMaxDelayMs,
     DEFAULT_RETRY_MAX_DELAY_MS,
-    "retryMaxDelayMs"
+    "retryMaxDelayMs",
   );
   if (retryMaxDelayMs < retryBaseDelayMs) {
     throw new LinkedInBuddyError(
@@ -1638,8 +1740,8 @@ export async function runReadOnlyLinkedInLiveValidation(
       "retryMaxDelayMs must be greater than or equal to retryBaseDelayMs.",
       {
         retry_base_delay_ms: retryBaseDelayMs,
-        retry_max_delay_ms: retryMaxDelayMs
-      }
+        retry_max_delay_ms: retryMaxDelayMs,
+      },
     );
   }
 
@@ -1659,7 +1761,7 @@ export async function runReadOnlyLinkedInLiveValidation(
       const entry = eventLogger.log(level, event, payload);
       validatedOptions.onLog?.(entry);
       return entry;
-    }
+    },
   };
   const artifacts = new ArtifactHelpers(paths, runId);
   const reportPath = artifacts.resolve(`${READ_ONLY_REPORT_DIR}/report.json`);
@@ -1671,13 +1773,13 @@ export async function runReadOnlyLinkedInLiveValidation(
   if (previousReportValue !== null && !previousReport) {
     logger.log("warn", "live_validation.previous_report.invalid", {
       latest_report_path: latestReportPath,
-      session_name: sessionName
+      session_name: sessionName,
     });
   }
   const blockedRequests: ReadOnlyValidationBlockedRequest[] = [];
   const rateLimiter = new ReadOnlyOperationRateLimiter(
     maxRequests,
-    minIntervalMs
+    minIntervalMs,
   );
 
   logger.log("info", "live_validation.start", {
@@ -1688,14 +1790,14 @@ export async function runReadOnlyLinkedInLiveValidation(
     retry_base_delay_ms: retryBaseDelayMs,
     retry_max_delay_ms: retryMaxDelayMs,
     session_name: sessionName,
-    timeout_ms: timeoutMs
+    timeout_ms: timeoutMs,
   });
 
   let browser: Browser | undefined;
   let context: BrowserContext | undefined;
   let cleanedUp = false;
   const cleanupResources = async (
-    trigger: "finally" | "signal"
+    trigger: "finally" | "signal",
   ): Promise<void> => {
     if (cleanedUp) {
       return;
@@ -1703,7 +1805,7 @@ export async function runReadOnlyLinkedInLiveValidation(
     cleanedUp = true;
     logger.log("debug", "live_validation.cleanup.start", {
       trigger,
-      session_name: sessionName
+      session_name: sessionName,
     });
 
     if (context) {
@@ -1713,7 +1815,7 @@ export async function runReadOnlyLinkedInLiveValidation(
         logger.log("warn", "live_validation.cleanup.context_failed", {
           error: getErrorMessage(error),
           session_name: sessionName,
-          trigger
+          trigger,
         });
       }
     }
@@ -1725,7 +1827,7 @@ export async function runReadOnlyLinkedInLiveValidation(
         logger.log("warn", "live_validation.cleanup.browser_failed", {
           error: getErrorMessage(error),
           session_name: sessionName,
-          trigger
+          trigger,
         });
       }
     }
@@ -1745,7 +1847,7 @@ export async function runReadOnlyLinkedInLiveValidation(
         removeHandlers();
         logger.log("warn", "live_validation.signal", {
           session_name: sessionName,
-          signal
+          signal,
         });
         void cleanupResources("signal").finally(() => {
           try {
@@ -1768,7 +1870,7 @@ export async function runReadOnlyLinkedInLiveValidation(
     const browserContext = await createBrowserContext(
       loadedSession,
       timeoutMs,
-      blockedRequests
+      blockedRequests,
     );
     browser = browserContext.browser;
     context = browserContext.context;
@@ -1786,7 +1888,7 @@ export async function runReadOnlyLinkedInLiveValidation(
 
       logger.log("info", "live_validation.operation.start", {
         operation: operation.id,
-        session_name: sessionName
+        session_name: sessionName,
       });
 
       const operationDefinition = getOperationDefinition(operation.id);
@@ -1803,7 +1905,7 @@ export async function runReadOnlyLinkedInLiveValidation(
           maxRetries,
           retryBaseDelayMs,
           retryMaxDelayMs,
-          logger
+          logger,
         );
         const operationResult = createOperationResult(
           operationDefinition,
@@ -1811,15 +1913,17 @@ export async function runReadOnlyLinkedInLiveValidation(
           new Date().toISOString(),
           Date.now() - startedAtMs,
           operationExecution.execution,
-          operationExecution.attemptCount
+          operationExecution.attemptCount,
         );
         operationResults.push(operationResult);
 
         logger.log(
-          operationResult.status === "fail" || operationResult.warnings.length > 0
+          operationResult.status === "fail" ||
+            operationResult.warnings.length > 0
             ? "warn"
             : "info",
-          operationResult.status === "fail" || operationResult.warnings.length > 0
+          operationResult.status === "fail" ||
+            operationResult.warnings.length > 0
             ? "live_validation.operation.degraded"
             : "live_validation.operation.done",
           {
@@ -1829,14 +1933,14 @@ export async function runReadOnlyLinkedInLiveValidation(
             operation: operation.id,
             page_load_ms: operationResult.page_load_ms,
             status: operationResult.status,
-            warnings: operationResult.warnings
-          }
+            warnings: operationResult.warnings,
+          },
         );
       } catch (error) {
         const normalizedError = asLinkedInBuddyError(
           error,
           error instanceof LinkedInBuddyError ? error.code : "UNKNOWN",
-          `Read-only live validation failed while running ${operation.id}.`
+          `Read-only live validation failed while running ${operation.id}.`,
         );
 
         if (
@@ -1854,7 +1958,7 @@ export async function runReadOnlyLinkedInLiveValidation(
           Date.now() - startedAtMs,
           getCurrentPageUrl(page),
           normalizedError,
-          getOperationAttemptCount(normalizedError)
+          getOperationAttemptCount(normalizedError),
         );
         operationResults.push(operationResult);
 
@@ -1866,7 +1970,7 @@ export async function runReadOnlyLinkedInLiveValidation(
           operation: operation.id,
           page_load_ms: operationResult.page_load_ms,
           session_name: sessionName,
-          warnings: operationResult.warnings
+          warnings: operationResult.warnings,
         });
 
         if (isBlockingOperationErrorCode(normalizedError.code)) {
@@ -1875,17 +1979,21 @@ export async function runReadOnlyLinkedInLiveValidation(
             completed_operations: operationResults.length,
             operation: operation.id,
             remaining_operations:
-              LINKEDIN_READ_ONLY_VALIDATION_OPERATIONS.length - operationResults.length,
-            session_name: sessionName
+              LINKEDIN_READ_ONLY_VALIDATION_OPERATIONS.length -
+              operationResults.length,
+            session_name: sessionName,
           });
           break;
         }
       }
     }
 
-    const diff = computeReadOnlyValidationDiff({ operations: operationResults }, previousReport);
+    const diff = computeReadOnlyValidationDiff(
+      { operations: operationResults },
+      previousReport,
+    );
     const failCount = operationResults.filter(
-      (operation) => operation.status === "fail"
+      (operation) => operation.status === "fail",
     ).length;
     const passCount = operationResults.length - failCount;
     const report: ReadOnlyValidationReport = {
@@ -1909,23 +2017,23 @@ export async function runReadOnlyLinkedInLiveValidation(
         max_requests: maxRequests,
         max_requests_reached: rateLimiter.hasReachedLimit(),
         min_interval_ms: minIntervalMs,
-        used_requests: rateLimiter.getRequestCount()
+        used_requests: rateLimiter.getRequestCount(),
       },
       run_id: runId,
       session: {
         captured_at: loadedSession.metadata.capturedAt,
         file_path: loadedSession.metadata.filePath,
         li_at_expires_at: loadedSession.metadata.liAtCookieExpiresAt,
-        session_name: loadedSession.metadata.sessionName
+        session_name: loadedSession.metadata.sessionName,
       },
-      summary: summarizeReport(operationResults, diff)
+      summary: summarizeReport(operationResults, diff),
     };
 
     report.recommended_actions = buildRecommendedActions(
       sessionName,
       reportPath,
       diff,
-      operationResults
+      operationResults,
     );
 
     try {
@@ -1933,16 +2041,16 @@ export async function runReadOnlyLinkedInLiveValidation(
         blocked_request_count: report.blocked_request_count,
         fail_count: report.fail_count,
         pass_count: report.pass_count,
-        session_name: sessionName
+        session_name: sessionName,
       });
     } catch (error) {
       logger.log("warn", "live_validation.report_persist.failed", {
         error: getErrorMessage(error),
         report_path: reportPath,
-        session_name: sessionName
+        session_name: sessionName,
       });
       report.recommended_actions.push(
-        `The report could not be written to ${reportPath}; use --json output or inspect ${report.events_path} for this run.`
+        `The report could not be written to ${reportPath}; use --json output or inspect ${report.events_path} for this run.`,
       );
     }
 
@@ -1952,10 +2060,10 @@ export async function runReadOnlyLinkedInLiveValidation(
       logger.log("warn", "live_validation.latest_report_persist.failed", {
         error: getErrorMessage(error),
         latest_report_path: latestReportPath,
-        session_name: sessionName
+        session_name: sessionName,
       });
       report.recommended_actions.push(
-        `The rolling latest report at ${latestReportPath} was not updated, so the next diff may use an older snapshot.`
+        `The rolling latest report at ${latestReportPath} was not updated, so the next diff may use an older snapshot.`,
       );
     }
 
@@ -1964,7 +2072,7 @@ export async function runReadOnlyLinkedInLiveValidation(
       fail_count: report.fail_count,
       pass_count: report.pass_count,
       report_path: report.report_path,
-      session_name: sessionName
+      session_name: sessionName,
     });
 
     return report;
@@ -1972,14 +2080,14 @@ export async function runReadOnlyLinkedInLiveValidation(
     const normalizedError = asLinkedInBuddyError(
       withPlaywrightInstallHint(error),
       error instanceof LinkedInBuddyError ? error.code : "UNKNOWN",
-      "Failed to run the read-only LinkedIn live validation."
+      "Failed to run the read-only LinkedIn live validation.",
     );
     logger.log("error", "live_validation.failed", {
       code: normalizedError.code,
       error_details: normalizedError.details,
       error_message: normalizedError.message,
       source_error_name: error instanceof Error ? error.name : typeof error,
-      session_name: sessionName
+      session_name: sessionName,
     });
     throw normalizedError;
   } finally {

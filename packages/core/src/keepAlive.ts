@@ -1,22 +1,23 @@
 import { EventEmitter } from "node:events";
-import type { BrowserContext, Page } from "playwright-core";
+import type { Page } from "playwright-core";
 import type {
   LinkedInBrowserStorageState,
-  LinkedInSessionStore
+  LinkedInSessionStore,
 } from "./auth/sessionStore.js";
 import {
   getLinkedInSessionFingerprint,
-  restoreLinkedInSessionCookies
+  restoreLinkedInSessionCookies,
 } from "./auth/sessionStore.js";
 import {
   checkFullHealth,
   DEFAULT_SESSION_COOKIE_EXPIRY_WARNING_MS,
-  type FullHealthStatus
+  type FullHealthStatus,
 } from "./healthCheck.js";
 import type { ConnectionLease } from "./connectionPool.js";
 import { CDPConnectionPool } from "./connectionPool.js";
 import { LinkedInBuddyError } from "./errors.js";
 import { humanize } from "./humanize.js";
+import { getOrCreatePage, isRecord } from "./shared.js";
 
 const DEFAULT_NETWORK_GRACE_PERIOD_MS = 5 * 60_000;
 const DEFAULT_NETWORK_RETRY_INTERVAL_MS = 30_000;
@@ -30,23 +31,23 @@ const RATE_LIMIT_BACKOFF_RETRY_MULTIPLIER = 4;
 
 const DEFAULT_RECONNECT_ALERT_THRESHOLD = {
   count: 3,
-  windowMs: 10 * 60_000
+  windowMs: 10 * 60_000,
 } as const;
 
 const ACTIVITY_PATTERNS = [
   "feed-scroll",
   "notifications-peek",
-  "network-peek"
+  "network-peek",
 ] as const;
 
 const KEEP_ALIVE_PAGE_GOTO_OPTIONS = {
-  waitUntil: "domcontentloaded"
+  waitUntil: "domcontentloaded",
 } as const;
 
 const LINKEDIN_KEEP_ALIVE_URLS = {
   feed: "https://www.linkedin.com/feed/",
   network: "https://www.linkedin.com/mynetwork/",
-  notifications: "https://www.linkedin.com/notifications/"
+  notifications: "https://www.linkedin.com/notifications/",
 } as const;
 
 type ActivityPattern = (typeof ACTIVITY_PATTERNS)[number];
@@ -64,16 +65,16 @@ const ACTIVITY_PATTERN_DETAILS: Readonly<
   "feed-scroll": {
     detail: "Rotated keepalive activity: scrolled the LinkedIn feed",
     shouldScrollDown: true,
-    url: LINKEDIN_KEEP_ALIVE_URLS.feed
+    url: LINKEDIN_KEEP_ALIVE_URLS.feed,
   },
   "network-peek": {
     detail: "Rotated keepalive activity: viewed the network page",
-    url: LINKEDIN_KEEP_ALIVE_URLS.network
+    url: LINKEDIN_KEEP_ALIVE_URLS.network,
   },
   "notifications-peek": {
     detail: "Rotated keepalive activity: checked the notifications page",
-    url: LINKEDIN_KEEP_ALIVE_URLS.notifications
-  }
+    url: LINKEDIN_KEEP_ALIVE_URLS.notifications,
+  },
 };
 
 interface SessionSnapshot {
@@ -222,10 +223,6 @@ export interface KeepAliveOptions {
   sessionStore?: KeepAliveSessionStoreLike;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function describeValueType(value: unknown): string {
   if (Array.isArray(value)) {
     return "array";
@@ -239,7 +236,11 @@ function describeValueType(value: unknown): string {
 }
 
 function isFiniteInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value) && Number.isInteger(value);
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    Number.isInteger(value)
+  );
 }
 
 function resolveRequiredString(value: unknown, label: string): string {
@@ -248,8 +249,8 @@ function resolveRequiredString(value: unknown, label: string): string {
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a non-empty string.`,
       {
-        received_type: describeValueType(value)
-      }
+        received_type: describeValueType(value),
+      },
     );
   }
 
@@ -257,7 +258,7 @@ function resolveRequiredString(value: unknown, label: string): string {
   if (normalized.length === 0) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      `${label} must be a non-empty string.`
+      `${label} must be a non-empty string.`,
     );
   }
 
@@ -267,7 +268,7 @@ function resolveRequiredString(value: unknown, label: string): string {
 function resolveOptionalString(
   value: unknown,
   label: string,
-  fallback: string
+  fallback: string,
 ): string {
   if (typeof value === "undefined") {
     return fallback;
@@ -279,7 +280,7 @@ function resolveOptionalString(
 function resolvePositiveInteger(
   value: unknown,
   fallback: number,
-  label: string
+  label: string,
 ): number {
   if (typeof value === "undefined") {
     return fallback;
@@ -290,8 +291,8 @@ function resolvePositiveInteger(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a positive integer.`,
       {
-        received: value
-      }
+        received: value,
+      },
     );
   }
 
@@ -301,7 +302,7 @@ function resolvePositiveInteger(
 function resolveNonNegativeInteger(
   value: unknown,
   fallback: number,
-  label: string
+  label: string,
 ): number {
   if (typeof value === "undefined") {
     return fallback;
@@ -312,8 +313,8 @@ function resolveNonNegativeInteger(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a non-negative integer.`,
       {
-        received: value
-      }
+        received: value,
+      },
     );
   }
 
@@ -323,7 +324,7 @@ function resolveNonNegativeInteger(
 function resolveBooleanOption(
   value: unknown,
   fallback: boolean,
-  label: string
+  label: string,
 ): boolean {
   if (typeof value === "undefined") {
     return fallback;
@@ -334,8 +335,8 @@ function resolveBooleanOption(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be a boolean when provided.`,
       {
-        received_type: describeValueType(value)
-      }
+        received_type: describeValueType(value),
+      },
     );
   }
 
@@ -343,12 +344,14 @@ function resolveBooleanOption(
 }
 
 function normalizeAlertThresholds(
-  input: KeepAliveOptions["alertThresholds"]
+  input: KeepAliveOptions["alertThresholds"],
 ): Required<KeepAliveAlertThresholds> {
   if (typeof input === "undefined") {
     return Object.freeze({
       cookieExpiringWithinMs: DEFAULT_SESSION_COOKIE_EXPIRY_WARNING_MS,
-      reconnectsInWindow: Object.freeze({ ...DEFAULT_RECONNECT_ALERT_THRESHOLD })
+      reconnectsInWindow: Object.freeze({
+        ...DEFAULT_RECONNECT_ALERT_THRESHOLD,
+      }),
     });
   }
 
@@ -357,8 +360,8 @@ function normalizeAlertThresholds(
       "ACTION_PRECONDITION_FAILED",
       "alertThresholds must be an object when provided.",
       {
-        received_type: describeValueType(input)
-      }
+        received_type: describeValueType(input),
+      },
     );
   }
 
@@ -371,8 +374,8 @@ function normalizeAlertThresholds(
       "ACTION_PRECONDITION_FAILED",
       "alertThresholds.reconnectsInWindow must be an object when provided.",
       {
-        received_type: describeValueType(reconnectsInWindowInput)
-      }
+        received_type: describeValueType(reconnectsInWindowInput),
+      },
     );
   }
 
@@ -380,30 +383,30 @@ function normalizeAlertThresholds(
     cookieExpiringWithinMs: resolveNonNegativeInteger(
       input.cookieExpiringWithinMs,
       DEFAULT_SESSION_COOKIE_EXPIRY_WARNING_MS,
-      "alertThresholds.cookieExpiringWithinMs"
+      "alertThresholds.cookieExpiringWithinMs",
     ),
     reconnectsInWindow: Object.freeze({
       count: resolvePositiveInteger(
         reconnectsInWindowInput?.count,
         DEFAULT_RECONNECT_ALERT_THRESHOLD.count,
-        "alertThresholds.reconnectsInWindow.count"
+        "alertThresholds.reconnectsInWindow.count",
       ),
       windowMs: resolvePositiveInteger(
         reconnectsInWindowInput?.windowMs,
         DEFAULT_RECONNECT_ALERT_THRESHOLD.windowMs,
-        "alertThresholds.reconnectsInWindow.windowMs"
-      )
-    })
+        "alertThresholds.reconnectsInWindow.windowMs",
+      ),
+    }),
   });
 }
 
 function normalizeNightHours(
-  input: KeepAliveOptions["nightHours"]
+  input: KeepAliveOptions["nightHours"],
 ): NonNullable<KeepAliveOptions["nightHours"]> {
   if (typeof input === "undefined") {
     return Object.freeze({
       startHour: 0,
-      endHour: 6
+      endHour: 6,
     });
   }
 
@@ -412,36 +415,40 @@ function normalizeNightHours(
       "ACTION_PRECONDITION_FAILED",
       "nightHours must be an object when provided.",
       {
-        received_type: describeValueType(input)
-      }
+        received_type: describeValueType(input),
+      },
     );
   }
 
   const startHour = resolveNonNegativeInteger(
     input.startHour,
     0,
-    "nightHours.startHour"
+    "nightHours.startHour",
   );
-  const endHour = resolveNonNegativeInteger(input.endHour, 6, "nightHours.endHour");
+  const endHour = resolveNonNegativeInteger(
+    input.endHour,
+    6,
+    "nightHours.endHour",
+  );
   if (startHour > 23 || endHour > 23) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "nightHours.startHour and nightHours.endHour must be between 0 and 23.",
       {
         start_hour: startHour,
-        end_hour: endHour
-      }
+        end_hour: endHour,
+      },
     );
   }
 
   return Object.freeze({
     startHour,
-    endHour
+    endHour,
   });
 }
 
 function normalizeSessionStore(
-  sessionStore: KeepAliveOptions["sessionStore"]
+  sessionStore: KeepAliveOptions["sessionStore"],
 ): Readonly<KeepAliveSessionStoreLike> | undefined {
   if (typeof sessionStore === "undefined") {
     return undefined;
@@ -452,8 +459,8 @@ function normalizeSessionStore(
       "ACTION_PRECONDITION_FAILED",
       "sessionStore must be an object when provided.",
       {
-        received_type: describeValueType(sessionStore)
-      }
+        received_type: describeValueType(sessionStore),
+      },
     );
   }
 
@@ -463,7 +470,7 @@ function normalizeSessionStore(
   ) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "sessionStore.restoreToContext must be a function when provided."
+      "sessionStore.restoreToContext must be a function when provided.",
     );
   }
 
@@ -473,33 +480,33 @@ function normalizeSessionStore(
   ) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "sessionStore.saveWithBackups must be a function when provided."
+      "sessionStore.saveWithBackups must be a function when provided.",
     );
   }
 
   const restoreToContext =
     typeof sessionStore.restoreToContext === "function"
-      ? (sessionStore.restoreToContext.bind(
-          sessionStore
-        ) as NonNullable<KeepAliveSessionStoreLike["restoreToContext"]>)
+      ? (sessionStore.restoreToContext.bind(sessionStore) as NonNullable<
+          KeepAliveSessionStoreLike["restoreToContext"]
+        >)
       : undefined;
   const saveWithBackups =
     typeof sessionStore.saveWithBackups === "function"
-      ? (sessionStore.saveWithBackups.bind(
-          sessionStore
-        ) as NonNullable<KeepAliveSessionStoreLike["saveWithBackups"]>)
+      ? (sessionStore.saveWithBackups.bind(sessionStore) as NonNullable<
+          KeepAliveSessionStoreLike["saveWithBackups"]
+        >)
       : undefined;
 
   if (!restoreToContext && !saveWithBackups) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "sessionStore must provide restoreToContext and/or saveWithBackups when provided."
+      "sessionStore must provide restoreToContext and/or saveWithBackups when provided.",
     );
   }
 
   return Object.freeze({
     ...(restoreToContext ? { restoreToContext } : {}),
-    ...(saveWithBackups ? { saveWithBackups } : {})
+    ...(saveWithBackups ? { saveWithBackups } : {}),
   });
 }
 
@@ -507,7 +514,7 @@ function validateKeepAlivePool(pool: CDPConnectionPool): void {
   if (!isRecord(pool) || typeof pool.acquire !== "function") {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "keepalive pool must expose an acquire() function."
+      "keepalive pool must expose an acquire() function.",
     );
   }
 
@@ -518,7 +525,7 @@ function validateKeepAlivePool(pool: CDPConnectionPool): void {
   ) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "keepalive pool.invalidate must be a function when provided."
+      "keepalive pool.invalidate must be a function when provided.",
     );
   }
 }
@@ -554,7 +561,9 @@ function isFullHealthStatus(value: unknown): value is FullHealthStatus {
   );
 }
 
-function assertFullHealthStatus(value: unknown): asserts value is FullHealthStatus {
+function assertFullHealthStatus(
+  value: unknown,
+): asserts value is FullHealthStatus {
   if (isFullHealthStatus(value)) {
     return;
   }
@@ -565,8 +574,8 @@ function assertFullHealthStatus(value: unknown): asserts value is FullHealthStat
     {
       received_type: describeValueType(value),
       has_browser: isRecord(value) && isRecord(value.browser),
-      has_session: isRecord(value) && isRecord(value.session)
-    }
+      has_session: isRecord(value) && isRecord(value.session),
+    },
   );
 }
 
@@ -579,7 +588,9 @@ function isConnectionLease(value: unknown): value is ConnectionLease {
   );
 }
 
-function assertConnectionLease(value: unknown): asserts value is ConnectionLease {
+function assertConnectionLease(
+  value: unknown,
+): asserts value is ConnectionLease {
   if (isConnectionLease(value)) {
     return;
   }
@@ -588,8 +599,8 @@ function assertConnectionLease(value: unknown): asserts value is ConnectionLease
     "UNKNOWN",
     "Keepalive connection pool returned an invalid lease.",
     {
-      received_type: describeValueType(value)
-    }
+      received_type: describeValueType(value),
+    },
   );
 }
 
@@ -607,7 +618,7 @@ function getErrorMessage(error: unknown): string {
 
 function isNightHour(
   hour: number,
-  nightHours: NonNullable<KeepAliveOptions["nightHours"]>
+  nightHours: NonNullable<KeepAliveOptions["nightHours"]>,
 ): boolean {
   if (nightHours.startHour === nightHours.endHour) {
     return false;
@@ -641,11 +652,13 @@ function isTransientConnectionError(error: unknown): boolean {
     "temporarily unavailable",
     "target closed",
     "timed out",
-    "websocket"
+    "websocket",
   ].some((token) => normalized.includes(token));
 }
 
-function millisecondsUntil(isoTimestamp: string | null | undefined): number | null {
+function millisecondsUntil(
+  isoTimestamp: string | null | undefined,
+): number | null {
   if (!isoTimestamp) {
     return null;
   }
@@ -660,19 +673,10 @@ function millisecondsUntil(isoTimestamp: string | null | undefined): number | nu
 
 function isTimestampWithinWindow(
   isoTimestamp: string | null | undefined,
-  windowMs: number
+  windowMs: number,
 ): boolean {
   const remainingMs = millisecondsUntil(isoTimestamp);
   return remainingMs !== null && remainingMs > 0 && remainingMs <= windowMs;
-}
-
-async function getOrCreatePage(context: BrowserContext): Promise<Page> {
-  const existingPage = context.pages()[0];
-  if (existingPage) {
-    return existingPage;
-  }
-
-  return context.newPage();
 }
 
 async function navigateToKeepAlivePage(page: Page, url: string): Promise<void> {
@@ -721,11 +725,13 @@ export class SessionKeepAliveService extends EventEmitter {
   private readonly cdpUrl: string;
   private readonly sessionName: string;
   private readonly sessionRefreshEnabled: boolean;
-  private readonly sessionStore: Readonly<KeepAliveSessionStoreLike> | undefined;
+  private readonly sessionStore:
+    | Readonly<KeepAliveSessionStoreLike>
+    | undefined;
 
   constructor(
     private readonly pool: CDPConnectionPool,
-    options: KeepAliveOptions
+    options: KeepAliveOptions,
   ) {
     super();
     validateKeepAlivePool(pool);
@@ -734,8 +740,8 @@ export class SessionKeepAliveService extends EventEmitter {
         "ACTION_PRECONDITION_FAILED",
         "keepalive options must be an object.",
         {
-          received_type: describeValueType(options)
-        }
+          received_type: describeValueType(options),
+        },
       );
     }
 
@@ -744,70 +750,78 @@ export class SessionKeepAliveService extends EventEmitter {
     this.activityEveryHealthyTicks = resolvePositiveInteger(
       options.activityEveryHealthyTicks,
       DEFAULT_ACTIVITY_EVERY_HEALTHY_TICKS,
-      "activityEveryHealthyTicks"
+      "activityEveryHealthyTicks",
     );
     this.activitySimulationEnabled = resolveBooleanOption(
       options.activitySimulationEnabled,
       true,
-      "activitySimulationEnabled"
+      "activitySimulationEnabled",
     );
     this.alertThresholds = normalizeAlertThresholds(options.alertThresholds);
     this.cookieRefreshLeadMs = resolveNonNegativeInteger(
       options.cookieRefreshLeadMs,
       DEFAULT_SESSION_COOKIE_EXPIRY_WARNING_MS,
-      "cookieRefreshLeadMs"
+      "cookieRefreshLeadMs",
     );
     this.idleWarmupThresholdMs = resolveNonNegativeInteger(
       options.idleWarmupThresholdMs,
       DEFAULT_IDLE_WARMUP_THRESHOLD_MS,
-      "idleWarmupThresholdMs"
+      "idleWarmupThresholdMs",
     );
-    this.intervalMs = resolvePositiveInteger(options.intervalMs, 300_000, "intervalMs");
-    this.jitterMs = resolveNonNegativeInteger(options.jitterMs, 30_000, "jitterMs");
+    this.intervalMs = resolvePositiveInteger(
+      options.intervalMs,
+      300_000,
+      "intervalMs",
+    );
+    this.jitterMs = resolveNonNegativeInteger(
+      options.jitterMs,
+      30_000,
+      "jitterMs",
+    );
     this.maxBackupSessions = resolvePositiveInteger(
       options.maxBackupSessions,
       DEFAULT_MAX_BACKUP_SESSIONS,
-      "maxBackupSessions"
+      "maxBackupSessions",
     );
     this.maxConsecutiveFailures = resolvePositiveInteger(
       options.maxConsecutiveFailures,
       5,
-      "maxConsecutiveFailures"
+      "maxConsecutiveFailures",
     );
     this.maxHealthLogEntries = Math.max(
       10,
       resolvePositiveInteger(
         options.maxHealthLogEntries,
         DEFAULT_MAX_HEALTH_LOG_ENTRIES,
-        "maxHealthLogEntries"
-      )
+        "maxHealthLogEntries",
+      ),
     );
     this.networkGracePeriodMs = resolveNonNegativeInteger(
       options.networkGracePeriodMs,
       DEFAULT_NETWORK_GRACE_PERIOD_MS,
-      "networkGracePeriodMs"
+      "networkGracePeriodMs",
     );
     this.networkRetryIntervalMs = resolvePositiveInteger(
       options.networkRetryIntervalMs,
       DEFAULT_NETWORK_RETRY_INTERVAL_MS,
-      "networkRetryIntervalMs"
+      "networkRetryIntervalMs",
     );
     this.nightActivityEveryHealthyTicks = resolvePositiveInteger(
       options.nightActivityEveryHealthyTicks,
       DEFAULT_NIGHT_ACTIVITY_EVERY_HEALTHY_TICKS,
-      "nightActivityEveryHealthyTicks"
+      "nightActivityEveryHealthyTicks",
     );
     this.nightHours = normalizeNightHours(options.nightHours);
     this.cdpUrl = resolveRequiredString(options.cdpUrl, "cdpUrl");
     this.sessionName = resolveOptionalString(
       options.sessionName,
       "sessionName",
-      "default"
+      "default",
     );
     this.sessionRefreshEnabled = resolveBooleanOption(
       options.sessionRefreshEnabled,
       true,
-      "sessionRefreshEnabled"
+      "sessionRefreshEnabled",
     );
     this.sessionStore = normalizeSessionStore(options.sessionStore);
   }
@@ -879,7 +893,7 @@ export class SessionKeepAliveService extends EventEmitter {
       backupSessionCount: this.backupSessions.length,
       consecutiveFailures: this.consecutiveFailures,
       reconnectCountInWindow: this.reconnectTimestampsMs.length,
-      sessionUptimeMs: this.getSessionUptimeMs()
+      sessionUptimeMs: this.getSessionUptimeMs(),
     };
   }
 
@@ -898,7 +912,7 @@ export class SessionKeepAliveService extends EventEmitter {
       reconnectCountInWindow: 0,
       sessionCookiePresent: false,
       sessionUptimeMs: 0,
-      ...(startedAt ? { startedAt } : {})
+      ...(startedAt ? { startedAt } : {}),
     };
   }
 
@@ -946,12 +960,12 @@ export class SessionKeepAliveService extends EventEmitter {
   private activateRateLimitCooldown(): number {
     const retryAfterMs = Math.max(
       this.intervalMs * RATE_LIMIT_BACKOFF_INTERVAL_MULTIPLIER,
-      this.networkRetryIntervalMs * RATE_LIMIT_BACKOFF_RETRY_MULTIPLIER
+      this.networkRetryIntervalMs * RATE_LIMIT_BACKOFF_RETRY_MULTIPLIER,
     );
     const retryAtMs = Date.now() + retryAfterMs;
     this.rateLimitCooldownUntilMs = Math.max(
       this.rateLimitCooldownUntilMs ?? 0,
-      retryAtMs
+      retryAtMs,
     );
     this.updateAlert(
       "rate-limit-cooldown",
@@ -959,8 +973,8 @@ export class SessionKeepAliveService extends EventEmitter {
       "LinkedIn rate-limit challenge detected; slowing keepalive retries",
       {
         retryAfterMs,
-        retryAt: new Date(this.rateLimitCooldownUntilMs).toISOString()
-      }
+        retryAt: new Date(this.rateLimitCooldownUntilMs).toISOString(),
+      },
     );
     return retryAfterMs;
   }
@@ -978,7 +992,7 @@ export class SessionKeepAliveService extends EventEmitter {
         : (Math.random() * 2 - 1) * this.jitterMs;
     const baseDelay = Math.max(
       usingRetryCadence ? this.networkRetryIntervalMs : this.intervalMs,
-      rateLimitDelayMs ?? 0
+      rateLimitDelayMs ?? 0,
     );
     const delay = Math.max(1_000, baseDelay + jitter);
 
@@ -1027,7 +1041,7 @@ export class SessionKeepAliveService extends EventEmitter {
   private async processHealthResult(
     health: FullHealthStatus,
     lease: ConnectionLease,
-    generation: number
+    generation: number,
   ): Promise<void> {
     if (!this.isGenerationCurrent(generation)) {
       return;
@@ -1047,11 +1061,14 @@ export class SessionKeepAliveService extends EventEmitter {
         detail: "Browser connection lost",
         metadata: {
           currentUrl: health.session.currentUrl,
-          sessionReason: health.session.reason
-        }
+          sessionReason: health.session.reason,
+        },
       });
       this.emit("browser-disconnected", health);
-      await this.handleNetworkInterruption("Browser connection lost", generation);
+      await this.handleNetworkInterruption(
+        "Browser connection lost",
+        generation,
+      );
       return;
     }
 
@@ -1092,7 +1109,7 @@ export class SessionKeepAliveService extends EventEmitter {
   private async handleHealthyState(
     health: FullHealthStatus,
     lease: ConnectionLease,
-    generation: number
+    generation: number,
   ): Promise<void> {
     if (!this.isGenerationCurrent(generation)) {
       return;
@@ -1106,8 +1123,8 @@ export class SessionKeepAliveService extends EventEmitter {
       health,
       metadata: {
         currentUrl: health.session.currentUrl,
-        nextCookieExpiryAt: health.session.nextCookieExpiryAt
-      }
+        nextCookieExpiryAt: health.session.nextCookieExpiryAt,
+      },
     });
     this.emit("healthy", health);
 
@@ -1147,7 +1164,7 @@ export class SessionKeepAliveService extends EventEmitter {
   private shouldRefreshCookies(health: FullHealthStatus): boolean {
     return isTimestampWithinWindow(
       health.session.nextCookieExpiryAt,
-      this.cookieRefreshLeadMs
+      this.cookieRefreshLeadMs,
     );
   }
 
@@ -1162,7 +1179,7 @@ export class SessionKeepAliveService extends EventEmitter {
   private async handleUnauthenticatedState(
     health: FullHealthStatus,
     lease: ConnectionLease,
-    generation: number
+    generation: number,
   ): Promise<void> {
     this.emitKeepAliveEvent({
       type: "session-expired",
@@ -1174,8 +1191,8 @@ export class SessionKeepAliveService extends EventEmitter {
         checkpointDetected: health.session.checkpointDetected,
         loginWallDetected: health.session.loginWallDetected,
         rateLimited: health.session.rateLimited,
-        nextCookieExpiryAt: health.session.nextCookieExpiryAt
-      }
+        nextCookieExpiryAt: health.session.nextCookieExpiryAt,
+      },
     });
     this.emit("session-expired", health);
 
@@ -1186,8 +1203,8 @@ export class SessionKeepAliveService extends EventEmitter {
         detail: "LinkedIn login wall detected mid-session",
         metadata: {
           currentUrl: health.session.currentUrl,
-          reason: health.session.reason
-        }
+          reason: health.session.reason,
+        },
       });
     }
 
@@ -1196,7 +1213,8 @@ export class SessionKeepAliveService extends EventEmitter {
       this.sessionRefreshEnabled &&
       !health.session.rateLimited &&
       !health.session.checkpointDetected &&
-      (health.session.sessionCookiePresent || this.shouldRefreshCookies(health));
+      (health.session.sessionCookiePresent ||
+        this.shouldRefreshCookies(health));
 
     if (shouldAttemptSoftRefresh) {
       recovered = await this.attemptSoftRefresh(lease, health, generation);
@@ -1206,7 +1224,11 @@ export class SessionKeepAliveService extends EventEmitter {
       return;
     }
 
-    if (!recovered && !health.session.rateLimited && !health.session.checkpointDetected) {
+    if (
+      !recovered &&
+      !health.session.rateLimited &&
+      !health.session.checkpointDetected
+    ) {
       recovered = await this.restoreBackupSession(lease, generation);
     }
 
@@ -1238,15 +1260,15 @@ export class SessionKeepAliveService extends EventEmitter {
         sessionCookiePresent: health.session.sessionCookiePresent,
         whatWasHappening: health.session.loginWallDetected
           ? "soft re-auth after LinkedIn login wall"
-          : "session recovery after authentication loss"
-      }
+          : "session recovery after authentication loss",
+      },
     });
     this.evaluateAlerts();
   }
 
   private async handleNetworkInterruption(
     detail: string,
-    generation: number
+    generation: number,
   ): Promise<void> {
     if (!this.isGenerationCurrent(generation)) {
       return;
@@ -1256,15 +1278,15 @@ export class SessionKeepAliveService extends EventEmitter {
     if (firstInterruption) {
       this.networkInterruptedAtMs = Date.now();
       this.metrics.networkInterruptedAt = new Date(
-        this.networkInterruptedAtMs
+        this.networkInterruptedAtMs,
       ).toISOString();
       this.emitKeepAliveEvent({
         type: "network-interruption",
         detail,
         metadata: {
           retryIntervalMs: this.networkRetryIntervalMs,
-          gracePeriodMs: this.networkGracePeriodMs
-        }
+          gracePeriodMs: this.networkGracePeriodMs,
+        },
       });
     }
 
@@ -1297,7 +1319,7 @@ export class SessionKeepAliveService extends EventEmitter {
     this.emitKeepAliveEvent({
       type: "network-recovered",
       health,
-      detail: "Recovered from transient network interruption"
+      detail: "Recovered from transient network interruption",
     });
     this.networkInterruptedAtMs = undefined;
     delete this.metrics.networkInterruptedAt;
@@ -1316,8 +1338,8 @@ export class SessionKeepAliveService extends EventEmitter {
         type: "dead",
         detail: `Declared dead after ${this.consecutiveFailures} consecutive failures`,
         metadata: {
-          maxConsecutiveFailures: this.maxConsecutiveFailures
-        }
+          maxConsecutiveFailures: this.maxConsecutiveFailures,
+        },
       });
     }
   }
@@ -1332,8 +1354,8 @@ export class SessionKeepAliveService extends EventEmitter {
       detail: "Attempting to reconnect to browser",
       metadata: {
         inNetworkGracePeriod: this.isWithinNetworkGracePeriod(),
-        retryIntervalMs: this.networkRetryIntervalMs
-      }
+        retryIntervalMs: this.networkRetryIntervalMs,
+      },
     });
 
     let lease: ConnectionLease | undefined;
@@ -1372,8 +1394,8 @@ export class SessionKeepAliveService extends EventEmitter {
             : "Reconnected to browser, but session still needs recovery",
           metadata: {
             reconnectCount: this.metrics.reconnectCount,
-            authenticated: health.session.authenticated
-          }
+            authenticated: health.session.authenticated,
+          },
         });
 
         if (health.session.authenticated) {
@@ -1392,13 +1414,13 @@ export class SessionKeepAliveService extends EventEmitter {
       this.emitKeepAliveEvent({
         type: "reconnect-failed",
         health,
-        detail: "Reconnected, but browser is still unhealthy"
+        detail: "Reconnected, but browser is still unhealthy",
       });
     } catch (error) {
       if (this.isGenerationCurrent(generation)) {
         this.emitKeepAliveEvent({
           type: "reconnect-failed",
-          detail: getErrorMessage(error)
+          detail: getErrorMessage(error),
         });
       }
     } finally {
@@ -1411,7 +1433,7 @@ export class SessionKeepAliveService extends EventEmitter {
   private async attemptSoftRefresh(
     lease: ConnectionLease,
     health: FullHealthStatus,
-    generation: number
+    generation: number,
   ): Promise<boolean> {
     if (!this.isGenerationCurrent(generation)) {
       return false;
@@ -1420,13 +1442,13 @@ export class SessionKeepAliveService extends EventEmitter {
     this.emitKeepAliveEvent({
       type: "soft-reauth-attempt",
       health,
-      detail: "Attempting to recover the active session without manual login"
+      detail: "Attempting to recover the active session without manual login",
     });
 
     const refreshedHealth = await this.refreshSession(
       lease,
       "soft-reauth",
-      generation
+      generation,
     );
     if (!this.isGenerationCurrent(generation)) {
       return false;
@@ -1436,7 +1458,7 @@ export class SessionKeepAliveService extends EventEmitter {
       this.emitKeepAliveEvent({
         type: "soft-reauth-success",
         health: refreshedHealth,
-        detail: "Recovered the LinkedIn session without manual login"
+        detail: "Recovered the LinkedIn session without manual login",
       });
       return true;
     }
@@ -1444,7 +1466,7 @@ export class SessionKeepAliveService extends EventEmitter {
     this.emitKeepAliveEvent({
       type: "soft-reauth-failed",
       health: refreshedHealth ?? health,
-      detail: "Soft session refresh did not restore authentication"
+      detail: "Soft session refresh did not restore authentication",
     });
     return false;
   }
@@ -1452,7 +1474,7 @@ export class SessionKeepAliveService extends EventEmitter {
   private async refreshSession(
     lease: ConnectionLease,
     reason: "proactive" | "soft-reauth",
-    generation: number
+    generation: number,
   ): Promise<FullHealthStatus | null> {
     if (!this.isGenerationCurrent(generation)) {
       return null;
@@ -1473,7 +1495,7 @@ export class SessionKeepAliveService extends EventEmitter {
       if (reason === "proactive") {
         this.emitKeepAliveEvent({
           type: "cookie-refresh",
-          detail: "Proactively refreshed near-expiry LinkedIn session cookies"
+          detail: "Proactively refreshed near-expiry LinkedIn session cookies",
         });
       }
 
@@ -1502,7 +1524,7 @@ export class SessionKeepAliveService extends EventEmitter {
   private async attemptSessionRestore(
     lease: ConnectionLease,
     attempt: SessionRestoreAttempt,
-    generation: number
+    generation: number,
   ): Promise<boolean> {
     if (!this.isGenerationCurrent(generation)) {
       return false;
@@ -1511,7 +1533,7 @@ export class SessionKeepAliveService extends EventEmitter {
     this.emitKeepAliveEvent({
       type: "soft-reauth-attempt",
       detail: attempt.attemptDetail,
-      metadata: attempt.attemptMetadata
+      metadata: attempt.attemptMetadata,
     });
 
     try {
@@ -1541,7 +1563,7 @@ export class SessionKeepAliveService extends EventEmitter {
         type: "soft-reauth-success",
         health: restoredHealth,
         detail: attempt.successDetail,
-        metadata: attempt.successMetadata
+        metadata: attempt.successMetadata,
       });
       return true;
     } catch {
@@ -1563,7 +1585,7 @@ export class SessionKeepAliveService extends EventEmitter {
   private async captureSessionSnapshot(
     lease: ConnectionLease,
     health: FullHealthStatus,
-    generation: number
+    generation: number,
   ): Promise<void> {
     if (!this.isGenerationCurrent(generation)) {
       return;
@@ -1588,7 +1610,7 @@ export class SessionKeepAliveService extends EventEmitter {
         capturedAt: new Date().toISOString(),
         fingerprint,
         nextCookieExpiryAt: health.session.nextCookieExpiryAt,
-        storageState
+        storageState,
       };
 
       const fingerprintChanged =
@@ -1598,8 +1620,8 @@ export class SessionKeepAliveService extends EventEmitter {
       this.backupSessions = [
         snapshot,
         ...this.backupSessions.filter(
-          (candidate) => candidate.fingerprint !== fingerprint
-        )
+          (candidate) => candidate.fingerprint !== fingerprint,
+        ),
       ].slice(0, this.maxBackupSessions);
       this.metrics.backupSessionCount = this.backupSessions.length;
 
@@ -1610,8 +1632,8 @@ export class SessionKeepAliveService extends EventEmitter {
           detail: "LinkedIn rotated session tokens; refreshed backup state",
           metadata: {
             backupSessionCount: this.backupSessions.length,
-            nextCookieExpiryAt: health.session.nextCookieExpiryAt
-          }
+            nextCookieExpiryAt: health.session.nextCookieExpiryAt,
+          },
         });
       }
 
@@ -1620,8 +1642,8 @@ export class SessionKeepAliveService extends EventEmitter {
           this.sessionName,
           storageState,
           {
-            maxBackups: this.maxBackupSessions
-          }
+            maxBackups: this.maxBackupSessions,
+          },
         );
         if (!this.isGenerationCurrent(generation)) {
           return;
@@ -1632,8 +1654,8 @@ export class SessionKeepAliveService extends EventEmitter {
           detail: `Persisted session snapshot for ${this.sessionName}`,
           metadata: {
             backupSessionCount: this.maxBackupSessions,
-            sessionName: this.sessionName
-          }
+            sessionName: this.sessionName,
+          },
         });
       }
     } catch {
@@ -1643,7 +1665,7 @@ export class SessionKeepAliveService extends EventEmitter {
 
   private async restoreBackupSession(
     lease: ConnectionLease,
-    generation: number
+    generation: number,
   ): Promise<boolean> {
     if (!this.isGenerationCurrent(generation)) {
       return false;
@@ -1652,22 +1674,26 @@ export class SessionKeepAliveService extends EventEmitter {
     const sessionStore = this.sessionStore;
     if (sessionStore?.restoreToContext) {
       const restoreToContext = sessionStore.restoreToContext;
-      const restoredFromSessionStore = await this.attemptSessionRestore(lease, {
-        attemptDetail: `Attempting stored-session restore for ${this.sessionName}`,
-        attemptMetadata: {
-          sessionName: this.sessionName,
-          source: "session-store"
+      const restoredFromSessionStore = await this.attemptSessionRestore(
+        lease,
+        {
+          attemptDetail: `Attempting stored-session restore for ${this.sessionName}`,
+          attemptMetadata: {
+            sessionName: this.sessionName,
+            source: "session-store",
+          },
+          restore: () =>
+            restoreToContext(lease.context, this.sessionName, {
+              allowExpired: false,
+              maxBackups: this.maxBackupSessions,
+            }),
+          successDetail: `Recovered authentication from stored session ${this.sessionName}`,
+          successMetadata: {
+            source: "session-store",
+          },
         },
-        restore: () =>
-          restoreToContext(lease.context, this.sessionName, {
-            allowExpired: false,
-            maxBackups: this.maxBackupSessions
-          }),
-        successDetail: `Recovered authentication from stored session ${this.sessionName}`,
-        successMetadata: {
-          source: "session-store"
-        }
-      }, generation);
+        generation,
+      );
 
       if (!this.isGenerationCurrent(generation)) {
         return false;
@@ -1683,21 +1709,26 @@ export class SessionKeepAliveService extends EventEmitter {
         return false;
       }
 
-      const restoredFromMemory = await this.attemptSessionRestore(lease, {
-        attemptDetail: "Attempting in-memory session restore",
-        attemptMetadata: {
-          capturedAt: snapshot.capturedAt,
-          nextCookieExpiryAt: snapshot.nextCookieExpiryAt,
-          source: "memory"
+      const restoredFromMemory = await this.attemptSessionRestore(
+        lease,
+        {
+          attemptDetail: "Attempting in-memory session restore",
+          attemptMetadata: {
+            capturedAt: snapshot.capturedAt,
+            nextCookieExpiryAt: snapshot.nextCookieExpiryAt,
+            source: "memory",
+          },
+          restore: () =>
+            restoreLinkedInSessionCookies(lease.context, snapshot.storageState),
+          successDetail:
+            "Recovered authentication from in-memory backup session",
+          successMetadata: {
+            source: "memory",
+            capturedAt: snapshot.capturedAt,
+          },
         },
-        restore: () =>
-          restoreLinkedInSessionCookies(lease.context, snapshot.storageState),
-        successDetail: "Recovered authentication from in-memory backup session",
-        successMetadata: {
-          source: "memory",
-          capturedAt: snapshot.capturedAt
-        }
-      }, generation);
+        generation,
+      );
 
       if (!this.isGenerationCurrent(generation)) {
         return false;
@@ -1713,7 +1744,7 @@ export class SessionKeepAliveService extends EventEmitter {
 
   private async maybeWarmup(
     lease: ConnectionLease,
-    generation: number
+    generation: number,
   ): Promise<void> {
     if (!this.isGenerationCurrent(generation)) {
       return;
@@ -1751,7 +1782,7 @@ export class SessionKeepAliveService extends EventEmitter {
       this.metrics.lastWarmupAt = new Date().toISOString();
       this.emitKeepAliveEvent({
         type: "warmup",
-        detail: "Performed a gentle session warmup after extended idle time"
+        detail: "Performed a gentle session warmup after extended idle time",
       });
     } catch {
       // Warmup is best-effort; failures should not break keepalive.
@@ -1760,7 +1791,7 @@ export class SessionKeepAliveService extends EventEmitter {
 
   private async simulateActivity(
     lease: ConnectionLease,
-    generation: number
+    generation: number,
   ): Promise<void> {
     if (!this.isGenerationCurrent(generation)) {
       return;
@@ -1801,8 +1832,8 @@ export class SessionKeepAliveService extends EventEmitter {
         type: "activity",
         detail: activity.detail,
         metadata: {
-          pattern
-        }
+          pattern,
+        },
       });
     } catch {
       // Activity simulation is best-effort; failures are not fatal.
@@ -1811,7 +1842,7 @@ export class SessionKeepAliveService extends EventEmitter {
 
   private async cleanupOrphanPages(
     lease: ConnectionLease,
-    generation: number
+    generation: number,
   ): Promise<void> {
     if (!this.isGenerationCurrent(generation)) {
       return;
@@ -1851,8 +1882,8 @@ export class SessionKeepAliveService extends EventEmitter {
         detail: `Closed ${closedCount} orphaned page${closedCount === 1 ? "" : "s"}`,
         metadata: {
           closedCount,
-          remainingPages: Math.max(0, pages.length - closedCount)
-        }
+          remainingPages: Math.max(0, pages.length - closedCount),
+        },
       });
     }
   }
@@ -1860,7 +1891,9 @@ export class SessionKeepAliveService extends EventEmitter {
   private trimReconnectWindow(): void {
     const windowMs = this.alertThresholds.reconnectsInWindow.windowMs;
     const cutoffMs = Date.now() - windowMs;
-    while ((this.reconnectTimestampsMs[0] ?? Number.POSITIVE_INFINITY) < cutoffMs) {
+    while (
+      (this.reconnectTimestampsMs[0] ?? Number.POSITIVE_INFINITY) < cutoffMs
+    ) {
       this.reconnectTimestampsMs.shift();
     }
   }
@@ -1872,7 +1905,7 @@ export class SessionKeepAliveService extends EventEmitter {
     const cookieExpiryMs = millisecondsUntil(this.metrics.nextCookieExpiryAt);
     const cookieAlertActive = isTimestampWithinWindow(
       this.metrics.nextCookieExpiryAt,
-      this.alertThresholds.cookieExpiringWithinMs
+      this.alertThresholds.cookieExpiringWithinMs,
     );
     this.updateAlert(
       "cookie-expiry",
@@ -1880,20 +1913,21 @@ export class SessionKeepAliveService extends EventEmitter {
       "LinkedIn session cookie is approaching expiry",
       {
         expiresInMs: cookieExpiryMs,
-        nextCookieExpiryAt: this.metrics.nextCookieExpiryAt
-      }
+        nextCookieExpiryAt: this.metrics.nextCookieExpiryAt,
+      },
     );
 
     const reconnectAlertActive =
-      this.reconnectTimestampsMs.length >= this.alertThresholds.reconnectsInWindow.count;
+      this.reconnectTimestampsMs.length >=
+      this.alertThresholds.reconnectsInWindow.count;
     this.updateAlert(
       "reconnect-burst",
       reconnectAlertActive,
       "Keepalive has needed repeated reconnects in a short window",
       {
         reconnectsInWindow: this.reconnectTimestampsMs.length,
-        windowMs: this.alertThresholds.reconnectsInWindow.windowMs
-      }
+        windowMs: this.alertThresholds.reconnectsInWindow.windowMs,
+      },
     );
   }
 
@@ -1901,7 +1935,7 @@ export class SessionKeepAliveService extends EventEmitter {
     key: string,
     active: boolean,
     detail: string,
-    metadata: Record<string, unknown>
+    metadata: Record<string, unknown>,
   ): void {
     if (active && !this.activeAlerts.has(key)) {
       this.activeAlerts.add(key);
@@ -1910,8 +1944,8 @@ export class SessionKeepAliveService extends EventEmitter {
         detail,
         metadata: {
           alertKey: key,
-          ...metadata
-        }
+          ...metadata,
+        },
       });
       return;
     }
@@ -1923,15 +1957,16 @@ export class SessionKeepAliveService extends EventEmitter {
 
   private emitKeepAliveEvent(
     partial: Omit<KeepAliveEvent, "timestamp" | "consecutiveFailures"> &
-      Partial<Pick<KeepAliveEvent, "timestamp" | "consecutiveFailures">>
+      Partial<Pick<KeepAliveEvent, "timestamp" | "consecutiveFailures">>,
   ): void {
     const event: KeepAliveEvent = {
       timestamp: partial.timestamp ?? new Date().toISOString(),
-      consecutiveFailures: partial.consecutiveFailures ?? this.consecutiveFailures,
+      consecutiveFailures:
+        partial.consecutiveFailures ?? this.consecutiveFailures,
       type: partial.type,
       ...(partial.health === undefined ? {} : { health: partial.health }),
       ...(partial.detail === undefined ? {} : { detail: partial.detail }),
-      ...(partial.metadata === undefined ? {} : { metadata: partial.metadata })
+      ...(partial.metadata === undefined ? {} : { metadata: partial.metadata }),
     };
 
     this.eventLog.push(event);
@@ -1944,12 +1979,12 @@ export class SessionKeepAliveService extends EventEmitter {
 
   private async handleTickError(
     error: unknown,
-    generation: number
+    generation: number,
   ): Promise<void> {
     if (isTransientConnectionError(error)) {
       await this.handleNetworkInterruption(
         getErrorMessage(error) || "Transient network interruption",
-        generation
+        generation,
       );
       return;
     }
@@ -1977,10 +2012,10 @@ export class SessionKeepAliveService extends EventEmitter {
           "UNKNOWN",
           "Failed to release keepalive browser lease.",
           {
-            cause: getErrorMessage(error)
+            cause: getErrorMessage(error),
           },
-          error instanceof Error ? { cause: error } : undefined
-        )
+          error instanceof Error ? { cause: error } : undefined,
+        ),
       );
     }
   }

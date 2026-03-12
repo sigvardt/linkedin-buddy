@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import { type BrowserContext, type Locator, type Page } from "playwright-core";
+import { type Locator, type Page } from "playwright-core";
 import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
 import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
@@ -8,27 +8,33 @@ import type { ConfirmFailureArtifactConfig } from "./config.js";
 import { LinkedInBuddyError, asLinkedInBuddyError } from "./errors.js";
 import {
   scrollLinkedInPageToBottom,
-  scrollLinkedInPageToTop
+  scrollLinkedInPageToTop,
 } from "./linkedinPage.js";
 import type { JsonEventLogger } from "./logging.js";
 import { validateLinkedInPostText } from "./linkedinPosts.js";
 import type { ProfileManager } from "./profileManager.js";
 import type { RateLimiter, RateLimiterState } from "./rateLimiter.js";
+import {
+  escapeCssAttributeValue,
+  getOrCreatePage,
+  isAbsoluteUrl,
+  normalizeText,
+} from "./shared.js";
 import type {
   LinkedInSelectorLocale,
-  LinkedInSelectorPhraseKey
+  LinkedInSelectorPhraseKey,
 } from "./selectorLocale.js";
 import {
   buildLinkedInAriaLabelContainsSelector,
   buildLinkedInSelectorPhraseRegex,
   formatLinkedInSelectorRegexHint,
-  valueContainsLinkedInSelectorPhrase
+  valueContainsLinkedInSelectorPhrase,
 } from "./selectorLocale.js";
 import type {
   ActionExecutor,
   ActionExecutorInput,
   ActionExecutorResult,
-  TwoPhaseCommitService
+  TwoPhaseCommitService,
 } from "./twoPhaseCommit.js";
 
 export interface LinkedInFeedPost {
@@ -111,7 +117,10 @@ export interface LinkedInFeedExecutorRuntime {
 }
 
 export interface LinkedInFeedRuntime extends LinkedInFeedExecutorRuntime {
-  twoPhaseCommit: Pick<TwoPhaseCommitService<LinkedInFeedExecutorRuntime>, "prepare">;
+  twoPhaseCommit: Pick<
+    TwoPhaseCommitService<LinkedInFeedExecutorRuntime>,
+    "prepare"
+  >;
 }
 
 const LINKEDIN_FEED_URL = "https://www.linkedin.com/feed/";
@@ -129,51 +138,52 @@ export const LINKEDIN_FEED_REACTION_TYPES = [
   "support",
   "love",
   "insightful",
-  "funny"
+  "funny",
 ] as const;
 
-export type LinkedInFeedReaction = (typeof LINKEDIN_FEED_REACTION_TYPES)[number];
+export type LinkedInFeedReaction =
+  (typeof LINKEDIN_FEED_REACTION_TYPES)[number];
 
 const LIKE_RATE_LIMIT_CONFIG = {
   counterKey: "linkedin.feed.like_post",
   windowSizeMs: 60 * 60 * 1000,
-  limit: 30
+  limit: 30,
 } as const;
 
 const COMMENT_RATE_LIMIT_CONFIG = {
   counterKey: "linkedin.feed.comment_on_post",
   windowSizeMs: 60 * 60 * 1000,
-  limit: 15
+  limit: 15,
 } as const;
 
 const REPOST_RATE_LIMIT_CONFIG = {
   counterKey: "linkedin.feed.repost_post",
   windowSizeMs: 60 * 60 * 1000,
-  limit: 10
+  limit: 10,
 } as const;
 
 const SHARE_RATE_LIMIT_CONFIG = {
   counterKey: "linkedin.feed.share_post",
   windowSizeMs: 60 * 60 * 1000,
-  limit: 10
+  limit: 10,
 } as const;
 
 const SAVE_RATE_LIMIT_CONFIG = {
   counterKey: "linkedin.feed.save_post",
   windowSizeMs: 60 * 60 * 1000,
-  limit: 40
+  limit: 40,
 } as const;
 
 const UNSAVE_RATE_LIMIT_CONFIG = {
   counterKey: "linkedin.feed.unsave_post",
   windowSizeMs: 60 * 60 * 1000,
-  limit: 40
+  limit: 40,
 } as const;
 
 const REMOVE_REACTION_RATE_LIMIT_CONFIG = {
   counterKey: "linkedin.feed.remove_reaction",
   windowSizeMs: 60 * 60 * 1000,
-  limit: 30
+  limit: 30,
 } as const;
 
 interface FeedReactionUiConfig {
@@ -189,33 +199,33 @@ export const LINKEDIN_FEED_REACTION_MAP: Record<
   like: {
     label: "Like",
     menuAriaLabel: "React Like",
-    iconType: "LIKE"
+    iconType: "LIKE",
   },
   celebrate: {
     label: "Celebrate",
     menuAriaLabel: "React Celebrate",
-    iconType: "PRAISE"
+    iconType: "PRAISE",
   },
   support: {
     label: "Support",
     menuAriaLabel: "React Support",
-    iconType: "APPRECIATION"
+    iconType: "APPRECIATION",
   },
   love: {
     label: "Love",
     menuAriaLabel: "React Love",
-    iconType: "EMPATHY"
+    iconType: "EMPATHY",
   },
   insightful: {
     label: "Insightful",
     menuAriaLabel: "React Insightful",
-    iconType: "INTEREST"
+    iconType: "INTEREST",
   },
   funny: {
     label: "Funny",
     menuAriaLabel: "React Funny",
-    iconType: "ENTERTAINMENT"
-  }
+    iconType: "ENTERTAINMENT",
+  },
 };
 
 const LINKEDIN_FEED_REACTION_ALIAS_MAP: Record<string, LinkedInFeedReaction> = {
@@ -236,7 +246,7 @@ const LINKEDIN_FEED_REACTION_ALIAS_MAP: Record<string, LinkedInFeedReaction> = {
   funny: "funny",
   laugh: "funny",
   haha: "funny",
-  entertainment: "funny"
+  entertainment: "funny",
 };
 
 interface FeedPostSnapshot {
@@ -279,21 +289,20 @@ interface PostRepostButtonState {
   className: string;
 }
 
-function normalizeText(value: string | null | undefined): string {
-  return (value ?? "").replace(/\s+/g, " ").trim();
-}
-
 function createVerificationSnippet(text: string): string {
   return normalizeText(text).slice(0, 120);
 }
 
 function normalizeReactionKey(value: string): string {
-  return value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
 }
 
 export function normalizeLinkedInFeedReaction(
   value: string | undefined,
-  fallback: LinkedInFeedReaction = "like"
+  fallback: LinkedInFeedReaction = "like",
 ): LinkedInFeedReaction {
   if (!value || normalizeText(value).length === 0) {
     return fallback;
@@ -310,13 +319,9 @@ export function normalizeLinkedInFeedReaction(
     `reaction must be one of: ${LINKEDIN_FEED_REACTION_TYPES.join(", ")}.`,
     {
       provided_reaction: value,
-      supported_reactions: LINKEDIN_FEED_REACTION_TYPES
-    }
+      supported_reactions: LINKEDIN_FEED_REACTION_TYPES,
+    },
   );
-}
-
-function isAbsoluteUrl(value: string): boolean {
-  return /^https?:\/\//i.test(value);
 }
 
 function resolvePostUrl(postUrl: string): string {
@@ -324,7 +329,7 @@ function resolvePostUrl(postUrl: string): string {
   if (!trimmedPostUrl) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "postUrl is required."
+      "postUrl is required.",
     );
   }
 
@@ -336,7 +341,7 @@ function resolvePostUrl(postUrl: string): string {
       throw asLinkedInBuddyError(
         error,
         "ACTION_PRECONDITION_FAILED",
-        "Post URL must be a valid URL."
+        "Post URL must be a valid URL.",
       );
     }
 
@@ -363,14 +368,6 @@ function resolvePostUrl(postUrl: string): string {
   }
 
   return `https://www.linkedin.com/feed/update/${encodeURIComponent(trimmedPostUrl)}/`;
-}
-
-async function getOrCreatePage(context: BrowserContext): Promise<Page> {
-  const existing = context.pages()[0];
-  if (existing) {
-    return existing;
-  }
-  return context.newPage();
 }
 
 function extractPostIdentity(value: string): string {
@@ -416,10 +413,6 @@ function extractActivityId(value: string): string {
   return match?.[1] ?? "";
 }
 
-function escapeCssAttributeValue(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-}
-
 function toAbsoluteLinkedInPostUrl(postId: string): string {
   const normalizedPostId = normalizeText(postId);
   if (!normalizedPostId) {
@@ -439,7 +432,8 @@ function toAbsoluteLinkedInPostUrl(postId: string): string {
 
 function toFeedPost(snapshot: FeedPostSnapshot): LinkedInFeedPost {
   const postId = normalizeText(snapshot.post_id);
-  const postUrl = normalizeText(snapshot.post_url) || toAbsoluteLinkedInPostUrl(postId);
+  const postUrl =
+    normalizeText(snapshot.post_url) || toAbsoluteLinkedInPostUrl(postId);
 
   return {
     post_id: postId,
@@ -451,12 +445,12 @@ function toFeedPost(snapshot: FeedPostSnapshot): LinkedInFeedPost {
     reactions_count: normalizeText(snapshot.reactions_count),
     comments_count: normalizeText(snapshot.comments_count),
     reposts_count: normalizeText(snapshot.reposts_count),
-    post_url: postUrl
+    post_url: postUrl,
   };
 }
 
 function formatRateLimitState(
-  state: RateLimiterState
+  state: RateLimiterState,
 ): Record<string, number | boolean | string> {
   return {
     counter_key: state.counterKey,
@@ -465,7 +459,7 @@ function formatRateLimitState(
     count: state.count,
     limit: state.limit,
     remaining: state.remaining,
-    allowed: state.allowed
+    allowed: state.allowed,
   };
 }
 
@@ -482,7 +476,7 @@ function getRequiredStringField(
   source: Record<string, unknown>,
   key: string,
   actionId: string,
-  location: "target" | "payload"
+  location: "target" | "payload",
 ): string {
   const value = source[key];
   if (typeof value === "string" && value.trim().length > 0) {
@@ -495,8 +489,8 @@ function getRequiredStringField(
     {
       action_id: actionId,
       location,
-      key
-    }
+      key,
+    },
   );
 }
 
@@ -504,7 +498,7 @@ async function captureScreenshotArtifact(
   runtime: LinkedInFeedExecutorRuntime,
   page: Page,
   relativePath: string,
-  metadata: Record<string, unknown> = {}
+  metadata: Record<string, unknown> = {},
 ): Promise<string> {
   const absolutePath = runtime.artifacts.resolve(relativePath);
   mkdirSync(path.dirname(absolutePath), { recursive: true });
@@ -518,14 +512,14 @@ async function waitForFeedSurface(page: Page): Promise<void> {
     "[data-urn]",
     ".feed-shared-update-v2",
     ".occludable-update",
-    "main"
+    "main",
   ];
 
   for (const selector of selectors) {
     try {
       await page.locator(selector).first().waitFor({
         state: "visible",
-        timeout: 5_000
+        timeout: 5_000,
       });
       return;
     } catch {
@@ -538,24 +532,19 @@ async function waitForFeedSurface(page: Page): Promise<void> {
     "Could not locate LinkedIn feed content.",
     {
       current_url: page.url(),
-      attempted_selectors: selectors
-    }
+      attempted_selectors: selectors,
+    },
   );
 }
 
 async function waitForPostSurface(page: Page): Promise<void> {
-  const selectors = [
-    "[data-urn]",
-    ".feed-shared-update-v2",
-    "article",
-    "main"
-  ];
+  const selectors = ["[data-urn]", ".feed-shared-update-v2", "article", "main"];
 
   for (const selector of selectors) {
     try {
       await page.locator(selector).first().waitFor({
         state: "visible",
-        timeout: 5_000
+        timeout: 5_000,
       });
       return;
     } catch {
@@ -568,232 +557,255 @@ async function waitForPostSurface(page: Page): Promise<void> {
     "Could not locate LinkedIn post content.",
     {
       current_url: page.url(),
-      attempted_selectors: selectors
-    }
+      attempted_selectors: selectors,
+    },
   );
 }
 
 /* eslint-disable no-undef -- DOM types are valid inside page.evaluate() */
-async function extractFeedPosts(page: Page, limit: number): Promise<LinkedInFeedPost[]> {
-  const snapshots = await page.evaluate((maxPosts: number) => {
-    const normalize = (value: string | null | undefined): string =>
-      (value ?? "").replace(/\s+/g, " ").trim();
+async function extractFeedPosts(
+  page: Page,
+  limit: number,
+): Promise<LinkedInFeedPost[]> {
+  const snapshots = await page.evaluate(
+    (maxPosts: number) => {
+      const normalize = (value: string | null | undefined): string =>
+        (value ?? "").replace(/\s+/g, " ").trim();
 
-    const toAbsoluteUrl = (href: string | null | undefined): string => {
-      const value = normalize(href);
-      if (!value) {
-        return "";
-      }
+      const toAbsoluteUrl = (href: string | null | undefined): string => {
+        const value = normalize(href);
+        if (!value) {
+          return "";
+        }
 
-      try {
-        return new URL(value, globalThis.window.location.origin).toString();
-      } catch {
-        return value;
-      }
-    };
-
-    const extractPostId = (value: string): string => {
-      const normalized = normalize(value);
-      if (!normalized) {
-        return "";
-      }
-
-      const urnMatch = /(urn:li:[^/?#]+)/i.exec(normalized);
-      if (urnMatch?.[1]) {
-        return urnMatch[1];
-      }
-
-      const updateMatch = /\/feed\/update\/([^/?#]+)/i.exec(normalized);
-      if (updateMatch?.[1]) {
         try {
-          return decodeURIComponent(updateMatch[1]);
+          return new URL(value, globalThis.window.location.origin).toString();
         } catch {
-          return updateMatch[1];
+          return value;
         }
-      }
+      };
 
-      const activityMatch = /activity[-:/](\d+)/i.exec(normalized);
-      if (activityMatch?.[1]) {
-        return activityMatch[1];
-      }
+      const extractPostId = (value: string): string => {
+        const normalized = normalize(value);
+        if (!normalized) {
+          return "";
+        }
 
-      const postMatch = /\/posts\/[^/?#-]+-(\d+)/i.exec(normalized);
-      if (postMatch?.[1]) {
-        return postMatch[1];
-      }
+        const urnMatch = /(urn:li:[^/?#]+)/i.exec(normalized);
+        if (urnMatch?.[1]) {
+          return urnMatch[1];
+        }
 
-      return normalized;
-    };
+        const updateMatch = /\/feed\/update\/([^/?#]+)/i.exec(normalized);
+        if (updateMatch?.[1]) {
+          try {
+            return decodeURIComponent(updateMatch[1]);
+          } catch {
+            return updateMatch[1];
+          }
+        }
 
-    const buildPostUrl = (postId: string): string => {
-      const normalized = normalize(postId);
-      if (!normalized) {
-        return "";
-      }
+        const activityMatch = /activity[-:/](\d+)/i.exec(normalized);
+        if (activityMatch?.[1]) {
+          return activityMatch[1];
+        }
 
-      if (/^urn:li:/i.test(normalized)) {
+        const postMatch = /\/posts\/[^/?#-]+-(\d+)/i.exec(normalized);
+        if (postMatch?.[1]) {
+          return postMatch[1];
+        }
+
+        return normalized;
+      };
+
+      const buildPostUrl = (postId: string): string => {
+        const normalized = normalize(postId);
+        if (!normalized) {
+          return "";
+        }
+
+        if (/^urn:li:/i.test(normalized)) {
+          return `https://www.linkedin.com/feed/update/${normalized}/`;
+        }
+
+        if (/^\d+$/.test(normalized)) {
+          return `https://www.linkedin.com/feed/update/urn:li:activity:${normalized}/`;
+        }
+
         return `https://www.linkedin.com/feed/update/${normalized}/`;
-      }
+      };
 
-      if (/^\d+$/.test(normalized)) {
-        return `https://www.linkedin.com/feed/update/urn:li:activity:${normalized}/`;
-      }
+      const pickText = (selectors: string[], root: ParentNode): string => {
+        for (const selector of selectors) {
+          const text = normalize(root.querySelector(selector)?.textContent);
+          if (text) {
+            return text;
+          }
+        }
+        return "";
+      };
 
-      return `https://www.linkedin.com/feed/update/${normalized}/`;
-    };
+      const pickHref = (selectors: string[], root: ParentNode): string => {
+        for (const selector of selectors) {
+          const href = (
+            root.querySelector(selector) as HTMLAnchorElement | null
+          )?.href;
+          const absolute = toAbsoluteUrl(href);
+          if (absolute) {
+            return absolute;
+          }
+        }
+        return "";
+      };
 
-    const pickText = (selectors: string[], root: ParentNode): string => {
-      for (const selector of selectors) {
-        const text = normalize(root.querySelector(selector)?.textContent);
-        if (text) {
-          return text;
+      const cardCandidates = [
+        ...Array.from(globalThis.document.querySelectorAll("[data-urn]")),
+        ...Array.from(
+          globalThis.document.querySelectorAll("div.feed-shared-update-v2"),
+        ),
+        ...Array.from(
+          globalThis.document.querySelectorAll("div.occludable-update"),
+        ),
+        ...Array.from(
+          globalThis.document.querySelectorAll("article.feed-shared-update-v2"),
+        ),
+      ];
+
+      const uniqueCards: Element[] = [];
+      const seenCards = new Set<Element>();
+      for (const candidate of cardCandidates) {
+        const root =
+          candidate.closest(
+            "div[data-urn], div.feed-shared-update-v2, div.occludable-update, article.feed-shared-update-v2, li",
+          ) ?? candidate;
+        if (seenCards.has(root)) {
+          continue;
+        }
+        seenCards.add(root);
+        uniqueCards.push(root);
+        if (uniqueCards.length >= maxPosts * 4) {
+          break;
         }
       }
-      return "";
-    };
 
-    const pickHref = (selectors: string[], root: ParentNode): string => {
-      for (const selector of selectors) {
-        const href = (root.querySelector(selector) as HTMLAnchorElement | null)?.href;
-        const absolute = toAbsoluteUrl(href);
-        if (absolute) {
-          return absolute;
+      const results: FeedPostSnapshot[] = [];
+      for (const card of uniqueCards) {
+        const actorRoot =
+          card.querySelector(
+            ".update-components-actor, .feed-shared-actor, .feed-shared-actor__container",
+          ) ?? card;
+
+        const urn =
+          normalize(card.getAttribute("data-urn")) ||
+          normalize(card.querySelector("[data-urn]")?.getAttribute("data-urn"));
+
+        const postUrl = pickHref(
+          [
+            "a[href*='/feed/update/']",
+            "a[href*='/posts/']",
+            "a[href*='activity-']",
+          ],
+          card,
+        );
+        const postId = extractPostId(urn || postUrl);
+        if (!postId && !postUrl) {
+          continue;
+        }
+
+        const postedAtText = pickText(
+          [
+            ".update-components-actor__sub-description span[aria-hidden='true']",
+            ".update-components-actor__sub-description",
+            ".feed-shared-actor__sub-description",
+            ".feed-shared-actor__sub-description-link",
+            ".update-components-actor__meta-link",
+          ],
+          actorRoot,
+        );
+
+        const timeElement = card.querySelector("time");
+        const postedAt =
+          normalize(timeElement?.textContent) ||
+          normalize(timeElement?.getAttribute("datetime")) ||
+          postedAtText;
+
+        const text = pickText(
+          [
+            ".feed-shared-update-v2__description-wrapper .break-words",
+            ".feed-shared-update-v2__description",
+            ".update-components-text span[dir='ltr']",
+            ".update-components-text",
+            ".break-words",
+          ],
+          card,
+        );
+
+        const reactions = pickText(
+          [
+            ".social-details-social-counts__reactions-count",
+            ".social-details-social-counts__social-proof-text",
+          ],
+          card,
+        );
+        const comments = pickText(
+          [".social-details-social-counts__comments"],
+          card,
+        );
+        const reposts = pickText(
+          [".social-details-social-counts__reposts"],
+          card,
+        );
+
+        const authorName = pickText(
+          [
+            ".update-components-actor__name",
+            ".feed-shared-actor__name",
+            ".update-components-actor__title span[aria-hidden='true']",
+          ],
+          actorRoot,
+        );
+
+        const authorHeadline = pickText(
+          [
+            ".update-components-actor__description",
+            ".feed-shared-actor__description",
+          ],
+          actorRoot,
+        );
+
+        const authorProfileUrl = pickHref(["a[href*='/in/']"], actorRoot);
+
+        results.push({
+          post_id: postId,
+          author_name: authorName,
+          author_headline: authorHeadline,
+          author_profile_url: authorProfileUrl,
+          posted_at: postedAt,
+          text,
+          reactions_count: reactions,
+          comments_count: comments,
+          reposts_count: reposts,
+          post_url: postUrl || buildPostUrl(postId),
+        });
+
+        if (results.length >= maxPosts) {
+          break;
         }
       }
-      return "";
-    };
 
-    const cardCandidates = [
-      ...Array.from(globalThis.document.querySelectorAll("[data-urn]")),
-      ...Array.from(globalThis.document.querySelectorAll("div.feed-shared-update-v2")),
-      ...Array.from(globalThis.document.querySelectorAll("div.occludable-update")),
-      ...Array.from(globalThis.document.querySelectorAll("article.feed-shared-update-v2"))
-    ];
-
-    const uniqueCards: Element[] = [];
-    const seenCards = new Set<Element>();
-    for (const candidate of cardCandidates) {
-      const root =
-        candidate.closest(
-          "div[data-urn], div.feed-shared-update-v2, div.occludable-update, article.feed-shared-update-v2, li"
-        ) ?? candidate;
-      if (seenCards.has(root)) {
-        continue;
-      }
-      seenCards.add(root);
-      uniqueCards.push(root);
-      if (uniqueCards.length >= maxPosts * 4) {
-        break;
-      }
-    }
-
-    const results: FeedPostSnapshot[] = [];
-    for (const card of uniqueCards) {
-      const actorRoot =
-        card.querySelector(
-          ".update-components-actor, .feed-shared-actor, .feed-shared-actor__container"
-        ) ?? card;
-
-      const urn =
-        normalize(card.getAttribute("data-urn")) ||
-        normalize(card.querySelector("[data-urn]")?.getAttribute("data-urn"));
-
-      const postUrl = pickHref(
-        [
-          "a[href*='/feed/update/']",
-          "a[href*='/posts/']",
-          "a[href*='activity-']"
-        ],
-        card
-      );
-      const postId = extractPostId(urn || postUrl);
-      if (!postId && !postUrl) {
-        continue;
-      }
-
-      const postedAtText = pickText(
-        [
-          ".update-components-actor__sub-description span[aria-hidden='true']",
-          ".update-components-actor__sub-description",
-          ".feed-shared-actor__sub-description",
-          ".feed-shared-actor__sub-description-link",
-          ".update-components-actor__meta-link"
-        ],
-        actorRoot
-      );
-
-      const timeElement = card.querySelector("time");
-      const postedAt =
-        normalize(timeElement?.textContent) ||
-        normalize(timeElement?.getAttribute("datetime")) ||
-        postedAtText;
-
-      const text = pickText(
-        [
-          ".feed-shared-update-v2__description-wrapper .break-words",
-          ".feed-shared-update-v2__description",
-          ".update-components-text span[dir='ltr']",
-          ".update-components-text",
-          ".break-words"
-        ],
-        card
-      );
-
-      const reactions = pickText(
-        [
-          ".social-details-social-counts__reactions-count",
-          ".social-details-social-counts__social-proof-text"
-        ],
-        card
-      );
-      const comments = pickText([".social-details-social-counts__comments"], card);
-      const reposts = pickText([".social-details-social-counts__reposts"], card);
-
-      const authorName = pickText(
-        [
-          ".update-components-actor__name",
-          ".feed-shared-actor__name",
-          ".update-components-actor__title span[aria-hidden='true']"
-        ],
-        actorRoot
-      );
-
-      const authorHeadline = pickText(
-        [
-          ".update-components-actor__description",
-          ".feed-shared-actor__description"
-        ],
-        actorRoot
-      );
-
-      const authorProfileUrl = pickHref(["a[href*='/in/']"], actorRoot);
-
-      results.push({
-        post_id: postId,
-        author_name: authorName,
-        author_headline: authorHeadline,
-        author_profile_url: authorProfileUrl,
-        posted_at: postedAt,
-        text,
-        reactions_count: reactions,
-        comments_count: comments,
-        reposts_count: reposts,
-        post_url: postUrl || buildPostUrl(postId)
-      });
-
-      if (results.length >= maxPosts) {
-        break;
-      }
-    }
-
-    return results;
-  }, Math.max(1, limit));
+      return results;
+    },
+    Math.max(1, limit),
+  );
 
   return snapshots.map(toFeedPost);
 }
 /* eslint-enable no-undef */
 
-async function loadFeedPosts(page: Page, limit: number): Promise<LinkedInFeedPost[]> {
+async function loadFeedPosts(
+  page: Page,
+  limit: number,
+): Promise<LinkedInFeedPost[]> {
   let posts = await extractFeedPosts(page, limit);
 
   for (let i = 0; i < 6 && posts.length < limit; i++) {
@@ -805,7 +817,10 @@ async function loadFeedPosts(page: Page, limit: number): Promise<LinkedInFeedPos
   return posts.slice(0, Math.max(1, limit));
 }
 
-function findMatchingPost(posts: LinkedInFeedPost[], postUrl: string): LinkedInFeedPost | null {
+function findMatchingPost(
+  posts: LinkedInFeedPost[],
+  postUrl: string,
+): LinkedInFeedPost | null {
   const requestedIdentity = extractPostIdentity(postUrl);
   if (!requestedIdentity) {
     return posts[0] ?? null;
@@ -829,7 +844,7 @@ function findMatchingPost(posts: LinkedInFeedPost[], postUrl: string): LinkedInF
 async function findVisibleLocatorOrThrow(
   page: Page,
   candidates: SelectorCandidate[],
-  selectorKey: string
+  selectorKey: string,
 ): Promise<{ locator: Locator; key: string }> {
   for (const candidate of candidates) {
     const locator = candidate.locatorFactory(page).first();
@@ -837,7 +852,7 @@ async function findVisibleLocatorOrThrow(
       await locator.waitFor({ state: "visible", timeout: 2_500 });
       return {
         locator,
-        key: candidate.key
+        key: candidate.key,
       };
     } catch {
       // Try next selector candidate.
@@ -850,21 +865,23 @@ async function findVisibleLocatorOrThrow(
     {
       selector_key: selectorKey,
       current_url: page.url(),
-      attempted_selectors: candidates.map((candidate) => candidate.selectorHint)
-    }
+      attempted_selectors: candidates.map(
+        (candidate) => candidate.selectorHint,
+      ),
+    },
   );
 }
 
 async function findVisibleLocator(
   page: Page,
-  candidates: SelectorCandidate[]
+  candidates: SelectorCandidate[],
 ): Promise<{ locator: Locator; key: string } | null> {
   for (const candidate of candidates) {
     const locator = candidate.locatorFactory(page).first();
     if (await isLocatorVisible(locator)) {
       return {
         locator,
-        key: candidate.key
+        key: candidate.key,
       };
     }
   }
@@ -876,7 +893,7 @@ async function findVisibleScopedLocatorOrThrow(
   root: Locator,
   candidates: ScopedSelectorCandidate[],
   selectorKey: string,
-  currentUrl: string
+  currentUrl: string,
 ): Promise<{ locator: Locator; key: string }> {
   for (const candidate of candidates) {
     const locator = candidate.locatorFactory(root).first();
@@ -884,7 +901,7 @@ async function findVisibleScopedLocatorOrThrow(
       await locator.waitFor({ state: "visible", timeout: 2_500 });
       return {
         locator,
-        key: candidate.key
+        key: candidate.key,
       };
     } catch {
       // Try next selector candidate.
@@ -897,22 +914,26 @@ async function findVisibleScopedLocatorOrThrow(
     {
       selector_key: selectorKey,
       current_url: currentUrl,
-      attempted_selectors: candidates.map((candidate) => candidate.selectorHint)
-    }
+      attempted_selectors: candidates.map(
+        (candidate) => candidate.selectorHint,
+      ),
+    },
   );
 }
 
 async function waitForNetworkIdleBestEffort(
   page: Page,
-  timeoutMs: number = 8_000
+  timeoutMs: number = 8_000,
 ): Promise<void> {
-  await page.waitForLoadState("networkidle", { timeout: timeoutMs }).catch(() => undefined);
+  await page
+    .waitForLoadState("networkidle", { timeout: timeoutMs })
+    .catch(() => undefined);
 }
 
 async function waitForCondition(
   condition: () => Promise<boolean>,
   timeoutMs: number,
-  intervalMs = 250
+  intervalMs = 250,
 ): Promise<boolean> {
   const deadline = Date.now() + Math.max(0, timeoutMs);
   while (Date.now() < deadline) {
@@ -935,7 +956,10 @@ async function isLocatorVisible(locator: Locator): Promise<boolean> {
   }
 }
 
-async function isAnyLocatorVisible(locator: Locator, maxChecks = 3): Promise<boolean> {
+async function isAnyLocatorVisible(
+  locator: Locator,
+  maxChecks = 3,
+): Promise<boolean> {
   const count = await locator.count();
   const checks = Math.min(count, maxChecks);
   for (let index = 0; index < checks; index += 1) {
@@ -963,12 +987,12 @@ const REACTION_SELECTOR_KEYS: Record<
   support: "support",
   love: "love",
   insightful: "insightful",
-  funny: "funny"
+  funny: "funny",
 };
 
 function inferReactionFromText(
   value: string,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): LinkedInFeedReaction | null {
   const normalized = normalizeText(value).toLowerCase();
   if (!normalized) {
@@ -981,7 +1005,7 @@ function inferReactionFromText(
       valueContainsLinkedInSelectorPhrase(
         normalized,
         REACTION_SELECTOR_KEYS[reaction],
-        selectorLocale
+        selectorLocale,
       )
     ) {
       return reaction;
@@ -996,12 +1020,16 @@ function inferReactionFromText(
 
 async function getReactionButtonState(
   reactButton: Locator,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<ReactionButtonState> {
-  const ariaPressed = normalizeText(await reactButton.getAttribute("aria-pressed")).toLowerCase();
+  const ariaPressed = normalizeText(
+    await reactButton.getAttribute("aria-pressed"),
+  ).toLowerCase();
   const className = normalizeText(await reactButton.getAttribute("class"));
   const ariaLabel = normalizeText(await reactButton.getAttribute("aria-label"));
-  const buttonText = normalizeText(await reactButton.innerText().catch(() => ""));
+  const buttonText = normalizeText(
+    await reactButton.innerText().catch(() => ""),
+  );
 
   const reacted =
     ariaPressed === "true" ||
@@ -1016,14 +1044,14 @@ async function getReactionButtonState(
     reaction: reactionFromLabel ?? reactionFromText,
     ariaLabel,
     className,
-    buttonText
+    buttonText,
   };
 }
 
 async function isDesiredReactionActive(
   reactButton: Locator,
   desiredReaction: LinkedInFeedReaction,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<boolean> {
   const state = await getReactionButtonState(reactButton, selectorLocale);
   if (!state.reacted) {
@@ -1042,37 +1070,40 @@ async function selectReactionFromMenu(
   page: Page,
   reactButton: Locator,
   reaction: LinkedInFeedReaction,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<string> {
   const reactionKey = REACTION_SELECTOR_KEYS[reaction];
   const reactionLabelRegex = buildLinkedInSelectorPhraseRegex(
     reactionKey,
     selectorLocale,
-    { exact: true }
+    { exact: true },
   );
   const reactionLabelRegexHint = formatLinkedInSelectorRegexHint(
     reactionKey,
     selectorLocale,
-    { exact: true }
+    { exact: true },
   );
   const reactionAriaSelector = buildLinkedInAriaLabelContainsSelector(
     "button.reactions-menu__reaction-index",
     reactionKey,
-    selectorLocale
+    selectorLocale,
   );
   const reactionFallbackAriaSelector = buildLinkedInAriaLabelContainsSelector(
     "button",
     reactionKey,
-    selectorLocale
+    selectorLocale,
   );
   await reactButton.hover({ timeout: 5_000 });
 
   const menu = page.locator("span.reactions-menu--active").first();
-  const menuVisible = await waitForCondition(async () => isLocatorVisible(menu), 3_500);
+  const menuVisible = await waitForCondition(
+    async () => isLocatorVisible(menu),
+    3_500,
+  );
   if (!menuVisible) {
     throw new LinkedInBuddyError(
       "UI_CHANGED_SELECTOR_FAILED",
-      "Could not open LinkedIn reaction menu for the selected post."
+      "Could not open LinkedIn reaction menu for the selected post.",
     );
   }
 
@@ -1083,41 +1114,45 @@ async function selectReactionFromMenu(
       locatorFactory: () =>
         menu
           .locator("button.reactions-menu__reaction-index")
-          .filter({ hasText: reactionLabelRegex })
+          .filter({ hasText: reactionLabelRegex }),
     },
     {
       key: "menu-reaction-aria",
       selectorHint: reactionAriaSelector,
-      locatorFactory: () => menu.locator(reactionAriaSelector)
+      locatorFactory: () => menu.locator(reactionAriaSelector),
     },
     {
       key: "menu-reaction-fallback",
       selectorHint: reactionFallbackAriaSelector,
-      locatorFactory: () => menu.locator(reactionFallbackAriaSelector)
-    }
+      locatorFactory: () => menu.locator(reactionFallbackAriaSelector),
+    },
   ];
 
-  const reactionButton = await findVisibleLocatorOrThrow(page, candidateButtons, "reaction_menu_button");
+  const reactionButton = await findVisibleLocatorOrThrow(
+    page,
+    candidateButtons,
+    "reaction_menu_button",
+  );
   await reactionButton.locator.click({ timeout: 5_000 });
   return reactionButton.key;
 }
 
 function createReactionButtonCandidates(
   postRoot: Locator,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): SelectorCandidate[] {
   const likeOrReactRegex = buildLinkedInSelectorPhraseRegex(
     ["like", "react"],
-    selectorLocale
+    selectorLocale,
   );
   const likeOrReactRegexHint = formatLinkedInSelectorRegexHint(
     ["like", "react"],
-    selectorLocale
+    selectorLocale,
   );
   const likeReactAriaSelector = buildLinkedInAriaLabelContainsSelector(
     "button",
     ["like", "react", "reaction"],
-    selectorLocale
+    selectorLocale,
   );
 
   return [
@@ -1125,62 +1160,64 @@ function createReactionButtonCandidates(
       key: "post-social-action-like",
       selectorHint: "button.social-actions-button.react-button__trigger",
       locatorFactory: () =>
-        postRoot.locator("button.social-actions-button.react-button__trigger")
+        postRoot.locator("button.social-actions-button.react-button__trigger"),
     },
     {
       key: "post-react-button",
       selectorHint: "button.react-button__trigger",
-      locatorFactory: () => postRoot.locator("button.react-button__trigger")
+      locatorFactory: () => postRoot.locator("button.react-button__trigger"),
     },
     {
       key: "post-aria-like-button",
       selectorHint: likeReactAriaSelector,
-      locatorFactory: () => postRoot.locator(likeReactAriaSelector)
+      locatorFactory: () => postRoot.locator(likeReactAriaSelector),
     },
     {
       key: "post-role-button-like",
       selectorHint: `getByRole(button, ${likeOrReactRegexHint})`,
       locatorFactory: () =>
         postRoot.getByRole("button", {
-          name: likeOrReactRegex
-        })
-    }
+          name: likeOrReactRegex,
+        }),
+    },
   ];
 }
 
 async function resolveReactionButton(
   page: Page,
   postRoot: Locator,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<{ locator: Locator; key: string }> {
   return findVisibleLocatorOrThrow(
     page,
     createReactionButtonCandidates(postRoot, selectorLocale),
-    "reaction_button"
+    "reaction_button",
   );
 }
 
 function createPostActionButtonCandidates(input: {
   postRoot: Locator;
   selectorLocale: LinkedInSelectorLocale;
-  selectorKeys: LinkedInSelectorPhraseKey | readonly LinkedInSelectorPhraseKey[];
+  selectorKeys:
+    | LinkedInSelectorPhraseKey
+    | readonly LinkedInSelectorPhraseKey[];
   candidateKeyPrefix: string;
   exact?: boolean;
 }): SelectorCandidate[] {
   const labelRegex = buildLinkedInSelectorPhraseRegex(
     input.selectorKeys,
     input.selectorLocale,
-    input.exact ? { exact: true } : {}
+    input.exact ? { exact: true } : {},
   );
   const labelRegexHint = formatLinkedInSelectorRegexHint(
     input.selectorKeys,
     input.selectorLocale,
-    input.exact ? { exact: true } : {}
+    input.exact ? { exact: true } : {},
   );
   const ariaSelector = buildLinkedInAriaLabelContainsSelector(
     ["button", "[role='button']"],
     input.selectorKeys,
-    input.selectorLocale
+    input.selectorLocale,
   );
 
   return [
@@ -1189,13 +1226,13 @@ function createPostActionButtonCandidates(input: {
       selectorHint: `post.getByRole(button, ${labelRegexHint})`,
       locatorFactory: () =>
         input.postRoot.getByRole("button", {
-          name: labelRegex
-        })
+          name: labelRegex,
+        }),
     },
     {
       key: `${input.candidateKeyPrefix}-post-aria`,
       selectorHint: `post ${ariaSelector}`,
-      locatorFactory: () => input.postRoot.locator(ariaSelector)
+      locatorFactory: () => input.postRoot.locator(ariaSelector),
     },
     {
       key: `${input.candidateKeyPrefix}-post-text`,
@@ -1203,14 +1240,16 @@ function createPostActionButtonCandidates(input: {
       locatorFactory: () =>
         input.postRoot
           .locator("button, [role='button']")
-          .filter({ hasText: labelRegex })
-    }
+          .filter({ hasText: labelRegex }),
+    },
   ];
 }
 
 function createPageMenuActionCandidates(input: {
   selectorLocale: LinkedInSelectorLocale;
-  selectorKeys: LinkedInSelectorPhraseKey | readonly LinkedInSelectorPhraseKey[];
+  selectorKeys:
+    | LinkedInSelectorPhraseKey
+    | readonly LinkedInSelectorPhraseKey[];
   candidateKeyPrefix: string;
   exact?: boolean;
 }): SelectorCandidate[] {
@@ -1220,42 +1259,47 @@ function createPageMenuActionCandidates(input: {
   const labelRegex = buildLinkedInSelectorPhraseRegex(
     selectorKeys,
     input.selectorLocale,
-    input.exact ? { exact: true } : {}
+    input.exact ? { exact: true } : {},
   );
   const labelRegexHint = formatLinkedInSelectorRegexHint(
     selectorKeys,
     input.selectorLocale,
-    input.exact ? { exact: true } : {}
+    input.exact ? { exact: true } : {},
   );
   const ariaSelector = buildLinkedInAriaLabelContainsSelector(
     ["[role='menuitem']", "button", "[role='button']", "li"],
     selectorKeys,
-    input.selectorLocale
+    input.selectorLocale,
   );
-  const fixtureMenuActions = [...new Set(
-    selectorKeys.flatMap((selectorKey) => {
-      switch (selectorKey) {
-        case "repost":
-        case "save":
-        case "share":
-        case "unsave":
-          return [selectorKey];
-        default:
-          return [];
-      }
-    })
-  )];
-  const fixtureMenuActionCandidates = fixtureMenuActions.map((menuAction) => ({
-    key: `${input.candidateKeyPrefix}-fixture-action-${menuAction}`,
-    selectorHint:
-      `.feed-post-actions-menu [data-menu-action="${menuAction}"], ` +
-      `.repost-actions-menu [data-menu-action="${menuAction}"]`,
-    locatorFactory: (page: Page) =>
-      page.locator(
-        `.feed-post-actions-menu [data-menu-action="${menuAction}"], ` +
-          `.repost-actions-menu [data-menu-action="${menuAction}"]`
-      )
-  } satisfies SelectorCandidate));
+  const fixtureMenuActions = [
+    ...new Set(
+      selectorKeys.flatMap((selectorKey) => {
+        switch (selectorKey) {
+          case "repost":
+          case "save":
+          case "share":
+          case "unsave":
+            return [selectorKey];
+          default:
+            return [];
+        }
+      }),
+    ),
+  ];
+  const fixtureMenuActionCandidates = fixtureMenuActions.map(
+    (menuAction) =>
+      ({
+        key: `${input.candidateKeyPrefix}-fixture-action-${menuAction}`,
+        selectorHint:
+          `.feed-post-actions-menu [data-menu-action="${menuAction}"], ` +
+          `.repost-actions-menu [data-menu-action="${menuAction}"]`,
+        locatorFactory: (page: Page) =>
+          page.locator(
+            `.feed-post-actions-menu [data-menu-action="${menuAction}"], ` +
+              `.repost-actions-menu [data-menu-action="${menuAction}"]`,
+          ),
+      }) satisfies SelectorCandidate,
+  );
 
   return [
     {
@@ -1263,8 +1307,8 @@ function createPageMenuActionCandidates(input: {
       selectorHint: `page.getByRole(menuitem, ${labelRegexHint})`,
       locatorFactory: (page) =>
         page.getByRole("menuitem", {
-          name: labelRegex
-        })
+          name: labelRegex,
+        }),
     },
     ...fixtureMenuActionCandidates,
     {
@@ -1272,8 +1316,8 @@ function createPageMenuActionCandidates(input: {
       selectorHint: `page.getByRole(button, ${labelRegexHint})`,
       locatorFactory: (page) =>
         page.getByRole("button", {
-          name: labelRegex
-        })
+          name: labelRegex,
+        }),
     },
     {
       key: `${input.candidateKeyPrefix}-dropdown-text`,
@@ -1281,9 +1325,9 @@ function createPageMenuActionCandidates(input: {
       locatorFactory: (page) =>
         page
           .locator(
-            ".artdeco-dropdown__content-inner [role='menuitem'], .artdeco-dropdown__content-inner [role='button'], .artdeco-dropdown__content-inner button, .artdeco-dropdown__content-inner li, [role='dialog'] [role='menuitem'], [role='dialog'] button, .feed-post-actions-menu [role='menuitem'], .feed-post-actions-menu button"
+            ".artdeco-dropdown__content-inner [role='menuitem'], .artdeco-dropdown__content-inner [role='button'], .artdeco-dropdown__content-inner button, .artdeco-dropdown__content-inner li, [role='dialog'] [role='menuitem'], [role='dialog'] button, .feed-post-actions-menu [role='menuitem'], .feed-post-actions-menu button",
           )
-          .filter({ hasText: labelRegex })
+          .filter({ hasText: labelRegex }),
     },
     {
       key: `${input.candidateKeyPrefix}-generic-text`,
@@ -1291,20 +1335,20 @@ function createPageMenuActionCandidates(input: {
       locatorFactory: (page) =>
         page
           .locator("[role='menuitem'], button, [role='button'], li")
-          .filter({ hasText: labelRegex })
+          .filter({ hasText: labelRegex }),
     },
     {
       key: `${input.candidateKeyPrefix}-aria`,
       selectorHint: ariaSelector,
-      locatorFactory: (page) => page.locator(ariaSelector)
-    }
+      locatorFactory: (page) => page.locator(ariaSelector),
+    },
   ];
 }
 
 async function openPostMoreActionsMenu(
   page: Page,
   postRoot: Locator,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<{ locator: Locator; key: string }> {
   const moreButton = await findVisibleLocatorOrThrow(
     page,
@@ -1312,16 +1356,17 @@ async function openPostMoreActionsMenu(
       {
         key: "post-more-menu-trigger",
         selectorHint: "button.feed-shared-control-menu__trigger",
-        locatorFactory: () => postRoot.locator("button.feed-shared-control-menu__trigger")
+        locatorFactory: () =>
+          postRoot.locator("button.feed-shared-control-menu__trigger"),
       },
       ...createPostActionButtonCandidates({
         postRoot,
         selectorLocale,
         selectorKeys: ["more_actions", "more"],
-        candidateKeyPrefix: "post-more"
-      })
+        candidateKeyPrefix: "post-more",
+      }),
     ],
-    "feed_post_more_actions_button"
+    "feed_post_more_actions_button",
   );
 
   await moreButton.locator.click({ timeout: 5_000 });
@@ -1333,30 +1378,39 @@ async function clickPostMoreMenuAction(input: {
   page: Page;
   postRoot: Locator;
   selectorLocale: LinkedInSelectorLocale;
-  selectorKeys: LinkedInSelectorPhraseKey | readonly LinkedInSelectorPhraseKey[];
+  selectorKeys:
+    | LinkedInSelectorPhraseKey
+    | readonly LinkedInSelectorPhraseKey[];
   candidateKeyPrefix: string;
   selectorKey: string;
 }): Promise<string> {
   const menuActionCandidates = createPageMenuActionCandidates({
     selectorLocale: input.selectorLocale,
     selectorKeys: input.selectorKeys,
-    candidateKeyPrefix: input.candidateKeyPrefix
+    candidateKeyPrefix: input.candidateKeyPrefix,
   });
-  const existingMenuAction = await findVisibleLocator(input.page, menuActionCandidates);
+  const existingMenuAction = await findVisibleLocator(
+    input.page,
+    menuActionCandidates,
+  );
 
   let triggerKey = "feed-menu-already-open";
   if (!existingMenuAction) {
     const moreButton = await openPostMoreActionsMenu(
       input.page,
       input.postRoot,
-      input.selectorLocale
+      input.selectorLocale,
     );
     triggerKey = moreButton.key;
   }
 
   const menuAction =
     existingMenuAction ??
-    (await findVisibleLocatorOrThrow(input.page, menuActionCandidates, input.selectorKey));
+    (await findVisibleLocatorOrThrow(
+      input.page,
+      menuActionCandidates,
+      input.selectorKey,
+    ));
 
   await menuAction.locator.click({ timeout: 5_000 });
   return `${triggerKey}:${menuAction.key}`;
@@ -1365,7 +1419,7 @@ async function clickPostMoreMenuAction(input: {
 async function readPostSavedState(
   page: Page,
   postRoot: Locator,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<boolean | null> {
   await openPostMoreActionsMenu(page, postRoot, selectorLocale);
 
@@ -1374,8 +1428,8 @@ async function readPostSavedState(
     createPageMenuActionCandidates({
       selectorLocale,
       selectorKeys: "unsave",
-      candidateKeyPrefix: "feed-unsave"
-    })
+      candidateKeyPrefix: "feed-unsave",
+    }),
   );
   if (unsaveAction) {
     await page.keyboard.press("Escape").catch(() => undefined);
@@ -1387,8 +1441,8 @@ async function readPostSavedState(
     createPageMenuActionCandidates({
       selectorLocale,
       selectorKeys: "save",
-      candidateKeyPrefix: "feed-save"
-    })
+      candidateKeyPrefix: "feed-save",
+    }),
   );
   if (saveAction) {
     await page.keyboard.press("Escape").catch(() => undefined);
@@ -1401,41 +1455,48 @@ async function readPostSavedState(
 
 function createRepostButtonCandidates(
   postRoot: Locator,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): SelectorCandidate[] {
   return [
     {
       key: "post-social-action-repost",
       selectorHint: "button.social-actions-button.repost-button",
-      locatorFactory: () => postRoot.locator("button.social-actions-button.repost-button")
+      locatorFactory: () =>
+        postRoot.locator("button.social-actions-button.repost-button"),
     },
     ...createPostActionButtonCandidates({
       postRoot,
       selectorLocale,
       selectorKeys: ["repost", "share"],
-      candidateKeyPrefix: "feed-repost"
-    })
+      candidateKeyPrefix: "feed-repost",
+    }),
   ];
 }
 
 async function resolveRepostButton(
   page: Page,
   postRoot: Locator,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<{ locator: Locator; key: string }> {
   return findVisibleLocatorOrThrow(
     page,
     createRepostButtonCandidates(postRoot, selectorLocale),
-    "feed_repost_button"
+    "feed_repost_button",
   );
 }
 
 async function getRepostButtonState(
-  repostButton: Locator
+  repostButton: Locator,
 ): Promise<PostRepostButtonState> {
-  const ariaLabel = normalizeText(await repostButton.getAttribute("aria-label"));
-  const ariaPressed = normalizeText(await repostButton.getAttribute("aria-pressed")).toLowerCase();
-  const buttonText = normalizeText(await repostButton.innerText().catch(() => ""));
+  const ariaLabel = normalizeText(
+    await repostButton.getAttribute("aria-label"),
+  );
+  const ariaPressed = normalizeText(
+    await repostButton.getAttribute("aria-pressed"),
+  ).toLowerCase();
+  const buttonText = normalizeText(
+    await repostButton.innerText().catch(() => ""),
+  );
   const className = normalizeText(await repostButton.getAttribute("class"));
 
   const reposted =
@@ -1448,7 +1509,7 @@ async function getRepostButtonState(
     ariaLabel,
     ariaPressed,
     buttonText,
-    className
+    className,
   };
 }
 
@@ -1461,14 +1522,16 @@ async function selectRepostMenuAction(input: {
   page: Page;
   postRoot: Locator;
   selectorLocale: LinkedInSelectorLocale;
-  selectorKeys: LinkedInSelectorPhraseKey | readonly LinkedInSelectorPhraseKey[];
+  selectorKeys:
+    | LinkedInSelectorPhraseKey
+    | readonly LinkedInSelectorPhraseKey[];
   candidateKeyPrefix: string;
   selectorKey: string;
 }): Promise<string> {
   const repostButton = await resolveRepostButton(
     input.page,
     input.postRoot,
-    input.selectorLocale
+    input.selectorLocale,
   );
   await repostButton.locator.click({ timeout: 5_000 });
   await input.page.waitForTimeout(600);
@@ -1478,9 +1541,9 @@ async function selectRepostMenuAction(input: {
     createPageMenuActionCandidates({
       selectorLocale: input.selectorLocale,
       selectorKeys: input.selectorKeys,
-      candidateKeyPrefix: input.candidateKeyPrefix
+      candidateKeyPrefix: input.candidateKeyPrefix,
     }),
-    input.selectorKey
+    input.selectorKey,
   );
 
   await menuAction.locator.click({ timeout: 5_000 });
@@ -1488,25 +1551,25 @@ async function selectRepostMenuAction(input: {
 }
 
 function createComposerRootCandidates(
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): SelectorCandidate[] {
   const postExactRegex = buildLinkedInSelectorPhraseRegex(
     "post",
     selectorLocale,
-    { exact: true }
+    { exact: true },
   );
   const postExactRegexHint = formatLinkedInSelectorRegexHint(
     "post",
     selectorLocale,
-    { exact: true }
+    { exact: true },
   );
   const composerPromptRegex = buildLinkedInSelectorPhraseRegex(
     "what_do_you_want_to_talk_about",
-    selectorLocale
+    selectorLocale,
   );
   const composerPromptRegexHint = formatLinkedInSelectorRegexHint(
     "what_do_you_want_to_talk_about",
-    selectorLocale
+    selectorLocale,
   );
 
   return [
@@ -1516,7 +1579,7 @@ function createComposerRootCandidates(
       locatorFactory: (page) =>
         page
           .locator("[role='dialog']")
-          .filter({ has: page.locator("[contenteditable='true'], textarea") })
+          .filter({ has: page.locator("[contenteditable='true'], textarea") }),
     },
     {
       key: "dialog-with-post-button",
@@ -1524,7 +1587,7 @@ function createComposerRootCandidates(
       locatorFactory: (page) =>
         page
           .locator("[role='dialog']")
-          .filter({ has: page.getByRole("button", { name: postExactRegex }) })
+          .filter({ has: page.getByRole("button", { name: postExactRegex }) }),
     },
     {
       key: "dialog-with-prompt",
@@ -1532,27 +1595,29 @@ function createComposerRootCandidates(
       locatorFactory: (page) =>
         page
           .locator("[role='dialog']")
-          .filter({ has: page.getByText(composerPromptRegex) })
+          .filter({ has: page.getByText(composerPromptRegex) }),
     },
     {
       key: "share-box-open",
       selectorHint: ".share-box__open, .share-creation-state, .composer-dialog",
       locatorFactory: (page) =>
-        page.locator(".share-box__open, .share-creation-state, .composer-dialog")
-    }
+        page.locator(
+          ".share-box__open, .share-creation-state, .composer-dialog",
+        ),
+    },
   ];
 }
 
 function createComposerInputCandidates(
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): ScopedSelectorCandidate[] {
   const composerInputRegex = buildLinkedInSelectorPhraseRegex(
     ["what_do_you_want_to_talk_about", "start_post"],
-    selectorLocale
+    selectorLocale,
   );
   const composerInputRegexHint = formatLinkedInSelectorRegexHint(
     ["what_do_you_want_to_talk_about", "start_post"],
-    selectorLocale
+    selectorLocale,
   );
 
   return [
@@ -1561,62 +1626,65 @@ function createComposerInputCandidates(
       selectorHint: `getByRole(textbox, ${composerInputRegexHint})`,
       locatorFactory: (root) =>
         root.getByRole("textbox", {
-          name: composerInputRegex
-        })
+          name: composerInputRegex,
+        }),
     },
     {
       key: "ql-editor",
       selectorHint: ".ql-editor[contenteditable='true']",
-      locatorFactory: (root) => root.locator(".ql-editor[contenteditable='true']")
+      locatorFactory: (root) =>
+        root.locator(".ql-editor[contenteditable='true']"),
     },
     {
       key: "contenteditable-role-textbox",
       selectorHint: "[contenteditable='true'][role='textbox']",
-      locatorFactory: (root) => root.locator("[contenteditable='true'][role='textbox']")
+      locatorFactory: (root) =>
+        root.locator("[contenteditable='true'][role='textbox']"),
     },
     {
       key: "contenteditable",
       selectorHint: "[contenteditable='true']",
-      locatorFactory: (root) => root.locator("[contenteditable='true']")
+      locatorFactory: (root) => root.locator("[contenteditable='true']"),
     },
     {
       key: "textarea",
       selectorHint: "textarea",
-      locatorFactory: (root) => root.locator("textarea")
-    }
+      locatorFactory: (root) => root.locator("textarea"),
+    },
   ];
 }
 
 function createPublishButtonCandidates(
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): ScopedSelectorCandidate[] {
   const postExactRegex = buildLinkedInSelectorPhraseRegex(
     "post",
     selectorLocale,
-    { exact: true }
+    { exact: true },
   );
   const postExactRegexHint = formatLinkedInSelectorRegexHint(
     "post",
     selectorLocale,
-    { exact: true }
+    { exact: true },
   );
 
   return [
     {
       key: "role-button-post",
       selectorHint: `getByRole(button, ${postExactRegexHint})`,
-      locatorFactory: (root) => root.getByRole("button", { name: postExactRegex })
+      locatorFactory: (root) =>
+        root.getByRole("button", { name: postExactRegex }),
     },
     {
       key: "share-actions-primary",
       selectorHint: ".share-actions__primary-action",
-      locatorFactory: (root) => root.locator(".share-actions__primary-action")
+      locatorFactory: (root) => root.locator(".share-actions__primary-action"),
     },
     {
       key: "submit-button",
       selectorHint: "button[type='submit']",
-      locatorFactory: (root) => root.locator("button[type='submit']")
-    }
+      locatorFactory: (root) => root.locator("button[type='submit']"),
+    },
   ];
 }
 
@@ -1624,13 +1692,13 @@ async function setComposerText(
   page: Page,
   composerRoot: Locator,
   selectorLocale: LinkedInSelectorLocale,
-  text: string
+  text: string,
 ): Promise<string> {
   const composerInput = await findVisibleScopedLocatorOrThrow(
     composerRoot,
     createComposerInputCandidates(selectorLocale),
     "feed_share_composer_input",
-    page.url()
+    page.url(),
   );
 
   await composerInput.locator.click({ timeout: 5_000 });
@@ -1649,7 +1717,7 @@ async function setComposerText(
 
 async function findVisiblePostBySnippet(
   page: Page,
-  snippet: string
+  snippet: string,
 ): Promise<Locator | null> {
   const postCandidates = [
     page
@@ -1658,8 +1726,8 @@ async function findVisiblePostBySnippet(
     page
       .getByText(snippet)
       .locator(
-        "xpath=ancestor-or-self::*[self::article or contains(@class, 'feed-shared-update-v2') or contains(@class, 'occludable-update')]"
-      )
+        "xpath=ancestor-or-self::*[self::article or contains(@class, 'feed-shared-update-v2') or contains(@class, 'occludable-update')]",
+      ),
   ];
 
   for (const candidate of postCandidates) {
@@ -1673,14 +1741,16 @@ async function findVisiblePostBySnippet(
 
 async function extractPublishedPostUrl(
   page: Page,
-  postRoot: Locator | null
+  postRoot: Locator | null,
 ): Promise<string | null> {
   if (!postRoot) {
     return null;
   }
 
   const href = await postRoot
-    .locator("a[href*='/feed/update/'], a[href*='/posts/'], a[href*='/activity/']")
+    .locator(
+      "a[href*='/feed/update/'], a[href*='/posts/'], a[href*='/activity/']",
+    )
     .first()
     .getAttribute("href")
     .catch(() => null);
@@ -1698,13 +1768,13 @@ async function extractPublishedPostUrl(
 
 async function verifySharedPost(
   page: Page,
-  text: string
+  text: string,
 ): Promise<{ verified: true; postUrl: string | null }> {
   const snippet = createVerificationSnippet(text);
   if (!snippet) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "Cannot verify a shared post with empty text content."
+      "Cannot verify a shared post with empty text content.",
     );
   }
 
@@ -1734,36 +1804,40 @@ async function verifySharedPost(
         "Shared LinkedIn post could not be verified on the feed.",
         {
           current_url: page.url(),
-          verification_snippet: snippet
-        }
+          verification_snippet: snippet,
+        },
       );
     }
   }
 
   return {
     verified: true,
-    postUrl: await extractPublishedPostUrl(page, postRoot)
+    postUrl: await extractPublishedPostUrl(page, postRoot),
   };
 }
 
 async function openShareComposerFromPost(
   page: Page,
   postRoot: Locator,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<{ composerRoot: Locator; triggerKey: string; rootKey: string }> {
-  const repostButton = await resolveRepostButton(page, postRoot, selectorLocale);
+  const repostButton = await resolveRepostButton(
+    page,
+    postRoot,
+    selectorLocale,
+  );
   await repostButton.locator.click({ timeout: 5_000 });
   await page.waitForTimeout(600);
 
   const directComposer = await findVisibleLocator(
     page,
-    createComposerRootCandidates(selectorLocale)
+    createComposerRootCandidates(selectorLocale),
   );
   if (directComposer) {
     return {
       composerRoot: directComposer.locator,
       triggerKey: repostButton.key,
-      rootKey: directComposer.key
+      rootKey: directComposer.key,
     };
   }
 
@@ -1772,9 +1846,9 @@ async function openShareComposerFromPost(
     createPageMenuActionCandidates({
       selectorLocale,
       selectorKeys: "share",
-      candidateKeyPrefix: "feed-share"
+      candidateKeyPrefix: "feed-share",
     }),
-    "feed_share_menu_action"
+    "feed_share_menu_action",
   );
 
   await shareAction.locator.click({ timeout: 5_000 });
@@ -1782,17 +1856,20 @@ async function openShareComposerFromPost(
   const composerRoot = await findVisibleLocatorOrThrow(
     page,
     createComposerRootCandidates(selectorLocale),
-    "feed_share_composer_root"
+    "feed_share_composer_root",
   );
 
   return {
     composerRoot: composerRoot.locator,
     triggerKey: `${repostButton.key}:${shareAction.key}`,
-    rootKey: composerRoot.key
+    rootKey: composerRoot.key,
   };
 }
 
-async function findTargetPostLocator(page: Page, postUrl: string): Promise<TargetPostLocator> {
+async function findTargetPostLocator(
+  page: Page,
+  postUrl: string,
+): Promise<TargetPostLocator> {
   const postIdentity = extractPostIdentity(postUrl);
   const activityId = extractActivityId(postIdentity || postUrl);
   const candidates: SelectorCandidate[] = [];
@@ -1804,20 +1881,20 @@ async function findTargetPostLocator(page: Page, postUrl: string): Promise<Targe
         key: "post-root-data-urn-exact",
         selectorHint: `[data-urn="${postIdentity}"]`,
         locatorFactory: (targetPage) =>
-          targetPage.locator(`[data-urn="${escapedIdentity}"]`)
+          targetPage.locator(`[data-urn="${escapedIdentity}"]`),
       },
       {
         key: "post-root-data-urn-contains",
         selectorHint: `[data-urn*="${postIdentity}"]`,
         locatorFactory: (targetPage) =>
-          targetPage.locator(`[data-urn*="${escapedIdentity}"]`)
+          targetPage.locator(`[data-urn*="${escapedIdentity}"]`),
       },
       {
         key: "post-root-permalink-identity",
         selectorHint: `article:has(a[href*="${postIdentity}"])`,
         locatorFactory: (targetPage) =>
-          targetPage.locator(`article:has(a[href*="${escapedIdentity}"])`)
-      }
+          targetPage.locator(`article:has(a[href*="${escapedIdentity}"])`),
+      },
     );
   }
 
@@ -1828,14 +1905,14 @@ async function findTargetPostLocator(page: Page, postUrl: string): Promise<Targe
         key: "post-root-data-urn-activity",
         selectorHint: `[data-urn*="${activityId}"]`,
         locatorFactory: (targetPage) =>
-          targetPage.locator(`[data-urn*="${escapedActivityId}"]`)
+          targetPage.locator(`[data-urn*="${escapedActivityId}"]`),
       },
       {
         key: "post-root-permalink-activity",
         selectorHint: `article:has(a[href*="${activityId}"])`,
         locatorFactory: (targetPage) =>
-          targetPage.locator(`article:has(a[href*="${escapedActivityId}"])`)
-      }
+          targetPage.locator(`article:has(a[href*="${escapedActivityId}"])`),
+      },
     );
   }
 
@@ -1843,62 +1920,67 @@ async function findTargetPostLocator(page: Page, postUrl: string): Promise<Targe
     {
       key: "post-root-first-data-urn",
       selectorHint: "[data-urn]",
-      locatorFactory: (targetPage) => targetPage.locator("[data-urn]")
+      locatorFactory: (targetPage) => targetPage.locator("[data-urn]"),
     },
     {
       key: "post-root-first-article",
       selectorHint: "article",
-      locatorFactory: (targetPage) => targetPage.locator("article")
-    }
+      locatorFactory: (targetPage) => targetPage.locator("article"),
+    },
   );
 
-  const resolved = await findVisibleLocatorOrThrow(page, candidates, "post_root");
+  const resolved = await findVisibleLocatorOrThrow(
+    page,
+    candidates,
+    "post_root",
+  );
   return {
     locator: resolved.locator,
     key: resolved.key,
     postIdentity,
-    activityId
+    activityId,
   };
 }
 
 async function expandCommentsForPost(
   page: Page,
   postRoot: Locator,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<string | null> {
   const commentRegex = buildLinkedInSelectorPhraseRegex(
     "comment",
-    selectorLocale
+    selectorLocale,
   );
   const commentRegexHint = formatLinkedInSelectorRegexHint(
     "comment",
-    selectorLocale
+    selectorLocale,
   );
   const commentAriaSelector = buildLinkedInAriaLabelContainsSelector(
     "button",
     "comment",
-    selectorLocale
+    selectorLocale,
   );
 
   const candidates: SelectorCandidate[] = [
     {
       key: "post-social-action-comment",
       selectorHint: "button.social-actions-button.comment-button",
-      locatorFactory: () => postRoot.locator("button.social-actions-button.comment-button")
+      locatorFactory: () =>
+        postRoot.locator("button.social-actions-button.comment-button"),
     },
     {
       key: "post-aria-comment-button",
       selectorHint: commentAriaSelector,
-      locatorFactory: () => postRoot.locator(commentAriaSelector)
+      locatorFactory: () => postRoot.locator(commentAriaSelector),
     },
     {
       key: "post-role-button-comment",
       selectorHint: `getByRole(button, ${commentRegexHint})`,
       locatorFactory: () =>
         postRoot.getByRole("button", {
-          name: commentRegex
-        })
-    }
+          name: commentRegex,
+        }),
+    },
   ];
 
   for (const candidate of candidates) {
@@ -1913,7 +1995,10 @@ async function expandCommentsForPost(
   return null;
 }
 
-async function isCommentVisibleInPost(postRoot: Locator, text: string): Promise<boolean> {
+async function isCommentVisibleInPost(
+  postRoot: Locator,
+  text: string,
+): Promise<boolean> {
   const normalized = normalizeText(text);
   if (!normalized) {
     return false;
@@ -1922,10 +2007,10 @@ async function isCommentVisibleInPost(postRoot: Locator, text: string): Promise<
   const candidates = [
     postRoot
       .locator(
-        ".comments-comment-item__main-content, .comments-comment-item-content-body, .comments-post-meta__main-content"
+        ".comments-comment-item__main-content, .comments-comment-item-content-body, .comments-post-meta__main-content",
       )
       .filter({ hasText: normalized }),
-    postRoot.locator(".comments-comment-item").filter({ hasText: normalized })
+    postRoot.locator(".comments-comment-item").filter({ hasText: normalized }),
   ];
 
   for (const candidate of candidates) {
@@ -1937,11 +2022,9 @@ async function isCommentVisibleInPost(postRoot: Locator, text: string): Promise<
   return false;
 }
 
-export class LikePostActionExecutor
-  implements ActionExecutor<LinkedInFeedExecutorRuntime>
-{
+export class LikePostActionExecutor implements ActionExecutor<LinkedInFeedExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInFeedExecutorRuntime>
+    input: ActionExecutorInput<LinkedInFeedExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const runtime = input.runtime;
     const action = input.action;
@@ -1950,7 +2033,7 @@ export class LikePostActionExecutor
       action.target,
       "post_url",
       action.id,
-      "target"
+      "target",
     );
     const requestedReaction =
       typeof action.payload.reaction === "string"
@@ -1960,14 +2043,14 @@ export class LikePostActionExecutor
 
     await runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: runtime.cdpUrl
+      cdpUrl: runtime.cdpUrl,
     });
 
     return runtime.profileManager.runWithContext(
       {
         cdpUrl: runtime.cdpUrl,
         profileName,
-        headless: true
+        headless: true,
       },
       async (context) => {
         const page = await getOrCreatePage(context);
@@ -1982,221 +2065,223 @@ export class LikePostActionExecutor
           targetUrl: postUrl,
           metadata: {
             post_url: postUrl,
-            requested_reaction: reaction
+            requested_reaction: reaction,
           },
           errorDetails: {
             post_url: postUrl,
-            requested_reaction: reaction
+            requested_reaction: reaction,
           },
           mapError: (error) =>
             asLinkedInBuddyError(
               error,
               "UNKNOWN",
-              "Failed to execute LinkedIn like_post action."
+              "Failed to execute LinkedIn like_post action.",
             ),
           execute: async () => {
-          const rateLimitState = runtime.rateLimiter.consume(
-            LIKE_RATE_LIMIT_CONFIG
-          );
-          if (!rateLimitState.allowed) {
-            throw new LinkedInBuddyError(
-              "RATE_LIMITED",
-              "LinkedIn like_post confirm is rate limited for the current window.",
-              {
-                action_id: action.id,
-                profile_name: profileName,
-                post_url: postUrl,
-                reaction,
-                rate_limit: formatRateLimitState(rateLimitState)
-              }
+            const rateLimitState = runtime.rateLimiter.consume(
+              LIKE_RATE_LIMIT_CONFIG,
             );
-          }
-
-          await page.goto(postUrl, { waitUntil: "domcontentloaded" });
-          await waitForPostSurface(page);
-
-          let targetPost = await findTargetPostLocator(page, postUrl);
-          const likeOrReactRegex = buildLinkedInSelectorPhraseRegex(
-            ["like", "react"],
-            runtime.selectorLocale
-          );
-          const likeOrReactRegexHint = formatLinkedInSelectorRegexHint(
-            ["like", "react"],
-            runtime.selectorLocale
-          );
-          const likeReactAriaSelector = buildLinkedInAriaLabelContainsSelector(
-            "button",
-            ["like", "react", "reaction"],
-            runtime.selectorLocale
-          );
-
-          const resolveReactionButton = async (postRoot: Locator) =>
-            findVisibleLocatorOrThrow(
-              page,
-              [
+            if (!rateLimitState.allowed) {
+              throw new LinkedInBuddyError(
+                "RATE_LIMITED",
+                "LinkedIn like_post confirm is rate limited for the current window.",
                 {
-                  key: "post-social-action-like",
-                  selectorHint: "button.social-actions-button.react-button__trigger",
-                  locatorFactory: () =>
-                    postRoot.locator(
-                      "button.social-actions-button.react-button__trigger"
-                    )
+                  action_id: action.id,
+                  profile_name: profileName,
+                  post_url: postUrl,
+                  reaction,
+                  rate_limit: formatRateLimitState(rateLimitState),
                 },
-                {
-                  key: "post-react-button",
-                  selectorHint: "button.react-button__trigger",
-                  locatorFactory: () => postRoot.locator("button.react-button__trigger")
-                },
-                {
-                  key: "post-aria-like-button",
-                  selectorHint: likeReactAriaSelector,
-                  locatorFactory: () => postRoot.locator(likeReactAriaSelector)
-                },
-                {
-                  key: "post-role-button-like",
-                  selectorHint: `getByRole(button, ${likeOrReactRegexHint})`,
-                  locatorFactory: () =>
-                    postRoot.getByRole("button", {
-                      name: likeOrReactRegex
-                    })
-                }
-              ],
-              "reaction_button"
-            );
-
-          let reactButton = await resolveReactionButton(targetPost.locator);
-          const wasAlreadyReacted = await isDesiredReactionActive(
-            reactButton.locator,
-            reaction,
-            runtime.selectorLocale
-          );
-          let reactionSelectorKey: string | null = null;
-
-          let verifiedReaction = wasAlreadyReacted;
-          if (!wasAlreadyReacted) {
-            if (reaction === "like") {
-              await reactButton.locator.click({ timeout: 5_000 });
-              verifiedReaction = await waitForCondition(
-                async () =>
-                  isDesiredReactionActive(
-                    reactButton.locator,
-                    reaction,
-                    runtime.selectorLocale
-                  ),
-                6_000
-              );
-
-              if (!verifiedReaction) {
-                try {
-                  reactionSelectorKey = await selectReactionFromMenu(
-                    page,
-                    reactButton.locator,
-                    reaction,
-                    runtime.selectorLocale
-                  );
-                  verifiedReaction = await waitForCondition(
-                    async () =>
-                      isDesiredReactionActive(
-                        reactButton.locator,
-                        reaction,
-                        runtime.selectorLocale
-                      ),
-                    6_000
-                  );
-                } catch {
-                  // Ignore and fall through to reload verification.
-                }
-              }
-            } else {
-              reactionSelectorKey = await selectReactionFromMenu(
-                page,
-                reactButton.locator,
-                reaction,
-                runtime.selectorLocale
-              );
-              verifiedReaction = await waitForCondition(
-                async () =>
-                  isDesiredReactionActive(
-                    reactButton.locator,
-                    reaction,
-                    runtime.selectorLocale
-                  ),
-                8_000
               );
             }
-          }
 
-          if (!verifiedReaction) {
-            await page.reload({ waitUntil: "domcontentloaded" });
+            await page.goto(postUrl, { waitUntil: "domcontentloaded" });
             await waitForPostSurface(page);
-            targetPost = await findTargetPostLocator(page, postUrl);
-            reactButton = await resolveReactionButton(targetPost.locator);
-            verifiedReaction = await isDesiredReactionActive(
+
+            let targetPost = await findTargetPostLocator(page, postUrl);
+            const likeOrReactRegex = buildLinkedInSelectorPhraseRegex(
+              ["like", "react"],
+              runtime.selectorLocale,
+            );
+            const likeOrReactRegexHint = formatLinkedInSelectorRegexHint(
+              ["like", "react"],
+              runtime.selectorLocale,
+            );
+            const likeReactAriaSelector =
+              buildLinkedInAriaLabelContainsSelector(
+                "button",
+                ["like", "react", "reaction"],
+                runtime.selectorLocale,
+              );
+
+            const resolveReactionButton = async (postRoot: Locator) =>
+              findVisibleLocatorOrThrow(
+                page,
+                [
+                  {
+                    key: "post-social-action-like",
+                    selectorHint:
+                      "button.social-actions-button.react-button__trigger",
+                    locatorFactory: () =>
+                      postRoot.locator(
+                        "button.social-actions-button.react-button__trigger",
+                      ),
+                  },
+                  {
+                    key: "post-react-button",
+                    selectorHint: "button.react-button__trigger",
+                    locatorFactory: () =>
+                      postRoot.locator("button.react-button__trigger"),
+                  },
+                  {
+                    key: "post-aria-like-button",
+                    selectorHint: likeReactAriaSelector,
+                    locatorFactory: () =>
+                      postRoot.locator(likeReactAriaSelector),
+                  },
+                  {
+                    key: "post-role-button-like",
+                    selectorHint: `getByRole(button, ${likeOrReactRegexHint})`,
+                    locatorFactory: () =>
+                      postRoot.getByRole("button", {
+                        name: likeOrReactRegex,
+                      }),
+                  },
+                ],
+                "reaction_button",
+              );
+
+            let reactButton = await resolveReactionButton(targetPost.locator);
+            const wasAlreadyReacted = await isDesiredReactionActive(
               reactButton.locator,
               reaction,
-              runtime.selectorLocale
+              runtime.selectorLocale,
             );
-          }
+            let reactionSelectorKey: string | null = null;
 
-          if (!verifiedReaction) {
-            const currentReactionState = await getReactionButtonState(
-              reactButton.locator,
-              runtime.selectorLocale
-            );
-            throw new LinkedInBuddyError(
-              "UNKNOWN",
-              "Reaction action could not be verified on the target post.",
-              {
-                action_id: action.id,
-                profile_name: profileName,
-                post_url: postUrl,
-                requested_reaction: reaction,
-                current_reaction: currentReactionState.reaction,
-                current_reacted: currentReactionState.reacted,
-                current_aria_label: currentReactionState.ariaLabel,
-                post_identity: targetPost.postIdentity,
-                activity_id: targetPost.activityId
+            let verifiedReaction = wasAlreadyReacted;
+            if (!wasAlreadyReacted) {
+              if (reaction === "like") {
+                await reactButton.locator.click({ timeout: 5_000 });
+                verifiedReaction = await waitForCondition(
+                  async () =>
+                    isDesiredReactionActive(
+                      reactButton.locator,
+                      reaction,
+                      runtime.selectorLocale,
+                    ),
+                  6_000,
+                );
+
+                if (!verifiedReaction) {
+                  try {
+                    reactionSelectorKey = await selectReactionFromMenu(
+                      page,
+                      reactButton.locator,
+                      reaction,
+                      runtime.selectorLocale,
+                    );
+                    verifiedReaction = await waitForCondition(
+                      async () =>
+                        isDesiredReactionActive(
+                          reactButton.locator,
+                          reaction,
+                          runtime.selectorLocale,
+                        ),
+                      6_000,
+                    );
+                  } catch {
+                    // Ignore and fall through to reload verification.
+                  }
+                }
+              } else {
+                reactionSelectorKey = await selectReactionFromMenu(
+                  page,
+                  reactButton.locator,
+                  reaction,
+                  runtime.selectorLocale,
+                );
+                verifiedReaction = await waitForCondition(
+                  async () =>
+                    isDesiredReactionActive(
+                      reactButton.locator,
+                      reaction,
+                      runtime.selectorLocale,
+                    ),
+                  8_000,
+                );
               }
-            );
-          }
+            }
 
-          const screenshotPath = `linkedin/screenshot-feed-like-${Date.now()}.png`;
-          await captureScreenshotArtifact(runtime, page, screenshotPath, {
-            action: LIKE_POST_ACTION_TYPE,
-            action_id: action.id,
-            profile_name: profileName,
-            post_url: postUrl,
-            reaction,
-            selector_key: reactButton.key,
-            reaction_selector_key: reactionSelectorKey ?? undefined,
-            post_selector_key: targetPost.key
-          });
+            if (!verifiedReaction) {
+              await page.reload({ waitUntil: "domcontentloaded" });
+              await waitForPostSurface(page);
+              targetPost = await findTargetPostLocator(page, postUrl);
+              reactButton = await resolveReactionButton(targetPost.locator);
+              verifiedReaction = await isDesiredReactionActive(
+                reactButton.locator,
+                reaction,
+                runtime.selectorLocale,
+              );
+            }
 
-          return {
-            ok: true,
-            result: {
-              reacted: true,
-              reaction,
-              already_reacted: wasAlreadyReacted,
-              liked: reaction === "like",
-              already_liked: reaction === "like" ? wasAlreadyReacted : false,
+            if (!verifiedReaction) {
+              const currentReactionState = await getReactionButtonState(
+                reactButton.locator,
+                runtime.selectorLocale,
+              );
+              throw new LinkedInBuddyError(
+                "UNKNOWN",
+                "Reaction action could not be verified on the target post.",
+                {
+                  action_id: action.id,
+                  profile_name: profileName,
+                  post_url: postUrl,
+                  requested_reaction: reaction,
+                  current_reaction: currentReactionState.reaction,
+                  current_reacted: currentReactionState.reacted,
+                  current_aria_label: currentReactionState.ariaLabel,
+                  post_identity: targetPost.postIdentity,
+                  activity_id: targetPost.activityId,
+                },
+              );
+            }
+
+            const screenshotPath = `linkedin/screenshot-feed-like-${Date.now()}.png`;
+            await captureScreenshotArtifact(runtime, page, screenshotPath, {
+              action: LIKE_POST_ACTION_TYPE,
+              action_id: action.id,
+              profile_name: profileName,
               post_url: postUrl,
-              rate_limit: formatRateLimitState(rateLimitState)
-            },
-            artifacts: [screenshotPath]
-          };
-          }
+              reaction,
+              selector_key: reactButton.key,
+              reaction_selector_key: reactionSelectorKey ?? undefined,
+              post_selector_key: targetPost.key,
+            });
+
+            return {
+              ok: true,
+              result: {
+                reacted: true,
+                reaction,
+                already_reacted: wasAlreadyReacted,
+                liked: reaction === "like",
+                already_liked: reaction === "like" ? wasAlreadyReacted : false,
+                post_url: postUrl,
+                rate_limit: formatRateLimitState(rateLimitState),
+              },
+              artifacts: [screenshotPath],
+            };
+          },
         });
-      }
+      },
     );
   }
 }
 
-export class CommentOnPostActionExecutor
-  implements ActionExecutor<LinkedInFeedExecutorRuntime>
-{
+export class CommentOnPostActionExecutor implements ActionExecutor<LinkedInFeedExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInFeedExecutorRuntime>
+    input: ActionExecutorInput<LinkedInFeedExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const runtime = input.runtime;
     const action = input.action;
@@ -2205,20 +2290,25 @@ export class CommentOnPostActionExecutor
       action.target,
       "post_url",
       action.id,
-      "target"
+      "target",
     );
-    const text = getRequiredStringField(action.payload, "text", action.id, "payload");
+    const text = getRequiredStringField(
+      action.payload,
+      "text",
+      action.id,
+      "payload",
+    );
 
     await runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: runtime.cdpUrl
+      cdpUrl: runtime.cdpUrl,
     });
 
     return runtime.profileManager.runWithContext(
       {
         cdpUrl: runtime.cdpUrl,
         profileName,
-        headless: true
+        headless: true,
       },
       async (context) => {
         const page = await getOrCreatePage(context);
@@ -2233,291 +2323,299 @@ export class CommentOnPostActionExecutor
           targetUrl: postUrl,
           metadata: {
             post_url: postUrl,
-            comment_text: text
+            comment_text: text,
           },
           errorDetails: {
             post_url: postUrl,
-            comment_text: text
+            comment_text: text,
           },
           mapError: (error) =>
             asLinkedInBuddyError(
               error,
               "UNKNOWN",
-              "Failed to execute LinkedIn comment_on_post action."
+              "Failed to execute LinkedIn comment_on_post action.",
             ),
           execute: async () => {
-          const rateLimitState = runtime.rateLimiter.consume(
-            COMMENT_RATE_LIMIT_CONFIG
-          );
-          if (!rateLimitState.allowed) {
-            throw new LinkedInBuddyError(
-              "RATE_LIMITED",
-              "LinkedIn comment_on_post confirm is rate limited for the current window.",
-              {
-                action_id: action.id,
-                profile_name: profileName,
-                post_url: postUrl,
-                rate_limit: formatRateLimitState(rateLimitState)
-              }
+            const rateLimitState = runtime.rateLimiter.consume(
+              COMMENT_RATE_LIMIT_CONFIG,
             );
-          }
-
-          await page.goto(postUrl, { waitUntil: "domcontentloaded" });
-          await waitForPostSurface(page);
-
-          let targetPost = await findTargetPostLocator(page, postUrl);
-          const commentRegex = buildLinkedInSelectorPhraseRegex(
-            "comment",
-            runtime.selectorLocale
-          );
-          const commentRegexHint = formatLinkedInSelectorRegexHint(
-            "comment",
-            runtime.selectorLocale
-          );
-          const commentAriaSelector = buildLinkedInAriaLabelContainsSelector(
-            "button",
-            "comment",
-            runtime.selectorLocale
-          );
-          const commentComposerRegex = buildLinkedInSelectorPhraseRegex(
-            ["add_comment", "comment"],
-            runtime.selectorLocale
-          );
-          const commentComposerRegexHint = formatLinkedInSelectorRegexHint(
-            ["add_comment", "comment"],
-            runtime.selectorLocale
-          );
-          const postRegex = buildLinkedInSelectorPhraseRegex(
-            "post",
-            runtime.selectorLocale,
-            { exact: true }
-          );
-          const postRegexHint = formatLinkedInSelectorRegexHint(
-            "post",
-            runtime.selectorLocale,
-            { exact: true }
-          );
-          const commentSubmitAriaSelector = buildLinkedInAriaLabelContainsSelector(
-            "button",
-            ["post_comment", "post"],
-            runtime.selectorLocale
-          );
-
-          const commentTrigger = await findVisibleLocatorOrThrow(
-            page,
-            [
-              {
-                key: "post-social-action-comment",
-                selectorHint: "button.social-actions-button.comment-button",
-                locatorFactory: () =>
-                  targetPost.locator.locator("button.social-actions-button.comment-button")
-              },
-              {
-                key: "post-aria-comment-button",
-                selectorHint: commentAriaSelector,
-                locatorFactory: () =>
-                  targetPost.locator.locator(commentAriaSelector)
-              },
-              {
-                key: "post-role-button-comment",
-                selectorHint: `getByRole(button, ${commentRegexHint})`,
-                locatorFactory: () =>
-                  targetPost.locator.getByRole("button", {
-                    name: commentRegex
-                  })
-              },
-              {
-                key: "comment-button-fallback",
-                selectorHint: "button.comments-comment-social-bar__button",
-                locatorFactory: () =>
-                  page.locator("button.comments-comment-social-bar__button")
-              }
-            ],
-            "comment_trigger"
-          );
-
-          await commentTrigger.locator.click({ timeout: 5_000 });
-
-          const commentInput = await findVisibleLocatorOrThrow(
-            page,
-            [
-              {
-                key: "post-comment-box-editor",
-                selectorHint: "div.comments-comment-box__editor[contenteditable='true']",
-                locatorFactory: () =>
-                  targetPost.locator.locator(
-                    "div.comments-comment-box__editor[contenteditable='true']"
-                  )
-              },
-              {
-                key: "post-contenteditable-textbox",
-                selectorHint: "div[role='textbox'][contenteditable='true']",
-                locatorFactory: () =>
-                  targetPost.locator.locator("div[role='textbox'][contenteditable='true']")
-              },
-              {
-                key: "post-role-textbox-comment",
-                selectorHint: `getByRole(textbox, ${commentComposerRegexHint})`,
-                locatorFactory: () =>
-                  targetPost.locator.getByRole("textbox", {
-                    name: commentComposerRegex
-                  })
-              },
-              {
-                key: "comment-box-editor-fallback",
-                selectorHint: "div.comments-comment-box__editor[contenteditable='true']",
-                locatorFactory: (targetPage) =>
-                  targetPage.locator(
-                    "div.comments-comment-box__editor[contenteditable='true']"
-                  )
-              },
-              {
-                key: "comment-textarea-fallback",
-                selectorHint: "textarea",
-                locatorFactory: (targetPage) => targetPage.locator("textarea")
-              }
-            ],
-            "comment_input"
-          );
-
-          await commentInput.locator.click({ timeout: 3_000 });
-          await commentInput.locator.fill(text, { timeout: 5_000 });
-
-          const composerRoot = commentInput.locator.locator(
-            "xpath=ancestor::*[contains(@class,'comments-comment-box')][1]"
-          );
-
-          const submitButton = await findVisibleLocatorOrThrow(
-            page,
-            [
-              {
-                key: "comment-submit-button",
-                selectorHint: "button[class*='comments-comment-box__submit-button']",
-                locatorFactory: () =>
-                  composerRoot.locator(
-                    "button[class*='comments-comment-box__submit-button']"
-                  )
-              },
-              {
-                key: "comment-submit-role-post",
-                selectorHint: `getByRole(button, ${postRegexHint})`,
-                locatorFactory: () =>
-                  composerRoot.getByRole("button", {
-                    name: postRegex
-                  })
-              },
-              {
-                key: "comment-submit-role-comment",
-                selectorHint: `getByRole(button, ${commentRegexHint})`,
-                locatorFactory: () =>
-                  composerRoot.getByRole("button", {
-                    name: commentRegex
-                  })
-              },
-              {
-                key: "comment-submit-aria",
-                selectorHint: commentSubmitAriaSelector,
-                locatorFactory: () =>
-                  composerRoot.locator(commentSubmitAriaSelector)
-              },
-              {
-                key: "comment-submit-post-root-fallback",
-                selectorHint: "button[class*='comments-comment-box__submit-button']",
-                locatorFactory: () =>
-                  targetPost.locator.locator(
-                    "button[class*='comments-comment-box__submit-button']"
-                  )
-              }
-            ],
-            "comment_submit"
-          );
-
-          const submitEnabled = await waitForCondition(async () => {
-            try {
-              return await submitButton.locator.isEnabled();
-            } catch {
-              return false;
+            if (!rateLimitState.allowed) {
+              throw new LinkedInBuddyError(
+                "RATE_LIMITED",
+                "LinkedIn comment_on_post confirm is rate limited for the current window.",
+                {
+                  action_id: action.id,
+                  profile_name: profileName,
+                  post_url: postUrl,
+                  rate_limit: formatRateLimitState(rateLimitState),
+                },
+              );
             }
-          }, 4_000);
 
-          if (!submitEnabled) {
-            throw new LinkedInBuddyError(
-              "UI_CHANGED_SELECTOR_FAILED",
-              "Comment submit button was not enabled after entering comment text.",
-              {
-                action_id: action.id,
-                profile_name: profileName,
-                post_url: postUrl,
-                selector_key: submitButton.key
-              }
+            await page.goto(postUrl, { waitUntil: "domcontentloaded" });
+            await waitForPostSurface(page);
+
+            let targetPost = await findTargetPostLocator(page, postUrl);
+            const commentRegex = buildLinkedInSelectorPhraseRegex(
+              "comment",
+              runtime.selectorLocale,
             );
-          }
-
-          await submitButton.locator.click({ timeout: 5_000 });
-          await page.waitForTimeout(1_200);
-
-          await page.reload({ waitUntil: "domcontentloaded" });
-          await waitForPostSurface(page);
-          targetPost = await findTargetPostLocator(page, postUrl);
-          const reopenCommentKey = await expandCommentsForPost(
-            page,
-            targetPost.locator,
-            runtime.selectorLocale
-          );
-
-          const commentVerified = await waitForCondition(
-            async () => isCommentVisibleInPost(targetPost.locator, text),
-            12_000
-          );
-
-          if (!commentVerified) {
-            throw new LinkedInBuddyError(
-              "UNKNOWN",
-              "Comment action could not be verified on the target post.",
-              {
-                action_id: action.id,
-                profile_name: profileName,
-                post_url: postUrl,
-                post_identity: targetPost.postIdentity,
-                activity_id: targetPost.activityId,
-                reopen_comment_selector_key: reopenCommentKey ?? null,
-                text
-              }
+            const commentRegexHint = formatLinkedInSelectorRegexHint(
+              "comment",
+              runtime.selectorLocale,
             );
-          }
+            const commentAriaSelector = buildLinkedInAriaLabelContainsSelector(
+              "button",
+              "comment",
+              runtime.selectorLocale,
+            );
+            const commentComposerRegex = buildLinkedInSelectorPhraseRegex(
+              ["add_comment", "comment"],
+              runtime.selectorLocale,
+            );
+            const commentComposerRegexHint = formatLinkedInSelectorRegexHint(
+              ["add_comment", "comment"],
+              runtime.selectorLocale,
+            );
+            const postRegex = buildLinkedInSelectorPhraseRegex(
+              "post",
+              runtime.selectorLocale,
+              { exact: true },
+            );
+            const postRegexHint = formatLinkedInSelectorRegexHint(
+              "post",
+              runtime.selectorLocale,
+              { exact: true },
+            );
+            const commentSubmitAriaSelector =
+              buildLinkedInAriaLabelContainsSelector(
+                "button",
+                ["post_comment", "post"],
+                runtime.selectorLocale,
+              );
 
-          const screenshotPath = `linkedin/screenshot-feed-comment-${Date.now()}.png`;
-          await captureScreenshotArtifact(runtime, page, screenshotPath, {
-            action: COMMENT_ON_POST_ACTION_TYPE,
-            action_id: action.id,
-            profile_name: profileName,
-            post_url: postUrl,
-            selector_key: submitButton.key,
-            post_selector_key: targetPost.key
-          });
+            const commentTrigger = await findVisibleLocatorOrThrow(
+              page,
+              [
+                {
+                  key: "post-social-action-comment",
+                  selectorHint: "button.social-actions-button.comment-button",
+                  locatorFactory: () =>
+                    targetPost.locator.locator(
+                      "button.social-actions-button.comment-button",
+                    ),
+                },
+                {
+                  key: "post-aria-comment-button",
+                  selectorHint: commentAriaSelector,
+                  locatorFactory: () =>
+                    targetPost.locator.locator(commentAriaSelector),
+                },
+                {
+                  key: "post-role-button-comment",
+                  selectorHint: `getByRole(button, ${commentRegexHint})`,
+                  locatorFactory: () =>
+                    targetPost.locator.getByRole("button", {
+                      name: commentRegex,
+                    }),
+                },
+                {
+                  key: "comment-button-fallback",
+                  selectorHint: "button.comments-comment-social-bar__button",
+                  locatorFactory: () =>
+                    page.locator("button.comments-comment-social-bar__button"),
+                },
+              ],
+              "comment_trigger",
+            );
 
-          return {
-            ok: true,
-            result: {
-              commented: true,
+            await commentTrigger.locator.click({ timeout: 5_000 });
+
+            const commentInput = await findVisibleLocatorOrThrow(
+              page,
+              [
+                {
+                  key: "post-comment-box-editor",
+                  selectorHint:
+                    "div.comments-comment-box__editor[contenteditable='true']",
+                  locatorFactory: () =>
+                    targetPost.locator.locator(
+                      "div.comments-comment-box__editor[contenteditable='true']",
+                    ),
+                },
+                {
+                  key: "post-contenteditable-textbox",
+                  selectorHint: "div[role='textbox'][contenteditable='true']",
+                  locatorFactory: () =>
+                    targetPost.locator.locator(
+                      "div[role='textbox'][contenteditable='true']",
+                    ),
+                },
+                {
+                  key: "post-role-textbox-comment",
+                  selectorHint: `getByRole(textbox, ${commentComposerRegexHint})`,
+                  locatorFactory: () =>
+                    targetPost.locator.getByRole("textbox", {
+                      name: commentComposerRegex,
+                    }),
+                },
+                {
+                  key: "comment-box-editor-fallback",
+                  selectorHint:
+                    "div.comments-comment-box__editor[contenteditable='true']",
+                  locatorFactory: (targetPage) =>
+                    targetPage.locator(
+                      "div.comments-comment-box__editor[contenteditable='true']",
+                    ),
+                },
+                {
+                  key: "comment-textarea-fallback",
+                  selectorHint: "textarea",
+                  locatorFactory: (targetPage) =>
+                    targetPage.locator("textarea"),
+                },
+              ],
+              "comment_input",
+            );
+
+            await commentInput.locator.click({ timeout: 3_000 });
+            await commentInput.locator.fill(text, { timeout: 5_000 });
+
+            const composerRoot = commentInput.locator.locator(
+              "xpath=ancestor::*[contains(@class,'comments-comment-box')][1]",
+            );
+
+            const submitButton = await findVisibleLocatorOrThrow(
+              page,
+              [
+                {
+                  key: "comment-submit-button",
+                  selectorHint:
+                    "button[class*='comments-comment-box__submit-button']",
+                  locatorFactory: () =>
+                    composerRoot.locator(
+                      "button[class*='comments-comment-box__submit-button']",
+                    ),
+                },
+                {
+                  key: "comment-submit-role-post",
+                  selectorHint: `getByRole(button, ${postRegexHint})`,
+                  locatorFactory: () =>
+                    composerRoot.getByRole("button", {
+                      name: postRegex,
+                    }),
+                },
+                {
+                  key: "comment-submit-role-comment",
+                  selectorHint: `getByRole(button, ${commentRegexHint})`,
+                  locatorFactory: () =>
+                    composerRoot.getByRole("button", {
+                      name: commentRegex,
+                    }),
+                },
+                {
+                  key: "comment-submit-aria",
+                  selectorHint: commentSubmitAriaSelector,
+                  locatorFactory: () =>
+                    composerRoot.locator(commentSubmitAriaSelector),
+                },
+                {
+                  key: "comment-submit-post-root-fallback",
+                  selectorHint:
+                    "button[class*='comments-comment-box__submit-button']",
+                  locatorFactory: () =>
+                    targetPost.locator.locator(
+                      "button[class*='comments-comment-box__submit-button']",
+                    ),
+                },
+              ],
+              "comment_submit",
+            );
+
+            const submitEnabled = await waitForCondition(async () => {
+              try {
+                return await submitButton.locator.isEnabled();
+              } catch {
+                return false;
+              }
+            }, 4_000);
+
+            if (!submitEnabled) {
+              throw new LinkedInBuddyError(
+                "UI_CHANGED_SELECTOR_FAILED",
+                "Comment submit button was not enabled after entering comment text.",
+                {
+                  action_id: action.id,
+                  profile_name: profileName,
+                  post_url: postUrl,
+                  selector_key: submitButton.key,
+                },
+              );
+            }
+
+            await submitButton.locator.click({ timeout: 5_000 });
+            await page.waitForTimeout(1_200);
+
+            await page.reload({ waitUntil: "domcontentloaded" });
+            await waitForPostSurface(page);
+            targetPost = await findTargetPostLocator(page, postUrl);
+            const reopenCommentKey = await expandCommentsForPost(
+              page,
+              targetPost.locator,
+              runtime.selectorLocale,
+            );
+
+            const commentVerified = await waitForCondition(
+              async () => isCommentVisibleInPost(targetPost.locator, text),
+              12_000,
+            );
+
+            if (!commentVerified) {
+              throw new LinkedInBuddyError(
+                "UNKNOWN",
+                "Comment action could not be verified on the target post.",
+                {
+                  action_id: action.id,
+                  profile_name: profileName,
+                  post_url: postUrl,
+                  post_identity: targetPost.postIdentity,
+                  activity_id: targetPost.activityId,
+                  reopen_comment_selector_key: reopenCommentKey ?? null,
+                  text,
+                },
+              );
+            }
+
+            const screenshotPath = `linkedin/screenshot-feed-comment-${Date.now()}.png`;
+            await captureScreenshotArtifact(runtime, page, screenshotPath, {
+              action: COMMENT_ON_POST_ACTION_TYPE,
+              action_id: action.id,
+              profile_name: profileName,
               post_url: postUrl,
-              text,
-              rate_limit: formatRateLimitState(rateLimitState)
-            },
-            artifacts: [screenshotPath]
-          };
-          }
+              selector_key: submitButton.key,
+              post_selector_key: targetPost.key,
+            });
+
+            return {
+              ok: true,
+              result: {
+                commented: true,
+                post_url: postUrl,
+                text,
+                rate_limit: formatRateLimitState(rateLimitState),
+              },
+              artifacts: [screenshotPath],
+            };
+          },
         });
-      }
+      },
     );
   }
 }
 
-export class RepostPostActionExecutor
-  implements ActionExecutor<LinkedInFeedExecutorRuntime>
-{
+export class RepostPostActionExecutor implements ActionExecutor<LinkedInFeedExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInFeedExecutorRuntime>
+    input: ActionExecutorInput<LinkedInFeedExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const runtime = input.runtime;
     const action = input.action;
@@ -2526,19 +2624,19 @@ export class RepostPostActionExecutor
       action.target,
       "post_url",
       action.id,
-      "target"
+      "target",
     );
 
     await runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: runtime.cdpUrl
+      cdpUrl: runtime.cdpUrl,
     });
 
     return runtime.profileManager.runWithContext(
       {
         cdpUrl: runtime.cdpUrl,
         profileName,
-        headless: true
+        headless: true,
       },
       async (context) => {
         const page = await getOrCreatePage(context);
@@ -2552,19 +2650,21 @@ export class RepostPostActionExecutor
           profileName,
           targetUrl: postUrl,
           metadata: {
-            post_url: postUrl
+            post_url: postUrl,
           },
           errorDetails: {
-            post_url: postUrl
+            post_url: postUrl,
           },
           mapError: (error) =>
             asLinkedInBuddyError(
               error,
               "UNKNOWN",
-              "Failed to execute LinkedIn repost_post action."
+              "Failed to execute LinkedIn repost_post action.",
             ),
           execute: async () => {
-            const rateLimitState = runtime.rateLimiter.consume(REPOST_RATE_LIMIT_CONFIG);
+            const rateLimitState = runtime.rateLimiter.consume(
+              REPOST_RATE_LIMIT_CONFIG,
+            );
             if (!rateLimitState.allowed) {
               throw new LinkedInBuddyError(
                 "RATE_LIMITED",
@@ -2573,8 +2673,8 @@ export class RepostPostActionExecutor
                   action_id: action.id,
                   profile_name: profileName,
                   post_url: postUrl,
-                  rate_limit: formatRateLimitState(rateLimitState)
-                }
+                  rate_limit: formatRateLimitState(rateLimitState),
+                },
               );
             }
 
@@ -2585,7 +2685,7 @@ export class RepostPostActionExecutor
             let repostButton = await resolveRepostButton(
               page,
               targetPost.locator,
-              runtime.selectorLocale
+              runtime.selectorLocale,
             );
             const alreadyReposted = await isPostReposted(repostButton.locator);
 
@@ -2597,7 +2697,7 @@ export class RepostPostActionExecutor
                 selectorLocale: runtime.selectorLocale,
                 selectorKeys: "repost",
                 candidateKeyPrefix: "feed-repost-menu",
-                selectorKey: "feed_repost_menu_action"
+                selectorKey: "feed_repost_menu_action",
               });
 
               let verified = await waitForCondition(async () => {
@@ -2605,7 +2705,7 @@ export class RepostPostActionExecutor
                   repostButton = await resolveRepostButton(
                     page,
                     targetPost.locator,
-                    runtime.selectorLocale
+                    runtime.selectorLocale,
                   );
                   return await isPostReposted(repostButton.locator);
                 } catch {
@@ -2620,7 +2720,7 @@ export class RepostPostActionExecutor
                 repostButton = await resolveRepostButton(
                   page,
                   targetPost.locator,
-                  runtime.selectorLocale
+                  runtime.selectorLocale,
                 );
                 verified = await isPostReposted(repostButton.locator);
               }
@@ -2635,8 +2735,8 @@ export class RepostPostActionExecutor
                     post_url: postUrl,
                     post_identity: targetPost.postIdentity,
                     activity_id: targetPost.activityId,
-                    selector_key: selectorKey
-                  }
+                    selector_key: selectorKey,
+                  },
                 );
               }
             }
@@ -2648,7 +2748,7 @@ export class RepostPostActionExecutor
               profile_name: profileName,
               post_url: postUrl,
               selector_key: selectorKey,
-              post_selector_key: targetPost.key
+              post_selector_key: targetPost.key,
             });
 
             return {
@@ -2657,22 +2757,20 @@ export class RepostPostActionExecutor
                 reposted: true,
                 already_reposted: alreadyReposted,
                 post_url: postUrl,
-                rate_limit: formatRateLimitState(rateLimitState)
+                rate_limit: formatRateLimitState(rateLimitState),
               },
-              artifacts: [screenshotPath]
+              artifacts: [screenshotPath],
             };
-          }
+          },
         });
-      }
+      },
     );
   }
 }
 
-export class SharePostActionExecutor
-  implements ActionExecutor<LinkedInFeedExecutorRuntime>
-{
+export class SharePostActionExecutor implements ActionExecutor<LinkedInFeedExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInFeedExecutorRuntime>
+    input: ActionExecutorInput<LinkedInFeedExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const runtime = input.runtime;
     const action = input.action;
@@ -2681,22 +2779,22 @@ export class SharePostActionExecutor
       action.target,
       "post_url",
       action.id,
-      "target"
+      "target",
     );
     const text = validateLinkedInPostText(
-      getRequiredStringField(action.payload, "text", action.id, "payload")
+      getRequiredStringField(action.payload, "text", action.id, "payload"),
     ).normalizedText;
 
     await runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: runtime.cdpUrl
+      cdpUrl: runtime.cdpUrl,
     });
 
     return runtime.profileManager.runWithContext(
       {
         cdpUrl: runtime.cdpUrl,
         profileName,
-        headless: true
+        headless: true,
       },
       async (context) => {
         const page = await getOrCreatePage(context);
@@ -2711,20 +2809,22 @@ export class SharePostActionExecutor
           targetUrl: postUrl,
           metadata: {
             post_url: postUrl,
-            text
+            text,
           },
           errorDetails: {
             post_url: postUrl,
-            text
+            text,
           },
           mapError: (error) =>
             asLinkedInBuddyError(
               error,
               "UNKNOWN",
-              "Failed to execute LinkedIn share_post action."
+              "Failed to execute LinkedIn share_post action.",
             ),
           execute: async () => {
-            const rateLimitState = runtime.rateLimiter.consume(SHARE_RATE_LIMIT_CONFIG);
+            const rateLimitState = runtime.rateLimiter.consume(
+              SHARE_RATE_LIMIT_CONFIG,
+            );
             if (!rateLimitState.allowed) {
               throw new LinkedInBuddyError(
                 "RATE_LIMITED",
@@ -2733,8 +2833,8 @@ export class SharePostActionExecutor
                   action_id: action.id,
                   profile_name: profileName,
                   post_url: postUrl,
-                  rate_limit: formatRateLimitState(rateLimitState)
-                }
+                  rate_limit: formatRateLimitState(rateLimitState),
+                },
               );
             }
 
@@ -2745,20 +2845,20 @@ export class SharePostActionExecutor
             const composer = await openShareComposerFromPost(
               page,
               targetPost.locator,
-              runtime.selectorLocale
+              runtime.selectorLocale,
             );
             const inputKey = await setComposerText(
               page,
               composer.composerRoot,
               runtime.selectorLocale,
-              text
+              text,
             );
 
             const publishButton = await findVisibleScopedLocatorOrThrow(
               composer.composerRoot,
               createPublishButtonCandidates(runtime.selectorLocale),
               "feed_share_publish_button",
-              page.url()
+              page.url(),
             );
 
             const publishEnabled = await waitForCondition(async () => {
@@ -2777,40 +2877,50 @@ export class SharePostActionExecutor
                   action_id: action.id,
                   profile_name: profileName,
                   post_url: postUrl,
-                  selector_key: publishButton.key
-                }
+                  selector_key: publishButton.key,
+                },
               );
             }
 
             const beforeScreenshotPath = `linkedin/screenshot-feed-share-before-${Date.now()}.png`;
-            await captureScreenshotArtifact(runtime, page, beforeScreenshotPath, {
-              action: SHARE_POST_ACTION_TYPE,
-              action_id: action.id,
-              profile_name: profileName,
-              post_url: postUrl,
-              trigger_selector_key: composer.triggerKey,
-              composer_selector_key: composer.rootKey,
-              input_selector_key: inputKey,
-              publish_selector_key: publishButton.key
-            });
+            await captureScreenshotArtifact(
+              runtime,
+              page,
+              beforeScreenshotPath,
+              {
+                action: SHARE_POST_ACTION_TYPE,
+                action_id: action.id,
+                profile_name: profileName,
+                post_url: postUrl,
+                trigger_selector_key: composer.triggerKey,
+                composer_selector_key: composer.rootKey,
+                input_selector_key: inputKey,
+                publish_selector_key: publishButton.key,
+              },
+            );
 
             await publishButton.locator.click({ timeout: 5_000 });
             await waitForCondition(
               async () => !(await isAnyLocatorVisible(composer.composerRoot)),
-              10_000
+              10_000,
             );
             await waitForNetworkIdleBestEffort(page);
 
             const verification = await verifySharedPost(page, text);
 
             const afterScreenshotPath = `linkedin/screenshot-feed-share-after-${Date.now()}.png`;
-            await captureScreenshotArtifact(runtime, page, afterScreenshotPath, {
-              action: SHARE_POST_ACTION_TYPE,
-              action_id: action.id,
-              profile_name: profileName,
-              post_url: postUrl,
-              shared_post_url: verification.postUrl
-            });
+            await captureScreenshotArtifact(
+              runtime,
+              page,
+              afterScreenshotPath,
+              {
+                action: SHARE_POST_ACTION_TYPE,
+                action_id: action.id,
+                profile_name: profileName,
+                post_url: postUrl,
+                shared_post_url: verification.postUrl,
+              },
+            );
 
             return {
               ok: true,
@@ -2820,22 +2930,20 @@ export class SharePostActionExecutor
                 shared_post_url: verification.postUrl,
                 text,
                 verification_snippet: createVerificationSnippet(text),
-                rate_limit: formatRateLimitState(rateLimitState)
+                rate_limit: formatRateLimitState(rateLimitState),
               },
-              artifacts: [beforeScreenshotPath, afterScreenshotPath]
+              artifacts: [beforeScreenshotPath, afterScreenshotPath],
             };
-          }
+          },
         });
-      }
+      },
     );
   }
 }
 
-export class SavePostActionExecutor
-  implements ActionExecutor<LinkedInFeedExecutorRuntime>
-{
+export class SavePostActionExecutor implements ActionExecutor<LinkedInFeedExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInFeedExecutorRuntime>
+    input: ActionExecutorInput<LinkedInFeedExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const runtime = input.runtime;
     const action = input.action;
@@ -2844,19 +2952,19 @@ export class SavePostActionExecutor
       action.target,
       "post_url",
       action.id,
-      "target"
+      "target",
     );
 
     await runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: runtime.cdpUrl
+      cdpUrl: runtime.cdpUrl,
     });
 
     return runtime.profileManager.runWithContext(
       {
         cdpUrl: runtime.cdpUrl,
         profileName,
-        headless: true
+        headless: true,
       },
       async (context) => {
         const page = await getOrCreatePage(context);
@@ -2870,19 +2978,21 @@ export class SavePostActionExecutor
           profileName,
           targetUrl: postUrl,
           metadata: {
-            post_url: postUrl
+            post_url: postUrl,
           },
           errorDetails: {
-            post_url: postUrl
+            post_url: postUrl,
           },
           mapError: (error) =>
             asLinkedInBuddyError(
               error,
               "UNKNOWN",
-              "Failed to execute LinkedIn save_post action."
+              "Failed to execute LinkedIn save_post action.",
             ),
           execute: async () => {
-            const rateLimitState = runtime.rateLimiter.consume(SAVE_RATE_LIMIT_CONFIG);
+            const rateLimitState = runtime.rateLimiter.consume(
+              SAVE_RATE_LIMIT_CONFIG,
+            );
             if (!rateLimitState.allowed) {
               throw new LinkedInBuddyError(
                 "RATE_LIMITED",
@@ -2891,8 +3001,8 @@ export class SavePostActionExecutor
                   action_id: action.id,
                   profile_name: profileName,
                   post_url: postUrl,
-                  rate_limit: formatRateLimitState(rateLimitState)
-                }
+                  rate_limit: formatRateLimitState(rateLimitState),
+                },
               );
             }
 
@@ -2903,7 +3013,7 @@ export class SavePostActionExecutor
             const initialSavedState = await readPostSavedState(
               page,
               targetPost.locator,
-              runtime.selectorLocale
+              runtime.selectorLocale,
             );
 
             let selectorKey = "feed-save-existing-state";
@@ -2914,7 +3024,7 @@ export class SavePostActionExecutor
                 selectorLocale: runtime.selectorLocale,
                 selectorKeys: "save",
                 candidateKeyPrefix: "feed-save",
-                selectorKey: "feed_save_menu_action"
+                selectorKey: "feed_save_menu_action",
               });
             }
 
@@ -2922,11 +3032,13 @@ export class SavePostActionExecutor
             if (!verified) {
               verified = await waitForCondition(async () => {
                 try {
-                  return (await readPostSavedState(
-                    page,
-                    targetPost.locator,
-                    runtime.selectorLocale
-                  )) === true;
+                  return (
+                    (await readPostSavedState(
+                      page,
+                      targetPost.locator,
+                      runtime.selectorLocale,
+                    )) === true
+                  );
                 } catch {
                   return false;
                 }
@@ -2938,7 +3050,11 @@ export class SavePostActionExecutor
               await waitForPostSurface(page);
               targetPost = await findTargetPostLocator(page, postUrl);
               verified =
-                (await readPostSavedState(page, targetPost.locator, runtime.selectorLocale)) === true;
+                (await readPostSavedState(
+                  page,
+                  targetPost.locator,
+                  runtime.selectorLocale,
+                )) === true;
             }
 
             if (!verified) {
@@ -2951,8 +3067,8 @@ export class SavePostActionExecutor
                   post_url: postUrl,
                   selector_key: selectorKey,
                   post_identity: targetPost.postIdentity,
-                  activity_id: targetPost.activityId
-                }
+                  activity_id: targetPost.activityId,
+                },
               );
             }
 
@@ -2963,7 +3079,7 @@ export class SavePostActionExecutor
               profile_name: profileName,
               post_url: postUrl,
               selector_key: selectorKey,
-              post_selector_key: targetPost.key
+              post_selector_key: targetPost.key,
             });
 
             return {
@@ -2972,22 +3088,20 @@ export class SavePostActionExecutor
                 saved: true,
                 already_saved: initialSavedState === true,
                 post_url: postUrl,
-                rate_limit: formatRateLimitState(rateLimitState)
+                rate_limit: formatRateLimitState(rateLimitState),
               },
-              artifacts: [screenshotPath]
+              artifacts: [screenshotPath],
             };
-          }
+          },
         });
-      }
+      },
     );
   }
 }
 
-export class UnsavePostActionExecutor
-  implements ActionExecutor<LinkedInFeedExecutorRuntime>
-{
+export class UnsavePostActionExecutor implements ActionExecutor<LinkedInFeedExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInFeedExecutorRuntime>
+    input: ActionExecutorInput<LinkedInFeedExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const runtime = input.runtime;
     const action = input.action;
@@ -2996,19 +3110,19 @@ export class UnsavePostActionExecutor
       action.target,
       "post_url",
       action.id,
-      "target"
+      "target",
     );
 
     await runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: runtime.cdpUrl
+      cdpUrl: runtime.cdpUrl,
     });
 
     return runtime.profileManager.runWithContext(
       {
         cdpUrl: runtime.cdpUrl,
         profileName,
-        headless: true
+        headless: true,
       },
       async (context) => {
         const page = await getOrCreatePage(context);
@@ -3022,19 +3136,21 @@ export class UnsavePostActionExecutor
           profileName,
           targetUrl: postUrl,
           metadata: {
-            post_url: postUrl
+            post_url: postUrl,
           },
           errorDetails: {
-            post_url: postUrl
+            post_url: postUrl,
           },
           mapError: (error) =>
             asLinkedInBuddyError(
               error,
               "UNKNOWN",
-              "Failed to execute LinkedIn unsave_post action."
+              "Failed to execute LinkedIn unsave_post action.",
             ),
           execute: async () => {
-            const rateLimitState = runtime.rateLimiter.consume(UNSAVE_RATE_LIMIT_CONFIG);
+            const rateLimitState = runtime.rateLimiter.consume(
+              UNSAVE_RATE_LIMIT_CONFIG,
+            );
             if (!rateLimitState.allowed) {
               throw new LinkedInBuddyError(
                 "RATE_LIMITED",
@@ -3043,8 +3159,8 @@ export class UnsavePostActionExecutor
                   action_id: action.id,
                   profile_name: profileName,
                   post_url: postUrl,
-                  rate_limit: formatRateLimitState(rateLimitState)
-                }
+                  rate_limit: formatRateLimitState(rateLimitState),
+                },
               );
             }
 
@@ -3055,7 +3171,7 @@ export class UnsavePostActionExecutor
             const initialSavedState = await readPostSavedState(
               page,
               targetPost.locator,
-              runtime.selectorLocale
+              runtime.selectorLocale,
             );
 
             let selectorKey = "feed-unsave-existing-state";
@@ -3066,7 +3182,7 @@ export class UnsavePostActionExecutor
                 selectorLocale: runtime.selectorLocale,
                 selectorKeys: "unsave",
                 candidateKeyPrefix: "feed-unsave",
-                selectorKey: "feed_unsave_menu_action"
+                selectorKey: "feed_unsave_menu_action",
               });
             }
 
@@ -3074,11 +3190,13 @@ export class UnsavePostActionExecutor
             if (!verified) {
               verified = await waitForCondition(async () => {
                 try {
-                  return (await readPostSavedState(
-                    page,
-                    targetPost.locator,
-                    runtime.selectorLocale
-                  )) === false;
+                  return (
+                    (await readPostSavedState(
+                      page,
+                      targetPost.locator,
+                      runtime.selectorLocale,
+                    )) === false
+                  );
                 } catch {
                   return false;
                 }
@@ -3090,7 +3208,11 @@ export class UnsavePostActionExecutor
               await waitForPostSurface(page);
               targetPost = await findTargetPostLocator(page, postUrl);
               verified =
-                (await readPostSavedState(page, targetPost.locator, runtime.selectorLocale)) === false;
+                (await readPostSavedState(
+                  page,
+                  targetPost.locator,
+                  runtime.selectorLocale,
+                )) === false;
             }
 
             if (!verified) {
@@ -3103,8 +3225,8 @@ export class UnsavePostActionExecutor
                   post_url: postUrl,
                   selector_key: selectorKey,
                   post_identity: targetPost.postIdentity,
-                  activity_id: targetPost.activityId
-                }
+                  activity_id: targetPost.activityId,
+                },
               );
             }
 
@@ -3115,7 +3237,7 @@ export class UnsavePostActionExecutor
               profile_name: profileName,
               post_url: postUrl,
               selector_key: selectorKey,
-              post_selector_key: targetPost.key
+              post_selector_key: targetPost.key,
             });
 
             return {
@@ -3124,22 +3246,20 @@ export class UnsavePostActionExecutor
                 saved: false,
                 already_unsaved: initialSavedState === false,
                 post_url: postUrl,
-                rate_limit: formatRateLimitState(rateLimitState)
+                rate_limit: formatRateLimitState(rateLimitState),
               },
-              artifacts: [screenshotPath]
+              artifacts: [screenshotPath],
             };
-          }
+          },
         });
-      }
+      },
     );
   }
 }
 
-export class RemoveReactionActionExecutor
-  implements ActionExecutor<LinkedInFeedExecutorRuntime>
-{
+export class RemoveReactionActionExecutor implements ActionExecutor<LinkedInFeedExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInFeedExecutorRuntime>
+    input: ActionExecutorInput<LinkedInFeedExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const runtime = input.runtime;
     const action = input.action;
@@ -3148,19 +3268,19 @@ export class RemoveReactionActionExecutor
       action.target,
       "post_url",
       action.id,
-      "target"
+      "target",
     );
 
     await runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: runtime.cdpUrl
+      cdpUrl: runtime.cdpUrl,
     });
 
     return runtime.profileManager.runWithContext(
       {
         cdpUrl: runtime.cdpUrl,
         profileName,
-        headless: true
+        headless: true,
       },
       async (context) => {
         const page = await getOrCreatePage(context);
@@ -3174,20 +3294,20 @@ export class RemoveReactionActionExecutor
           profileName,
           targetUrl: postUrl,
           metadata: {
-            post_url: postUrl
+            post_url: postUrl,
           },
           errorDetails: {
-            post_url: postUrl
+            post_url: postUrl,
           },
           mapError: (error) =>
             asLinkedInBuddyError(
               error,
               "UNKNOWN",
-              "Failed to execute LinkedIn remove_reaction action."
+              "Failed to execute LinkedIn remove_reaction action.",
             ),
           execute: async () => {
             const rateLimitState = runtime.rateLimiter.consume(
-              REMOVE_REACTION_RATE_LIMIT_CONFIG
+              REMOVE_REACTION_RATE_LIMIT_CONFIG,
             );
             if (!rateLimitState.allowed) {
               throw new LinkedInBuddyError(
@@ -3197,8 +3317,8 @@ export class RemoveReactionActionExecutor
                   action_id: action.id,
                   profile_name: profileName,
                   post_url: postUrl,
-                  rate_limit: formatRateLimitState(rateLimitState)
-                }
+                  rate_limit: formatRateLimitState(rateLimitState),
+                },
               );
             }
 
@@ -3209,11 +3329,11 @@ export class RemoveReactionActionExecutor
             let reactButton = await resolveReactionButton(
               page,
               targetPost.locator,
-              runtime.selectorLocale
+              runtime.selectorLocale,
             );
             const reactionState = await getReactionButtonState(
               reactButton.locator,
-              runtime.selectorLocale
+              runtime.selectorLocale,
             );
             const previousReaction = reactionState.reaction;
             const alreadyCleared = !reactionState.reacted;
@@ -3225,7 +3345,7 @@ export class RemoveReactionActionExecutor
                 try {
                   const currentState = await getReactionButtonState(
                     reactButton.locator,
-                    runtime.selectorLocale
+                    runtime.selectorLocale,
                   );
                   return !currentState.reacted;
                 } catch {
@@ -3240,12 +3360,14 @@ export class RemoveReactionActionExecutor
                 reactButton = await resolveReactionButton(
                   page,
                   targetPost.locator,
-                  runtime.selectorLocale
+                  runtime.selectorLocale,
                 );
-                verified = !(await getReactionButtonState(
-                  reactButton.locator,
-                  runtime.selectorLocale
-                )).reacted;
+                verified = !(
+                  await getReactionButtonState(
+                    reactButton.locator,
+                    runtime.selectorLocale,
+                  )
+                ).reacted;
               }
 
               if (!verified) {
@@ -3258,8 +3380,8 @@ export class RemoveReactionActionExecutor
                     post_url: postUrl,
                     post_identity: targetPost.postIdentity,
                     activity_id: targetPost.activityId,
-                    previous_reaction: previousReaction
-                  }
+                    previous_reaction: previousReaction,
+                  },
                 );
               }
             }
@@ -3271,7 +3393,7 @@ export class RemoveReactionActionExecutor
               profile_name: profileName,
               post_url: postUrl,
               post_selector_key: targetPost.key,
-              previous_reaction: previousReaction
+              previous_reaction: previousReaction,
             });
 
             return {
@@ -3281,13 +3403,13 @@ export class RemoveReactionActionExecutor
                 already_cleared: alreadyCleared,
                 previous_reaction: previousReaction,
                 post_url: postUrl,
-                rate_limit: formatRateLimitState(rateLimitState)
+                rate_limit: formatRateLimitState(rateLimitState),
               },
-              artifacts: [screenshotPath]
+              artifacts: [screenshotPath],
             };
-          }
+          },
         });
-      }
+      },
     );
   }
 }
@@ -3303,7 +3425,7 @@ export function createFeedActionExecutors(): Record<
     [SHARE_POST_ACTION_TYPE]: new SharePostActionExecutor(),
     [SAVE_POST_ACTION_TYPE]: new SavePostActionExecutor(),
     [UNSAVE_POST_ACTION_TYPE]: new UnsavePostActionExecutor(),
-    [REMOVE_REACTION_ACTION_TYPE]: new RemoveReactionActionExecutor()
+    [REMOVE_REACTION_ACTION_TYPE]: new RemoveReactionActionExecutor(),
   };
 }
 
@@ -3324,7 +3446,7 @@ export class LinkedInFeedService {
 
     await this.runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: this.runtime.cdpUrl
+      cdpUrl: this.runtime.cdpUrl,
     });
 
     try {
@@ -3332,7 +3454,7 @@ export class LinkedInFeedService {
         {
           cdpUrl: this.runtime.cdpUrl,
           profileName,
-          headless: true
+          headless: true,
         },
         async (context) => {
           const page = await getOrCreatePage(context);
@@ -3340,7 +3462,7 @@ export class LinkedInFeedService {
           await waitForFeedSurface(page);
           const posts = await loadFeedPosts(page, limit);
           return posts.slice(0, limit);
-        }
+        },
       );
     } catch (error) {
       if (error instanceof LinkedInBuddyError) {
@@ -3349,7 +3471,7 @@ export class LinkedInFeedService {
       throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
-        "Failed to view LinkedIn feed."
+        "Failed to view LinkedIn feed.",
       );
     }
   }
@@ -3360,7 +3482,7 @@ export class LinkedInFeedService {
 
     await this.runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: this.runtime.cdpUrl
+      cdpUrl: this.runtime.cdpUrl,
     });
 
     try {
@@ -3368,7 +3490,7 @@ export class LinkedInFeedService {
         {
           cdpUrl: this.runtime.cdpUrl,
           profileName,
-          headless: true
+          headless: true,
         },
         async (context) => {
           const page = await getOrCreatePage(context);
@@ -3383,13 +3505,13 @@ export class LinkedInFeedService {
               "Could not extract post details from the requested LinkedIn post URL.",
               {
                 post_url: postUrl,
-                current_url: page.url()
-              }
+                current_url: page.url(),
+              },
             );
           }
 
           return post;
-        }
+        },
       );
     } catch (error) {
       if (error instanceof LinkedInBuddyError) {
@@ -3398,7 +3520,7 @@ export class LinkedInFeedService {
       throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
-        "Failed to view LinkedIn post."
+        "Failed to view LinkedIn post.",
       );
     }
   }
@@ -3412,11 +3534,13 @@ export class LinkedInFeedService {
     const profileName = input.profileName ?? "default";
     const postUrl = resolvePostUrl(input.postUrl);
     const reaction = normalizeLinkedInFeedReaction(input.reaction, "like");
-    const rateLimitState = this.runtime.rateLimiter.peek(LIKE_RATE_LIMIT_CONFIG);
+    const rateLimitState = this.runtime.rateLimiter.peek(
+      LIKE_RATE_LIMIT_CONFIG,
+    );
 
     const target = {
       profile_name: profileName,
-      post_url: postUrl
+      post_url: postUrl,
     };
 
     const preview = {
@@ -3424,21 +3548,21 @@ export class LinkedInFeedService {
       target,
       outbound: {
         action: "react",
-        reaction
+        reaction,
       },
       supported_reactions: LINKEDIN_FEED_REACTION_TYPES,
       reaction_map: LINKEDIN_FEED_REACTION_MAP,
-      rate_limit: formatRateLimitState(rateLimitState)
+      rate_limit: formatRateLimitState(rateLimitState),
     } satisfies Record<string, unknown>;
 
     return this.runtime.twoPhaseCommit.prepare({
       actionType: LIKE_POST_ACTION_TYPE,
       target,
       payload: {
-        reaction
+        reaction,
       },
       preview,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 
@@ -3455,34 +3579,36 @@ export class LinkedInFeedService {
     if (!text) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        "Comment text must not be empty."
+        "Comment text must not be empty.",
       );
     }
 
-    const rateLimitState = this.runtime.rateLimiter.peek(COMMENT_RATE_LIMIT_CONFIG);
+    const rateLimitState = this.runtime.rateLimiter.peek(
+      COMMENT_RATE_LIMIT_CONFIG,
+    );
 
     const target = {
       profile_name: profileName,
-      post_url: postUrl
+      post_url: postUrl,
     };
 
     const preview = {
       summary: `Comment on LinkedIn post ${postUrl}`,
       target,
       outbound: {
-        text
+        text,
       },
-      rate_limit: formatRateLimitState(rateLimitState)
+      rate_limit: formatRateLimitState(rateLimitState),
     } satisfies Record<string, unknown>;
 
     return this.runtime.twoPhaseCommit.prepare({
       actionType: COMMENT_ON_POST_ACTION_TYPE,
       target,
       payload: {
-        text
+        text,
       },
       preview,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 
@@ -3494,20 +3620,22 @@ export class LinkedInFeedService {
   } {
     const profileName = input.profileName ?? "default";
     const postUrl = resolvePostUrl(input.postUrl);
-    const rateLimitState = this.runtime.rateLimiter.peek(REPOST_RATE_LIMIT_CONFIG);
+    const rateLimitState = this.runtime.rateLimiter.peek(
+      REPOST_RATE_LIMIT_CONFIG,
+    );
 
     const target = {
       profile_name: profileName,
-      post_url: postUrl
+      post_url: postUrl,
     };
 
     const preview = {
       summary: `Repost LinkedIn post ${postUrl}`,
       target,
       outbound: {
-        action: "repost"
+        action: "repost",
       },
-      rate_limit: formatRateLimitState(rateLimitState)
+      rate_limit: formatRateLimitState(rateLimitState),
     } satisfies Record<string, unknown>;
 
     return this.runtime.twoPhaseCommit.prepare({
@@ -3515,7 +3643,7 @@ export class LinkedInFeedService {
       target,
       payload: {},
       preview,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 
@@ -3528,11 +3656,13 @@ export class LinkedInFeedService {
     const profileName = input.profileName ?? "default";
     const postUrl = resolvePostUrl(input.postUrl);
     const text = validateLinkedInPostText(input.text).normalizedText;
-    const rateLimitState = this.runtime.rateLimiter.peek(SHARE_RATE_LIMIT_CONFIG);
+    const rateLimitState = this.runtime.rateLimiter.peek(
+      SHARE_RATE_LIMIT_CONFIG,
+    );
 
     const target = {
       profile_name: profileName,
-      post_url: postUrl
+      post_url: postUrl,
     };
 
     const preview = {
@@ -3540,19 +3670,19 @@ export class LinkedInFeedService {
       target,
       outbound: {
         action: "share",
-        text
+        text,
       },
-      rate_limit: formatRateLimitState(rateLimitState)
+      rate_limit: formatRateLimitState(rateLimitState),
     } satisfies Record<string, unknown>;
 
     return this.runtime.twoPhaseCommit.prepare({
       actionType: SHARE_POST_ACTION_TYPE,
       target,
       payload: {
-        text
+        text,
       },
       preview,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 
@@ -3564,20 +3694,22 @@ export class LinkedInFeedService {
   } {
     const profileName = input.profileName ?? "default";
     const postUrl = resolvePostUrl(input.postUrl);
-    const rateLimitState = this.runtime.rateLimiter.peek(SAVE_RATE_LIMIT_CONFIG);
+    const rateLimitState = this.runtime.rateLimiter.peek(
+      SAVE_RATE_LIMIT_CONFIG,
+    );
 
     const target = {
       profile_name: profileName,
-      post_url: postUrl
+      post_url: postUrl,
     };
 
     const preview = {
       summary: `Save LinkedIn post ${postUrl} for later`,
       target,
       outbound: {
-        action: "save"
+        action: "save",
       },
-      rate_limit: formatRateLimitState(rateLimitState)
+      rate_limit: formatRateLimitState(rateLimitState),
     } satisfies Record<string, unknown>;
 
     return this.runtime.twoPhaseCommit.prepare({
@@ -3585,7 +3717,7 @@ export class LinkedInFeedService {
       target,
       payload: {},
       preview,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 
@@ -3597,20 +3729,22 @@ export class LinkedInFeedService {
   } {
     const profileName = input.profileName ?? "default";
     const postUrl = resolvePostUrl(input.postUrl);
-    const rateLimitState = this.runtime.rateLimiter.peek(UNSAVE_RATE_LIMIT_CONFIG);
+    const rateLimitState = this.runtime.rateLimiter.peek(
+      UNSAVE_RATE_LIMIT_CONFIG,
+    );
 
     const target = {
       profile_name: profileName,
-      post_url: postUrl
+      post_url: postUrl,
     };
 
     const preview = {
       summary: `Unsave LinkedIn post ${postUrl}`,
       target,
       outbound: {
-        action: "unsave"
+        action: "unsave",
       },
-      rate_limit: formatRateLimitState(rateLimitState)
+      rate_limit: formatRateLimitState(rateLimitState),
     } satisfies Record<string, unknown>;
 
     return this.runtime.twoPhaseCommit.prepare({
@@ -3618,7 +3752,7 @@ export class LinkedInFeedService {
       target,
       payload: {},
       preview,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 
@@ -3631,21 +3765,21 @@ export class LinkedInFeedService {
     const profileName = input.profileName ?? "default";
     const postUrl = resolvePostUrl(input.postUrl);
     const rateLimitState = this.runtime.rateLimiter.peek(
-      REMOVE_REACTION_RATE_LIMIT_CONFIG
+      REMOVE_REACTION_RATE_LIMIT_CONFIG,
     );
 
     const target = {
       profile_name: profileName,
-      post_url: postUrl
+      post_url: postUrl,
     };
 
     const preview = {
       summary: `Remove your reaction from LinkedIn post ${postUrl}`,
       target,
       outbound: {
-        action: "remove_reaction"
+        action: "remove_reaction",
       },
-      rate_limit: formatRateLimitState(rateLimitState)
+      rate_limit: formatRateLimitState(rateLimitState),
     } satisfies Record<string, unknown>;
 
     return this.runtime.twoPhaseCommit.prepare({
@@ -3653,7 +3787,7 @@ export class LinkedInFeedService {
       target,
       payload: {},
       preview,
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 }

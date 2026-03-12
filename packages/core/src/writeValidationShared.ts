@@ -1,19 +1,16 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import {
-  LIKE_POST_ACTION_TYPE
-} from "./linkedinFeed.js";
-import {
-  SEND_INVITATION_ACTION_TYPE
-} from "./linkedinConnections.js";
+import { LIKE_POST_ACTION_TYPE } from "./linkedinFeed.js";
+import { SEND_INVITATION_ACTION_TYPE } from "./linkedinConnections.js";
 import { FOLLOWUP_AFTER_ACCEPT_ACTION_TYPE } from "./linkedinFollowups.js";
 import { CREATE_POST_ACTION_TYPE } from "./linkedinPosts.js";
 import type { LinkedInBuddyErrorCode } from "./errors.js";
 import type { JsonLogEntry } from "./logging.js";
 import type { CoreRuntime } from "./runtime.js";
+import { isRecord } from "./shared.js";
 import type {
   ConfirmByTokenResult,
-  PreparedActionResult
+  PreparedActionResult,
 } from "./twoPhaseCommit.js";
 import type { WriteValidationAccount } from "./writeValidationAccounts.js";
 
@@ -171,7 +168,7 @@ export interface RunLinkedInWriteValidationOptions {
   maxRetries?: number;
   onLog?: (entry: JsonLogEntry) => void;
   onBeforeAction?: (
-    preview: WriteValidationActionPreview
+    preview: WriteValidationActionPreview,
   ) => Promise<boolean> | boolean;
   retryBaseDelayMs?: number;
   retryMaxDelayMs?: number;
@@ -187,35 +184,26 @@ export interface ScenarioPrepareResult {
 }
 
 /** Full contract implemented by each real-action scenario in the fixed Tier 3 suite. */
-export interface WriteValidationScenarioDefinition
-  extends LinkedInWriteValidationActionDefinition {
+export interface WriteValidationScenarioDefinition extends LinkedInWriteValidationActionDefinition {
   prepare: (
     runtime: CoreRuntime,
-    account: WriteValidationAccount
+    account: WriteValidationAccount,
   ) => Promise<ScenarioPrepareResult>;
   resolveAfterScreenshotUrl: (
     account: WriteValidationAccount,
     prepared: ScenarioPrepareResult,
-    confirmed: ConfirmByTokenResult
+    confirmed: ConfirmByTokenResult,
   ) => string | null;
   validateConfig?: (account: WriteValidationAccount) => void;
   verify: (
     runtime: CoreRuntime,
     account: WriteValidationAccount,
     prepared: ScenarioPrepareResult,
-    confirmed: ConfirmByTokenResult
+    confirmed: ConfirmByTokenResult,
   ) => Promise<WriteValidationVerificationResult>;
 }
 
-/** Returns whether a value is a plain object rather than `null` or an array. */
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** Trims text and collapses internal whitespace for stable comparisons and output. */
-export function normalizeText(value: string | null | undefined): string {
-  return (value ?? "").replace(/\s+/gu, " ").trim();
-}
+export { isRecord, normalizeText } from "./shared.js";
 
 /** Removes blank strings and duplicates while preserving the first-seen order. */
 export function dedupeStrings(values: readonly string[]): string[] {
@@ -228,7 +216,9 @@ export function isScreenshotPath(value: string): boolean {
 }
 
 /** Extracts artifact paths from a prepared-action preview payload when available. */
-export function readPreviewArtifacts(preview: Record<string, unknown>): string[] {
+export function readPreviewArtifacts(
+  preview: Record<string, unknown>,
+): string[] {
   const artifacts = preview.artifacts;
   if (!Array.isArray(artifacts)) {
     return [];
@@ -243,15 +233,20 @@ export function readPreviewArtifacts(preview: Record<string, unknown>): string[]
       const pathValue = artifact.path;
       return typeof pathValue === "string" ? pathValue : null;
     })
-    .filter((artifactPath): artifactPath is string => typeof artifactPath === "string");
+    .filter(
+      (artifactPath): artifactPath is string =>
+        typeof artifactPath === "string",
+    );
 }
 
 /** Normalizes a prepared action into the public preview payload shown to operators. */
 export function buildPreview(
   scenario: WriteValidationScenarioDefinition,
-  prepared: PreparedActionResult
+  prepared: PreparedActionResult,
 ): WriteValidationActionPreview {
-  const target = isRecord(prepared.preview.target) ? prepared.preview.target : {};
+  const target = isRecord(prepared.preview.target)
+    ? prepared.preview.target
+    : {};
   const outbound = isRecord(prepared.preview.outbound)
     ? prepared.preview.outbound
     : {};
@@ -262,13 +257,13 @@ export function buildPreview(
     outbound,
     risk_class: scenario.riskClass,
     summary: scenario.summary,
-    target
+    target,
   };
 }
 
 /** Maps a verification result to the final status stored for an action. */
 export function determineActionStatus(
-  verification: WriteValidationVerificationResult
+  verification: WriteValidationVerificationResult,
 ): WriteValidationResultStatus {
   if (!verification.verified || verification.state_synced === false) {
     return "fail";
@@ -279,7 +274,7 @@ export function determineActionStatus(
 
 /** Tallies pass, fail, and cancelled counts across a set of action results. */
 export function countActionStatuses(
-  actions: readonly WriteValidationActionResult[]
+  actions: readonly WriteValidationActionResult[],
 ): {
   cancelledCount: number;
   failCount: number;
@@ -300,14 +295,14 @@ export function countActionStatuses(
     {
       cancelledCount: 0,
       failCount: 0,
-      passCount: 0
-    }
+      passCount: 0,
+    },
   );
 }
 
 /** Resolves the run outcome, with `fail` taking precedence over `cancelled` and `pass`. */
 export function determineOutcome(
-  actions: readonly WriteValidationActionResult[]
+  actions: readonly WriteValidationActionResult[],
 ): WriteValidationOutcome {
   if (actions.some((action) => action.status === "fail")) {
     return "fail";
@@ -325,13 +320,13 @@ export function buildWriteValidationSummary(
   report: Pick<
     WriteValidationReport,
     "action_count" | "pass_count" | "fail_count" | "cancelled_count" | "outcome"
-  >
+  >,
 ): string {
   const parts = [
     `Checked ${report.action_count} write-validation actions.`,
     `${report.pass_count} passed.`,
     `${report.fail_count} failed.`,
-    `${report.cancelled_count} cancelled.`
+    `${report.cancelled_count} cancelled.`,
   ];
 
   return `${parts.join(" ")} Overall outcome: ${report.outcome}.`;
@@ -339,43 +334,49 @@ export function buildWriteValidationSummary(
 
 /** Derives follow-up guidance from report paths, cleanup steps, and common failure modes. */
 export function buildRecommendedActions(
-  report: Pick<WriteValidationReport, "actions" | "report_path" | "audit_log_path" | "account">
+  report: Pick<
+    WriteValidationReport,
+    "actions" | "report_path" | "audit_log_path" | "account"
+  >,
 ): string[] {
   const actions: string[] = [
     `Review ${report.report_path} for the full per-action report and screenshots.`,
-    `Open ${report.audit_log_path} to inspect the structured audit log for this run.`
+    `Open ${report.audit_log_path} to inspect the structured audit log for this run.`,
   ];
 
   for (const action of report.actions) {
     actions.push(...action.cleanup_guidance);
 
-    if (action.error_code === "AUTH_REQUIRED" || action.error_code === "CAPTCHA_OR_CHALLENGE") {
+    if (
+      action.error_code === "AUTH_REQUIRED" ||
+      action.error_code === "CAPTCHA_OR_CHALLENGE"
+    ) {
       actions.push(
-        `Capture a fresh stored session with "linkedin auth session --session ${report.account.session_name}" before rerunning write validation.`
+        `Capture a fresh stored session with "linkedin auth session --session ${report.account.session_name}" before rerunning write validation.`,
       );
     }
 
     if (action.error_code === "RATE_LIMITED") {
       actions.push(
-        `Wait for LinkedIn to lift rate limiting on session "${report.account.session_name}" before rerunning write validation.`
+        `Wait for LinkedIn to lift rate limiting on session "${report.account.session_name}" before rerunning write validation.`,
       );
     }
 
     if (action.error_code === "TARGET_NOT_FOUND") {
       actions.push(
-        `Confirm the approved ${action.action_type} target in the write-validation account config still exists before rerunning.`
+        `Confirm the approved ${action.action_type} target in the write-validation account config still exists before rerunning.`,
       );
     }
 
     if (action.error_code === "UI_CHANGED_SELECTOR_FAILED") {
       actions.push(
-        `Review the failed ${action.action_type} screenshots and update the validator selectors before rerunning.`
+        `Review the failed ${action.action_type} screenshots and update the validator selectors before rerunning.`,
       );
     }
 
     if (action.status === "fail") {
       actions.push(
-        `Re-check ${action.action_type} after reviewing ${report.report_path} and the attached screenshots.`
+        `Re-check ${action.action_type} after reviewing ${report.report_path} and the attached screenshots.`,
       );
     }
   }
@@ -384,20 +385,23 @@ export function buildRecommendedActions(
 }
 
 /** Writes pretty JSON with a trailing newline, creating parent directories as needed. */
-export async function writeJsonFile(filePath: string, value: unknown): Promise<void> {
+export async function writeJsonFile(
+  filePath: string,
+  value: unknown,
+): Promise<void> {
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
 /** Projects an internal account record into the report-safe account payload. */
 export function buildWriteValidationReportAccount(
-  account: WriteValidationAccount
+  account: WriteValidationAccount,
 ): WriteValidationReport["account"] {
   return {
     designation: account.designation,
     id: account.id,
     label: account.label,
     profile_name: account.profileName,
-    session_name: account.sessionName
+    session_name: account.sessionName,
   };
 }

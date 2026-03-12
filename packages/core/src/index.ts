@@ -47,6 +47,7 @@ export * from "./rateLimiter.js";
 export * from "./run.js";
 export * from "./runtime.js";
 export * from "./scheduler.js";
+export * from "./shared.js";
 export * from "./selectorAudit.js";
 export * from "./selectorLocale.js";
 export * from "./stealth.js";

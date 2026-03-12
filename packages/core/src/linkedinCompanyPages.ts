@@ -1,4 +1,4 @@
-import { type BrowserContext, type Locator, type Page } from "playwright-core";
+import { type Locator, type Page } from "playwright-core";
 import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
 import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
@@ -7,18 +7,19 @@ import { LinkedInBuddyError, asLinkedInBuddyError } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
+import { getOrCreatePage, isAbsoluteUrl, normalizeText } from "./shared.js";
 import {
   buildLinkedInAriaLabelContainsSelector,
   buildLinkedInSelectorPhraseRegex,
   formatLinkedInSelectorRegexHint,
   type LinkedInSelectorLocale,
-  type LinkedInSelectorPhraseKey
+  type LinkedInSelectorPhraseKey,
 } from "./selectorLocale.js";
 import type {
   ActionExecutor,
   ActionExecutorInput,
   ActionExecutorResult,
-  TwoPhaseCommitService
+  TwoPhaseCommitService,
 } from "./twoPhaseCommit.js";
 
 /* eslint-disable no-undef -- DOM types are valid inside page.evaluate() */
@@ -64,14 +65,12 @@ interface LinkedInCompanyPagesRuntimeBase {
   logger: JsonEventLogger;
 }
 
-export interface LinkedInCompanyPagesExecutorRuntime
-  extends LinkedInCompanyPagesRuntimeBase {
+export interface LinkedInCompanyPagesExecutorRuntime extends LinkedInCompanyPagesRuntimeBase {
   artifacts: ArtifactHelpers;
   confirmFailureArtifacts: ConfirmFailureArtifactConfig;
 }
 
-export interface LinkedInCompanyPagesRuntime
-  extends LinkedInCompanyPagesExecutorRuntime {
+export interface LinkedInCompanyPagesRuntime extends LinkedInCompanyPagesExecutorRuntime {
   twoPhaseCommit: Pick<
     TwoPhaseCommitService<LinkedInCompanyPagesExecutorRuntime>,
     "prepare"
@@ -81,20 +80,12 @@ export interface LinkedInCompanyPagesRuntime
 export const FOLLOW_COMPANY_PAGE_ACTION_TYPE = "company.follow";
 export const UNFOLLOW_COMPANY_PAGE_ACTION_TYPE = "company.unfollow";
 
-function normalizeText(value: string | null | undefined): string {
-  return (value ?? "").replace(/\s+/g, " ").trim();
-}
-
-function isAbsoluteUrl(value: string): boolean {
-  return /^https?:\/\//i.test(value);
-}
-
 export function resolveCompanyPageUrl(target: string): string {
   const trimmedTarget = normalizeText(target);
   if (!trimmedTarget) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "Company page target is required."
+      "Company page target is required.",
     );
   }
 
@@ -106,19 +97,21 @@ export function resolveCompanyPageUrl(target: string): string {
       throw asLinkedInBuddyError(
         error,
         "ACTION_PRECONDITION_FAILED",
-        "Company page URL must be a valid URL."
+        "Company page URL must be a valid URL.",
       );
     }
 
     const hostname = parsedUrl.hostname.toLowerCase();
     const isLinkedInDomain =
       hostname === "linkedin.com" || hostname.endsWith(".linkedin.com");
-    const segments = parsedUrl.pathname.split("/").filter((segment) => segment.length > 0);
+    const segments = parsedUrl.pathname
+      .split("/")
+      .filter((segment) => segment.length > 0);
     if (!isLinkedInDomain || segments[0] !== "company" || !segments[1]) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "Company page URL must point to linkedin.com/company/.",
-        { target: trimmedTarget }
+        { target: trimmedTarget },
       );
     }
 
@@ -132,7 +125,7 @@ export function resolveCompanyPageUrl(target: string): string {
     if (!normalizedSlug) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        "Company page target is required."
+        "Company page target is required.",
       );
     }
     return `https://www.linkedin.com/company/${encodeURIComponent(normalizedSlug)}/`;
@@ -177,14 +170,6 @@ function extractCompanySlug(url: string): string | null {
   }
 }
 
-async function getOrCreatePage(context: BrowserContext): Promise<Page> {
-  const existing = context.pages()[0];
-  if (existing) {
-    return existing;
-  }
-  return context.newPage();
-}
-
 async function waitForCompanyPageReady(page: Page): Promise<void> {
   await page
     .locator("main h1")
@@ -203,7 +188,7 @@ interface VisibleLocatorCandidate {
 
 async function findVisibleLocator(
   root: LocatorRoot,
-  candidates: VisibleLocatorCandidate[]
+  candidates: VisibleLocatorCandidate[],
 ): Promise<{ locator: Locator; key: string } | null> {
   for (const candidate of candidates) {
     const locator = candidate.locatorFactory(root).first();
@@ -218,7 +203,7 @@ async function findVisibleLocator(
 async function waitForCondition(
   condition: () => Promise<boolean>,
   timeoutMs: number,
-  intervalMs = 250
+  intervalMs = 250,
 ): Promise<boolean> {
   const deadline = Date.now() + Math.max(0, timeoutMs);
   while (Date.now() < deadline) {
@@ -236,23 +221,25 @@ async function waitForCondition(
 function buildCompanyActionButtonCandidates(input: {
   root: Locator;
   selectorLocale: LinkedInSelectorLocale;
-  selectorKeys: LinkedInSelectorPhraseKey | readonly LinkedInSelectorPhraseKey[];
+  selectorKeys:
+    | LinkedInSelectorPhraseKey
+    | readonly LinkedInSelectorPhraseKey[];
   candidateKeyPrefix: string;
 }): VisibleLocatorCandidate[] {
   const exactRegex = buildLinkedInSelectorPhraseRegex(
     input.selectorKeys,
     input.selectorLocale,
-    { exact: true }
+    { exact: true },
   );
   const exactRegexHint = formatLinkedInSelectorRegexHint(
     input.selectorKeys,
     input.selectorLocale,
-    { exact: true }
+    { exact: true },
   );
   const ariaSelector = buildLinkedInAriaLabelContainsSelector(
     "button",
     input.selectorKeys,
-    input.selectorLocale
+    input.selectorLocale,
   );
 
   return [
@@ -261,40 +248,40 @@ function buildCompanyActionButtonCandidates(input: {
       selectorHint: `root.getByRole(button, ${exactRegexHint})`,
       locatorFactory: () =>
         input.root.getByRole("button", {
-          name: exactRegex
-        })
+          name: exactRegex,
+        }),
     },
     {
       key: `${input.candidateKeyPrefix}-root-aria`,
       selectorHint: `root ${ariaSelector}`,
-      locatorFactory: () => input.root.locator(ariaSelector)
+      locatorFactory: () => input.root.locator(ariaSelector),
     },
     {
       key: `${input.candidateKeyPrefix}-page-role`,
       selectorHint: `page.getByRole(button, ${exactRegexHint})`,
       locatorFactory: (pageRoot) =>
         pageRoot.getByRole("button", {
-          name: exactRegex
-        })
+          name: exactRegex,
+        }),
     },
     {
       key: `${input.candidateKeyPrefix}-page-aria`,
       selectorHint: ariaSelector,
-      locatorFactory: (pageRoot) => pageRoot.locator(ariaSelector)
-    }
+      locatorFactory: (pageRoot) => pageRoot.locator(ariaSelector),
+    },
   ];
 }
 
 async function readCompanyFollowState(
   page: Page,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<LinkedInCompanyPage["follow_state"]> {
   const root = page.locator("main").first();
   const followingCandidates = buildCompanyActionButtonCandidates({
     root,
     selectorLocale,
     selectorKeys: "following",
-    candidateKeyPrefix: "company-following"
+    candidateKeyPrefix: "company-following",
   });
   if (await findVisibleLocator(page, followingCandidates)) {
     return "following";
@@ -304,7 +291,7 @@ async function readCompanyFollowState(
     root,
     selectorLocale,
     selectorKeys: "follow",
-    candidateKeyPrefix: "company-follow"
+    candidateKeyPrefix: "company-follow",
   });
   if (await findVisibleLocator(page, followCandidates)) {
     return "not_following";
@@ -316,7 +303,9 @@ async function readCompanyFollowState(
 async function clickCompanyAction(input: {
   page: Page;
   selectorLocale: LinkedInSelectorLocale;
-  selectorKeys: LinkedInSelectorPhraseKey | readonly LinkedInSelectorPhraseKey[];
+  selectorKeys:
+    | LinkedInSelectorPhraseKey
+    | readonly LinkedInSelectorPhraseKey[];
   actionLabel: string;
   targetCompany: string;
   candidateKeyPrefix: string;
@@ -326,7 +315,7 @@ async function clickCompanyAction(input: {
     root,
     selectorLocale: input.selectorLocale,
     selectorKeys: input.selectorKeys,
-    candidateKeyPrefix: input.candidateKeyPrefix
+    candidateKeyPrefix: input.candidateKeyPrefix,
   });
   const found = await findVisibleLocator(input.page, candidates);
 
@@ -338,9 +327,9 @@ async function clickCompanyAction(input: {
         target_company: input.targetCompany,
         selector_candidates: candidates.map((candidate) => ({
           key: candidate.key,
-          selector_hint: candidate.selectorHint
-        }))
-      }
+          selector_hint: candidate.selectorHint,
+        })),
+      },
     );
   }
 
@@ -348,9 +337,9 @@ async function clickCompanyAction(input: {
   return found.key;
 }
 
-async function extractCompanyPageData(page: Page): Promise<
-  Omit<LinkedInCompanyPage, "follow_state">
-> {
+async function extractCompanyPageData(
+  page: Page,
+): Promise<Omit<LinkedInCompanyPage, "follow_state">> {
   return page.evaluate(() => {
     const normalize = (value: string | null | undefined): string =>
       (value ?? "").replace(/\s+/g, " ").trim();
@@ -372,22 +361,29 @@ async function extractCompanyPageData(page: Page): Promise<
 
     const firstSection = main?.querySelector("section");
     const topLines = (
-      (firstSection as HTMLElement | null)?.innerText ?? firstSection?.textContent ?? ""
+      (firstSection as HTMLElement | null)?.innerText ??
+      firstSection?.textContent ??
+      ""
     )
       .split(/\n+/)
       .map((value) => normalize(value))
       .filter((value) => value.length > 0);
     const summaryLine =
       topLines.find(
-        (line) => /\bfollowers\b/i.test(line) && /\bemployees\b/i.test(line)
+        (line) => /\bfollowers\b/i.test(line) && /\bemployees\b/i.test(line),
       ) ??
       topLines[1] ??
       "";
 
     const overviewSection = Array.from(
-      main?.querySelectorAll("section") ?? []
-    ).find((section) => normalize(section.querySelector("h2, h3")?.textContent) === "Overview");
-    const overview = normalize(overviewSection?.querySelector("p")?.textContent);
+      main?.querySelectorAll("section") ?? [],
+    ).find(
+      (section) =>
+        normalize(section.querySelector("h2, h3")?.textContent) === "Overview",
+    );
+    const overview = normalize(
+      overviewSection?.querySelector("p")?.textContent,
+    );
 
     const detailMap = new Map<string, string[]>();
     for (const dt of Array.from(main?.querySelectorAll("dt") ?? [])) {
@@ -418,9 +414,10 @@ async function extractCompanyPageData(page: Page): Promise<
     const locationPrefix = followerMatch
       ? normalize(summaryLine.slice(0, followerMatch.index))
       : "";
-    const location = industry && locationPrefix.startsWith(industry)
-      ? normalize(locationPrefix.slice(industry.length))
-      : locationPrefix;
+    const location =
+      industry && locationPrefix.startsWith(industry)
+        ? normalize(locationPrefix.slice(industry.length))
+        : locationPrefix;
 
     return {
       company_url: slug
@@ -440,7 +437,7 @@ async function extractCompanyPageData(page: Page): Promise<
       verified_on: detailMap.get("Verified page")?.[0] ?? "",
       headquarters: detailMap.get("Headquarters")?.[0] ?? "",
       specialties: detailMap.get("Specialties")?.[0] ?? "",
-      overview
+      overview,
     };
   });
 }
@@ -448,19 +445,19 @@ async function extractCompanyPageData(page: Page): Promise<
 async function executeFollowCompanyPage(
   runtime: LinkedInCompanyPagesExecutorRuntime,
   actionId: string,
-  target: Record<string, unknown>
+  target: Record<string, unknown>,
 ): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
   const targetCompany = String(target.target_company ?? "");
   const profileName = String(target.profile_name ?? "default");
   const companyUrl = normalizeLinkedInCompanyPageUrl(
-    String(target.company_url ?? targetCompany)
+    String(target.company_url ?? targetCompany),
   );
 
   return runtime.profileManager.runWithContext(
     {
       cdpUrl: runtime.cdpUrl,
       profileName,
-      headless: true
+      headless: true,
     },
     async (context) => {
       const page = await getOrCreatePage(context);
@@ -474,28 +471,28 @@ async function executeFollowCompanyPage(
         targetUrl: companyUrl,
         metadata: {
           target_company: targetCompany,
-          company_url: companyUrl
+          company_url: companyUrl,
         },
         errorDetails: {
           target_company: targetCompany,
-          company_url: companyUrl
+          company_url: companyUrl,
         },
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
             "UNKNOWN",
-            "Failed to execute LinkedIn company follow action."
+            "Failed to execute LinkedIn company follow action.",
           ),
         execute: async () => {
           await page.goto(buildCompanyPageAboutUrl(companyUrl), {
-            waitUntil: "domcontentloaded"
+            waitUntil: "domcontentloaded",
           });
           await waitForNetworkIdleBestEffort(page);
           await waitForCompanyPageReady(page);
 
           const followState = await readCompanyFollowState(
             page,
-            runtime.selectorLocale
+            runtime.selectorLocale,
           );
           if (followState === "following") {
             throw new LinkedInBuddyError(
@@ -503,8 +500,8 @@ async function executeFollowCompanyPage(
               `Already following company "${targetCompany}".`,
               {
                 target_company: targetCompany,
-                company_url: companyUrl
-              }
+                company_url: companyUrl,
+              },
             );
           }
 
@@ -514,13 +511,13 @@ async function executeFollowCompanyPage(
             selectorKeys: "follow",
             actionLabel: "Follow",
             targetCompany,
-            candidateKeyPrefix: "company-follow"
+            candidateKeyPrefix: "company-follow",
           });
 
           const followed = await waitForCondition(async () => {
             const nextState = await readCompanyFollowState(
               page,
-              runtime.selectorLocale
+              runtime.selectorLocale,
             );
             return nextState === "following";
           }, 5_000);
@@ -532,8 +529,8 @@ async function executeFollowCompanyPage(
               {
                 target_company: targetCompany,
                 company_url: companyUrl,
-                follow_selector_key: selectorKey
-              }
+                follow_selector_key: selectorKey,
+              },
             );
           }
 
@@ -543,32 +540,32 @@ async function executeFollowCompanyPage(
               status: "company_followed",
               target_company: targetCompany,
               company_url: companyUrl,
-              follow_selector_key: selectorKey
+              follow_selector_key: selectorKey,
             },
-            artifacts: []
+            artifacts: [],
           };
-        }
+        },
       });
-    }
+    },
   );
 }
 
 async function executeUnfollowCompanyPage(
   runtime: LinkedInCompanyPagesExecutorRuntime,
   actionId: string,
-  target: Record<string, unknown>
+  target: Record<string, unknown>,
 ): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
   const targetCompany = String(target.target_company ?? "");
   const profileName = String(target.profile_name ?? "default");
   const companyUrl = normalizeLinkedInCompanyPageUrl(
-    String(target.company_url ?? targetCompany)
+    String(target.company_url ?? targetCompany),
   );
 
   return runtime.profileManager.runWithContext(
     {
       cdpUrl: runtime.cdpUrl,
       profileName,
-      headless: true
+      headless: true,
     },
     async (context) => {
       const page = await getOrCreatePage(context);
@@ -582,28 +579,28 @@ async function executeUnfollowCompanyPage(
         targetUrl: companyUrl,
         metadata: {
           target_company: targetCompany,
-          company_url: companyUrl
+          company_url: companyUrl,
         },
         errorDetails: {
           target_company: targetCompany,
-          company_url: companyUrl
+          company_url: companyUrl,
         },
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
             "UNKNOWN",
-            "Failed to execute LinkedIn company unfollow action."
+            "Failed to execute LinkedIn company unfollow action.",
           ),
         execute: async () => {
           await page.goto(buildCompanyPageAboutUrl(companyUrl), {
-            waitUntil: "domcontentloaded"
+            waitUntil: "domcontentloaded",
           });
           await waitForNetworkIdleBestEffort(page);
           await waitForCompanyPageReady(page);
 
           const followState = await readCompanyFollowState(
             page,
-            runtime.selectorLocale
+            runtime.selectorLocale,
           );
           if (followState === "not_following") {
             throw new LinkedInBuddyError(
@@ -611,8 +608,8 @@ async function executeUnfollowCompanyPage(
               `Already not following company "${targetCompany}".`,
               {
                 target_company: targetCompany,
-                company_url: companyUrl
-              }
+                company_url: companyUrl,
+              },
             );
           }
 
@@ -622,13 +619,13 @@ async function executeUnfollowCompanyPage(
             selectorKeys: "following",
             actionLabel: "Unfollow",
             targetCompany,
-            candidateKeyPrefix: "company-unfollow"
+            candidateKeyPrefix: "company-unfollow",
           });
 
           const unfollowed = await waitForCondition(async () => {
             const nextState = await readCompanyFollowState(
               page,
-              runtime.selectorLocale
+              runtime.selectorLocale,
             );
             return nextState === "not_following";
           }, 5_000);
@@ -640,8 +637,8 @@ async function executeUnfollowCompanyPage(
               {
                 target_company: targetCompany,
                 company_url: companyUrl,
-                unfollow_selector_key: selectorKey
-              }
+                unfollow_selector_key: selectorKey,
+              },
             );
           }
 
@@ -651,41 +648,37 @@ async function executeUnfollowCompanyPage(
               status: "company_unfollowed",
               target_company: targetCompany,
               company_url: companyUrl,
-              unfollow_selector_key: selectorKey
+              unfollow_selector_key: selectorKey,
             },
-            artifacts: []
+            artifacts: [],
           };
-        }
+        },
       });
-    }
+    },
   );
 }
 
-export class FollowCompanyPageActionExecutor
-  implements ActionExecutor<LinkedInCompanyPagesExecutorRuntime>
-{
+export class FollowCompanyPageActionExecutor implements ActionExecutor<LinkedInCompanyPagesExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInCompanyPagesExecutorRuntime>
+    input: ActionExecutorInput<LinkedInCompanyPagesExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const { result, artifacts } = await executeFollowCompanyPage(
       input.runtime,
       input.action.id,
-      input.action.target
+      input.action.target,
     );
     return { ok: true, result, artifacts };
   }
 }
 
-export class UnfollowCompanyPageActionExecutor
-  implements ActionExecutor<LinkedInCompanyPagesExecutorRuntime>
-{
+export class UnfollowCompanyPageActionExecutor implements ActionExecutor<LinkedInCompanyPagesExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInCompanyPagesExecutorRuntime>
+    input: ActionExecutorInput<LinkedInCompanyPagesExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const { result, artifacts } = await executeUnfollowCompanyPage(
       input.runtime,
       input.action.id,
-      input.action.target
+      input.action.target,
     );
     return { ok: true, result, artifacts };
   }
@@ -697,7 +690,8 @@ export function createCompanyPageActionExecutors(): Record<
 > {
   return {
     [FOLLOW_COMPANY_PAGE_ACTION_TYPE]: new FollowCompanyPageActionExecutor(),
-    [UNFOLLOW_COMPANY_PAGE_ACTION_TYPE]: new UnfollowCompanyPageActionExecutor()
+    [UNFOLLOW_COMPANY_PAGE_ACTION_TYPE]:
+      new UnfollowCompanyPageActionExecutor(),
   };
 }
 
@@ -721,7 +715,7 @@ export class LinkedInCompanyPagesService {
     if (!targetCompany) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        "targetCompany is required."
+        "targetCompany is required.",
       );
     }
 
@@ -729,7 +723,7 @@ export class LinkedInCompanyPagesService {
     const target = {
       profile_name: profileName,
       target_company: targetCompany,
-      company_url: companyUrl
+      company_url: companyUrl,
     };
 
     return this.runtime.twoPhaseCommit.prepare({
@@ -738,20 +732,22 @@ export class LinkedInCompanyPagesService {
       payload: {},
       preview: {
         summary: input.summary,
-        target
+        target,
       },
-      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
     });
   }
 
-  async viewCompanyPage(input: ViewCompanyPageInput): Promise<LinkedInCompanyPage> {
+  async viewCompanyPage(
+    input: ViewCompanyPageInput,
+  ): Promise<LinkedInCompanyPage> {
     const profileName = input.profileName ?? "default";
     const companyUrl = normalizeLinkedInCompanyPageUrl(input.target);
     const aboutUrl = buildCompanyPageAboutUrl(companyUrl);
 
     await this.runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: this.runtime.cdpUrl
+      cdpUrl: this.runtime.cdpUrl,
     });
 
     try {
@@ -759,7 +755,7 @@ export class LinkedInCompanyPagesService {
         {
           cdpUrl: this.runtime.cdpUrl,
           profileName,
-          headless: true
+          headless: true,
         },
         async (context) => {
           const page = await getOrCreatePage(context);
@@ -770,21 +766,21 @@ export class LinkedInCompanyPagesService {
           const company = await extractCompanyPageData(page);
           const followState = await readCompanyFollowState(
             page,
-            this.runtime.selectorLocale
+            this.runtime.selectorLocale,
           );
 
           return {
             ...company,
             company_url: normalizeLinkedInCompanyPageUrl(
-              company.company_url || companyUrl
+              company.company_url || companyUrl,
             ),
             about_url: buildCompanyPageAboutUrl(
-              company.company_url || companyUrl
+              company.company_url || companyUrl,
             ),
             slug: company.slug ?? extractCompanySlug(companyUrl),
-            follow_state: followState
+            follow_state: followState,
           };
-        }
+        },
       );
     } catch (error) {
       if (error instanceof LinkedInBuddyError) {
@@ -793,7 +789,7 @@ export class LinkedInCompanyPagesService {
       throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
-        "Failed to view LinkedIn company page."
+        "Failed to view LinkedIn company page.",
       );
     }
   }
@@ -809,7 +805,7 @@ export class LinkedInCompanyPagesService {
       operatorNote: input.operatorNote,
       profileName: input.profileName,
       targetCompany: input.targetCompany,
-      summary: `Follow company ${normalizeText(input.targetCompany)}`
+      summary: `Follow company ${normalizeText(input.targetCompany)}`,
     });
   }
 
@@ -824,7 +820,7 @@ export class LinkedInCompanyPagesService {
       operatorNote: input.operatorNote,
       profileName: input.profileName,
       targetCompany: input.targetCompany,
-      summary: `Unfollow company ${normalizeText(input.targetCompany)}`
+      summary: `Unfollow company ${normalizeText(input.targetCompany)}`,
     });
   }
 }
