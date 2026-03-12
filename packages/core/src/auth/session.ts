@@ -137,6 +137,13 @@ const CAPTCHA_DIAGNOSTIC_SELECTORS = [
   "#captcha",
 ] as const;
 
+function splitSelectorCandidates(selectorList: string): string[] {
+  return selectorList
+    .split(",")
+    .map((selector) => selector.trim())
+    .filter((selector) => selector.length > 0);
+}
+
 async function detectVisibleSelectorCandidate(
   page: Page,
   selectors: readonly string[],
@@ -534,12 +541,36 @@ export class LinkedInAuthService {
 
         await dismissCookieConsentBanner(page);
 
+        const emailSelectorCandidates = splitSelectorCandidates(
+          LINKEDIN_LOGIN_EMAIL_INPUT_SELECTOR,
+        );
+        const passwordSelectorCandidates = splitSelectorCandidates(
+          LINKEDIN_LOGIN_PASSWORD_INPUT_SELECTOR,
+        );
+
         const emailInputVisible = await page
           .locator(LINKEDIN_LOGIN_EMAIL_INPUT_SELECTOR)
           .first()
           .waitFor({ state: "visible", timeout: 8_000 })
           .then(() => true)
           .catch(() => false);
+
+        if (emailInputVisible) {
+          const emailSelectorMatch = await detectVisibleSelectorCandidate(
+            page,
+            emailSelectorCandidates,
+          );
+          if (emailSelectorMatch && emailSelectorMatch.index > 0) {
+            this.logger?.log(
+              "info",
+              "auth.session.login.email_selector_fallback",
+              {
+                fallback_index: emailSelectorMatch.index,
+                matched_selector: emailSelectorMatch.selector,
+              },
+            );
+          }
+        }
 
         if (!emailInputVisible) {
           // LinkedIn "returning user" variant: the email field is a hidden
@@ -552,6 +583,24 @@ export class LinkedInAuthService {
             .first()
             .isVisible({ timeout: 3_000 })
             .catch(() => false);
+
+          if (passwordVisible) {
+            const passwordSelectorMatch = await detectVisibleSelectorCandidate(
+              page,
+              passwordSelectorCandidates,
+            );
+            if (passwordSelectorMatch && passwordSelectorMatch.index > 0) {
+              this.logger?.log(
+                "info",
+                "auth.session.login.password_selector_fallback",
+                {
+                  fallback_index: passwordSelectorMatch.index,
+                  matched_selector: passwordSelectorMatch.selector,
+                  returning_user_variant: true,
+                },
+              );
+            }
+          }
 
           if (!passwordVisible) {
             await context.clearCookies({ domain: ".linkedin.com" });

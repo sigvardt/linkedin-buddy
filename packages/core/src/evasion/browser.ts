@@ -1,3 +1,4 @@
+import { debuglog } from "node:util";
 import type { Page } from "playwright-core";
 import { computeMomentumSteps } from "./math.js";
 import {
@@ -12,7 +13,7 @@ import {
   MIN_SCROLL_STEPS,
   clamp,
   isFiniteNumber,
-  normalizeFiniteNumber
+  normalizeFiniteNumber,
 } from "./shared.js";
 import type { EvasionLevel } from "./types.js";
 
@@ -37,6 +38,8 @@ type ScrollInstruction = {
   behavior: ScrollBehavior;
 };
 
+const evasionDebugLog = debuglog("linkedin-evasion");
+
 /**
  * Apply navigator and canvas fingerprint hardening to `page` by injecting
  * JavaScript into the current page context.
@@ -60,7 +63,7 @@ type ScrollInstruction = {
  */
 export async function applyFingerprintHardening(
   page: Page,
-  level: EvasionLevel = "moderate"
+  level: EvasionLevel = "moderate",
 ): Promise<void> {
   if (level === "minimal") {
     return;
@@ -90,14 +93,16 @@ export async function applyFingerprintHardening(
 export async function simulateMomentumScroll(
   page: Page,
   pixels: number,
-  steps = 6
+  steps = 6,
 ): Promise<void> {
   const safePixels = normalizeFiniteNumber(pixels, 0);
   if (safePixels === 0) {
     return;
   }
 
-  const totalSteps = Math.round(clamp(steps, MIN_SCROLL_STEPS, MAX_SCROLL_STEPS));
+  const totalSteps = Math.round(
+    clamp(steps, MIN_SCROLL_STEPS, MAX_SCROLL_STEPS),
+  );
   for (const amount of computeMomentumSteps(safePixels, totalSteps)) {
     if (amount === 0) {
       continue;
@@ -128,13 +133,15 @@ export async function simulateIdleDrift(
   currentX: number,
   currentY: number,
   driftCount = 3,
-  radius = 5
+  radius = 5,
 ): Promise<void> {
   const basePoint: MousePoint = {
     x: normalizeFiniteNumber(currentX, 0),
-    y: normalizeFiniteNumber(currentY, 0)
+    y: normalizeFiniteNumber(currentY, 0),
   };
-  const clampedCount = Math.round(clamp(driftCount, MIN_DRIFT_COUNT, MAX_DRIFT_COUNT));
+  const clampedCount = Math.round(
+    clamp(driftCount, MIN_DRIFT_COUNT, MAX_DRIFT_COUNT),
+  );
   const clampedRadius = clamp(radius, 0, MAX_DRIFT_RADIUS_PX);
   const viewportBounds = resolveViewportBounds(page);
 
@@ -144,9 +151,9 @@ export async function simulateIdleDrift(
     const targetPoint = clampPointToViewport(
       {
         x: basePoint.x + Math.cos(angle) * distance,
-        y: basePoint.y + Math.sin(angle) * distance
+        y: basePoint.y + Math.sin(angle) * distance,
       },
-      viewportBounds
+      viewportBounds,
     );
 
     const moved = await safeMouseMove(page, targetPoint, 1);
@@ -174,8 +181,13 @@ export async function simulateIdleDrift(
  * await simulateTabBlur(page, 1_500);
  * ```
  */
-export async function simulateTabBlur(page: Page, blurDurationMs = 2_000): Promise<void> {
-  const duration = Math.round(clamp(blurDurationMs, MIN_BLUR_DURATION_MS, MAX_BLUR_DURATION_MS));
+export async function simulateTabBlur(
+  page: Page,
+  blurDurationMs = 2_000,
+): Promise<void> {
+  const duration = Math.round(
+    clamp(blurDurationMs, MIN_BLUR_DURATION_MS, MAX_BLUR_DURATION_MS),
+  );
 
   await dispatchWindowEvents(page, ["blur", "visibilitychange"]);
   await safeWaitForTimeout(page, duration);
@@ -215,7 +227,13 @@ export async function simulateViewportJitter(page: Page): Promise<void> {
  * ```
  */
 export async function detectCaptcha(page: Page): Promise<boolean> {
-  return (await findMatchingSelectors(page, CAPTCHA_SELECTORS, true)).length > 0;
+  const matches = await findMatchingSelectors(page, CAPTCHA_SELECTORS, true);
+  const matchedSelector = matches[0] ?? null;
+  if (matchedSelector) {
+    evasionDebugLog("detectCaptcha matched selector: %s", matchedSelector);
+  }
+
+  return matchedSelector !== null;
 }
 
 /**
@@ -232,7 +250,9 @@ export async function detectCaptcha(page: Page): Promise<boolean> {
  * const selectors = await findHoneypotFields(page);
  * ```
  */
-export async function findHoneypotFields(page: Page): Promise<readonly string[]> {
+export async function findHoneypotFields(
+  page: Page,
+): Promise<readonly string[]> {
   return findMatchingSelectors(page, HONEYPOT_SELECTORS);
 }
 
@@ -247,7 +267,7 @@ export async function findHoneypotFields(page: Page): Promise<readonly string[]>
 export async function scrollPageBy(
   page: Page,
   pixels: number,
-  behavior: ScrollBehavior = "auto"
+  behavior: ScrollBehavior = "auto",
 ): Promise<void> {
   const safePixels = normalizeFiniteNumber(pixels, 0);
   if (safePixels === 0) {
@@ -256,7 +276,7 @@ export async function scrollPageBy(
 
   const scrollInstruction: ScrollInstruction = {
     top: safePixels,
-    behavior: behavior === "smooth" ? "smooth" : "auto"
+    behavior: behavior === "smooth" ? "smooth" : "auto",
   };
   await safeEvaluate(page, executeScrollBy, scrollInstruction);
 }
@@ -272,7 +292,10 @@ async function applyCanvasNoise(page: Page, salt: number): Promise<void> {
   await safeEvaluate(page, installCanvasNoise, safeSalt);
 }
 
-async function dispatchWindowEvents(page: Page, eventNames: readonly string[]): Promise<void> {
+async function dispatchWindowEvents(
+  page: Page,
+  eventNames: readonly string[],
+): Promise<void> {
   if (eventNames.length === 0) {
     return;
   }
@@ -283,7 +306,7 @@ async function dispatchWindowEvents(page: Page, eventNames: readonly string[]): 
 async function findMatchingSelectors(
   page: Page,
   selectors: readonly string[],
-  stopAfterFirstMatch = false
+  stopAfterFirstMatch = false,
 ): Promise<string[]> {
   const matches: string[] = [];
 
@@ -307,16 +330,29 @@ async function selectorMatches(page: Page, selector: string): Promise<boolean> {
   }
 }
 
-async function waitWithRandomJitter(page: Page, baseMs: number, jitterMs: number): Promise<void> {
+async function waitWithRandomJitter(
+  page: Page,
+  baseMs: number,
+  jitterMs: number,
+): Promise<void> {
   const safeBaseMs = Math.max(0, Math.round(normalizeFiniteNumber(baseMs, 0)));
-  const safeJitterMs = Math.max(0, Math.round(normalizeFiniteNumber(jitterMs, 0)));
+  const safeJitterMs = Math.max(
+    0,
+    Math.round(normalizeFiniteNumber(jitterMs, 0)),
+  );
   const delayMs = safeBaseMs + Math.floor(Math.random() * (safeJitterMs + 1));
 
   await safeWaitForTimeout(page, delayMs);
 }
 
-async function safeWaitForTimeout(page: Page, delayMs: number): Promise<boolean> {
-  const safeDelayMs = Math.max(0, Math.round(normalizeFiniteNumber(delayMs, 0)));
+async function safeWaitForTimeout(
+  page: Page,
+  delayMs: number,
+): Promise<boolean> {
+  const safeDelayMs = Math.max(
+    0,
+    Math.round(normalizeFiniteNumber(delayMs, 0)),
+  );
 
   try {
     await page.waitForTimeout(safeDelayMs);
@@ -326,7 +362,11 @@ async function safeWaitForTimeout(page: Page, delayMs: number): Promise<boolean>
   }
 }
 
-async function safeMouseMove(page: Page, point: Readonly<MousePoint>, steps: number): Promise<boolean> {
+async function safeMouseMove(
+  page: Page,
+  point: Readonly<MousePoint>,
+  steps: number,
+): Promise<boolean> {
   try {
     await page.mouse.move(point.x, point.y, { steps });
     return true;
@@ -335,9 +375,15 @@ async function safeMouseMove(page: Page, point: Readonly<MousePoint>, steps: num
   }
 }
 
-async function safeAddInitScript(page: Page, callback: unknown, arg?: unknown): Promise<boolean> {
+async function safeAddInitScript(
+  page: Page,
+  callback: unknown,
+  arg?: unknown,
+): Promise<boolean> {
   const pageWithInitScript = page as PageWithInitScript;
-  const addInitScript = pageWithInitScript.addInitScript as PageScriptInvoker | undefined;
+  const addInitScript = pageWithInitScript.addInitScript as
+    | PageScriptInvoker
+    | undefined;
   if (typeof addInitScript !== "function") {
     return false;
   }
@@ -350,7 +396,11 @@ async function safeAddInitScript(page: Page, callback: unknown, arg?: unknown): 
   }
 }
 
-async function safeEvaluate(page: Page, callback: unknown, arg?: unknown): Promise<boolean> {
+async function safeEvaluate(
+  page: Page,
+  callback: unknown,
+  arg?: unknown,
+): Promise<boolean> {
   const evaluate = page.evaluate as unknown as PageScriptInvoker;
 
   try {
@@ -375,7 +425,7 @@ function resolveViewportBounds(page: Page): ViewportBounds | null {
 
     return {
       width: Math.max(0, viewportSize.width),
-      height: Math.max(0, viewportSize.height)
+      height: Math.max(0, viewportSize.height),
     };
   } catch {
     return null;
@@ -393,18 +443,18 @@ function isViewportSize(value: unknown): value is ViewportBounds {
 
 function clampPointToViewport(
   point: Readonly<MousePoint>,
-  viewportBounds: ViewportBounds | null
+  viewportBounds: ViewportBounds | null,
 ): MousePoint {
   if (viewportBounds === null) {
     return {
       x: normalizeFiniteNumber(point.x, 0),
-      y: normalizeFiniteNumber(point.y, 0)
+      y: normalizeFiniteNumber(point.y, 0),
     };
   }
 
   return {
     x: clamp(point.x, 0, viewportBounds.width),
-    y: clamp(point.y, 0, viewportBounds.height)
+    y: clamp(point.y, 0, viewportBounds.height),
   };
 }
 
@@ -429,7 +479,7 @@ function installWebdriverHardening(): void {
 
     Object.defineProperty(navigatorObject, "webdriver", {
       get: () => undefined,
-      configurable: true
+      configurable: true,
     });
     state["webdriverApplied"] = true;
   } catch {
@@ -462,7 +512,9 @@ function installCanvasNoise(noiseSalt: number): void {
     }
 
     const safeNoiseSalt =
-      typeof noiseSalt === "number" && Number.isFinite(noiseSalt) ? noiseSalt : 0;
+      typeof noiseSalt === "number" && Number.isFinite(noiseSalt)
+        ? noiseSalt
+        : 0;
     canvasState["salt"] = Math.round(safeNoiseSalt) & 255;
 
     const contextConstructor = globalRecord["CanvasRenderingContext2D"];
@@ -470,7 +522,9 @@ function installCanvasNoise(noiseSalt: number): void {
       return;
     }
 
-    const prototype = (contextConstructor as { prototype: Record<string, unknown> }).prototype;
+    const prototype = (
+      contextConstructor as { prototype: Record<string, unknown> }
+    ).prototype;
     const originalGetImageData = prototype["getImageData"];
     if (typeof originalGetImageData !== "function") {
       return;
@@ -485,7 +539,7 @@ function installCanvasNoise(noiseSalt: number): void {
       sx: number,
       sy: number,
       sw: number,
-      sh: number
+      sh: number,
     ) => { data?: { length?: number; [index: number]: number | undefined } };
 
     prototype["getImageData"] = function (
@@ -493,10 +547,12 @@ function installCanvasNoise(noiseSalt: number): void {
       sx: number,
       sy: number,
       sw: number,
-      sh: number
+      sh: number,
     ): unknown {
       const imageData = typedGetImageData.call(this, sx, sy, sw, sh);
-      const imageDataRecord = imageData as { data?: { length?: number; [index: number]: number | undefined } };
+      const imageDataRecord = imageData as {
+        data?: { length?: number; [index: number]: number | undefined };
+      };
       const data = imageDataRecord.data;
       if (data && typeof data.length === "number" && data.length > 0) {
         const rawActiveSalt = canvasState["salt"];
@@ -517,7 +573,10 @@ function installCanvasNoise(noiseSalt: number): void {
 
 function executeScrollBy(instruction: ScrollInstruction): void {
   try {
-    globalThis.scrollBy({ top: instruction.top, behavior: instruction.behavior });
+    globalThis.scrollBy({
+      top: instruction.top,
+      behavior: instruction.behavior,
+    });
   } catch {
     // Browser scrolling unavailable; skip.
   }

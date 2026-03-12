@@ -1451,9 +1451,8 @@ export function normalizeLinkedInProfileUrl(target: string): string {
       : `${parsedUrl.pathname}/`;
 
     return `${parsedUrl.origin}${pathname}`;
-  } catch (error) {
-    throw asLinkedInBuddyError(
-      error,
+  } catch {
+    throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "Profile URL normalization failed.",
       {
@@ -3698,7 +3697,7 @@ async function getTopCardRoot(page: Page): Promise<Locator> {
   if (!resolved) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      "Could not find the profile top card on the profile page.",
+      "Could not find the profile top card on the profile page. This can happen when the self-profile intro is blank; navigation may still have succeeded.",
     );
   }
 
@@ -4106,7 +4105,13 @@ async function openIntroEditSurface(
 
   throw new LinkedInBuddyError(
     "TARGET_NOT_FOUND",
-    "Could not open the intro editor after clicking the edit control.",
+    `Could not open the intro editor after clicking the edit control. Tried page root selectors: ${PROFILE_INTRO_EDITOR_SURFACE_SELECTORS.pageRootSelectors.join(", ")}; dialog selector: ${PROFILE_DIALOG_ROOT_SELECTOR}.`,
+    {
+      attempted_surface_selectors: [
+        ...PROFILE_INTRO_EDITOR_SURFACE_SELECTORS.pageRootSelectors,
+        PROFILE_DIALOG_ROOT_SELECTOR,
+      ],
+    },
   );
 }
 
@@ -4522,6 +4527,46 @@ async function fillSplitProfileIntroLocationField(
   return updatedField;
 }
 
+async function readProfileEditorDialogState(
+  dialog: Locator,
+): Promise<{ visible: boolean; control_count: number }> {
+  const visible = await dialog.isVisible().catch(() => false);
+  const controlCount = await dialog
+    .locator("input, textarea, select, [role='textbox'], [role='combobox']")
+    .count()
+    .catch(() => 0);
+
+  return {
+    visible,
+    control_count: controlCount,
+  };
+}
+
+async function readLocationFieldSplitState(dialog: Locator): Promise<{
+  city_field_found: boolean;
+  country_field_found: boolean;
+  single_location_field_found: boolean;
+}> {
+  const cityField = await findDialogFieldLocatorByDefinition(
+    dialog,
+    PROFILE_INTRO_LOCATION_CITY_FIELD_DEFINITION,
+  );
+  const countryField = await findDialogFieldLocatorByDefinition(
+    dialog,
+    PROFILE_INTRO_LOCATION_COUNTRY_FIELD_DEFINITION,
+  );
+  const locationField = await findDialogFieldLocatorByDefinition(
+    dialog,
+    PROFILE_INTRO_LOCATION_FIELD_DEFINITION,
+  );
+
+  return {
+    city_field_found: cityField !== null,
+    country_field_found: countryField !== null,
+    single_location_field_found: locationField !== null,
+  };
+}
+
 async function fillDialogField(
   page: Page,
   dialog: Locator,
@@ -4530,9 +4575,39 @@ async function fillDialogField(
 ): Promise<void> {
   const locator = await waitForDialogFieldLocator(dialog, definition, 10_000);
   if (!locator) {
+    const fieldLabel = definition.aliases[0] ?? definition.key;
+    const dialogState = await readProfileEditorDialogState(dialog);
+    const stringValue = String(value);
+    const splitExpectation =
+      definition.key === "location"
+        ? splitProfileIntroLocationValue(stringValue)
+        : null;
+    const splitState =
+      definition.key === "location"
+        ? await readLocationFieldSplitState(dialog)
+        : null;
+
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      `Could not find the "${definition.key}" field in the profile editor.`,
+      `Could not find the "${definition.key}" field (label: "${fieldLabel}") in the profile editor. Dialog state: visible=${dialogState.visible}, controls=${dialogState.control_count}.${
+        splitExpectation && splitExpectation.countryOrRegion
+          ? ` Location split expected city="${splitExpectation.city}" and countryOrRegion="${splitExpectation.countryOrRegion}" but found cityField=${splitState?.city_field_found ?? false}, countryField=${splitState?.country_field_found ?? false}, singleLocationField=${splitState?.single_location_field_found ?? false}.`
+          : ""
+      }`,
+      {
+        field_key: definition.key,
+        field_label: fieldLabel,
+        dialog_state: dialogState,
+        ...(splitExpectation && splitExpectation.countryOrRegion
+          ? {
+              location_split_expected: {
+                city: splitExpectation.city,
+                country_or_region: splitExpectation.countryOrRegion,
+              },
+              location_split_found: splitState,
+            }
+          : {}),
+      },
     );
   }
 
