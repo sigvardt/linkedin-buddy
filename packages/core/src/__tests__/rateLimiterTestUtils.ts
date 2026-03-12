@@ -1,22 +1,32 @@
 import { vi } from "vitest";
-import type { ConsumeRateLimitInput, RateLimiterState } from "../rateLimiter.js";
+import type {
+  ConsumeRateLimitInput,
+  RateLimiterState,
+} from "../rateLimiter.js";
 
 export function createRateLimitState(
   input: ConsumeRateLimitInput,
-  overrides: Partial<RateLimiterState> = {}
+  overrides: Partial<RateLimiterState> = {},
 ): RateLimiterState {
   const count = overrides.count ?? 0;
   const limit = overrides.limit ?? input.limit;
   const remaining = overrides.remaining ?? Math.max(0, limit - count);
+  const windowStartMs = overrides.windowStartMs ?? 0;
+  const windowSizeMs = overrides.windowSizeMs ?? input.windowSizeMs;
+  const windowEndsAtMs =
+    overrides.windowEndsAtMs ?? windowStartMs + windowSizeMs;
+  const retryAfterMs = overrides.retryAfterMs ?? windowSizeMs;
 
   return {
     counterKey: overrides.counterKey ?? input.counterKey,
-    windowStartMs: overrides.windowStartMs ?? 0,
-    windowSizeMs: overrides.windowSizeMs ?? input.windowSizeMs,
+    windowStartMs,
+    windowSizeMs,
     count,
     limit,
     remaining,
-    allowed: overrides.allowed ?? count < limit
+    allowed: overrides.allowed ?? count < limit,
+    windowEndsAtMs,
+    retryAfterMs,
   };
 }
 
@@ -27,9 +37,9 @@ export function createAllowedRateLimiterStub() {
       createRateLimitState(input, {
         count: 1,
         remaining: Math.max(0, input.limit - 1),
-        allowed: true
-      })
-    )
+        allowed: true,
+      }),
+    ),
   };
 }
 
@@ -39,15 +49,15 @@ export function createBlockedRateLimiterStub() {
       createRateLimitState(input, {
         count: input.limit,
         remaining: 0,
-        allowed: false
-      })
+        allowed: false,
+      }),
     ),
     consume: vi.fn((input: ConsumeRateLimitInput) =>
       createRateLimitState(input, {
         count: input.limit + 1,
         remaining: 0,
-        allowed: false
-      })
-    )
+        allowed: false,
+      }),
+    ),
   };
 }

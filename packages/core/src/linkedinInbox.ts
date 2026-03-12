@@ -31,10 +31,14 @@ import {
 } from "./linkedinFeed.js";
 import type { LinkedInSearchResult, LinkedInSearchService } from "./linkedinSearch.js";
 import type { ProfileManager } from "./profileManager.js";
+import {
+  consumeRateLimitOrThrow,
+  createConfirmRateLimitMessage,
+  formatRateLimitState
+} from "./rateLimiter.js";
 import type {
   ConsumeRateLimitInput,
-  RateLimiter,
-  RateLimiterState
+  RateLimiter
 } from "./rateLimiter.js";
 import type {
   LinkedInSelectorLocale,
@@ -1240,20 +1244,6 @@ function toAutomationError(
   }
 
   return asLinkedInBuddyError(error, "UNKNOWN", message);
-}
-
-function formatRateLimitState(
-  state: RateLimiterState
-): Record<string, number | boolean | string> {
-  return {
-    counter_key: state.counterKey,
-    window_start_ms: state.windowStartMs,
-    window_size_ms: state.windowSizeMs,
-    count: state.count,
-    limit: state.limit,
-    remaining: state.remaining,
-    allowed: state.allowed
-  };
 }
 
 async function getOrCreatePage(context: BrowserContext): Promise<Page> {
@@ -3442,18 +3432,14 @@ export class LinkedInInboxService {
         async (context) => {
           const page = await getOrCreatePage(context);
           const artifactPaths: string[] = [];
-          const rateLimitState = this.runtime.rateLimiter.consume(input.rateLimitConfig);
-          if (!rateLimitState.allowed) {
-            throw new LinkedInBuddyError(
-              "RATE_LIMITED",
-              `LinkedIn ${input.actionType} is rate limited for the current window.`,
-              {
-                profile_name: input.profileName,
-                thread_url: threadUrl,
-                rate_limit: formatRateLimitState(rateLimitState)
-              }
-            );
-          }
+          const rateLimitState = consumeRateLimitOrThrow(this.runtime.rateLimiter, {
+            config: input.rateLimitConfig,
+            message: createConfirmRateLimitMessage(input.actionType),
+            details: {
+              profile_name: input.profileName,
+              thread_url: threadUrl
+            }
+          });
 
           const mutation = await executeThreadMenuMutation({
             actionType: input.actionType,
@@ -3648,21 +3634,15 @@ class SendMessageActionExecutor
             const detail = await extractThreadDetailWithNetwork(page, threadUrl, 20);
             validateThreadTarget(action, detail, page.url());
 
-            const rateLimitState = runtime.rateLimiter.consume(
-              SEND_MESSAGE_RATE_LIMIT_CONFIG
-            );
-            if (!rateLimitState.allowed) {
-              throw new LinkedInBuddyError(
-                "RATE_LIMITED",
-                "LinkedIn send_message confirm is rate limited for the current window.",
-                {
-                  action_id: action.id,
-                  profile_name: profileName,
-                  thread_url: threadUrl,
-                  rate_limit: formatRateLimitState(rateLimitState)
-                }
-              );
-            }
+            consumeRateLimitOrThrow(runtime.rateLimiter, {
+              config: SEND_MESSAGE_RATE_LIMIT_CONFIG,
+              message: createConfirmRateLimitMessage(SEND_MESSAGE_ACTION_TYPE),
+              details: {
+                action_id: action.id,
+                profile_name: profileName,
+                thread_url: threadUrl
+              }
+            });
 
             await fillAndSendMessage({
               actionId: action.id,
@@ -3758,21 +3738,15 @@ class SendNewThreadActionExecutor
             ),
           execute: async () => {
             const artifactPaths: string[] = [];
-            const rateLimitState = runtime.rateLimiter.consume(
-              SEND_MESSAGE_RATE_LIMIT_CONFIG
-            );
-            if (!rateLimitState.allowed) {
-              throw new LinkedInBuddyError(
-                "RATE_LIMITED",
-                "LinkedIn new-thread send confirm is rate limited for the current window.",
-                {
-                  action_id: action.id,
-                  profile_name: profileName,
-                  recipient_count: recipients.length,
-                  rate_limit: formatRateLimitState(rateLimitState)
-                }
-              );
-            }
+            consumeRateLimitOrThrow(runtime.rateLimiter, {
+              config: SEND_MESSAGE_RATE_LIMIT_CONFIG,
+              message: createConfirmRateLimitMessage(SEND_NEW_THREAD_ACTION_TYPE),
+              details: {
+                action_id: action.id,
+                profile_name: profileName,
+                recipient_count: recipients.length
+              }
+            });
 
             if (recipients.length === 1 && recipients[0]) {
               await openProfileMessageComposer({
@@ -3892,22 +3866,16 @@ class AddRecipientsActionExecutor
             const detail = await extractThreadDetailWithNetwork(page, threadUrl, 20);
             validateThreadTarget(action, detail, page.url());
 
-            const rateLimitState = runtime.rateLimiter.consume(
-              ADD_RECIPIENTS_RATE_LIMIT_CONFIG
-            );
-            if (!rateLimitState.allowed) {
-              throw new LinkedInBuddyError(
-                "RATE_LIMITED",
-                "LinkedIn add_recipients confirm is rate limited for the current window.",
-                {
-                  action_id: action.id,
-                  profile_name: profileName,
-                  recipient_count: recipients.length,
-                  thread_url: threadUrl,
-                  rate_limit: formatRateLimitState(rateLimitState)
-                }
-              );
-            }
+            consumeRateLimitOrThrow(runtime.rateLimiter, {
+              config: ADD_RECIPIENTS_RATE_LIMIT_CONFIG,
+              message: createConfirmRateLimitMessage(ADD_RECIPIENTS_ACTION_TYPE),
+              details: {
+                action_id: action.id,
+                profile_name: profileName,
+                recipient_count: recipients.length,
+                thread_url: threadUrl
+              }
+            });
 
             await openAddRecipientsFlow({
               artifactPaths,
@@ -4024,21 +3992,15 @@ class ReactMessageActionExecutor
             const detail = await extractThreadDetailWithNetwork(page, threadUrl, 20);
             validateThreadTarget(action, detail, page.url());
 
-            const rateLimitState = runtime.rateLimiter.consume(
-              REACT_MESSAGE_RATE_LIMIT_CONFIG
-            );
-            if (!rateLimitState.allowed) {
-              throw new LinkedInBuddyError(
-                "RATE_LIMITED",
-                "LinkedIn inbox reactions are rate limited for the current window.",
-                {
-                  action_id: action.id,
-                  profile_name: profileName,
-                  thread_url: threadUrl,
-                  rate_limit: formatRateLimitState(rateLimitState)
-                }
-              );
-            }
+            const rateLimitState = consumeRateLimitOrThrow(runtime.rateLimiter, {
+              config: REACT_MESSAGE_RATE_LIMIT_CONFIG,
+              message: createConfirmRateLimitMessage(REACT_MESSAGE_ACTION_TYPE),
+              details: {
+                action_id: action.id,
+                profile_name: profileName,
+                thread_url: threadUrl
+              }
+            });
 
             const artifactPaths: string[] = [];
             const reactionResult = await executeThreadReaction({

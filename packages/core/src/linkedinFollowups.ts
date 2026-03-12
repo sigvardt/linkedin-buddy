@@ -2,42 +2,43 @@ import {
   errors as playwrightErrors,
   type BrowserContext,
   type Locator,
-  type Page
+  type Page,
 } from "playwright-core";
 import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
 import type {
   AssistantDatabase,
   PreparedActionRow,
-  SentInvitationStateRow
+  SentInvitationStateRow,
 } from "./db/database.js";
-import {
-  LinkedInBuddyError,
-  asLinkedInBuddyError
-} from "./errors.js";
+import { LinkedInBuddyError, asLinkedInBuddyError } from "./errors.js";
 import {
   SEND_MESSAGE_RATE_LIMIT_CONFIG,
-  type LinkedInMessagingRuntime
+  type LinkedInMessagingRuntime,
 } from "./linkedinInbox.js";
-import {
-  normalizeLinkedInProfileUrl
-} from "./linkedinProfile.js";
+import { normalizeLinkedInProfileUrl } from "./linkedinProfile.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
-import type { RateLimiter, RateLimiterState } from "./rateLimiter.js";
+import {
+  consumeRateLimitOrThrow,
+  createConfirmRateLimitMessage,
+  formatRateLimitState,
+  type RateLimiter,
+  type RateLimiterState,
+} from "./rateLimiter.js";
 import type { LinkedInSelectorLocale } from "./selectorLocale.js";
 import {
   buildLinkedInAriaLabelContainsSelector,
   buildLinkedInSelectorPhraseRegex,
-  formatLinkedInSelectorRegexHint
+  formatLinkedInSelectorRegexHint,
 } from "./selectorLocale.js";
 import type {
   ActionExecutor,
   ActionExecutorInput,
   ActionExecutorResult,
   PreparedAction,
-  TwoPhaseCommitService
+  TwoPhaseCommitService,
 } from "./twoPhaseCommit.js";
 
 export const FOLLOWUP_AFTER_ACCEPT_ACTION_TYPE =
@@ -161,7 +162,10 @@ export interface LinkedInFollowupsRuntime extends LinkedInFollowupsExecutorRunti
       filter?: "sent" | "received" | "all";
     }): Promise<unknown[]>;
   };
-  twoPhaseCommit: Pick<TwoPhaseCommitService<LinkedInMessagingRuntime>, "prepare">;
+  twoPhaseCommit: Pick<
+    TwoPhaseCommitService<LinkedInMessagingRuntime>,
+    "prepare"
+  >;
 }
 
 function normalizeText(value: string | null | undefined): string {
@@ -203,7 +207,7 @@ export function buildDefaultFollowupText(fullName: string): string {
  */
 export function resolveFollowupSinceWindow(
   since: string | undefined,
-  nowMs = Date.now()
+  nowMs = Date.now(),
 ): { since: string; sinceMs: number } {
   const normalized = normalizeText(since) || DEFAULT_FOLLOWUP_SINCE;
   const relativeMatch = /^(\d+)\s*(m|h|d|w)$/i.exec(normalized);
@@ -215,7 +219,7 @@ export function resolveFollowupSinceWindow(
     if (!Number.isFinite(amount) || amount <= 0) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        "since must be a positive relative duration like 7d or 24h."
+        "since must be a positive relative duration like 7d or 24h.",
       );
     }
 
@@ -230,7 +234,7 @@ export function resolveFollowupSinceWindow(
 
     return {
       since: `${amount}${unit}`,
-      sinceMs: nowMs - amount * multiplier
+      sinceMs: nowMs - amount * multiplier,
     };
   }
 
@@ -239,19 +243,19 @@ export function resolveFollowupSinceWindow(
     if (absoluteMs > nowMs) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        "since must not be in the future."
+        "since must not be in the future.",
       );
     }
 
     return {
       since: normalized,
-      sinceMs: absoluteMs
+      sinceMs: absoluteMs,
     };
   }
 
   throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
-    "since must be a relative duration like 7d, 24h, 30m, or an ISO date."
+    "since must be a relative duration like 7d, 24h, 30m, or an ISO date.",
   );
 }
 
@@ -260,7 +264,7 @@ function formatLookbackWindowMs(value: number): string {
     { label: "w", sizeMs: 7 * 24 * 60 * 60 * 1000 },
     { label: "d", sizeMs: 24 * 60 * 60 * 1000 },
     { label: "h", sizeMs: 60 * 60 * 1000 },
-    { label: "m", sizeMs: 60 * 1000 }
+    { label: "m", sizeMs: 60 * 1000 },
   ] as const;
 
   for (const unit of units) {
@@ -283,34 +287,21 @@ function resolveFollowupLookbackWindow(input: {
     if (!Number.isFinite(input.sinceMs) || input.sinceMs <= 0) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        "sinceMs must be a positive number of milliseconds."
+        "sinceMs must be a positive number of milliseconds.",
       );
     }
 
     return {
-      since: normalizeText(input.since) || formatLookbackWindowMs(input.sinceMs),
-      cutoffMs: nowMs - input.sinceMs
+      since:
+        normalizeText(input.since) || formatLookbackWindowMs(input.sinceMs),
+      cutoffMs: nowMs - input.sinceMs,
     };
   }
 
   const resolved = resolveFollowupSinceWindow(input.since, nowMs);
   return {
     since: resolved.since,
-    cutoffMs: resolved.sinceMs
-  };
-}
-
-function formatRateLimitState(
-  state: RateLimiterState
-): Record<string, number | boolean | string> {
-  return {
-    counter_key: state.counterKey,
-    window_start_ms: state.windowStartMs,
-    window_size_ms: state.windowSizeMs,
-    count: state.count,
-    limit: state.limit,
-    remaining: state.remaining,
-    allowed: state.allowed
+    cutoffMs: resolved.sinceMs,
   };
 }
 
@@ -327,7 +318,7 @@ function getRequiredStringField(
   source: Record<string, unknown>,
   key: string,
   actionId: string,
-  location: "target" | "payload"
+  location: "target" | "payload",
 ): string {
   const value = source[key];
   if (typeof value === "string" && value.trim().length > 0) {
@@ -340,14 +331,14 @@ function getRequiredStringField(
     {
       action_id: actionId,
       location,
-      key
-    }
+      key,
+    },
   );
 }
 
 function getOptionalStringField(
   source: Record<string, unknown>,
-  key: string
+  key: string,
 ): string | undefined {
   const value = source[key];
   if (typeof value === "string" && value.trim().length > 0) {
@@ -360,14 +351,16 @@ function getOptionalStringField(
 function toAutomationError(
   error: unknown,
   message: string,
-  details: Record<string, unknown>
+  details: Record<string, unknown>,
 ): LinkedInBuddyError {
   if (error instanceof LinkedInBuddyError) {
     return error;
   }
 
   if (error instanceof playwrightErrors.TimeoutError) {
-    return new LinkedInBuddyError("TIMEOUT", message, details, { cause: error });
+    return new LinkedInBuddyError("TIMEOUT", message, details, {
+      cause: error,
+    });
   }
 
   if (
@@ -375,7 +368,7 @@ function toAutomationError(
     /(net::|ERR_|ECONN|ENOTFOUND|EAI_AGAIN|socket hang up)/i.test(error.message)
   ) {
     return new LinkedInBuddyError("NETWORK_ERROR", message, details, {
-      cause: error
+      cause: error,
     });
   }
 
@@ -392,7 +385,7 @@ function deriveFollowupStatus(input: {
     state,
     nowMs,
     preparedActionStatus,
-    preparedActionExpiresAtMs = null
+    preparedActionExpiresAtMs = null,
   } = input;
 
   if (state.followup_confirmed_at !== null) {
@@ -412,7 +405,10 @@ function deriveFollowupStatus(input: {
   }
 
   if (preparedActionStatus === "prepared") {
-    if (preparedActionExpiresAtMs !== null && preparedActionExpiresAtMs <= nowMs) {
+    if (
+      preparedActionExpiresAtMs !== null &&
+      preparedActionExpiresAtMs <= nowMs
+    ) {
       return "expired";
     }
 
@@ -423,9 +419,11 @@ function deriveFollowupStatus(input: {
 }
 
 function shouldPrepareAcceptedConnectionFollowup(
-  status: FollowupPreparationStatus
+  status: FollowupPreparationStatus,
 ): boolean {
-  return status === "not_prepared" || status === "failed" || status === "expired";
+  return (
+    status === "not_prepared" || status === "failed" || status === "expired"
+  );
 }
 
 async function getOrCreatePage(context: BrowserContext): Promise<Page> {
@@ -441,7 +439,7 @@ async function captureScreenshotArtifact(
   runtime: Pick<LinkedInFollowupsExecutorRuntime, "artifacts">,
   page: Page,
   relativePath: string,
-  metadata: Record<string, unknown> = {}
+  metadata: Record<string, unknown> = {},
 ): Promise<string> {
   const absolutePath = runtime.artifacts.resolve(relativePath);
   await page.screenshot({ path: absolutePath, fullPage: true });
@@ -449,7 +447,10 @@ async function captureScreenshotArtifact(
   return relativePath;
 }
 
-async function waitForMessageEcho(page: Page, messageText: string): Promise<void> {
+async function waitForMessageEcho(
+  page: Page,
+  messageText: string,
+): Promise<void> {
   const snippet = messageText.trim().slice(0, 140);
   if (!snippet) {
     return;
@@ -461,8 +462,8 @@ async function waitForMessageEcho(page: Page, messageText: string): Promise<void
       .filter({ hasText: snippet })
       .last(),
     page.locator("[role='dialog'], .msg-overlay-conversation-bubble").filter({
-      hasText: snippet
-    })
+      hasText: snippet,
+    }),
   ];
 
   for (const candidate of candidates) {
@@ -477,7 +478,7 @@ async function waitForMessageEcho(page: Page, messageText: string): Promise<void
 
 async function findVisibleLocator(
   page: Page,
-  candidates: SelectorCandidate[]
+  candidates: SelectorCandidate[],
 ): Promise<{ locator: Locator; key: string } | null> {
   for (const candidate of candidates) {
     const locator = candidate.locatorFactory(page).first();
@@ -496,7 +497,7 @@ async function findVisibleLocatorOrThrow(
   page: Page,
   candidates: SelectorCandidate[],
   selectorKey: string,
-  artifactPaths: string[]
+  artifactPaths: string[],
 ): Promise<{ locator: Locator; key: string }> {
   const result = await findVisibleLocator(page, candidates);
   if (result) {
@@ -509,38 +510,40 @@ async function findVisibleLocatorOrThrow(
     {
       selector_key: selectorKey,
       current_url: page.url(),
-      attempted_selectors: candidates.map((candidate) => candidate.selectorHint),
-      artifact_paths: artifactPaths
-    }
+      attempted_selectors: candidates.map(
+        (candidate) => candidate.selectorHint,
+      ),
+      artifact_paths: artifactPaths,
+    },
   );
 }
 
 function profileMessageButtonCandidates(
   root: Locator,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): SelectorCandidate[] {
   const messageExactRegex = buildLinkedInSelectorPhraseRegex(
     "message",
     selectorLocale,
-    { exact: true }
+    { exact: true },
   );
   const messageExactRegexHint = formatLinkedInSelectorRegexHint(
     "message",
     selectorLocale,
-    { exact: true }
+    { exact: true },
   );
   const messageTextRegex = buildLinkedInSelectorPhraseRegex(
     "message",
-    selectorLocale
+    selectorLocale,
   );
   const messageTextRegexHint = formatLinkedInSelectorRegexHint(
     "message",
-    selectorLocale
+    selectorLocale,
   );
   const messageAriaSelector = buildLinkedInAriaLabelContainsSelector(
     "button",
     "message",
-    selectorLocale
+    selectorLocale,
   );
 
   return [
@@ -549,38 +552,39 @@ function profileMessageButtonCandidates(
       selectorHint: `topCard.getByRole(button, ${messageExactRegexHint})`,
       locatorFactory: () =>
         root.getByRole("button", {
-          name: messageExactRegex
-        })
+          name: messageExactRegex,
+        }),
     },
     {
       key: "topcard-message-text",
       selectorHint: `topCard button hasText ${messageTextRegexHint}`,
-      locatorFactory: () => root.locator("button").filter({ hasText: messageTextRegex })
+      locatorFactory: () =>
+        root.locator("button").filter({ hasText: messageTextRegex }),
     },
     {
       key: "topcard-message-aria",
       selectorHint: `topCard ${messageAriaSelector}`,
-      locatorFactory: () => root.locator(messageAriaSelector)
+      locatorFactory: () => root.locator(messageAriaSelector),
     },
     {
       key: "page-message-role",
       selectorHint: `page.getByRole(button, ${messageExactRegexHint})`,
       locatorFactory: (page) =>
         page.getByRole("button", {
-          name: messageExactRegex
-        })
-    }
+          name: messageExactRegex,
+        }),
+    },
   ];
 }
 
 async function findProfileMessageTrigger(
   page: Page,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<{ locator: Locator; key: string } | null> {
   const topCardRoot = page.locator("main .pv-top-card, main").first();
   const direct = await findVisibleLocator(
     page,
-    profileMessageButtonCandidates(topCardRoot, selectorLocale)
+    profileMessageButtonCandidates(topCardRoot, selectorLocale),
   );
   if (direct) {
     return direct;
@@ -589,35 +593,35 @@ async function findProfileMessageTrigger(
   const moreExactRegex = buildLinkedInSelectorPhraseRegex(
     "more",
     selectorLocale,
-    { exact: true }
+    { exact: true },
   );
   const moreExactRegexHint = formatLinkedInSelectorRegexHint(
     "more",
     selectorLocale,
-    { exact: true }
+    { exact: true },
   );
   const moreActionsAriaSelector = buildLinkedInAriaLabelContainsSelector(
     "button",
     "more_actions",
-    selectorLocale
+    selectorLocale,
   );
   const messageMenuExactRegex = buildLinkedInSelectorPhraseRegex(
     "message",
     selectorLocale,
-    { exact: true }
+    { exact: true },
   );
   const messageMenuExactRegexHint = formatLinkedInSelectorRegexHint(
     "message",
     selectorLocale,
-    { exact: true }
+    { exact: true },
   );
   const messageMenuTextRegex = buildLinkedInSelectorPhraseRegex(
     "message",
-    selectorLocale
+    selectorLocale,
   );
   const messageMenuTextRegexHint = formatLinkedInSelectorRegexHint(
     "message",
-    selectorLocale
+    selectorLocale,
   );
 
   const moreCandidates: SelectorCandidate[] = [
@@ -626,19 +630,19 @@ async function findProfileMessageTrigger(
       selectorHint: `topCard.getByRole(button, ${moreExactRegexHint})`,
       locatorFactory: () =>
         topCardRoot.getByRole("button", {
-          name: moreExactRegex
-        })
+          name: moreExactRegex,
+        }),
     },
     {
       key: "topcard-more-aria",
       selectorHint: `topCard ${moreActionsAriaSelector}`,
-      locatorFactory: () => topCardRoot.locator(moreActionsAriaSelector)
+      locatorFactory: () => topCardRoot.locator(moreActionsAriaSelector),
     },
     {
       key: "page-more-aria",
       selectorHint: `page ${moreActionsAriaSelector}`,
-      locatorFactory: (page) => page.locator(moreActionsAriaSelector)
-    }
+      locatorFactory: (page) => page.locator(moreActionsAriaSelector),
+    },
   ];
 
   const more = await findVisibleLocator(page, moreCandidates);
@@ -655,21 +659,23 @@ async function findProfileMessageTrigger(
       selectorHint: `page.getByRole(menuitem, ${messageMenuExactRegexHint})`,
       locatorFactory: (page) =>
         page.getByRole("menuitem", {
-          name: messageMenuExactRegex
-        })
+          name: messageMenuExactRegex,
+        }),
     },
     {
       key: "menu-message-text",
       selectorHint: `[role='menu'] hasText ${messageMenuTextRegexHint}`,
       locatorFactory: (page) =>
-        page.locator("[role='menu']").filter({ hasText: messageMenuTextRegex })
+        page.locator("[role='menu']").filter({ hasText: messageMenuTextRegex }),
     },
     {
       key: "menu-message-button-fallback",
       selectorHint: `div[role='button'] hasText ${messageMenuTextRegexHint}`,
       locatorFactory: (page) =>
-        page.locator("div[role='button']").filter({ hasText: messageMenuTextRegex })
-    }
+        page
+          .locator("div[role='button']")
+          .filter({ hasText: messageMenuTextRegex }),
+    },
   ];
 
   const message = await findVisibleLocator(page, menuCandidates);
@@ -679,7 +685,7 @@ async function findProfileMessageTrigger(
 
   return {
     locator: message.locator,
-    key: `${more.key}:${message.key}`
+    key: `${more.key}:${message.key}`,
   };
 }
 
@@ -694,23 +700,26 @@ async function extractProfileSummary(page: Page): Promise<{
       (value ?? "").replace(/\s+/g, " ").trim();
 
     const fullName = normalize(
-      globalThis.document.querySelector("h1.text-heading-xlarge")?.textContent ??
-        globalThis.document.querySelector("h1[class*='text-heading']")?.textContent ??
-        globalThis.document.querySelector("h1")?.textContent
+      globalThis.document.querySelector("h1.text-heading-xlarge")
+        ?.textContent ??
+        globalThis.document.querySelector("h1[class*='text-heading']")
+          ?.textContent ??
+        globalThis.document.querySelector("h1")?.textContent,
     );
 
     const headline = normalize(
       globalThis.document.querySelector(".text-body-medium.break-words")
         ?.textContent ??
         globalThis.document.querySelector(
-          ".pv-text-details__left-panel .text-body-medium"
+          ".pv-text-details__left-panel .text-body-medium",
         )?.textContent ??
-        globalThis.document.querySelector("main .text-body-medium")?.textContent
+        globalThis.document.querySelector("main .text-body-medium")
+          ?.textContent,
     );
 
     return {
       fullName,
-      headline
+      headline,
     };
   });
 
@@ -720,14 +729,14 @@ async function extractProfileSummary(page: Page): Promise<{
     profileUrl,
     vanityName: extractVanityName(profileUrl),
     fullName: normalizeText(summary.fullName),
-    headline: normalizeText(summary.headline)
+    headline: normalizeText(summary.headline),
   };
 }
 
 async function probeAcceptedConnection(
   page: Page,
   profileUrl: string,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<AcceptanceProbeResult | null> {
   await page.goto(profileUrl, { waitUntil: "domcontentloaded" });
   await waitForNetworkIdleBestEffort(page);
@@ -744,14 +753,14 @@ async function probeAcceptedConnection(
     vanityName: summary.vanityName,
     fullName: summary.fullName,
     headline: summary.headline,
-    acceptedDetection: messageTrigger.key
+    acceptedDetection: messageTrigger.key,
   };
 }
 
 async function validateMessageSurfaceTarget(
   page: Page,
   action: PreparedAction,
-  expectedFullName?: string
+  expectedFullName?: string,
 ): Promise<void> {
   const normalizedExpected = normalizeText(expectedFullName).toLowerCase();
   if (!normalizedExpected) {
@@ -761,7 +770,7 @@ async function validateMessageSurfaceTarget(
   const headerCandidates = [
     page.locator(".msg-overlay-bubble-header__title").first(),
     page.locator("[role='dialog'] h2, [role='dialog'] h3").first(),
-    page.locator(".msg-thread__link-to-profile").first()
+    page.locator(".msg-thread__link-to-profile").first(),
   ];
 
   for (const candidate of headerCandidates) {
@@ -791,8 +800,8 @@ async function validateMessageSurfaceTarget(
         action_id: action.id,
         expected_full_name: expectedFullName,
         actual_header: actual,
-        current_url: page.url()
-      }
+        current_url: page.url(),
+      },
     );
   }
 }
@@ -800,9 +809,8 @@ async function validateMessageSurfaceTarget(
 function mapAcceptedConnection(
   state: SentInvitationStateRow,
   nowMs: number,
-  preparedAction?: Pick<PreparedActionRow, "status" | "expires_at">
+  preparedAction?: Pick<PreparedActionRow, "status" | "expires_at">,
 ): LinkedInAcceptedConnection {
-
   return {
     profile_url_key: state.profile_url_key,
     profile_url: state.profile_url,
@@ -817,31 +825,34 @@ function mapAcceptedConnection(
       state,
       nowMs,
       preparedActionStatus: preparedAction?.status,
-      preparedActionExpiresAtMs: preparedAction?.expires_at ?? null
+      preparedActionExpiresAtMs: preparedAction?.expires_at ?? null,
     }),
     followup_prepared_action_id: state.followup_prepared_action_id,
     followup_prepared_at_ms: state.followup_prepared_at,
     followup_confirmed_at_ms: state.followup_confirmed_at,
-    followup_expires_at_ms: preparedAction?.expires_at ?? null
+    followup_expires_at_ms: preparedAction?.expires_at ?? null,
   };
 }
 
 function mapAcceptedConnections(
   db: Pick<AssistantDatabase, "listPreparedActionsByIds">,
   states: SentInvitationStateRow[],
-  nowMs: number
+  nowMs: number,
 ): LinkedInAcceptedConnection[] {
-  const preparedActionIds = [...new Set(
-    states
-      .map((state) => state.followup_prepared_action_id)
-      .filter((preparedActionId): preparedActionId is string =>
-        typeof preparedActionId === "string" && preparedActionId.length > 0
-      )
-  )];
+  const preparedActionIds = [
+    ...new Set(
+      states
+        .map((state) => state.followup_prepared_action_id)
+        .filter(
+          (preparedActionId): preparedActionId is string =>
+            typeof preparedActionId === "string" && preparedActionId.length > 0,
+        ),
+    ),
+  ];
   const preparedActionsById = new Map(
     db
       .listPreparedActionsByIds(preparedActionIds)
-      .map((preparedAction) => [preparedAction.id, preparedAction])
+      .map((preparedAction) => [preparedAction.id, preparedAction]),
   );
 
   return states.map((state) =>
@@ -850,19 +861,17 @@ function mapAcceptedConnections(
       nowMs,
       state.followup_prepared_action_id
         ? preparedActionsById.get(state.followup_prepared_action_id)
-        : undefined
-    )
+        : undefined,
+    ),
   );
 }
 
 /**
  * Confirm-time executor for accepted-connection follow-up actions.
  */
-export class FollowupAfterAcceptActionExecutor
-  implements ActionExecutor<LinkedInFollowupsExecutorRuntime>
-{
+export class FollowupAfterAcceptActionExecutor implements ActionExecutor<LinkedInFollowupsExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInFollowupsExecutorRuntime>
+    input: ActionExecutorInput<LinkedInFollowupsExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const runtime = input.runtime;
     const action = input.action;
@@ -871,29 +880,34 @@ export class FollowupAfterAcceptActionExecutor
       action.target,
       "target_profile_url",
       action.id,
-      "target"
+      "target",
     );
     const profileUrlKey = getRequiredStringField(
       action.target,
       "profile_url_key",
       action.id,
-      "target"
+      "target",
     );
     const fullName = getOptionalStringField(action.target, "full_name");
-    const text = getRequiredStringField(action.payload, "text", action.id, "payload");
+    const text = getRequiredStringField(
+      action.payload,
+      "text",
+      action.id,
+      "payload",
+    );
     const tracePath = `linkedin/trace-followup-confirm-${Date.now()}.zip`;
     const artifactPaths: string[] = [tracePath];
 
     await runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: runtime.cdpUrl
+      cdpUrl: runtime.cdpUrl,
     });
 
     return runtime.profileManager.runWithContext(
       {
         cdpUrl: runtime.cdpUrl,
         profileName,
-        headless: true
+        headless: true,
       },
       async (context) => {
         const page = await getOrCreatePage(context);
@@ -903,7 +917,7 @@ export class FollowupAfterAcceptActionExecutor
           await context.tracing.start({
             screenshots: true,
             snapshots: true,
-            sources: true
+            sources: true,
           });
           tracingStarted = true;
 
@@ -912,7 +926,7 @@ export class FollowupAfterAcceptActionExecutor
 
           const messageTrigger = await findProfileMessageTrigger(
             page,
-            runtime.selectorLocale
+            runtime.selectorLocale,
           );
           if (!messageTrigger) {
             throw new LinkedInBuddyError(
@@ -921,8 +935,8 @@ export class FollowupAfterAcceptActionExecutor
               {
                 action_id: action.id,
                 profile_url: profileUrl,
-                current_url: page.url()
-              }
+                current_url: page.url(),
+              },
             );
           }
 
@@ -930,55 +944,49 @@ export class FollowupAfterAcceptActionExecutor
           await page.waitForTimeout(600);
           await validateMessageSurfaceTarget(page, action, fullName);
 
-          const rateLimitState = runtime.rateLimiter.consume(
-            SEND_MESSAGE_RATE_LIMIT_CONFIG
-          );
-          if (!rateLimitState.allowed) {
-            throw new LinkedInBuddyError(
-              "RATE_LIMITED",
-              "LinkedIn follow-up confirm is rate limited for the current window.",
-              {
-                action_id: action.id,
-                profile_name: profileName,
-                profile_url: profileUrl,
-                rate_limit: formatRateLimitState(rateLimitState)
-              }
-            );
-          }
+          consumeRateLimitOrThrow(runtime.rateLimiter, {
+            config: SEND_MESSAGE_RATE_LIMIT_CONFIG,
+            message: createConfirmRateLimitMessage("followup.send_message"),
+            details: {
+              action_id: action.id,
+              profile_name: profileName,
+              profile_url: profileUrl,
+            },
+          });
 
           const composerNameRegex = buildLinkedInSelectorPhraseRegex(
             ["write_message", "message"],
-            runtime.selectorLocale
+            runtime.selectorLocale,
           );
           const composerNameRegexHint = formatLinkedInSelectorRegexHint(
             ["write_message", "message"],
-            runtime.selectorLocale
+            runtime.selectorLocale,
           );
           const placeholderRegex = buildLinkedInSelectorPhraseRegex(
             "write_message",
-            runtime.selectorLocale
+            runtime.selectorLocale,
           );
           const placeholderRegexHint = formatLinkedInSelectorRegexHint(
             "write_message",
-            runtime.selectorLocale
+            runtime.selectorLocale,
           );
           const sendButtonRegex = buildLinkedInSelectorPhraseRegex(
             "send",
             runtime.selectorLocale,
-            { exact: true }
+            { exact: true },
           );
           const sendButtonRegexHint = formatLinkedInSelectorRegexHint(
             "send",
             runtime.selectorLocale,
-            { exact: true }
+            { exact: true },
           );
           const dialogSendRegex = buildLinkedInSelectorPhraseRegex(
             "send",
-            runtime.selectorLocale
+            runtime.selectorLocale,
           );
           const dialogSendRegexHint = formatLinkedInSelectorRegexHint(
             "send",
-            runtime.selectorLocale
+            runtime.selectorLocale,
           );
 
           const composerSelectors: SelectorCandidate[] = [
@@ -987,33 +995,36 @@ export class FollowupAfterAcceptActionExecutor
               selectorHint: `getByRole(textbox, ${composerNameRegexHint})`,
               locatorFactory: (page) =>
                 page.getByRole("textbox", {
-                  name: composerNameRegex
-                })
+                  name: composerNameRegex,
+                }),
             },
             {
               key: "placeholder-write-message",
               selectorHint: `getByPlaceholder(${placeholderRegexHint})`,
-              locatorFactory: (page) => page.getByPlaceholder(placeholderRegex)
+              locatorFactory: (page) => page.getByPlaceholder(placeholderRegex),
             },
             {
               key: "msg-contenteditable",
-              selectorHint: ".msg-form__contenteditable[contenteditable='true']",
+              selectorHint:
+                ".msg-form__contenteditable[contenteditable='true']",
               locatorFactory: (page) =>
-                page.locator(".msg-form__contenteditable[contenteditable='true']")
+                page.locator(
+                  ".msg-form__contenteditable[contenteditable='true']",
+                ),
             },
             {
               key: "dialog-contenteditable",
               selectorHint: "[role='dialog'] [contenteditable='true']",
               locatorFactory: (page) =>
-                page.locator("[role='dialog'] [contenteditable='true']")
-            }
+                page.locator("[role='dialog'] [contenteditable='true']"),
+            },
           ];
 
           const composer = await findVisibleLocatorOrThrow(
             page,
             composerSelectors,
             "followup_message_composer",
-            artifactPaths
+            artifactPaths,
           );
           await composer.locator.click({ timeout: 3_000 });
           await composer.locator.fill(text, { timeout: 5_000 });
@@ -1023,28 +1034,29 @@ export class FollowupAfterAcceptActionExecutor
               key: "role-button-send",
               selectorHint: `getByRole(button, ${sendButtonRegexHint})`,
               locatorFactory: (page) =>
-                page.getByRole("button", { name: sendButtonRegex })
+                page.getByRole("button", { name: sendButtonRegex }),
             },
             {
               key: "msg-form-send-button",
               selectorHint: "button.msg-form__send-button",
-              locatorFactory: (page) => page.locator("button.msg-form__send-button")
+              locatorFactory: (page) =>
+                page.locator("button.msg-form__send-button"),
             },
             {
               key: "dialog-send-button",
               selectorHint: `[role='dialog'] button hasText ${dialogSendRegexHint}`,
               locatorFactory: (page) =>
                 page.locator("[role='dialog'] button").filter({
-                  hasText: dialogSendRegex
-                })
-            }
+                  hasText: dialogSendRegex,
+                }),
+            },
           ];
 
           const sendButton = await findVisibleLocatorOrThrow(
             page,
             sendButtonSelectors,
             "followup_send_button",
-            artifactPaths
+            artifactPaths,
           );
           await sendButton.locator.click({ timeout: 5_000 });
 
@@ -1053,7 +1065,7 @@ export class FollowupAfterAcceptActionExecutor
           await captureScreenshotArtifact(runtime, page, postSendScreenshot, {
             action: FOLLOWUP_AFTER_ACCEPT_ACTION_TYPE,
             profile_name: profileName,
-            profile_url: profileUrl
+            profile_url: profileUrl,
           });
           artifactPaths.push(postSendScreenshot);
 
@@ -1063,7 +1075,7 @@ export class FollowupAfterAcceptActionExecutor
             profileUrlKey,
             confirmedAtMs,
             preparedActionId: action.id,
-            updatedAtMs: confirmedAtMs
+            updatedAtMs: confirmedAtMs,
           });
           if (!updated) {
             runtime.logger.log(
@@ -1072,8 +1084,8 @@ export class FollowupAfterAcceptActionExecutor
               {
                 action_id: action.id,
                 profile_name: profileName,
-                profile_url_key: profileUrlKey
-              }
+                profile_url_key: profileUrlKey,
+              },
             );
           }
 
@@ -1082,9 +1094,9 @@ export class FollowupAfterAcceptActionExecutor
             result: {
               sent: true,
               status: "followup_sent",
-              profile_url: profileUrl
+              profile_url: profileUrl,
             },
-            artifacts: artifactPaths
+            artifacts: artifactPaths,
           };
         } catch (error) {
           const failureScreenshot = `linkedin/screenshot-followup-confirm-error-${Date.now()}.png`;
@@ -1092,7 +1104,7 @@ export class FollowupAfterAcceptActionExecutor
             await captureScreenshotArtifact(runtime, page, failureScreenshot, {
               action: `${FOLLOWUP_AFTER_ACCEPT_ACTION_TYPE}_error`,
               profile_name: profileName,
-              profile_url: profileUrl
+              profile_url: profileUrl,
             });
             artifactPaths.push(failureScreenshot);
           } catch {
@@ -1106,8 +1118,8 @@ export class FollowupAfterAcceptActionExecutor
               action_id: action.id,
               current_url: page.url(),
               selector_context: FOLLOWUP_AFTER_ACCEPT_ACTION_TYPE,
-              artifact_paths: artifactPaths
-            }
+              artifact_paths: artifactPaths,
+            },
           );
         } finally {
           if (tracingStarted) {
@@ -1116,7 +1128,7 @@ export class FollowupAfterAcceptActionExecutor
               await context.tracing.stop({ path: absoluteTracePath });
               runtime.artifacts.registerArtifact(tracePath, "application/zip", {
                 action: FOLLOWUP_AFTER_ACCEPT_ACTION_TYPE,
-                profile_name: profileName
+                profile_name: profileName,
               });
             } catch (error) {
               runtime.logger.log(
@@ -1124,13 +1136,14 @@ export class FollowupAfterAcceptActionExecutor
                 "linkedin.followups.confirm.trace.stop_failed",
                 {
                   action_id: action.id,
-                  message: error instanceof Error ? error.message : String(error)
-                }
+                  message:
+                    error instanceof Error ? error.message : String(error),
+                },
               );
             }
           }
         }
-      }
+      },
     );
   }
 }
@@ -1144,7 +1157,8 @@ export function createFollowupActionExecutors(): Record<
   ActionExecutor<LinkedInFollowupsExecutorRuntime>
 > {
   return {
-    [FOLLOWUP_AFTER_ACCEPT_ACTION_TYPE]: new FollowupAfterAcceptActionExecutor()
+    [FOLLOWUP_AFTER_ACCEPT_ACTION_TYPE]:
+      new FollowupAfterAcceptActionExecutor(),
   };
 }
 
@@ -1169,17 +1183,17 @@ export class LinkedInFollowupsService {
   } {
     const acceptedStates = this.runtime.db.listAcceptedSentInvitations({
       profileName: input.profileName,
-      sinceMs: input.cutoffMs
+      sinceMs: input.cutoffMs,
     });
     const acceptedConnections = mapAcceptedConnections(
       this.runtime.db,
       acceptedStates,
-      input.nowMs ?? Date.now()
+      input.nowMs ?? Date.now(),
     );
 
     return {
       acceptedStates,
-      acceptedConnections
+      acceptedConnections,
     };
   }
 
@@ -1188,7 +1202,7 @@ export class LinkedInFollowupsService {
    * the requested lookback window.
    */
   async listAcceptedConnections(
-    input: ListAcceptedConnectionsInput = {}
+    input: ListAcceptedConnectionsInput = {},
   ): Promise<LinkedInAcceptedConnection[]> {
     const profileName = input.profileName ?? "default";
     const { cutoffMs } = resolveFollowupLookbackWindow(input);
@@ -1197,7 +1211,7 @@ export class LinkedInFollowupsService {
 
     return this.loadAcceptedConnections({
       profileName,
-      cutoffMs
+      cutoffMs,
     }).acceptedConnections;
   }
 
@@ -1206,23 +1220,24 @@ export class LinkedInFollowupsService {
    * accepted connection that still needs one.
    */
   async prepareFollowupsAfterAccept(
-    input: PrepareFollowupsAfterAcceptInput = {}
+    input: PrepareFollowupsAfterAcceptInput = {},
   ): Promise<PrepareFollowupsAfterAcceptResult> {
     const profileName = input.profileName ?? "default";
     const { since, cutoffMs } = resolveFollowupLookbackWindow(input);
 
     await this.refreshAcceptanceState(profileName);
 
-    const { acceptedStates, acceptedConnections } = this.loadAcceptedConnections({
-      profileName,
-      cutoffMs
-    });
+    const { acceptedStates, acceptedConnections } =
+      this.loadAcceptedConnections({
+        profileName,
+        cutoffMs,
+      });
 
     const stateByKey = new Map(
-      acceptedStates.map((state) => [state.profile_url_key, state])
+      acceptedStates.map((state) => [state.profile_url_key, state]),
     );
     const candidates = acceptedConnections.filter((connection) =>
-      shouldPrepareAcceptedConnectionFollowup(connection.followup_status)
+      shouldPrepareAcceptedConnectionFollowup(connection.followup_status),
     );
 
     const preparedFollowups =
@@ -1231,23 +1246,24 @@ export class LinkedInFollowupsService {
             profileName,
             candidates,
             stateByKey,
-            input.operatorNote
+            input.operatorNote,
           )
         : [];
 
     const preparedByKey = new Map(
       preparedFollowups.map((prepared) => [
         prepared.connection.profile_url_key,
-        prepared.connection
-      ])
+        prepared.connection,
+      ]),
     );
 
     return {
       since,
       acceptedConnections: acceptedConnections.map(
-        (connection) => preparedByKey.get(connection.profile_url_key) ?? connection
+        (connection) =>
+          preparedByKey.get(connection.profile_url_key) ?? connection,
       ),
-      preparedFollowups
+      preparedFollowups,
     };
   }
 
@@ -1259,7 +1275,7 @@ export class LinkedInFollowupsService {
    * otherwise `null`.
    */
   async prepareFollowupForAcceptedConnection(
-    input: PrepareAcceptedConnectionFollowupInput
+    input: PrepareAcceptedConnectionFollowupInput,
   ): Promise<PreparedAcceptedConnectionFollowup | null> {
     const profileName = input.profileName ?? "default";
     if (input.refreshState) {
@@ -1268,13 +1284,17 @@ export class LinkedInFollowupsService {
 
     const state = this.runtime.db.getSentInvitationState({
       profileName,
-      profileUrlKey: input.profileUrlKey
+      profileUrlKey: input.profileUrlKey,
     });
     if (!state || state.closed_at !== null || state.accepted_at === null) {
       return null;
     }
 
-    const connection = mapAcceptedConnections(this.runtime.db, [state], Date.now())[0];
+    const connection = mapAcceptedConnections(
+      this.runtime.db,
+      [state],
+      Date.now(),
+    )[0];
     if (!connection) {
       return null;
     }
@@ -1287,7 +1307,7 @@ export class LinkedInFollowupsService {
       profileName,
       [connection],
       new Map([[state.profile_url_key, state]]),
-      input.operatorNote
+      input.operatorNote,
     );
 
     return prepared[0] ?? null;
@@ -1298,12 +1318,12 @@ export class LinkedInFollowupsService {
 
     await this.runtime.connections.listPendingInvitations({
       profileName,
-      filter: "sent"
+      filter: "sent",
     });
 
     const candidates = this.runtime.db.listSentInvitationAcceptanceCandidates({
       profileName,
-      lastSeenBeforeMs
+      lastSeenBeforeMs,
     });
 
     if (candidates.length === 0) {
@@ -1312,14 +1332,14 @@ export class LinkedInFollowupsService {
 
     await this.runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: this.runtime.cdpUrl
+      cdpUrl: this.runtime.cdpUrl,
     });
 
     const acceptedResults = await this.runtime.profileManager.runWithContext(
       {
         cdpUrl: this.runtime.cdpUrl,
         profileName,
-        headless: true
+        headless: true,
       },
       async (context) => {
         const page = await getOrCreatePage(context);
@@ -1333,7 +1353,7 @@ export class LinkedInFollowupsService {
             const probe = await probeAcceptedConnection(
               page,
               state.profile_url,
-              this.runtime.selectorLocale
+              this.runtime.selectorLocale,
             );
             if (!probe) {
               continue;
@@ -1347,14 +1367,14 @@ export class LinkedInFollowupsService {
               {
                 profile_name: profileName,
                 profile_url: state.profile_url,
-                message: error instanceof Error ? error.message : String(error)
-              }
+                message: error instanceof Error ? error.message : String(error),
+              },
             );
           }
         }
 
         return results;
-      }
+      },
     );
 
     const acceptedAtMs = Date.now();
@@ -1368,7 +1388,7 @@ export class LinkedInFollowupsService {
         profileUrl: accepted.probe.profileUrl,
         acceptedAtMs,
         acceptedDetection: accepted.probe.acceptedDetection,
-        updatedAtMs: acceptedAtMs
+        updatedAtMs: acceptedAtMs,
       });
     }
   }
@@ -1377,18 +1397,18 @@ export class LinkedInFollowupsService {
     profileName: string,
     connections: LinkedInAcceptedConnection[],
     stateByKey: Map<string, SentInvitationStateRow>,
-    operatorNote?: string
+    operatorNote?: string,
   ): Promise<PreparedAcceptedConnectionFollowup[]> {
     await this.runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: this.runtime.cdpUrl
+      cdpUrl: this.runtime.cdpUrl,
     });
 
     return this.runtime.profileManager.runWithContext(
       {
         cdpUrl: this.runtime.cdpUrl,
         profileName,
-        headless: true
+        headless: true,
       },
       async (context) => {
         const page = await getOrCreatePage(context);
@@ -1404,7 +1424,7 @@ export class LinkedInFollowupsService {
             const probe = await probeAcceptedConnection(
               page,
               state.profile_url,
-              this.runtime.selectorLocale
+              this.runtime.selectorLocale,
             );
             if (!probe) {
               this.runtime.logger.log(
@@ -1413,26 +1433,32 @@ export class LinkedInFollowupsService {
                 {
                   profile_name: profileName,
                   profile_url: state.profile_url,
-                  profile_url_key: state.profile_url_key
-                }
+                  profile_url_key: state.profile_url_key,
+                },
               );
               continue;
             }
 
             const relativeProfileUrl = normalizeLinkedInProfileUrl(
-              probe.profileUrl || state.profile_url
+              probe.profileUrl || state.profile_url,
             );
-            const text = buildDefaultFollowupText(probe.fullName || state.full_name);
+            const text = buildDefaultFollowupText(
+              probe.fullName || state.full_name,
+            );
             const screenshotPath = `linkedin/screenshot-followup-prepare-${Date.now()}-${preparedResults.length + 1}.png`;
-            await captureScreenshotArtifact(this.runtime, page, screenshotPath, {
-              action: FOLLOWUP_AFTER_ACCEPT_ACTION_TYPE,
-              profile_name: profileName,
-              profile_url: relativeProfileUrl
-            });
-
-            const rateLimitState = this.runtime.rateLimiter.peek(
-              SEND_MESSAGE_RATE_LIMIT_CONFIG
+            await captureScreenshotArtifact(
+              this.runtime,
+              page,
+              screenshotPath,
+              {
+                action: FOLLOWUP_AFTER_ACCEPT_ACTION_TYPE,
+                profile_name: profileName,
+                profile_url: relativeProfileUrl,
+              },
             );
+
+            const rateLimitState: RateLimiterState =
+              this.runtime.rateLimiter.peek(SEND_MESSAGE_RATE_LIMIT_CONFIG);
 
             const target = {
               profile_name: profileName,
@@ -1440,7 +1466,7 @@ export class LinkedInFollowupsService {
               target_profile_url: relativeProfileUrl,
               vanity_name: probe.vanityName,
               full_name: probe.fullName || state.full_name,
-              headline: probe.headline || state.headline
+              headline: probe.headline || state.headline,
             };
 
             const preview = {
@@ -1452,32 +1478,32 @@ export class LinkedInFollowupsService {
                 accepted_at_ms: connection.accepted_at_ms,
                 detected_via: connection.accepted_detection,
                 first_seen_sent_at_ms: connection.first_seen_sent_at_ms,
-                last_seen_sent_at_ms: connection.last_seen_sent_at_ms
+                last_seen_sent_at_ms: connection.last_seen_sent_at_ms,
               },
               outbound: {
-                text
+                text,
               },
               artifacts: [
                 {
                   type: "screenshot",
-                  path: screenshotPath
-                }
+                  path: screenshotPath,
+                },
               ],
-              rate_limit: formatRateLimitState(rateLimitState)
+              rate_limit: formatRateLimitState(rateLimitState),
             } satisfies Record<string, unknown>;
 
             const prepared = this.runtime.twoPhaseCommit.prepare({
               actionType: FOLLOWUP_AFTER_ACCEPT_ACTION_TYPE,
               target,
               payload: {
-                text
+                text,
               },
               preview,
               ...(operatorNote
                 ? {
-                    operatorNote
+                    operatorNote,
                   }
-                : {})
+                : {}),
             });
 
             const preparedAtMs = Date.now();
@@ -1486,7 +1512,7 @@ export class LinkedInFollowupsService {
               profileUrlKey: state.profile_url_key,
               preparedAtMs,
               preparedActionId: prepared.preparedActionId,
-              updatedAtMs: preparedAtMs
+              updatedAtMs: preparedAtMs,
             });
             if (!updated) {
               throw new LinkedInBuddyError(
@@ -1494,8 +1520,8 @@ export class LinkedInFollowupsService {
                 `Could not persist follow-up preparation state for ${state.profile_url}.`,
                 {
                   profile_name: profileName,
-                  profile_url_key: state.profile_url_key
-                }
+                  profile_url_key: state.profile_url_key,
+                },
               );
             }
 
@@ -1509,12 +1535,12 @@ export class LinkedInFollowupsService {
                 followup_status: "prepared",
                 followup_prepared_action_id: prepared.preparedActionId,
                 followup_prepared_at_ms: preparedAtMs,
-                followup_expires_at_ms: prepared.expiresAtMs
+                followup_expires_at_ms: prepared.expiresAtMs,
               },
               preparedActionId: prepared.preparedActionId,
               confirmToken: prepared.confirmToken,
               expiresAtMs: prepared.expiresAtMs,
-              preview: prepared.preview
+              preview: prepared.preview,
             });
           } catch (error) {
             this.runtime.logger.log(
@@ -1523,14 +1549,14 @@ export class LinkedInFollowupsService {
               {
                 profile_name: profileName,
                 profile_url: state.profile_url,
-                message: error instanceof Error ? error.message : String(error)
-              }
+                message: error instanceof Error ? error.message : String(error),
+              },
             );
           }
         }
 
         return preparedResults;
-      }
+      },
     );
   }
 }

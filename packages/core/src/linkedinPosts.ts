@@ -5,27 +5,29 @@ import {
   errors as playwrightErrors,
   type BrowserContext,
   type Locator,
-  type Page
+  type Page,
 } from "playwright-core";
 import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
-import {
-  LinkedInBuddyError,
-  asLinkedInBuddyError
-} from "./errors.js";
+import { LinkedInBuddyError, asLinkedInBuddyError } from "./errors.js";
 import { scrollLinkedInPageToTop } from "./linkedinPage.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
+import {
+  consumeRateLimitOrThrow,
+  createConfirmRateLimitMessage,
+  formatRateLimitState,
+} from "./rateLimiter.js";
 import type { RateLimiter, RateLimiterState } from "./rateLimiter.js";
 import type {
   LinkedInSelectorLocale,
-  LinkedInSelectorPhraseKey
+  LinkedInSelectorPhraseKey,
 } from "./selectorLocale.js";
 import {
   buildLinkedInAriaLabelContainsSelector,
   buildLinkedInSelectorPhraseRegex,
-  formatLinkedInSelectorRegexHint
+  formatLinkedInSelectorRegexHint,
 } from "./selectorLocale.js";
 import { createFeedPostComposerTriggerCandidates } from "./feedPostComposerTriggerSelectors.js";
 import type {
@@ -34,11 +36,12 @@ import type {
   ActionExecutorResult,
   ActionExecutorRegistry,
   PreparedActionResult,
-  TwoPhaseCommitService
+  TwoPhaseCommitService,
 } from "./twoPhaseCommit.js";
 
 const LINKEDIN_FEED_URL = "https://www.linkedin.com/feed/";
-const LINKEDIN_PROFILE_ACTIVITY_URL = "https://www.linkedin.com/in/me/recent-activity/all/";
+const LINKEDIN_PROFILE_ACTIVITY_URL =
+  "https://www.linkedin.com/in/me/recent-activity/all/";
 const LINKEDIN_BUDDY_CONFIG_FILENAME = "config.json";
 const DEFAULT_LINK_PREVIEW_VALIDATION_TIMEOUT_MS = 5_000;
 const MAX_LINK_PREVIEW_VALIDATION_TIMEOUT_MS = 30_000;
@@ -60,7 +63,7 @@ export const LINKEDIN_POST_FEED_SURFACE_SELECTORS = [
   ".feed-shared-update-v2",
   ".occludable-update",
   ".share-box-feed-entry",
-  "main"
+  "main",
 ] as const;
 export const LINKEDIN_POST_ACTIVITY_SURFACE_SELECTORS = [
   "main[role='main']",
@@ -68,7 +71,7 @@ export const LINKEDIN_POST_ACTIVITY_SURFACE_SELECTORS = [
   "article",
   ".feed-shared-update-v2",
   ".occludable-update",
-  "main"
+  "main",
 ] as const;
 
 type LinkedInPollDurationDays =
@@ -76,12 +79,11 @@ type LinkedInPollDurationDays =
 
 export const LINKEDIN_POST_MEDIA_KINDS = ["image", "video"] as const;
 
-export type LinkedInPostMediaKind =
-  (typeof LINKEDIN_POST_MEDIA_KINDS)[number];
+export type LinkedInPostMediaKind = (typeof LINKEDIN_POST_MEDIA_KINDS)[number];
 
 export const LINKEDIN_POST_VISIBILITY_TYPES = [
   "public",
-  "connections"
+  "connections",
 ] as const;
 
 export type LinkedInPostVisibility =
@@ -98,39 +100,42 @@ export const LINKEDIN_POST_VISIBILITY_MAP: Record<
 > = {
   public: {
     label: "Public",
-    audienceLabel: "Anyone"
+    audienceLabel: "Anyone",
   },
   connections: {
     label: "Connections",
-    audienceLabel: "Connections only"
-  }
+    audienceLabel: "Connections only",
+  },
 };
 
-const LINKEDIN_POST_VISIBILITY_ALIAS_MAP: Record<string, LinkedInPostVisibility> = {
+const LINKEDIN_POST_VISIBILITY_ALIAS_MAP: Record<
+  string,
+  LinkedInPostVisibility
+> = {
   public: "public",
   anyone: "public",
   everyone: "public",
   connections: "connections",
   connection: "connections",
-  connections_only: "connections"
+  connections_only: "connections",
 };
 
 const CREATE_POST_RATE_LIMIT_CONFIG = {
   counterKey: "linkedin.post.create",
   windowSizeMs: 24 * 60 * 60 * 1000,
-  limit: 1
+  limit: 1,
 } as const;
 
 const EDIT_POST_RATE_LIMIT_CONFIG = {
   counterKey: "linkedin.post.edit",
   windowSizeMs: 24 * 60 * 60 * 1000,
-  limit: 10
+  limit: 10,
 } as const;
 
 const DELETE_POST_RATE_LIMIT_CONFIG = {
   counterKey: "linkedin.post.delete",
   windowSizeMs: 24 * 60 * 60 * 1000,
-  limit: 10
+  limit: 10,
 } as const;
 
 const LINKEDIN_POST_IMAGE_EXTENSIONS = new Set([
@@ -139,7 +144,7 @@ const LINKEDIN_POST_IMAGE_EXTENSIONS = new Set([
   ".jpeg",
   ".gif",
   ".webp",
-  ".bmp"
+  ".bmp",
 ]);
 
 const LINKEDIN_POST_VIDEO_EXTENSIONS = new Set([
@@ -147,7 +152,7 @@ const LINKEDIN_POST_VIDEO_EXTENSIONS = new Set([
   ".mov",
   ".m4v",
   ".avi",
-  ".webm"
+  ".webm",
 ]);
 
 export interface PrepareCreatePostInput {
@@ -273,12 +278,13 @@ interface TargetPostLocator {
   activityId: string;
 }
 
-export const DEFAULT_LINKEDIN_POST_SAFETY_LINT_CONFIG: LinkedInPostSafetyLintConfig = {
-  maxLength: LINKEDIN_POST_MAX_LENGTH,
-  bannedPhrases: [],
-  validateLinkPreviews: false,
-  linkPreviewValidationTimeoutMs: DEFAULT_LINK_PREVIEW_VALIDATION_TIMEOUT_MS
-};
+export const DEFAULT_LINKEDIN_POST_SAFETY_LINT_CONFIG: LinkedInPostSafetyLintConfig =
+  {
+    maxLength: LINKEDIN_POST_MAX_LENGTH,
+    bannedPhrases: [],
+    validateLinkPreviews: false,
+    linkPreviewValidationTimeoutMs: DEFAULT_LINK_PREVIEW_VALIDATION_TIMEOUT_MS,
+  };
 
 function normalizeText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
@@ -291,7 +297,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function parseOptionalPositiveInteger(
   value: unknown,
   label: string,
-  options: { min?: number; max?: number } = {}
+  options: { min?: number; max?: number } = {},
 ): number | undefined {
   if (value === undefined) {
     return undefined;
@@ -303,8 +309,8 @@ function parseOptionalPositiveInteger(
       `${label} must be an integer.`,
       {
         label,
-        provided_value: value
-      }
+        provided_value: value,
+      },
     );
   }
 
@@ -320,15 +326,18 @@ function parseOptionalPositiveInteger(
         label,
         provided_value: value,
         min,
-        ...(max === undefined ? {} : { max })
-      }
+        ...(max === undefined ? {} : { max }),
+      },
     );
   }
 
   return value;
 }
 
-function parseOptionalBoolean(value: unknown, label: string): boolean | undefined {
+function parseOptionalBoolean(
+  value: unknown,
+  label: string,
+): boolean | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -339,8 +348,8 @@ function parseOptionalBoolean(value: unknown, label: string): boolean | undefine
       `${label} must be a boolean.`,
       {
         label,
-        provided_value: value
-      }
+        provided_value: value,
+      },
     );
   }
 
@@ -371,27 +380,33 @@ function normalizeConfiguredPhraseList(values: string[]): string[] {
 
 function parseOptionalBannedPhraseList(
   value: unknown,
-  label: string
+  label: string,
 ): string[] | undefined {
   if (value === undefined) {
     return undefined;
   }
 
-  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+  if (
+    !Array.isArray(value) ||
+    value.some((entry) => typeof entry !== "string")
+  ) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `${label} must be an array of strings.`,
       {
         label,
-        provided_value: value
-      }
+        provided_value: value,
+      },
     );
   }
 
   return normalizeConfiguredPhraseList(value);
 }
 
-function parseBooleanEnv(value: string | undefined, label: string): boolean | undefined {
+function parseBooleanEnv(
+  value: string | undefined,
+  label: string,
+): boolean | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -410,15 +425,15 @@ function parseBooleanEnv(value: string | undefined, label: string): boolean | un
     `${label} must be one of: true, false, 1, 0, yes, no, on, off.`,
     {
       label,
-      provided_value: value
-    }
+      provided_value: value,
+    },
   );
 }
 
 function parseIntegerEnv(
   value: string | undefined,
   label: string,
-  options: { min?: number; max?: number } = {}
+  options: { min?: number; max?: number } = {},
 ): number | undefined {
   if (value === undefined || value.trim().length === 0) {
     return undefined;
@@ -431,8 +446,8 @@ function parseIntegerEnv(
       `${label} must be an integer.`,
       {
         label,
-        provided_value: value
-      }
+        provided_value: value,
+      },
     );
   }
 
@@ -441,7 +456,7 @@ function parseIntegerEnv(
 
 function parseBannedPhraseEnv(
   value: string | undefined,
-  label: string
+  label: string,
 ): string[] | undefined {
   if (value === undefined) {
     return undefined;
@@ -464,9 +479,9 @@ function parseBannedPhraseEnv(
         {
           label,
           provided_value: value,
-          message: error instanceof Error ? error.message : String(error)
+          message: error instanceof Error ? error.message : String(error),
         },
-        error instanceof Error ? { cause: error } : undefined
+        error instanceof Error ? { cause: error } : undefined,
       );
     }
 
@@ -476,7 +491,9 @@ function parseBannedPhraseEnv(
   return normalizeConfiguredPhraseList(trimmedValue.split(/\r?\n|,/g));
 }
 
-function readPostSafetyLintConfigShape(baseDir: string): PostSafetyLintConfigShape {
+function readPostSafetyLintConfigShape(
+  baseDir: string,
+): PostSafetyLintConfigShape {
   const configPath = path.join(baseDir, LINKEDIN_BUDDY_CONFIG_FILENAME);
   if (!existsSync(configPath)) {
     return {};
@@ -491,9 +508,9 @@ function readPostSafetyLintConfigShape(baseDir: string): PostSafetyLintConfigSha
       `Failed to parse LinkedIn Buddy config file at ${configPath}.`,
       {
         config_path: configPath,
-        message: error instanceof Error ? error.message : String(error)
+        message: error instanceof Error ? error.message : String(error),
       },
-      error instanceof Error ? { cause: error } : undefined
+      error instanceof Error ? { cause: error } : undefined,
     );
   }
 
@@ -502,8 +519,8 @@ function readPostSafetyLintConfigShape(baseDir: string): PostSafetyLintConfigSha
       "ACTION_PRECONDITION_FAILED",
       `LinkedIn Buddy config file at ${configPath} must contain a JSON object.`,
       {
-        config_path: configPath
-      }
+        config_path: configPath,
+      },
     );
   }
 
@@ -518,8 +535,8 @@ function readPostSafetyLintConfigShape(baseDir: string): PostSafetyLintConfigSha
       `postSafetyLint in ${configPath} must be a JSON object.`,
       {
         config_path: configPath,
-        provided_value: directLintConfig
-      }
+        provided_value: directLintConfig,
+      },
     );
   }
 
@@ -527,7 +544,7 @@ function readPostSafetyLintConfigShape(baseDir: string): PostSafetyLintConfigSha
 }
 
 export function resolveLinkedInPostSafetyLintConfig(
-  baseDir?: string
+  baseDir?: string,
 ): LinkedInPostSafetyLintConfig {
   const fileConfig = baseDir ? readPostSafetyLintConfigShape(baseDir) : {};
   const fileLabel = baseDir
@@ -539,30 +556,37 @@ export function resolveLinkedInPostSafetyLintConfig(
       process.env.LINKEDIN_BUDDY_POST_SAFETY_MAX_LENGTH,
       "LINKEDIN_BUDDY_POST_SAFETY_MAX_LENGTH",
       {
-      max: LINKEDIN_POST_MAX_LENGTH
-      }
+        max: LINKEDIN_POST_MAX_LENGTH,
+      },
     ) ??
-    parseOptionalPositiveInteger(fileConfig.maxLength, `${fileLabel}.maxLength`, {
-      max: LINKEDIN_POST_MAX_LENGTH
-    }) ??
+    parseOptionalPositiveInteger(
+      fileConfig.maxLength,
+      `${fileLabel}.maxLength`,
+      {
+        max: LINKEDIN_POST_MAX_LENGTH,
+      },
+    ) ??
     DEFAULT_LINKEDIN_POST_SAFETY_LINT_CONFIG.maxLength;
 
   const bannedPhrases =
     parseBannedPhraseEnv(
       process.env.LINKEDIN_BUDDY_POST_SAFETY_BANNED_PHRASES,
-      "LINKEDIN_BUDDY_POST_SAFETY_BANNED_PHRASES"
+      "LINKEDIN_BUDDY_POST_SAFETY_BANNED_PHRASES",
     ) ??
-    parseOptionalBannedPhraseList(fileConfig.bannedPhrases, `${fileLabel}.bannedPhrases`) ??
+    parseOptionalBannedPhraseList(
+      fileConfig.bannedPhrases,
+      `${fileLabel}.bannedPhrases`,
+    ) ??
     DEFAULT_LINKEDIN_POST_SAFETY_LINT_CONFIG.bannedPhrases;
 
   const validateLinkPreviews =
     parseBooleanEnv(
       process.env.LINKEDIN_BUDDY_POST_SAFETY_VALIDATE_LINK_PREVIEWS,
-      "LINKEDIN_BUDDY_POST_SAFETY_VALIDATE_LINK_PREVIEWS"
+      "LINKEDIN_BUDDY_POST_SAFETY_VALIDATE_LINK_PREVIEWS",
     ) ??
     parseOptionalBoolean(
       fileConfig.validateLinkPreviews,
-      `${fileLabel}.validateLinkPreviews`
+      `${fileLabel}.validateLinkPreviews`,
     ) ??
     DEFAULT_LINKEDIN_POST_SAFETY_LINT_CONFIG.validateLinkPreviews;
 
@@ -571,15 +595,15 @@ export function resolveLinkedInPostSafetyLintConfig(
       process.env.LINKEDIN_BUDDY_POST_SAFETY_LINK_TIMEOUT_MS,
       "LINKEDIN_BUDDY_POST_SAFETY_LINK_TIMEOUT_MS",
       {
-        max: MAX_LINK_PREVIEW_VALIDATION_TIMEOUT_MS
-      }
+        max: MAX_LINK_PREVIEW_VALIDATION_TIMEOUT_MS,
+      },
     ) ??
     parseOptionalPositiveInteger(
       fileConfig.linkPreviewValidationTimeoutMs,
       `${fileLabel}.linkPreviewValidationTimeoutMs`,
       {
-        max: MAX_LINK_PREVIEW_VALIDATION_TIMEOUT_MS
-      }
+        max: MAX_LINK_PREVIEW_VALIDATION_TIMEOUT_MS,
+      },
     ) ??
     DEFAULT_LINKEDIN_POST_SAFETY_LINT_CONFIG.linkPreviewValidationTimeoutMs;
 
@@ -587,7 +611,7 @@ export function resolveLinkedInPostSafetyLintConfig(
     maxLength,
     bannedPhrases,
     validateLinkPreviews,
-    linkPreviewValidationTimeoutMs
+    linkPreviewValidationTimeoutMs,
   };
 }
 
@@ -626,21 +650,21 @@ function hasUnsupportedControlCharacters(value: string): boolean {
 
 export function validateLinkedInPostText(
   value: string,
-  maxLength: number = LINKEDIN_POST_MAX_LENGTH
+  maxLength: number = LINKEDIN_POST_MAX_LENGTH,
 ): ValidatedPostText {
   const normalizedText = normalizePostText(value);
 
   if (!normalizedText) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "Post text must not be empty."
+      "Post text must not be empty.",
     );
   }
 
   if (hasUnsupportedControlCharacters(normalizedText)) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "Post text contains unsupported control characters."
+      "Post text contains unsupported control characters.",
     );
   }
 
@@ -652,8 +676,8 @@ export function validateLinkedInPostText(
       {
         character_count: characterCount,
         max_length: maxLength,
-        linkedin_max_length: LINKEDIN_POST_MAX_LENGTH
-      }
+        linkedin_max_length: LINKEDIN_POST_MAX_LENGTH,
+      },
     );
   }
 
@@ -666,7 +690,7 @@ export function validateLinkedInPostText(
     paragraphCount: countParagraphs(normalizedText),
     containsUrl: /(https?:\/\/|www\.)/i.test(normalizedText),
     containsMention: /(^|\s)@[\p{L}\p{N}_.-]+/iu.test(normalizedText),
-    containsHashtag: /(^|\s)#[\p{L}\p{N}_-]+/iu.test(normalizedText)
+    containsHashtag: /(^|\s)#[\p{L}\p{N}_-]+/iu.test(normalizedText),
   };
 }
 
@@ -676,7 +700,7 @@ function normalizeBannedPhraseMatcher(value: string): string {
 
 function matchConfiguredBannedPhrases(
   text: string,
-  bannedPhrases: string[]
+  bannedPhrases: string[],
 ): string[] {
   return bannedPhrases.filter((phrase) => {
     const normalizedPhrase = normalizeBannedPhraseMatcher(phrase);
@@ -684,10 +708,13 @@ function matchConfiguredBannedPhrases(
       return false;
     }
 
-    const normalizedPattern = escapeRegExp(normalizedPhrase).replace(/\s+/g, "\\s+");
+    const normalizedPattern = escapeRegExp(normalizedPhrase).replace(
+      /\s+/g,
+      "\\s+",
+    );
     return new RegExp(
       `(^|[^\\p{L}\\p{N}_])${normalizedPattern}($|[^\\p{L}\\p{N}_])`,
-      "iu"
+      "iu",
     ).test(text);
   });
 }
@@ -734,7 +761,7 @@ function extractUrlsFromPostText(text: string): ExtractedPostLinks {
 
   return {
     validUrls,
-    invalidUrls
+    invalidUrls,
   };
 }
 
@@ -751,7 +778,9 @@ function isPrivateHostname(hostname: string): boolean {
 
   const ipVersion = isIP(normalizedHostname);
   if (ipVersion === 4) {
-    const octets = normalizedHostname.split(".").map((segment) => Number.parseInt(segment, 10));
+    const octets = normalizedHostname
+      .split(".")
+      .map((segment) => Number.parseInt(segment, 10));
     const firstOctet = octets[0] ?? -1;
     const secondOctet = octets[1] ?? -1;
 
@@ -786,7 +815,10 @@ function isPrivateHostname(hostname: string): boolean {
   return false;
 }
 
-async function readResponseSnippet(response: Response, maxBytes: number): Promise<string> {
+async function readResponseSnippet(
+  response: Response,
+  maxBytes: number,
+): Promise<string> {
   if (!response.body) {
     return "";
   }
@@ -834,7 +866,10 @@ function looksPreviewableHtml(html: string): boolean {
   );
 }
 
-async function validateLinkPreview(url: string, timeoutMs: number): Promise<string | null> {
+async function validateLinkPreview(
+  url: string,
+  timeoutMs: number,
+): Promise<string | null> {
   const parsedUrl = new URL(url);
   if (isPrivateHostname(parsedUrl.hostname)) {
     return "Private, loopback, or local-network links cannot be preview-validated.";
@@ -849,8 +884,8 @@ async function validateLinkPreview(url: string, timeoutMs: number): Promise<stri
       redirect: "follow",
       signal: controller.signal,
       headers: {
-        accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.1"
-      }
+        accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.1",
+      },
     });
 
     if (!response.ok) {
@@ -862,7 +897,10 @@ async function validateLinkPreview(url: string, timeoutMs: number): Promise<stri
       return `Expected HTML content but received ${contentType || "unknown content type"}.`;
     }
 
-    const htmlSnippet = await readResponseSnippet(response, LINK_PREVIEW_BODY_BYTE_LIMIT);
+    const htmlSnippet = await readResponseSnippet(
+      response,
+      LINK_PREVIEW_BODY_BYTE_LIMIT,
+    );
     if (!looksPreviewableHtml(htmlSnippet)) {
       return "The page does not expose HTML title or preview metadata near the top of the document.";
     }
@@ -881,7 +919,7 @@ async function validateLinkPreview(url: string, timeoutMs: number): Promise<stri
 
 async function validateConfiguredLinkPreviews(
   urls: string[],
-  timeoutMs: number
+  timeoutMs: number,
 ): Promise<void> {
   const results = await Promise.all(
     urls.map(async (url): Promise<LinkPreviewValidationFailure | null> => {
@@ -892,13 +930,13 @@ async function validateConfiguredLinkPreviews(
 
       return {
         url,
-        reason: failureReason
+        reason: failureReason,
       };
-    })
+    }),
   );
 
   const failedLinks = results.filter(
-    (result): result is LinkPreviewValidationFailure => result !== null
+    (result): result is LinkPreviewValidationFailure => result !== null,
   );
   if (failedLinks.length === 0) {
     return;
@@ -918,20 +956,20 @@ async function validateConfiguredLinkPreviews(
       invalid_links: failedLinks,
       link_preview_validation: {
         enabled: true,
-        timeout_ms: timeoutMs
-      }
-    }
+        timeout_ms: timeoutMs,
+      },
+    },
   );
 }
 
 export async function lintLinkedInPostContent(
   value: string,
-  config: LinkedInPostSafetyLintConfig = DEFAULT_LINKEDIN_POST_SAFETY_LINT_CONFIG
+  config: LinkedInPostSafetyLintConfig = DEFAULT_LINKEDIN_POST_SAFETY_LINT_CONFIG,
 ): Promise<LinkedInPostLintResult> {
   const validatedText = validateLinkedInPostText(value, config.maxLength);
   const matchedBannedPhrases = matchConfiguredBannedPhrases(
     validatedText.normalizedText,
-    config.bannedPhrases
+    config.bannedPhrases,
   );
   if (matchedBannedPhrases.length > 0) {
     throw new LinkedInBuddyError(
@@ -941,8 +979,8 @@ export async function lintLinkedInPostContent(
         : `Post text contains ${matchedBannedPhrases.length} banned phrases.`,
       {
         banned_phrases: matchedBannedPhrases,
-        configured_banned_phrase_count: config.bannedPhrases.length
-      }
+        configured_banned_phrase_count: config.bannedPhrases.length,
+      },
     );
   }
 
@@ -958,37 +996,41 @@ export async function lintLinkedInPostContent(
           invalid_urls: extractedLinks.invalidUrls,
           link_preview_validation: {
             enabled: true,
-            timeout_ms: config.linkPreviewValidationTimeoutMs
-          }
-        }
+            timeout_ms: config.linkPreviewValidationTimeoutMs,
+          },
+        },
       );
     }
 
     await validateConfiguredLinkPreviews(
       extractedLinks.validUrls,
-      config.linkPreviewValidationTimeoutMs
+      config.linkPreviewValidationTimeoutMs,
     );
   }
 
   return {
     validatedText,
-    urls: extractedLinks.validUrls
+    urls: extractedLinks.validUrls,
   };
 }
 
 function normalizeVisibilityKey(value: string): string {
-  return value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
 }
 
 export function normalizeLinkedInPostVisibility(
   value: string | undefined,
-  fallback: LinkedInPostVisibility = "public"
+  fallback: LinkedInPostVisibility = "public",
 ): LinkedInPostVisibility {
   if (!value || normalizeText(value).length === 0) {
     return fallback;
   }
 
-  const mapped = LINKEDIN_POST_VISIBILITY_ALIAS_MAP[normalizeVisibilityKey(value)];
+  const mapped =
+    LINKEDIN_POST_VISIBILITY_ALIAS_MAP[normalizeVisibilityKey(value)];
   if (mapped) {
     return mapped;
   }
@@ -998,8 +1040,8 @@ export function normalizeLinkedInPostVisibility(
     `visibility must be one of: ${LINKEDIN_POST_VISIBILITY_TYPES.join(", ")}.`,
     {
       provided_visibility: value,
-      supported_visibilities: LINKEDIN_POST_VISIBILITY_TYPES
-    }
+      supported_visibilities: LINKEDIN_POST_VISIBILITY_TYPES,
+    },
   );
 }
 
@@ -1014,7 +1056,7 @@ function normalizeOptionalPostText(value: string | undefined): string | null {
 
 async function lintOptionalLinkedInPostContent(
   value: string | undefined,
-  config: LinkedInPostSafetyLintConfig = DEFAULT_LINKEDIN_POST_SAFETY_LINT_CONFIG
+  config: LinkedInPostSafetyLintConfig = DEFAULT_LINKEDIN_POST_SAFETY_LINT_CONFIG,
 ): Promise<LinkedInPostLintResult | null> {
   const normalizedValue = normalizeOptionalPostText(value);
   if (!normalizedValue) {
@@ -1033,7 +1075,7 @@ function resolvePostUrl(postUrl: string): string {
   if (!trimmedPostUrl) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "postUrl is required."
+      "postUrl is required.",
     );
   }
 
@@ -1045,7 +1087,7 @@ function resolvePostUrl(postUrl: string): string {
       throw asLinkedInBuddyError(
         error,
         "ACTION_PRECONDITION_FAILED",
-        "Post URL must be a valid URL."
+        "Post URL must be a valid URL.",
       );
     }
 
@@ -1126,10 +1168,12 @@ function buildTextRegex(labels: readonly string[], exact = false): RegExp {
     new Set(
       labels
         .map((label) => normalizeText(label))
-        .filter((label) => label.length > 0)
-    )
+        .filter((label) => label.length > 0),
+    ),
   );
-  const pattern = normalizedLabels.map((label) => escapeRegExp(label)).join("|");
+  const pattern = normalizedLabels
+    .map((label) => escapeRegExp(label))
+    .join("|");
   return new RegExp(exact ? `^(?:${pattern})$` : `(?:${pattern})`, "i");
 }
 
@@ -1146,12 +1190,12 @@ function determineMediaKind(extension: string): LinkedInPostMediaKind | null {
 }
 
 function validateLinkedInPostMediaAttachments(
-  mediaPaths: string[]
+  mediaPaths: string[],
 ): ValidatedMediaAttachment[] {
   if (!Array.isArray(mediaPaths) || mediaPaths.length === 0) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "mediaPaths must include at least one attachment."
+      "mediaPaths must include at least one attachment.",
     );
   }
 
@@ -1161,8 +1205,8 @@ function validateLinkedInPostMediaAttachments(
       `mediaPaths may include at most ${LINKEDIN_POST_MAX_MEDIA_ATTACHMENTS} files.`,
       {
         media_count: mediaPaths.length,
-        max_media_attachments: LINKEDIN_POST_MAX_MEDIA_ATTACHMENTS
-      }
+        max_media_attachments: LINKEDIN_POST_MAX_MEDIA_ATTACHMENTS,
+      },
     );
   }
 
@@ -1171,7 +1215,7 @@ function validateLinkedInPostMediaAttachments(
     if (!normalizedPath) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        "mediaPaths must not contain empty entries."
+        "mediaPaths must not contain empty entries.",
       );
     }
 
@@ -1182,8 +1226,8 @@ function validateLinkedInPostMediaAttachments(
         `Media file does not exist: ${normalizedPath}.`,
         {
           media_path: normalizedPath,
-          absolute_path: absolutePath
-        }
+          absolute_path: absolutePath,
+        },
       );
     }
 
@@ -1194,8 +1238,8 @@ function validateLinkedInPostMediaAttachments(
         `Media path must point to a file: ${normalizedPath}.`,
         {
           media_path: normalizedPath,
-          absolute_path: absolutePath
-        }
+          absolute_path: absolutePath,
+        },
       );
     }
 
@@ -1205,8 +1249,8 @@ function validateLinkedInPostMediaAttachments(
         `Media file must not be empty: ${normalizedPath}.`,
         {
           media_path: normalizedPath,
-          absolute_path: absolutePath
-        }
+          absolute_path: absolutePath,
+        },
       );
     }
 
@@ -1222,9 +1266,9 @@ function validateLinkedInPostMediaAttachments(
           extension,
           supported_extensions: [
             ...Array.from(LINKEDIN_POST_IMAGE_EXTENSIONS),
-            ...Array.from(LINKEDIN_POST_VIDEO_EXTENSIONS)
-          ]
-        }
+            ...Array.from(LINKEDIN_POST_VIDEO_EXTENSIONS),
+          ],
+        },
       );
     }
 
@@ -1234,7 +1278,7 @@ function validateLinkedInPostMediaAttachments(
       fileName: path.basename(absolutePath),
       extension,
       kind,
-      sizeBytes: stats.size
+      sizeBytes: stats.size,
     } satisfies ValidatedMediaAttachment;
   });
 
@@ -1244,8 +1288,8 @@ function validateLinkedInPostMediaAttachments(
       "ACTION_PRECONDITION_FAILED",
       "mediaPaths must contain only images or only a single video.",
       {
-        media_kinds: Array.from(kinds)
-      }
+        media_kinds: Array.from(kinds),
+      },
     );
   }
 
@@ -1255,8 +1299,8 @@ function validateLinkedInPostMediaAttachments(
       "ACTION_PRECONDITION_FAILED",
       "LinkedIn post composer only supports one video attachment per post.",
       {
-        media_count: attachments.length
-      }
+        media_count: attachments.length,
+      },
     );
   }
 
@@ -1268,7 +1312,7 @@ function normalizePollQuestion(question: string): string {
   if (!normalized) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "question is required."
+      "question is required.",
     );
   }
 
@@ -1279,7 +1323,7 @@ function normalizePollOptions(options: string[]): string[] {
   if (!Array.isArray(options)) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      `options must include ${LINKEDIN_POST_POLL_MIN_OPTIONS}-${LINKEDIN_POST_POLL_MAX_OPTIONS} entries.`
+      `options must include ${LINKEDIN_POST_POLL_MIN_OPTIONS}-${LINKEDIN_POST_POLL_MAX_OPTIONS} entries.`,
     );
   }
 
@@ -1297,19 +1341,21 @@ function normalizePollOptions(options: string[]): string[] {
       {
         option_count: normalizedOptions.length,
         min_options: LINKEDIN_POST_POLL_MIN_OPTIONS,
-        max_options: LINKEDIN_POST_POLL_MAX_OPTIONS
-      }
+        max_options: LINKEDIN_POST_POLL_MAX_OPTIONS,
+      },
     );
   }
 
-  const dedupeSet = new Set(normalizedOptions.map((option) => option.toLowerCase()));
+  const dedupeSet = new Set(
+    normalizedOptions.map((option) => option.toLowerCase()),
+  );
   if (dedupeSet.size !== normalizedOptions.length) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       "options must be distinct.",
       {
-        options: normalizedOptions
-      }
+        options: normalizedOptions,
+      },
     );
   }
 
@@ -1317,7 +1363,7 @@ function normalizePollOptions(options: string[]): string[] {
 }
 
 function normalizePollDurationDays(
-  durationDays: number | LinkedInPollDurationDays | undefined
+  durationDays: number | LinkedInPollDurationDays | undefined,
 ): LinkedInPollDurationDays {
   if (durationDays === undefined) {
     return 7;
@@ -1325,15 +1371,17 @@ function normalizePollDurationDays(
 
   if (
     typeof durationDays !== "number" ||
-    !LINKEDIN_POST_POLL_DURATION_DAYS.includes(durationDays as LinkedInPollDurationDays)
+    !LINKEDIN_POST_POLL_DURATION_DAYS.includes(
+      durationDays as LinkedInPollDurationDays,
+    )
   ) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
       `durationDays must be one of: ${LINKEDIN_POST_POLL_DURATION_DAYS.join(", ")}.`,
       {
         duration_days: durationDays,
-        supported_duration_days: LINKEDIN_POST_POLL_DURATION_DAYS
-      }
+        supported_duration_days: LINKEDIN_POST_POLL_DURATION_DAYS,
+      },
     );
   }
 
@@ -1353,7 +1401,7 @@ function getRequiredStringField(
   source: Record<string, unknown>,
   key: string,
   actionId: string,
-  location: "target" | "payload"
+  location: "target" | "payload",
 ): string {
   const value = source[key];
   if (typeof value === "string" && value.trim().length > 0) {
@@ -1366,22 +1414,24 @@ function getRequiredStringField(
     {
       action_id: actionId,
       location,
-      key
-    }
+      key,
+    },
   );
 }
 
 function toAutomationError(
   error: unknown,
   message: string,
-  details: Record<string, unknown>
+  details: Record<string, unknown>,
 ): LinkedInBuddyError {
   if (error instanceof LinkedInBuddyError) {
     return error;
   }
 
   if (error instanceof playwrightErrors.TimeoutError) {
-    return new LinkedInBuddyError("TIMEOUT", message, details, { cause: error });
+    return new LinkedInBuddyError("TIMEOUT", message, details, {
+      cause: error,
+    });
   }
 
   if (
@@ -1389,25 +1439,11 @@ function toAutomationError(
     /(net::|ERR_|ECONN|ENOTFOUND|EAI_AGAIN|socket hang up)/i.test(error.message)
   ) {
     return new LinkedInBuddyError("NETWORK_ERROR", message, details, {
-      cause: error
+      cause: error,
     });
   }
 
   return asLinkedInBuddyError(error, "UNKNOWN", message);
-}
-
-function formatRateLimitState(
-  state: RateLimiterState
-): Record<string, number | boolean | string> {
-  return {
-    counter_key: state.counterKey,
-    window_start_ms: state.windowStartMs,
-    window_size_ms: state.windowSizeMs,
-    count: state.count,
-    limit: state.limit,
-    remaining: state.remaining,
-    allowed: state.allowed
-  };
 }
 
 function escapeRegExp(value: string): string {
@@ -1431,7 +1467,7 @@ async function captureScreenshotArtifact(
   runtime: LinkedInPostsExecutorRuntime,
   page: Page,
   relativePath: string,
-  metadata: Record<string, unknown> = {}
+  metadata: Record<string, unknown> = {},
 ): Promise<string> {
   const absolutePath = runtime.artifacts.resolve(relativePath);
   await page.screenshot({ path: absolutePath, fullPage: true });
@@ -1442,7 +1478,7 @@ async function captureScreenshotArtifact(
 function registerTraceArtifact(
   runtime: LinkedInPostsExecutorRuntime,
   relativePath: string,
-  metadata: Record<string, unknown>
+  metadata: Record<string, unknown>,
 ): void {
   runtime.artifacts.registerArtifact(relativePath, "application/zip", metadata);
 }
@@ -1450,7 +1486,7 @@ function registerTraceArtifact(
 async function waitForCondition(
   condition: () => Promise<boolean>,
   timeoutMs: number,
-  intervalMs: number = 250
+  intervalMs: number = 250,
 ): Promise<boolean> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
@@ -1476,7 +1512,12 @@ async function isLocatorVisible(locator: Locator): Promise<boolean> {
 async function isAnyLocatorVisible(locator: Locator): Promise<boolean> {
   const count = Math.min(await locator.count().catch(() => 0), 4);
   for (let index = 0; index < count; index += 1) {
-    if (await locator.nth(index).isVisible().catch(() => false)) {
+    if (
+      await locator
+        .nth(index)
+        .isVisible()
+        .catch(() => false)
+    ) {
       return true;
     }
   }
@@ -1492,7 +1533,7 @@ async function findVisibleLocatorOrThrow(
   page: Page,
   candidates: SelectorCandidate[],
   selectorKey: string,
-  artifactPaths: string[]
+  artifactPaths: string[],
 ): Promise<{ locator: Locator; key: string }> {
   for (const candidate of candidates) {
     const locator = candidate.locatorFactory(page).first();
@@ -1510,9 +1551,11 @@ async function findVisibleLocatorOrThrow(
     {
       selector_key: selectorKey,
       current_url: page.url(),
-      attempted_selectors: candidates.map((candidate) => candidate.selectorHint),
-      artifact_paths: artifactPaths
-    }
+      attempted_selectors: candidates.map(
+        (candidate) => candidate.selectorHint,
+      ),
+      artifact_paths: artifactPaths,
+    },
   );
 }
 
@@ -1521,7 +1564,7 @@ async function findVisibleScopedLocatorOrThrow(
   candidates: ScopedSelectorCandidate[],
   selectorKey: string,
   artifactPaths: string[],
-  currentUrl: string
+  currentUrl: string,
 ): Promise<{ locator: Locator; key: string }> {
   for (const candidate of candidates) {
     const locator = candidate.locatorFactory(root).first();
@@ -1539,15 +1582,17 @@ async function findVisibleScopedLocatorOrThrow(
     {
       selector_key: selectorKey,
       current_url: currentUrl,
-      attempted_selectors: candidates.map((candidate) => candidate.selectorHint),
-      artifact_paths: artifactPaths
-    }
+      attempted_selectors: candidates.map(
+        (candidate) => candidate.selectorHint,
+      ),
+      artifact_paths: artifactPaths,
+    },
   );
 }
 
 async function findOptionalVisibleLocator(
   page: Page,
-  candidates: SelectorCandidate[]
+  candidates: SelectorCandidate[],
 ): Promise<{ locator: Locator; key: string } | null> {
   for (const candidate of candidates) {
     const locator = candidate.locatorFactory(page).first();
@@ -1563,7 +1608,7 @@ async function findPresentLocatorOrThrow(
   page: Page,
   candidates: SelectorCandidate[],
   selectorKey: string,
-  artifactPaths: string[]
+  artifactPaths: string[],
 ): Promise<{ locator: Locator; key: string }> {
   for (const candidate of candidates) {
     const locator = candidate.locatorFactory(page).first();
@@ -1578,15 +1623,17 @@ async function findPresentLocatorOrThrow(
     {
       selector_key: selectorKey,
       current_url: page.url(),
-      attempted_selectors: candidates.map((candidate) => candidate.selectorHint),
-      artifact_paths: artifactPaths
-    }
+      attempted_selectors: candidates.map(
+        (candidate) => candidate.selectorHint,
+      ),
+      artifact_paths: artifactPaths,
+    },
   );
 }
 
 async function findPresentLocatorCollection(
   page: Page,
-  candidates: SelectorCandidate[]
+  candidates: SelectorCandidate[],
 ): Promise<{ locator: Locator; key: string } | null> {
   for (const candidate of candidates) {
     const locator = candidate.locatorFactory(page);
@@ -1600,7 +1647,7 @@ async function findPresentLocatorCollection(
 
 async function findOptionalScopedLocator(
   root: Locator,
-  candidates: ScopedSelectorCandidate[]
+  candidates: ScopedSelectorCandidate[],
 ): Promise<{ locator: Locator; key: string } | null> {
   for (const candidate of candidates) {
     const locator = candidate.locatorFactory(root).first();
@@ -1614,7 +1661,7 @@ async function findOptionalScopedLocator(
 
 async function findPresentScopedLocator(
   root: Locator,
-  candidates: ScopedSelectorCandidate[]
+  candidates: ScopedSelectorCandidate[],
 ): Promise<{ locator: Locator; key: string } | null> {
   for (const candidate of candidates) {
     const locator = candidate.locatorFactory(root).first();
@@ -1629,13 +1676,13 @@ async function findPresentScopedLocator(
 async function waitForVisibleSurface(
   page: Page,
   selectors: readonly string[],
-  errorMessage: string
+  errorMessage: string,
 ): Promise<void> {
   for (const selector of selectors) {
     try {
       await page.locator(selector).first().waitFor({
         state: "visible",
-        timeout: 5_000
+        timeout: 5_000,
       });
       return;
     } catch {
@@ -1643,21 +1690,17 @@ async function waitForVisibleSurface(
     }
   }
 
-  throw new LinkedInBuddyError(
-    "UI_CHANGED_SELECTOR_FAILED",
-    errorMessage,
-    {
-      current_url: page.url(),
-      attempted_selectors: [...selectors]
-    }
-  );
+  throw new LinkedInBuddyError("UI_CHANGED_SELECTOR_FAILED", errorMessage, {
+    current_url: page.url(),
+    attempted_selectors: [...selectors],
+  });
 }
 
 export async function waitForFeedSurface(page: Page): Promise<void> {
   await waitForVisibleSurface(
     page,
     LINKEDIN_POST_FEED_SURFACE_SELECTORS,
-    "Could not locate LinkedIn feed surface."
+    "Could not locate LinkedIn feed surface.",
   );
 }
 
@@ -1665,7 +1708,7 @@ async function waitForProfileActivitySurface(page: Page): Promise<void> {
   await waitForVisibleSurface(
     page,
     LINKEDIN_POST_ACTIVITY_SURFACE_SELECTORS,
-    "Could not locate LinkedIn profile activity surface."
+    "Could not locate LinkedIn profile activity surface.",
   );
 }
 
@@ -1684,111 +1727,110 @@ const POST_UI_ACTION_LABELS: Record<
 > = {
   edit: {
     en: ["Edit post", "Edit"],
-    da: ["Rediger opslag", "Rediger"]
+    da: ["Rediger opslag", "Rediger"],
   },
   delete: {
     en: ["Delete post", "Delete", "Remove"],
-    da: ["Slet opslag", "Slet", "Fjern"]
+    da: ["Slet opslag", "Slet", "Fjern"],
   },
   media: {
-    en: [
-      "Add media",
-      "Add a photo",
-      "Add a photo or video",
-      "Photo",
-      "Video"
-    ],
+    en: ["Add media", "Add a photo", "Add a photo or video", "Photo", "Video"],
     da: [
       "Tilføj medier",
       "Tilføj et billede",
       "Tilføj et billede eller en video",
       "Foto",
       "Billede",
-      "Video"
-    ]
+      "Video",
+    ],
   },
   poll: {
     en: ["Create a poll", "Poll"],
-    da: ["Opret en afstemning", "Afstemning"]
+    da: ["Opret en afstemning", "Afstemning"],
   },
   question: {
     en: ["Question"],
-    da: ["Spørgsmål"]
+    da: ["Spørgsmål"],
   },
   option: {
     en: ["Option"],
-    da: ["Valgmulighed", "Svarmulighed", "Mulighed"]
+    da: ["Valgmulighed", "Svarmulighed", "Mulighed"],
   },
   duration: {
     en: ["Duration"],
-    da: ["Varighed"]
-  }
+    da: ["Varighed"],
+  },
 };
 
 function getPostUiActionLabels(
   key: PostUiActionLabelKey,
-  locale: LinkedInSelectorLocale
+  locale: LinkedInSelectorLocale,
 ): string[] {
-  const localized = POST_UI_ACTION_LABELS[key][locale] ?? POST_UI_ACTION_LABELS[key].en;
+  const localized =
+    POST_UI_ACTION_LABELS[key][locale] ?? POST_UI_ACTION_LABELS[key].en;
   return Array.from(new Set([...localized, ...POST_UI_ACTION_LABELS[key].en]));
 }
 
 function buildAriaLabelContainsSelector(
   tagNames: string | readonly string[],
-  labels: readonly string[]
+  labels: readonly string[],
 ): string {
   const resolvedTagNames = Array.isArray(tagNames) ? tagNames : [tagNames];
   return resolvedTagNames
     .flatMap((tagName) =>
       labels.map(
-        (label) => `${tagName}[aria-label*="${escapeCssAttributeValue(label)}" i]`
-      )
+        (label) =>
+          `${tagName}[aria-label*="${escapeCssAttributeValue(label)}" i]`,
+      ),
     )
     .join(", ");
 }
 
 function formatPollDurationLabels(
   durationDays: LinkedInPollDurationDays,
-  locale: LinkedInSelectorLocale
+  locale: LinkedInSelectorLocale,
 ): string[] {
   const englishLabels = {
     1: ["1 day", "One day"],
     3: ["3 days"],
     7: ["1 week", "7 days"],
-    14: ["2 weeks", "14 days"]
+    14: ["2 weeks", "14 days"],
   } satisfies Record<LinkedInPollDurationDays, string[]>;
 
   const danishLabels = {
     1: ["1 dag"],
     3: ["3 dage"],
     7: ["1 uge", "7 dage"],
-    14: ["2 uger", "14 dage"]
+    14: ["2 uger", "14 dage"],
   } satisfies Record<LinkedInPollDurationDays, string[]>;
 
-  const localized = locale === "da" ? danishLabels[durationDays] : englishLabels[durationDays];
-  return Array.from(new Set([...(localized ?? []), ...englishLabels[durationDays]]));
+  const localized =
+    locale === "da" ? danishLabels[durationDays] : englishLabels[durationDays];
+  return Array.from(
+    new Set([...(localized ?? []), ...englishLabels[durationDays]]),
+  );
 }
 
 function createComposerRootCandidates(
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): SelectorCandidate[] {
   const postExactRegex = buildLinkedInSelectorPhraseRegex(
     "post",
     selectorLocale,
-    { exact: true }
+    { exact: true },
   );
   const postExactRegexHint = formatLinkedInSelectorRegexHint(
     "post",
     selectorLocale,
-    { exact: true }
+    { exact: true },
   );
   const composerPromptRegex = buildLinkedInSelectorPhraseRegex(
     "what_do_you_want_to_talk_about",
-    selectorLocale
+    selectorLocale,
   );
   const composerPromptRegexHint = formatLinkedInSelectorRegexHint(
     "what_do_you_want_to_talk_about",
-    selectorLocale
+    selectorLocale,
   );
 
   return [
@@ -1798,7 +1840,7 @@ function createComposerRootCandidates(
       locatorFactory: (page) =>
         page
           .locator("[role='dialog']")
-          .filter({ has: page.locator("[contenteditable='true'], textarea") })
+          .filter({ has: page.locator("[contenteditable='true'], textarea") }),
     },
     {
       key: "dialog-with-post-button",
@@ -1806,7 +1848,7 @@ function createComposerRootCandidates(
       locatorFactory: (page) =>
         page
           .locator("[role='dialog']")
-          .filter({ has: page.getByRole("button", { name: postExactRegex }) })
+          .filter({ has: page.getByRole("button", { name: postExactRegex }) }),
     },
     {
       key: "dialog-with-prompt",
@@ -1814,27 +1856,27 @@ function createComposerRootCandidates(
       locatorFactory: (page) =>
         page
           .locator("[role='dialog']")
-          .filter({ has: page.getByText(composerPromptRegex) })
+          .filter({ has: page.getByText(composerPromptRegex) }),
     },
     {
       key: "share-box-open",
       selectorHint: ".share-box__open, .share-creation-state",
       locatorFactory: (page) =>
-        page.locator(".share-box__open, .share-creation-state")
-    }
+        page.locator(".share-box__open, .share-creation-state"),
+    },
   ];
 }
 
 function createComposerInputCandidates(
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): ScopedSelectorCandidate[] {
   const composerInputRegex = buildLinkedInSelectorPhraseRegex(
     ["what_do_you_want_to_talk_about", "start_post"],
-    selectorLocale
+    selectorLocale,
   );
   const composerInputRegexHint = formatLinkedInSelectorRegexHint(
     ["what_do_you_want_to_talk_about", "start_post"],
-    selectorLocale
+    selectorLocale,
   );
 
   return [
@@ -1843,34 +1885,36 @@ function createComposerInputCandidates(
       selectorHint: `getByRole(textbox, ${composerInputRegexHint})`,
       locatorFactory: (root) =>
         root.getByRole("textbox", {
-          name: composerInputRegex
-        })
+          name: composerInputRegex,
+        }),
     },
     {
       key: "ql-editor",
       selectorHint: ".ql-editor[contenteditable='true']",
-      locatorFactory: (root) => root.locator(".ql-editor[contenteditable='true']")
+      locatorFactory: (root) =>
+        root.locator(".ql-editor[contenteditable='true']"),
     },
     {
       key: "contenteditable-role-textbox",
       selectorHint: "[contenteditable='true'][role='textbox']",
-      locatorFactory: (root) => root.locator("[contenteditable='true'][role='textbox']")
+      locatorFactory: (root) =>
+        root.locator("[contenteditable='true'][role='textbox']"),
     },
     {
       key: "contenteditable",
       selectorHint: "[contenteditable='true']",
-      locatorFactory: (root) => root.locator("[contenteditable='true']")
+      locatorFactory: (root) => root.locator("[contenteditable='true']"),
     },
     {
       key: "textarea",
       selectorHint: "textarea",
-      locatorFactory: (root) => root.locator("textarea")
-    }
+      locatorFactory: (root) => root.locator("textarea"),
+    },
   ];
 }
 
 function createVisibilityButtonCandidates(
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): ScopedSelectorCandidate[] {
   const visibilityRegex = buildLinkedInSelectorPhraseRegex(
     [
@@ -1878,9 +1922,9 @@ function createVisibilityButtonCandidates(
       "connections_only",
       "who_can_see_your_post",
       "visibility",
-      "post_settings"
+      "post_settings",
     ],
-    selectorLocale
+    selectorLocale,
   );
   const visibilityRegexHint = formatLinkedInSelectorRegexHint(
     [
@@ -1888,9 +1932,9 @@ function createVisibilityButtonCandidates(
       "connections_only",
       "who_can_see_your_post",
       "visibility",
-      "post_settings"
+      "post_settings",
     ],
-    selectorLocale
+    selectorLocale,
   );
   const visibilityAriaSelector = buildLinkedInAriaLabelContainsSelector(
     "button",
@@ -1899,17 +1943,17 @@ function createVisibilityButtonCandidates(
       "connections_only",
       "who_can_see_your_post",
       "visibility",
-      "post_settings"
+      "post_settings",
     ],
-    selectorLocale
+    selectorLocale,
   );
   const visibilityTextRegex = buildLinkedInSelectorPhraseRegex(
     ["anyone", "connections_only"],
-    selectorLocale
+    selectorLocale,
   );
   const visibilityTextRegexHint = formatLinkedInSelectorRegexHint(
     ["anyone", "connections_only"],
-    selectorLocale
+    selectorLocale,
   );
 
   return [
@@ -1918,60 +1962,61 @@ function createVisibilityButtonCandidates(
       selectorHint: `getByRole(button, ${visibilityRegexHint})`,
       locatorFactory: (root) =>
         root.getByRole("button", {
-          name: visibilityRegex
-        })
+          name: visibilityRegex,
+        }),
     },
     {
       key: "aria-label-visibility",
       selectorHint: visibilityAriaSelector,
-      locatorFactory: (root) => root.locator(visibilityAriaSelector)
+      locatorFactory: (root) => root.locator(visibilityAriaSelector),
     },
     {
       key: "button-text-visibility",
       selectorHint: `button hasText ${visibilityTextRegexHint}`,
       locatorFactory: (root) =>
-        root.locator("button").filter({ hasText: visibilityTextRegex })
-    }
+        root.locator("button").filter({ hasText: visibilityTextRegex }),
+    },
   ];
 }
 
 function getVisibilityPhraseKey(
-  visibility: LinkedInPostVisibility
+  visibility: LinkedInPostVisibility,
 ): LinkedInSelectorPhraseKey {
   return visibility === "connections" ? "connections_only" : "anyone";
 }
 
 function createVisibilityOptionCandidates(
   visibility: LinkedInPostVisibility,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): SelectorCandidate[] {
   const visibilityPhraseKey = getVisibilityPhraseKey(visibility);
   const labelRegex = buildLinkedInSelectorPhraseRegex(
     visibilityPhraseKey,
     selectorLocale,
-    { exact: true }
+    { exact: true },
   );
   const labelRegexHint = formatLinkedInSelectorRegexHint(
     visibilityPhraseKey,
     selectorLocale,
-    { exact: true }
+    { exact: true },
   );
 
   return [
     {
       key: "role-radio-visibility-option",
       selectorHint: `getByRole(radio, ${labelRegexHint})`,
-      locatorFactory: (page) => page.getByRole("radio", { name: labelRegex })
+      locatorFactory: (page) => page.getByRole("radio", { name: labelRegex }),
     },
     {
       key: "role-button-visibility-option",
       selectorHint: `getByRole(button, ${labelRegexHint})`,
-      locatorFactory: (page) => page.getByRole("button", { name: labelRegex })
+      locatorFactory: (page) => page.getByRole("button", { name: labelRegex }),
     },
     {
       key: "label-visibility-option",
       selectorHint: `label hasText ${labelRegexHint}`,
-      locatorFactory: (page) => page.locator("label").filter({ hasText: labelRegex })
+      locatorFactory: (page) =>
+        page.locator("label").filter({ hasText: labelRegex }),
     },
     {
       key: "generic-visibility-option",
@@ -1979,245 +2024,260 @@ function createVisibilityOptionCandidates(
       locatorFactory: (page) =>
         page
           .locator("[role='radio'], button, label, li")
-          .filter({ hasText: labelRegex })
-    }
+          .filter({ hasText: labelRegex }),
+    },
   ];
 }
 
 function createVisibilityDoneButtonCandidates(
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): SelectorCandidate[] {
   const doneRegex = buildLinkedInSelectorPhraseRegex(
     ["done", "save"],
-    selectorLocale
+    selectorLocale,
   );
   const doneRegexHint = formatLinkedInSelectorRegexHint(
     ["done", "save"],
-    selectorLocale
+    selectorLocale,
   );
 
   return [
     {
       key: "role-button-done",
       selectorHint: `getByRole(button, ${doneRegexHint})`,
-      locatorFactory: (page) => page.getByRole("button", { name: doneRegex })
+      locatorFactory: (page) => page.getByRole("button", { name: doneRegex }),
     },
     {
       key: "button-text-done",
       selectorHint: `button hasText ${doneRegexHint}`,
-      locatorFactory: (page) => page.locator("button").filter({ hasText: doneRegex })
-    }
+      locatorFactory: (page) =>
+        page.locator("button").filter({ hasText: doneRegex }),
+    },
   ];
 }
 
 function createPublishButtonCandidates(
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): ScopedSelectorCandidate[] {
   const postExactRegex = buildLinkedInSelectorPhraseRegex(
     "post",
     selectorLocale,
-    { exact: true }
+    { exact: true },
   );
   const postExactRegexHint = formatLinkedInSelectorRegexHint(
     "post",
     selectorLocale,
-    { exact: true }
+    { exact: true },
   );
 
   return [
     {
       key: "role-button-post",
       selectorHint: `getByRole(button, ${postExactRegexHint})`,
-      locatorFactory: (root) => root.getByRole("button", { name: postExactRegex })
+      locatorFactory: (root) =>
+        root.getByRole("button", { name: postExactRegex }),
     },
     {
       key: "share-actions-primary",
       selectorHint: ".share-actions__primary-action",
-      locatorFactory: (root) => root.locator(".share-actions__primary-action")
+      locatorFactory: (root) => root.locator(".share-actions__primary-action"),
     },
     {
       key: "submit-button",
       selectorHint: "button[type='submit']",
-      locatorFactory: (root) => root.locator("button[type='submit']")
-    }
+      locatorFactory: (root) => root.locator("button[type='submit']"),
+    },
   ];
 }
 
 function createScopedSaveButtonCandidates(
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): ScopedSelectorCandidate[] {
   const saveRegex = buildLinkedInSelectorPhraseRegex(
     ["save", "done"],
-    selectorLocale
+    selectorLocale,
   );
   const saveRegexHint = formatLinkedInSelectorRegexHint(
     ["save", "done"],
-    selectorLocale
+    selectorLocale,
   );
   const saveAriaSelector = buildLinkedInAriaLabelContainsSelector(
     ["button", "[role='button']"],
     ["save", "done"],
-    selectorLocale
+    selectorLocale,
   );
 
   return [
     {
       key: "dialog-role-button-save",
       selectorHint: `getByRole(button, ${saveRegexHint})`,
-      locatorFactory: (root) => root.getByRole("button", { name: saveRegex })
+      locatorFactory: (root) => root.getByRole("button", { name: saveRegex }),
     },
     {
       key: "dialog-aria-button-save",
       selectorHint: saveAriaSelector,
-      locatorFactory: (root) => root.locator(saveAriaSelector)
+      locatorFactory: (root) => root.locator(saveAriaSelector),
     },
     {
       key: "dialog-button-text-save",
       selectorHint: `button hasText ${saveRegexHint}`,
-      locatorFactory: (root) => root.locator("button").filter({ hasText: saveRegex })
-    }
+      locatorFactory: (root) =>
+        root.locator("button").filter({ hasText: saveRegex }),
+    },
   ];
 }
 
 function createPostMenuButtonCandidates(
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): ScopedSelectorCandidate[] {
   const menuRegex = buildLinkedInSelectorPhraseRegex(
     ["more", "more_actions"],
-    selectorLocale
+    selectorLocale,
   );
   const menuRegexHint = formatLinkedInSelectorRegexHint(
     ["more", "more_actions"],
-    selectorLocale
+    selectorLocale,
   );
   const menuAriaSelector = buildLinkedInAriaLabelContainsSelector(
     ["button", "[role='button']"],
     ["more", "more_actions"],
-    selectorLocale
+    selectorLocale,
   );
 
   return [
     {
       key: "post-menu-button-role",
       selectorHint: `getByRole(button, ${menuRegexHint})`,
-      locatorFactory: (root) => root.getByRole("button", { name: menuRegex })
+      locatorFactory: (root) => root.getByRole("button", { name: menuRegex }),
     },
     {
       key: "post-menu-button-aria",
       selectorHint: menuAriaSelector,
-      locatorFactory: (root) => root.locator(menuAriaSelector)
+      locatorFactory: (root) => root.locator(menuAriaSelector),
     },
     {
       key: "post-menu-button-feed-control",
-      selectorHint: ".feed-shared-control-menu__trigger, .artdeco-dropdown__trigger",
+      selectorHint:
+        ".feed-shared-control-menu__trigger, .artdeco-dropdown__trigger",
       locatorFactory: (root) =>
-        root.locator(".feed-shared-control-menu__trigger, .artdeco-dropdown__trigger")
-    }
+        root.locator(
+          ".feed-shared-control-menu__trigger, .artdeco-dropdown__trigger",
+        ),
+    },
   ];
 }
 
 function createPostMenuActionCandidates(
   labels: readonly string[],
-  keyPrefix: string
+  keyPrefix: string,
 ): SelectorCandidate[] {
   const exactRegex = buildTextRegex(labels, true);
   const textRegex = buildTextRegex(labels);
   const ariaSelector = buildAriaLabelContainsSelector(
     ["button", "[role='button']", "[role='menuitem']"],
-    labels
+    labels,
   );
 
   return [
     {
       key: `${keyPrefix}-menuitem-role`,
       selectorHint: `[role='menuitem'] hasText ${textRegex.source}`,
-      locatorFactory: (page) => page.locator("[role='menuitem']").filter({ hasText: textRegex })
+      locatorFactory: (page) =>
+        page.locator("[role='menuitem']").filter({ hasText: textRegex }),
     },
     {
       key: `${keyPrefix}-dropdown-button-text`,
       selectorHint: `.artdeco-dropdown__content-inner button hasText ${textRegex.source}`,
       locatorFactory: (page) =>
         page
-          .locator(".artdeco-dropdown__content-inner button, .artdeco-dropdown__content-inner li")
-          .filter({ hasText: textRegex })
+          .locator(
+            ".artdeco-dropdown__content-inner button, .artdeco-dropdown__content-inner li",
+          )
+          .filter({ hasText: textRegex }),
     },
     {
       key: `${keyPrefix}-action-aria`,
       selectorHint: ariaSelector,
-      locatorFactory: (page) => page.locator(ariaSelector)
+      locatorFactory: (page) => page.locator(ariaSelector),
     },
     {
       key: `${keyPrefix}-button-exact`,
       selectorHint: `button exact ${exactRegex.source}`,
-      locatorFactory: (page) => page.locator("button, [role='button']").filter({ hasText: exactRegex })
-    }
+      locatorFactory: (page) =>
+        page.locator("button, [role='button']").filter({ hasText: exactRegex }),
+    },
   ];
 }
 
 function createDeleteConfirmButtonCandidates(
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): ScopedSelectorCandidate[] {
   const labels = getPostUiActionLabels("delete", selectorLocale);
   const deleteRegex = buildTextRegex(labels);
   const deleteExactRegex = buildTextRegex(labels, true);
   const deleteAriaSelector = buildAriaLabelContainsSelector(
     ["button", "[role='button']"],
-    labels
+    labels,
   );
 
   return [
     {
       key: "delete-confirm-role-exact",
       selectorHint: `getByRole(button, ${deleteExactRegex.source})`,
-      locatorFactory: (root) => root.getByRole("button", { name: deleteExactRegex })
+      locatorFactory: (root) =>
+        root.getByRole("button", { name: deleteExactRegex }),
     },
     {
       key: "delete-confirm-aria",
       selectorHint: deleteAriaSelector,
-      locatorFactory: (root) => root.locator(deleteAriaSelector)
+      locatorFactory: (root) => root.locator(deleteAriaSelector),
     },
     {
       key: "delete-confirm-button-text",
       selectorHint: `button hasText ${deleteRegex.source}`,
-      locatorFactory: (root) => root.locator("button").filter({ hasText: deleteRegex })
-    }
+      locatorFactory: (root) =>
+        root.locator("button").filter({ hasText: deleteRegex }),
+    },
   ];
 }
 
 function createMediaButtonCandidates(
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): ScopedSelectorCandidate[] {
   const labels = getPostUiActionLabels("media", selectorLocale);
   const mediaRegex = buildTextRegex(labels);
   const mediaExactRegex = buildTextRegex(labels, true);
   const mediaAriaSelector = buildAriaLabelContainsSelector(
     ["button", "[role='button']"],
-    labels
+    labels,
   );
 
   return [
     {
       key: "media-button-role-exact",
       selectorHint: `getByRole(button, ${mediaExactRegex.source})`,
-      locatorFactory: (root) => root.getByRole("button", { name: mediaExactRegex })
+      locatorFactory: (root) =>
+        root.getByRole("button", { name: mediaExactRegex }),
     },
     {
       key: "media-button-aria",
       selectorHint: mediaAriaSelector,
-      locatorFactory: (root) => root.locator(mediaAriaSelector)
+      locatorFactory: (root) => root.locator(mediaAriaSelector),
     },
     {
       key: "media-button-text",
       selectorHint: `button hasText ${mediaRegex.source}`,
       locatorFactory: (root) =>
-        root.locator("button, [role='button']").filter({ hasText: mediaRegex })
+        root.locator("button, [role='button']").filter({ hasText: mediaRegex }),
     },
     {
       key: "media-button-footer-icon",
       selectorHint: ".share-box-footer button, footer button",
       locatorFactory: (root) =>
-        root.locator(".share-box-footer button, .share-creation-state__footer button")
-    }
+        root.locator(
+          ".share-box-footer button, .share-creation-state__footer button",
+        ),
+    },
   ];
 }
 
@@ -2226,14 +2286,14 @@ function createMediaInputCandidates(): ScopedSelectorCandidate[] {
     {
       key: "media-input-file",
       selectorHint: "input[type='file']",
-      locatorFactory: (root) => root.locator("input[type='file']")
+      locatorFactory: (root) => root.locator("input[type='file']"),
     },
     {
       key: "media-input-accept-image-video",
       selectorHint: "input[accept*='image'], input[accept*='video']",
       locatorFactory: (root) =>
-        root.locator("input[accept*='image'], input[accept*='video']")
-    }
+        root.locator("input[accept*='image'], input[accept*='video']"),
+    },
   ];
 }
 
@@ -2242,105 +2302,108 @@ function createPageMediaInputCandidates(): SelectorCandidate[] {
     {
       key: "page-media-input-file",
       selectorHint: "input[type='file']",
-      locatorFactory: (page) => page.locator("input[type='file']")
+      locatorFactory: (page) => page.locator("input[type='file']"),
     },
     {
       key: "page-media-input-accept-image-video",
       selectorHint: "input[accept*='image'], input[accept*='video']",
       locatorFactory: (page) =>
-        page.locator("input[accept*='image'], input[accept*='video']")
-    }
+        page.locator("input[accept*='image'], input[accept*='video']"),
+    },
   ];
 }
 
 function createPollButtonCandidates(
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): ScopedSelectorCandidate[] {
   const labels = getPostUiActionLabels("poll", selectorLocale);
   const pollRegex = buildTextRegex(labels);
   const pollExactRegex = buildTextRegex(labels, true);
   const pollAriaSelector = buildAriaLabelContainsSelector(
     ["button", "[role='button']"],
-    labels
+    labels,
   );
 
   return [
     {
       key: "poll-button-role-exact",
       selectorHint: `getByRole(button, ${pollExactRegex.source})`,
-      locatorFactory: (root) => root.getByRole("button", { name: pollExactRegex })
+      locatorFactory: (root) =>
+        root.getByRole("button", { name: pollExactRegex }),
     },
     {
       key: "poll-button-aria",
       selectorHint: pollAriaSelector,
-      locatorFactory: (root) => root.locator(pollAriaSelector)
+      locatorFactory: (root) => root.locator(pollAriaSelector),
     },
     {
       key: "poll-button-text",
       selectorHint: `button hasText ${pollRegex.source}`,
       locatorFactory: (root) =>
-        root.locator("button, [role='button']").filter({ hasText: pollRegex })
-    }
+        root.locator("button, [role='button']").filter({ hasText: pollRegex }),
+    },
   ];
 }
 
 function createPollQuestionInputCandidates(
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): SelectorCandidate[] {
   const labels = getPostUiActionLabels("question", selectorLocale);
   const questionRegex = buildTextRegex(labels);
   const questionAriaSelector = buildAriaLabelContainsSelector(
     ["input", "textarea"],
-    labels
+    labels,
   );
 
   return [
     {
       key: "poll-question-role-textbox",
       selectorHint: `getByRole(textbox, ${questionRegex.source})`,
-      locatorFactory: (page) => page.getByRole("textbox", { name: questionRegex })
+      locatorFactory: (page) =>
+        page.getByRole("textbox", { name: questionRegex }),
     },
     {
       key: "poll-question-aria",
       selectorHint: questionAriaSelector,
-      locatorFactory: (page) => page.locator(questionAriaSelector)
+      locatorFactory: (page) => page.locator(questionAriaSelector),
     },
     {
       key: "poll-question-name",
       selectorHint: "input[name*='question'], textarea[name*='question']",
       locatorFactory: (page) =>
-        page.locator("input[name*='question' i], textarea[name*='question' i]")
-    }
+        page.locator("input[name*='question' i], textarea[name*='question' i]"),
+    },
   ];
 }
 
 function createPollOptionInputCandidates(
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): SelectorCandidate[] {
   const labels = getPostUiActionLabels("option", selectorLocale);
   const optionRegex = buildTextRegex(labels);
   const optionAriaSelector = buildAriaLabelContainsSelector(
     ["input", "textarea"],
-    labels
+    labels,
   );
 
   return [
     {
       key: "poll-option-role-textbox",
       selectorHint: `getByRole(textbox, ${optionRegex.source})`,
-      locatorFactory: (page) => page.getByRole("textbox", { name: optionRegex })
+      locatorFactory: (page) =>
+        page.getByRole("textbox", { name: optionRegex }),
     },
     {
       key: "poll-option-aria",
       selectorHint: optionAriaSelector,
-      locatorFactory: (page) => page.locator(optionAriaSelector)
+      locatorFactory: (page) => page.locator(optionAriaSelector),
     },
     {
       key: "poll-option-name",
       selectorHint: "input[name*='option'], textarea[name*='option']",
       locatorFactory: (page) =>
-        page.locator("input[name*='option' i], textarea[name*='option' i]")
-    }
+        page.locator("input[name*='option' i], textarea[name*='option' i]"),
+    },
   ];
 }
 
@@ -2350,43 +2413,46 @@ function createPollDurationSelectCandidates(): SelectorCandidate[] {
       key: "poll-duration-select-labeled",
       selectorHint: "select[aria-label*='Duration'], select[name*='duration']",
       locatorFactory: (page) =>
-        page.locator("select[aria-label*='Duration' i], select[name*='duration' i]")
+        page.locator(
+          "select[aria-label*='Duration' i], select[name*='duration' i]",
+        ),
     },
     {
       key: "poll-duration-select-generic",
       selectorHint: "select",
-      locatorFactory: (page) => page.locator("select")
-    }
+      locatorFactory: (page) => page.locator("select"),
+    },
   ];
 }
 
 function createPollDurationButtonCandidates(
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): SelectorCandidate[] {
   const labels = getPostUiActionLabels("duration", selectorLocale);
   const durationRegex = buildTextRegex(labels);
   const durationAriaSelector = buildAriaLabelContainsSelector(
     ["button", "[role='button']"],
-    labels
+    labels,
   );
 
   return [
     {
       key: "poll-duration-button-role",
       selectorHint: `getByRole(button, ${durationRegex.source})`,
-      locatorFactory: (page) => page.getByRole("button", { name: durationRegex })
+      locatorFactory: (page) =>
+        page.getByRole("button", { name: durationRegex }),
     },
     {
       key: "poll-duration-button-aria",
       selectorHint: durationAriaSelector,
-      locatorFactory: (page) => page.locator(durationAriaSelector)
-    }
+      locatorFactory: (page) => page.locator(durationAriaSelector),
+    },
   ];
 }
 
 function createPollDurationOptionCandidates(
   durationDays: LinkedInPollDurationDays,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): SelectorCandidate[] {
   const labels = formatPollDurationLabels(durationDays, selectorLocale);
   const durationRegex = buildTextRegex(labels);
@@ -2396,88 +2462,98 @@ function createPollDurationOptionCandidates(
     {
       key: "poll-duration-option-menuitem",
       selectorHint: `[role='menuitem'] hasText ${durationRegex.source}`,
-      locatorFactory: (page) => page.locator("[role='menuitem']").filter({ hasText: durationRegex })
+      locatorFactory: (page) =>
+        page.locator("[role='menuitem']").filter({ hasText: durationRegex }),
     },
     {
       key: "poll-duration-option-role",
       selectorHint: `getByRole(option, ${durationExactRegex.source})`,
-      locatorFactory: (page) => page.getByRole("option", { name: durationExactRegex })
+      locatorFactory: (page) =>
+        page.getByRole("option", { name: durationExactRegex }),
     },
     {
       key: "poll-duration-option-generic",
       selectorHint: `button, li hasText ${durationRegex.source}`,
       locatorFactory: (page) =>
-        page.locator("button, li, div[role='button']").filter({ hasText: durationRegex })
-    }
+        page
+          .locator("button, li, div[role='button']")
+          .filter({ hasText: durationRegex }),
+    },
   ];
 }
 
 function createComposerCloseButtonCandidates(
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): ScopedSelectorCandidate[] {
   const closeRegex = buildLinkedInSelectorPhraseRegex(
     ["dismiss", "close"],
-    selectorLocale
+    selectorLocale,
   );
   const closeRegexHint = formatLinkedInSelectorRegexHint(
     ["dismiss", "close"],
-    selectorLocale
+    selectorLocale,
   );
   const closeAriaSelector = buildLinkedInAriaLabelContainsSelector(
     "button",
     ["dismiss", "close"],
-    selectorLocale
+    selectorLocale,
   );
 
   return [
     {
       key: "role-button-dismiss",
       selectorHint: `getByRole(button, ${closeRegexHint})`,
-      locatorFactory: (root) => root.getByRole("button", { name: closeRegex })
+      locatorFactory: (root) => root.getByRole("button", { name: closeRegex }),
     },
     {
       key: "aria-dismiss-close",
       selectorHint: closeAriaSelector,
-      locatorFactory: (root) => root.locator(closeAriaSelector)
-    }
+      locatorFactory: (root) => root.locator(closeAriaSelector),
+    },
   ];
 }
 
 function createDiscardDialogCandidates(
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): SelectorCandidate[] {
   const discardRegex = buildLinkedInSelectorPhraseRegex(
     ["discard", "leave"],
-    selectorLocale
+    selectorLocale,
   );
   const discardRegexHint = formatLinkedInSelectorRegexHint(
     ["discard", "leave"],
-    selectorLocale
+    selectorLocale,
   );
 
   return [
     {
       key: "role-button-discard",
       selectorHint: `getByRole(button, ${discardRegexHint})`,
-      locatorFactory: (page) => page.getByRole("button", { name: discardRegex })
+      locatorFactory: (page) =>
+        page.getByRole("button", { name: discardRegex }),
     },
     {
       key: "button-text-discard",
       selectorHint: `button hasText ${discardRegexHint}`,
-      locatorFactory: (page) => page.locator("button").filter({ hasText: discardRegex })
-    }
+      locatorFactory: (page) =>
+        page.locator("button").filter({ hasText: discardRegex }),
+    },
   ];
 }
 
 async function openPostComposer(
   page: Page,
   selectorLocale: LinkedInSelectorLocale,
-  artifactPaths: string[]
+  artifactPaths: string[],
 ): Promise<{ composerRoot: Locator; triggerKey: string; rootKey: string }> {
   await page.goto(LINKEDIN_FEED_URL, { waitUntil: "domcontentloaded" });
   await waitForNetworkIdleBestEffort(page);
-  const triggerCandidates = createFeedPostComposerTriggerCandidates(selectorLocale);
-  const visibleTrigger = await findOptionalVisibleLocator(page, triggerCandidates);
+  const triggerCandidates =
+    createFeedPostComposerTriggerCandidates(selectorLocale);
+  const visibleTrigger = await findOptionalVisibleLocator(
+    page,
+    triggerCandidates,
+  );
   if (!visibleTrigger) {
     await waitForFeedSurface(page);
   }
@@ -2488,7 +2564,7 @@ async function openPostComposer(
       page,
       triggerCandidates,
       "post_composer_trigger",
-      artifactPaths
+      artifactPaths,
     ));
   await trigger.locator.click({ timeout: 5_000 });
 
@@ -2496,24 +2572,24 @@ async function openPostComposer(
     page,
     createComposerRootCandidates(selectorLocale),
     "post_composer_root",
-    artifactPaths
+    artifactPaths,
   );
 
   return {
     composerRoot: root.locator,
     triggerKey: trigger.key,
-    rootKey: root.key
+    rootKey: root.key,
   };
 }
 
 async function closeComposerBestEffort(
   page: Page,
   composerRoot: Locator,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<void> {
   const closeButton = await findOptionalScopedLocator(
     composerRoot,
-    createComposerCloseButtonCandidates(selectorLocale)
+    createComposerCloseButtonCandidates(selectorLocale),
   );
 
   try {
@@ -2528,13 +2604,18 @@ async function closeComposerBestEffort(
 
   const discardButton = await findOptionalVisibleLocator(
     page,
-    createDiscardDialogCandidates(selectorLocale)
+    createDiscardDialogCandidates(selectorLocale),
   );
   if (discardButton) {
-    await discardButton.locator.click({ timeout: 2_000 }).catch(() => undefined);
+    await discardButton.locator
+      .click({ timeout: 2_000 })
+      .catch(() => undefined);
   }
 
-  await waitForCondition(async () => !(await isAnyLocatorVisible(composerRoot)), 5_000);
+  await waitForCondition(
+    async () => !(await isAnyLocatorVisible(composerRoot)),
+    5_000,
+  );
 }
 
 async function setComposerText(
@@ -2542,14 +2623,14 @@ async function setComposerText(
   composerRoot: Locator,
   selectorLocale: LinkedInSelectorLocale,
   text: string,
-  artifactPaths: string[]
+  artifactPaths: string[],
 ): Promise<string> {
   const composerInput = await findVisibleScopedLocatorOrThrow(
     composerRoot,
     createComposerInputCandidates(selectorLocale),
     "post_composer_input",
     artifactPaths,
-    page.url()
+    page.url(),
   );
 
   await composerInput.locator.click({ timeout: 5_000 });
@@ -2572,7 +2653,10 @@ async function readLocatorDetails(locator: Locator): Promise<string> {
     return normalizeText(ariaLabel);
   }
 
-  const textContent = await locator.first().innerText().catch(() => "");
+  const textContent = await locator
+    .first()
+    .innerText()
+    .catch(() => "");
   return normalizeText(textContent);
 }
 
@@ -2581,7 +2665,7 @@ async function setPostVisibility(
   composerRoot: Locator,
   selectorLocale: LinkedInSelectorLocale,
   visibility: LinkedInPostVisibility,
-  artifactPaths: string[]
+  artifactPaths: string[],
 ): Promise<string> {
   const audienceLabel = LINKEDIN_POST_VISIBILITY_MAP[visibility].audienceLabel;
   const visibilityButton = await findVisibleScopedLocatorOrThrow(
@@ -2589,7 +2673,7 @@ async function setPostVisibility(
     createVisibilityButtonCandidates(selectorLocale),
     "post_visibility_button",
     artifactPaths,
-    page.url()
+    page.url(),
   );
 
   const currentLabel = await readLocatorDetails(visibilityButton.locator);
@@ -2603,13 +2687,13 @@ async function setPostVisibility(
     page,
     createVisibilityOptionCandidates(visibility, selectorLocale),
     "post_visibility_option",
-    artifactPaths
+    artifactPaths,
   );
   await option.locator.click({ timeout: 5_000 });
 
   const doneButton = await findOptionalVisibleLocator(
     page,
-    createVisibilityDoneButtonCandidates(selectorLocale)
+    createVisibilityDoneButtonCandidates(selectorLocale),
   );
   if (doneButton) {
     await doneButton.locator.click({ timeout: 5_000 });
@@ -2618,7 +2702,7 @@ async function setPostVisibility(
   const updated = await waitForCondition(async () => {
     const nextButton = await findOptionalScopedLocator(
       composerRoot,
-      createVisibilityButtonCandidates(selectorLocale)
+      createVisibilityButtonCandidates(selectorLocale),
     );
     if (!nextButton) {
       return false;
@@ -2637,8 +2721,8 @@ async function setPostVisibility(
         requested_visibility: visibility,
         requested_audience_label: audienceLabel,
         selector_key: visibilityButton.key,
-        artifact_paths: artifactPaths
-      }
+        artifact_paths: artifactPaths,
+      },
     );
   }
 
@@ -2654,7 +2738,7 @@ async function waitForVisibleDialog(page: Page): Promise<Locator> {
 async function setTextInputValue(
   page: Page,
   locator: Locator,
-  value: string
+  value: string,
 ): Promise<void> {
   await locator.click({ timeout: 5_000 });
 
@@ -2671,7 +2755,7 @@ async function setTextInputValue(
 async function findTargetPostLocator(
   page: Page,
   postUrl: string,
-  artifactPaths: string[]
+  artifactPaths: string[],
 ): Promise<TargetPostLocator> {
   const postIdentity = extractPostIdentity(postUrl);
   const activityId = extractActivityId(postIdentity || postUrl);
@@ -2684,20 +2768,20 @@ async function findTargetPostLocator(
         key: "post-root-data-urn-exact",
         selectorHint: `[data-urn="${postIdentity}"]`,
         locatorFactory: (targetPage) =>
-          targetPage.locator(`[data-urn="${escapedIdentity}"]`)
+          targetPage.locator(`[data-urn="${escapedIdentity}"]`),
       },
       {
         key: "post-root-data-urn-contains",
         selectorHint: `[data-urn*="${postIdentity}"]`,
         locatorFactory: (targetPage) =>
-          targetPage.locator(`[data-urn*="${escapedIdentity}"]`)
+          targetPage.locator(`[data-urn*="${escapedIdentity}"]`),
       },
       {
         key: "post-root-permalink-identity",
         selectorHint: `article:has(a[href*="${postIdentity}"])`,
         locatorFactory: (targetPage) =>
-          targetPage.locator(`article:has(a[href*="${escapedIdentity}"])`)
-      }
+          targetPage.locator(`article:has(a[href*="${escapedIdentity}"])`),
+      },
     );
   }
 
@@ -2708,14 +2792,14 @@ async function findTargetPostLocator(
         key: "post-root-data-urn-activity",
         selectorHint: `[data-urn*="${activityId}"]`,
         locatorFactory: (targetPage) =>
-          targetPage.locator(`[data-urn*="${escapedActivityId}"]`)
+          targetPage.locator(`[data-urn*="${escapedActivityId}"]`),
       },
       {
         key: "post-root-permalink-activity",
         selectorHint: `article:has(a[href*="${activityId}"])`,
         locatorFactory: (targetPage) =>
-          targetPage.locator(`article:has(a[href*="${escapedActivityId}"])`)
-      }
+          targetPage.locator(`article:has(a[href*="${escapedActivityId}"])`),
+      },
     );
   }
 
@@ -2723,27 +2807,27 @@ async function findTargetPostLocator(
     {
       key: "post-root-first-data-urn",
       selectorHint: "[data-urn]",
-      locatorFactory: (targetPage) => targetPage.locator("[data-urn]")
+      locatorFactory: (targetPage) => targetPage.locator("[data-urn]"),
     },
     {
       key: "post-root-first-article",
       selectorHint: "article",
-      locatorFactory: (targetPage) => targetPage.locator("article")
-    }
+      locatorFactory: (targetPage) => targetPage.locator("article"),
+    },
   );
 
   const resolved = await findVisibleLocatorOrThrow(
     page,
     candidates,
     "post_root",
-    artifactPaths
+    artifactPaths,
   );
 
   return {
     locator: resolved.locator,
     key: resolved.key,
     postIdentity,
-    activityId
+    activityId,
   };
 }
 
@@ -2751,21 +2835,23 @@ async function openTargetPostActionMenu(
   page: Page,
   targetPost: TargetPostLocator,
   selectorLocale: LinkedInSelectorLocale,
-  artifactPaths: string[]
+  artifactPaths: string[],
 ): Promise<string> {
   const menuButton = await findVisibleScopedLocatorOrThrow(
     targetPost.locator,
     createPostMenuButtonCandidates(selectorLocale),
     "post_action_menu_button",
     artifactPaths,
-    page.url()
+    page.url(),
   );
 
   await menuButton.locator.click({ timeout: 5_000 });
   const menuOpened = await waitForCondition(
     async () =>
-      isAnyLocatorVisible(page.locator("[role='menu'], .artdeco-dropdown__content-inner")),
-    5_000
+      isAnyLocatorVisible(
+        page.locator("[role='menu'], .artdeco-dropdown__content-inner"),
+      ),
+    5_000,
   );
 
   if (!menuOpened) {
@@ -2775,8 +2861,8 @@ async function openTargetPostActionMenu(
       {
         current_url: page.url(),
         selector_key: menuButton.key,
-        artifact_paths: artifactPaths
-      }
+        artifact_paths: artifactPaths,
+      },
     );
   }
 
@@ -2788,12 +2874,12 @@ async function attachMediaToComposer(
   composerRoot: Locator,
   selectorLocale: LinkedInSelectorLocale,
   attachments: ValidatedMediaAttachment[],
-  artifactPaths: string[]
+  artifactPaths: string[],
 ): Promise<{ mediaButtonKey: string | null; mediaInputKey: string }> {
   let mediaButtonKey: string | null = null;
   let mediaInput = await findPresentScopedLocator(
     composerRoot,
-    createMediaInputCandidates()
+    createMediaInputCandidates(),
   );
 
   if (!mediaInput) {
@@ -2802,34 +2888,37 @@ async function attachMediaToComposer(
       createMediaButtonCandidates(selectorLocale),
       "post_media_button",
       artifactPaths,
-      page.url()
+      page.url(),
     );
 
     mediaButtonKey = mediaButton.key;
     await mediaButton.locator.click({ timeout: 5_000 });
 
     mediaInput =
-      (await findPresentScopedLocator(composerRoot, createMediaInputCandidates())) ??
+      (await findPresentScopedLocator(
+        composerRoot,
+        createMediaInputCandidates(),
+      )) ??
       (await findPresentLocatorOrThrow(
         page,
         createPageMediaInputCandidates(),
         "post_media_input",
-        artifactPaths
+        artifactPaths,
       ));
   }
 
   await mediaInput.locator.setInputFiles(
-    attachments.map((attachment) => attachment.absolutePath)
+    attachments.map((attachment) => attachment.absolutePath),
   );
   await waitForNetworkIdleBestEffort(page, 10_000).catch(() => undefined);
 
   const attachmentsReady = await waitForCondition(async () => {
     const previewLocator = composerRoot.locator(
-      ".share-preview, .share-box__preview, .share-image, img, video, [data-test-id*='media']"
+      ".share-preview, .share-box__preview, .share-image, img, video, [data-test-id*='media']",
     );
     const publishButton = await findOptionalScopedLocator(
       composerRoot,
-      createPublishButtonCandidates(selectorLocale)
+      createPublishButtonCandidates(selectorLocale),
     );
     const publishEnabled = publishButton
       ? await publishButton.locator.isEnabled().catch(() => false)
@@ -2844,14 +2933,14 @@ async function attachMediaToComposer(
       {
         current_url: page.url(),
         media_paths: attachments.map((attachment) => attachment.path),
-        artifact_paths: artifactPaths
-      }
+        artifact_paths: artifactPaths,
+      },
     );
   }
 
   return {
     mediaButtonKey,
-    mediaInputKey: mediaInput.key
+    mediaInputKey: mediaInput.key,
   };
 }
 
@@ -2859,7 +2948,7 @@ async function resolvePollOptionInput(
   page: Page,
   selectorLocale: LinkedInSelectorLocale,
   optionIndex: number,
-  artifactPaths: string[]
+  artifactPaths: string[],
 ): Promise<{ locator: Locator; key: string }> {
   for (const candidate of createPollOptionInputCandidates(selectorLocale)) {
     const locator = candidate.locatorFactory(page);
@@ -2873,7 +2962,7 @@ async function resolvePollOptionInput(
       await resolved.waitFor({ state: "visible", timeout: 2_500 });
       return {
         locator: resolved,
-        key: `${candidate.key}-${optionIndex}`
+        key: `${candidate.key}-${optionIndex}`,
       };
     } catch {
       // Try next candidate collection.
@@ -2886,8 +2975,8 @@ async function resolvePollOptionInput(
     {
       current_url: page.url(),
       option_index: optionIndex,
-      artifact_paths: artifactPaths
-    }
+      artifact_paths: artifactPaths,
+    },
   );
 }
 
@@ -2895,11 +2984,11 @@ async function setPollDuration(
   page: Page,
   selectorLocale: LinkedInSelectorLocale,
   durationDays: LinkedInPollDurationDays,
-  artifactPaths: string[]
+  artifactPaths: string[],
 ): Promise<string | null> {
   const durationSelect = await findPresentLocatorCollection(
     page,
-    createPollDurationSelectCandidates()
+    createPollDurationSelectCandidates(),
   );
   if (durationSelect) {
     const select = durationSelect.locator.first();
@@ -2925,7 +3014,7 @@ async function setPollDuration(
 
   const durationButton = await findOptionalVisibleLocator(
     page,
-    createPollDurationButtonCandidates(selectorLocale)
+    createPollDurationButtonCandidates(selectorLocale),
   );
   if (!durationButton) {
     if (durationDays === 7) {
@@ -2938,8 +3027,8 @@ async function setPollDuration(
       {
         current_url: page.url(),
         duration_days: durationDays,
-        artifact_paths: artifactPaths
-      }
+        artifact_paths: artifactPaths,
+      },
     );
   }
 
@@ -2948,7 +3037,7 @@ async function setPollDuration(
     page,
     createPollDurationOptionCandidates(durationDays, selectorLocale),
     "poll_duration_option",
-    artifactPaths
+    artifactPaths,
   );
   await durationOption.locator.click({ timeout: 5_000 });
   return durationButton.key;
@@ -2961,7 +3050,7 @@ async function fillPollComposerFields(
   question: string,
   options: string[],
   durationDays: LinkedInPollDurationDays,
-  artifactPaths: string[]
+  artifactPaths: string[],
 ): Promise<{
   pollButtonKey: string;
   questionInputKey: string;
@@ -2973,7 +3062,7 @@ async function fillPollComposerFields(
     createPollButtonCandidates(selectorLocale),
     "post_poll_button",
     artifactPaths,
-    page.url()
+    page.url(),
   );
   await pollButton.locator.click({ timeout: 5_000 });
 
@@ -2981,7 +3070,7 @@ async function fillPollComposerFields(
     page,
     createPollQuestionInputCandidates(selectorLocale),
     "poll_question_input",
-    artifactPaths
+    artifactPaths,
   );
   await setTextInputValue(page, questionInput.locator, question);
 
@@ -2991,7 +3080,7 @@ async function fillPollComposerFields(
       page,
       selectorLocale,
       index,
-      artifactPaths
+      artifactPaths,
     );
     await setTextInputValue(page, optionInput.locator, options[index] ?? "");
     optionInputKeys.push(optionInput.key);
@@ -3001,18 +3090,20 @@ async function fillPollComposerFields(
     page,
     selectorLocale,
     durationDays,
-    artifactPaths
+    artifactPaths,
   );
 
   return {
     pollButtonKey: pollButton.key,
     questionInputKey: questionInput.key,
     optionInputKeys,
-    durationKey
+    durationKey,
   };
 }
 
-async function extractPostSnippetFromLocator(targetPost: Locator): Promise<string> {
+async function extractPostSnippetFromLocator(
+  targetPost: Locator,
+): Promise<string> {
   const text = normalizeText(await targetPost.innerText().catch(() => ""));
   return createVerificationSnippet(text);
 }
@@ -3021,13 +3112,13 @@ async function verifyUpdatedPostAtUrl(
   page: Page,
   postUrl: string,
   text: string,
-  artifactPaths: string[]
+  artifactPaths: string[],
 ): Promise<{ verified: true; postUrl: string }> {
   const snippet = createVerificationSnippet(text);
   if (!snippet) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "Cannot verify an updated post with empty text content."
+      "Cannot verify an updated post with empty text content.",
     );
   }
 
@@ -3046,14 +3137,14 @@ async function verifyUpdatedPostAtUrl(
       {
         post_url: postUrl,
         verification_snippet: snippet,
-        artifact_paths: artifactPaths
-      }
+        artifact_paths: artifactPaths,
+      },
     );
   }
 
   return {
     verified: true,
-    postUrl
+    postUrl,
   };
 }
 
@@ -3061,7 +3152,7 @@ async function verifyDeletedPostAtUrl(
   page: Page,
   postUrl: string,
   previousSnippet: string,
-  artifactPaths: string[]
+  artifactPaths: string[],
 ): Promise<{ verified: true; postUrl: string }> {
   await page.goto(postUrl, { waitUntil: "domcontentloaded" });
   await waitForNetworkIdleBestEffort(page);
@@ -3082,26 +3173,30 @@ async function verifyDeletedPostAtUrl(
       {
         post_url: postUrl,
         verification_snippet: previousSnippet,
-        artifact_paths: artifactPaths
-      }
+        artifact_paths: artifactPaths,
+      },
     );
   }
 
   return {
     verified: true,
-    postUrl
+    postUrl,
   };
 }
 
 async function findVisiblePostBySnippet(
   page: Page,
-  snippet: string
+  snippet: string,
 ): Promise<Locator | null> {
   const postCandidates = [
     page
       .locator("article, .feed-shared-update-v2, .occludable-update")
       .filter({ hasText: snippet }),
-    page.getByText(snippet).locator("xpath=ancestor-or-self::*[self::article or contains(@class, 'feed-shared-update-v2') or contains(@class, 'occludable-update')]")
+    page
+      .getByText(snippet)
+      .locator(
+        "xpath=ancestor-or-self::*[self::article or contains(@class, 'feed-shared-update-v2') or contains(@class, 'occludable-update')]",
+      ),
   ];
 
   for (const candidate of postCandidates) {
@@ -3115,14 +3210,16 @@ async function findVisiblePostBySnippet(
 
 async function extractPublishedPostUrl(
   page: Page,
-  postRoot: Locator | null
+  postRoot: Locator | null,
 ): Promise<string | null> {
   if (!postRoot) {
     return null;
   }
 
   const href = await postRoot
-    .locator("a[href*='/feed/update/'], a[href*='/posts/'], a[href*='/activity/']")
+    .locator(
+      "a[href*='/feed/update/'], a[href*='/posts/'], a[href*='/activity/']",
+    )
     .first()
     .getAttribute("href")
     .catch(() => null);
@@ -3143,7 +3240,7 @@ type PublishedPostVerificationSurface = "feed" | "profile_activity";
 async function locatePublishedPostOnSurface(
   page: Page,
   snippet: string,
-  surface: PublishedPostVerificationSurface
+  surface: PublishedPostVerificationSurface,
 ): Promise<Locator | null> {
   if (surface === "feed") {
     if (!page.url().startsWith(LINKEDIN_FEED_URL)) {
@@ -3156,7 +3253,7 @@ async function locatePublishedPostOnSurface(
   }
 
   await page.goto(LINKEDIN_PROFILE_ACTIVITY_URL, {
-    waitUntil: "domcontentloaded"
+    waitUntil: "domcontentloaded",
   });
   await waitForNetworkIdleBestEffort(page);
   await scrollLinkedInPageToTop(page);
@@ -3167,7 +3264,7 @@ async function locatePublishedPostOnSurface(
 export async function verifyPublishedPost(
   page: Page,
   text: string,
-  artifactPaths: string[]
+  artifactPaths: string[],
 ): Promise<{
   verified: true;
   postUrl: string | null;
@@ -3177,13 +3274,13 @@ export async function verifyPublishedPost(
   if (!snippet) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "Cannot verify a post with empty text content."
+      "Cannot verify a post with empty text content.",
     );
   }
 
   const surfaces: readonly PublishedPostVerificationSurface[] = [
     "feed",
-    "profile_activity"
+    "profile_activity",
   ];
   let locatedSurface: PublishedPostVerificationSurface | null = null;
   let postRoot: Locator | null = null;
@@ -3198,7 +3295,11 @@ export async function verifyPublishedPost(
   if (!postRoot) {
     const verified = await waitForCondition(async () => {
       for (const surface of surfaces) {
-        const located = await locatePublishedPostOnSurface(page, snippet, surface);
+        const located = await locatePublishedPostOnSurface(
+          page,
+          snippet,
+          surface,
+        );
         if (located) {
           postRoot = located;
           locatedSurface = surface;
@@ -3217,8 +3318,8 @@ export async function verifyPublishedPost(
           current_url: page.url(),
           verification_snippet: snippet,
           artifact_paths: artifactPaths,
-          verification_urls: [LINKEDIN_FEED_URL, LINKEDIN_PROFILE_ACTIVITY_URL]
-        }
+          verification_urls: [LINKEDIN_FEED_URL, LINKEDIN_PROFILE_ACTIVITY_URL],
+        },
       );
     }
   }
@@ -3226,7 +3327,7 @@ export async function verifyPublishedPost(
   return {
     verified: true,
     postUrl: await extractPublishedPostUrl(page, postRoot),
-    surface: locatedSurface ?? "feed"
+    surface: locatedSurface ?? "feed",
   };
 }
 
@@ -3234,21 +3335,24 @@ export class LinkedInPostsService {
   constructor(private readonly runtime: LinkedInPostsRuntime) {}
 
   async prepareCreate(
-    input: PrepareCreatePostInput
+    input: PrepareCreatePostInput,
   ): Promise<PreparedActionResult> {
     const profileName = input.profileName ?? "default";
     const lintResult = await lintLinkedInPostContent(
       input.text,
-      this.runtime.postSafetyLint
+      this.runtime.postSafetyLint,
     );
     const validatedText = lintResult.validatedText;
-    const visibility = normalizeLinkedInPostVisibility(input.visibility, "public");
+    const visibility = normalizeLinkedInPostVisibility(
+      input.visibility,
+      "public",
+    );
     const tracePath = `linkedin/trace-post-prepare-${Date.now()}.zip`;
     const artifactPaths: string[] = [tracePath];
 
     await this.runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: this.runtime.cdpUrl
+      cdpUrl: this.runtime.cdpUrl,
     });
 
     try {
@@ -3256,7 +3360,7 @@ export class LinkedInPostsService {
         {
           cdpUrl: this.runtime.cdpUrl,
           profileName,
-          headless: true
+          headless: true,
         },
         async (context) => {
           const page = await getOrCreatePage(context);
@@ -3266,48 +3370,53 @@ export class LinkedInPostsService {
             await context.tracing.start({
               screenshots: true,
               snapshots: true,
-              sources: true
+              sources: true,
             });
             tracingStarted = true;
 
-            const { composerRoot, triggerKey, rootKey } = await openPostComposer(
-              page,
-              this.runtime.selectorLocale,
-              artifactPaths
-            );
+            const { composerRoot, triggerKey, rootKey } =
+              await openPostComposer(
+                page,
+                this.runtime.selectorLocale,
+                artifactPaths,
+              );
 
             const screenshotPath = `linkedin/screenshot-post-prepare-${Date.now()}.png`;
-            await captureScreenshotArtifact(this.runtime, page, screenshotPath, {
-              action: "prepare_create_post",
-              profile_name: profileName,
-              visibility,
-              trigger_selector_key: triggerKey,
-              composer_selector_key: rootKey
-            });
+            await captureScreenshotArtifact(
+              this.runtime,
+              page,
+              screenshotPath,
+              {
+                action: "prepare_create_post",
+                profile_name: profileName,
+                visibility,
+                trigger_selector_key: triggerKey,
+                composer_selector_key: rootKey,
+              },
+            );
             artifactPaths.push(screenshotPath);
 
             await closeComposerBestEffort(
               page,
               composerRoot,
-              this.runtime.selectorLocale
+              this.runtime.selectorLocale,
             );
 
-            const rateLimitState = this.runtime.rateLimiter.peek(
-              CREATE_POST_RATE_LIMIT_CONFIG
-            );
+            const rateLimitState: RateLimiterState =
+              this.runtime.rateLimiter.peek(CREATE_POST_RATE_LIMIT_CONFIG);
 
             const target = {
               profile_name: profileName,
               visibility,
               visibility_label: LINKEDIN_POST_VISIBILITY_MAP[visibility].label,
-              compose_url: LINKEDIN_FEED_URL
+              compose_url: LINKEDIN_FEED_URL,
             };
 
             const preview = {
               summary: `Create ${LINKEDIN_POST_VISIBILITY_MAP[visibility].label.toLowerCase()} LinkedIn post`,
               target,
               outbound: {
-                text: validatedText.normalizedText
+                text: validatedText.normalizedText,
               },
               validation: {
                 character_count: validatedText.characterCount,
@@ -3320,17 +3429,18 @@ export class LinkedInPostsService {
                 contains_hashtag: validatedText.containsHashtag,
                 checked_url_count: lintResult.urls.length,
                 checked_urls: lintResult.urls,
-                banned_phrase_count: this.runtime.postSafetyLint.bannedPhrases.length,
+                banned_phrase_count:
+                  this.runtime.postSafetyLint.bannedPhrases.length,
                 link_preview_validation_enabled:
                   this.runtime.postSafetyLint.validateLinkPreviews,
                 link_preview_validation_timeout_ms:
-                  this.runtime.postSafetyLint.linkPreviewValidationTimeoutMs
+                  this.runtime.postSafetyLint.linkPreviewValidationTimeoutMs,
               },
               artifacts: artifactPaths.map((path) => ({
                 type: path.endsWith(".zip") ? "trace" : "screenshot",
-                path
+                path,
               })),
-              rate_limit: formatRateLimitState(rateLimitState)
+              rate_limit: formatRateLimitState(rateLimitState),
             } satisfies Record<string, unknown>;
 
             return this.runtime.twoPhaseCommit.prepare({
@@ -3338,78 +3448,102 @@ export class LinkedInPostsService {
               target,
               payload: {
                 text: validatedText.normalizedText,
-                visibility
+                visibility,
               },
               preview,
-              ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+              ...(input.operatorNote
+                ? { operatorNote: input.operatorNote }
+                : {}),
             });
           } catch (error) {
             const failureScreenshot = `linkedin/screenshot-post-prepare-error-${Date.now()}.png`;
             try {
-              await captureScreenshotArtifact(this.runtime, page, failureScreenshot, {
-                action: "prepare_create_post_error",
-                profile_name: profileName,
-                visibility
-              });
+              await captureScreenshotArtifact(
+                this.runtime,
+                page,
+                failureScreenshot,
+                {
+                  action: "prepare_create_post_error",
+                  profile_name: profileName,
+                  visibility,
+                },
+              );
               artifactPaths.push(failureScreenshot);
             } catch {
               // Best effort.
             }
 
-            throw toAutomationError(error, "Failed to prepare LinkedIn post creation.", {
-              profile_name: profileName,
-              current_url: page.url(),
-              requested_visibility: visibility,
-              artifact_paths: artifactPaths
-            });
+            throw toAutomationError(
+              error,
+              "Failed to prepare LinkedIn post creation.",
+              {
+                profile_name: profileName,
+                current_url: page.url(),
+                requested_visibility: visibility,
+                artifact_paths: artifactPaths,
+              },
+            );
           } finally {
             if (tracingStarted) {
               try {
-                const absoluteTracePath = this.runtime.artifacts.resolve(tracePath);
+                const absoluteTracePath =
+                  this.runtime.artifacts.resolve(tracePath);
                 await context.tracing.stop({ path: absoluteTracePath });
                 registerTraceArtifact(this.runtime, tracePath, {
                   action: "prepare_create_post",
                   profile_name: profileName,
-                  visibility
+                  visibility,
                 });
               } catch (error) {
-                this.runtime.logger.log("warn", "linkedin.post.prepare.trace.stop_failed", {
-                  profile_name: profileName,
-                  message: error instanceof Error ? error.message : String(error)
-                });
+                this.runtime.logger.log(
+                  "warn",
+                  "linkedin.post.prepare.trace.stop_failed",
+                  {
+                    profile_name: profileName,
+                    message:
+                      error instanceof Error ? error.message : String(error),
+                  },
+                );
               }
             }
           }
-        }
+        },
       );
 
       return prepared;
     } catch (error) {
-      throw toAutomationError(error, "Failed to prepare LinkedIn post creation.", {
-        profile_name: profileName,
-        requested_visibility: visibility,
-        artifact_paths: artifactPaths
-      });
+      throw toAutomationError(
+        error,
+        "Failed to prepare LinkedIn post creation.",
+        {
+          profile_name: profileName,
+          requested_visibility: visibility,
+          artifact_paths: artifactPaths,
+        },
+      );
     }
   }
 
   async prepareCreateMedia(
-    input: PrepareCreateMediaPostInput
+    input: PrepareCreateMediaPostInput,
   ): Promise<PreparedActionResult> {
     const profileName = input.profileName ?? "default";
     const lintResult = await lintLinkedInPostContent(
       input.text,
-      this.runtime.postSafetyLint
+      this.runtime.postSafetyLint,
     );
     const validatedText = lintResult.validatedText;
     const attachments = validateLinkedInPostMediaAttachments(input.mediaPaths);
-    const visibility = normalizeLinkedInPostVisibility(input.visibility, "public");
+    const visibility = normalizeLinkedInPostVisibility(
+      input.visibility,
+      "public",
+    );
     const tracePath = `linkedin/trace-post-media-prepare-${Date.now()}.zip`;
     const artifactPaths: string[] = [tracePath];
 
     await this.runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: this.runtime.cdpUrl
+      cdpUrl: this.runtime.cdpUrl,
     });
 
     try {
@@ -3417,7 +3551,7 @@ export class LinkedInPostsService {
         {
           cdpUrl: this.runtime.cdpUrl,
           profileName,
-          headless: true
+          headless: true,
         },
         async (context) => {
           const page = await getOrCreatePage(context);
@@ -3427,23 +3561,24 @@ export class LinkedInPostsService {
             await context.tracing.start({
               screenshots: true,
               snapshots: true,
-              sources: true
+              sources: true,
             });
             tracingStarted = true;
 
-            const { composerRoot, triggerKey, rootKey } = await openPostComposer(
-              page,
-              this.runtime.selectorLocale,
-              artifactPaths
-            );
+            const { composerRoot, triggerKey, rootKey } =
+              await openPostComposer(
+                page,
+                this.runtime.selectorLocale,
+                artifactPaths,
+              );
             const mediaSurface =
               (await findPresentScopedLocator(
                 composerRoot,
-                createMediaInputCandidates()
+                createMediaInputCandidates(),
               )) ??
               (await findOptionalScopedLocator(
                 composerRoot,
-                createMediaButtonCandidates(this.runtime.selectorLocale)
+                createMediaButtonCandidates(this.runtime.selectorLocale),
               ));
 
             if (!mediaSurface) {
@@ -3452,37 +3587,41 @@ export class LinkedInPostsService {
                 "Could not locate LinkedIn media controls in the post composer.",
                 {
                   current_url: page.url(),
-                  artifact_paths: artifactPaths
-                }
+                  artifact_paths: artifactPaths,
+                },
               );
             }
 
             const screenshotPath = `linkedin/screenshot-post-media-prepare-${Date.now()}.png`;
-            await captureScreenshotArtifact(this.runtime, page, screenshotPath, {
-              action: "prepare_create_media_post",
-              profile_name: profileName,
-              visibility,
-              trigger_selector_key: triggerKey,
-              composer_selector_key: rootKey,
-              media_surface_selector_key: mediaSurface.key
-            });
+            await captureScreenshotArtifact(
+              this.runtime,
+              page,
+              screenshotPath,
+              {
+                action: "prepare_create_media_post",
+                profile_name: profileName,
+                visibility,
+                trigger_selector_key: triggerKey,
+                composer_selector_key: rootKey,
+                media_surface_selector_key: mediaSurface.key,
+              },
+            );
             artifactPaths.push(screenshotPath);
 
             await closeComposerBestEffort(
               page,
               composerRoot,
-              this.runtime.selectorLocale
+              this.runtime.selectorLocale,
             );
 
-            const rateLimitState = this.runtime.rateLimiter.peek(
-              CREATE_POST_RATE_LIMIT_CONFIG
-            );
+            const rateLimitState: RateLimiterState =
+              this.runtime.rateLimiter.peek(CREATE_POST_RATE_LIMIT_CONFIG);
 
             const target = {
               profile_name: profileName,
               visibility,
               visibility_label: LINKEDIN_POST_VISIBILITY_MAP[visibility].label,
-              compose_url: LINKEDIN_FEED_URL
+              compose_url: LINKEDIN_FEED_URL,
             };
 
             const preview = {
@@ -3494,8 +3633,8 @@ export class LinkedInPostsService {
                   path: attachment.path,
                   file_name: attachment.fileName,
                   kind: attachment.kind,
-                  size_bytes: attachment.sizeBytes
-                }))
+                  size_bytes: attachment.sizeBytes,
+                })),
               },
               validation: {
                 character_count: validatedText.characterCount,
@@ -3508,19 +3647,20 @@ export class LinkedInPostsService {
                 contains_hashtag: validatedText.containsHashtag,
                 checked_url_count: lintResult.urls.length,
                 checked_urls: lintResult.urls,
-                banned_phrase_count: this.runtime.postSafetyLint.bannedPhrases.length,
+                banned_phrase_count:
+                  this.runtime.postSafetyLint.bannedPhrases.length,
                 link_preview_validation_enabled:
                   this.runtime.postSafetyLint.validateLinkPreviews,
                 link_preview_validation_timeout_ms:
                   this.runtime.postSafetyLint.linkPreviewValidationTimeoutMs,
                 media_count: attachments.length,
-                media_kind: attachments[0]?.kind ?? null
+                media_kind: attachments[0]?.kind ?? null,
               },
               artifacts: artifactPaths.map((path) => ({
                 type: path.endsWith(".zip") ? "trace" : "screenshot",
-                path
+                path,
               })),
-              rate_limit: formatRateLimitState(rateLimitState)
+              rate_limit: formatRateLimitState(rateLimitState),
             } satisfies Record<string, unknown>;
 
             return this.runtime.twoPhaseCommit.prepare({
@@ -3529,19 +3669,28 @@ export class LinkedInPostsService {
               payload: {
                 text: validatedText.normalizedText,
                 visibility,
-                media_paths: attachments.map((attachment) => attachment.absolutePath)
+                media_paths: attachments.map(
+                  (attachment) => attachment.absolutePath,
+                ),
               },
               preview,
-              ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+              ...(input.operatorNote
+                ? { operatorNote: input.operatorNote }
+                : {}),
             });
           } catch (error) {
             const failureScreenshot = `linkedin/screenshot-post-media-prepare-error-${Date.now()}.png`;
             try {
-              await captureScreenshotArtifact(this.runtime, page, failureScreenshot, {
-                action: "prepare_create_media_post_error",
-                profile_name: profileName,
-                visibility
-              });
+              await captureScreenshotArtifact(
+                this.runtime,
+                page,
+                failureScreenshot,
+                {
+                  action: "prepare_create_media_post_error",
+                  profile_name: profileName,
+                  visibility,
+                },
+              );
               artifactPaths.push(failureScreenshot);
             } catch {
               // Best effort.
@@ -3554,18 +3703,19 @@ export class LinkedInPostsService {
                 profile_name: profileName,
                 current_url: page.url(),
                 requested_visibility: visibility,
-                artifact_paths: artifactPaths
-              }
+                artifact_paths: artifactPaths,
+              },
             );
           } finally {
             if (tracingStarted) {
               try {
-                const absoluteTracePath = this.runtime.artifacts.resolve(tracePath);
+                const absoluteTracePath =
+                  this.runtime.artifacts.resolve(tracePath);
                 await context.tracing.stop({ path: absoluteTracePath });
                 registerTraceArtifact(this.runtime, tracePath, {
                   action: "prepare_create_media_post",
                   profile_name: profileName,
-                  visibility
+                  visibility,
                 });
               } catch (error) {
                 this.runtime.logger.log(
@@ -3573,13 +3723,14 @@ export class LinkedInPostsService {
                   "linkedin.post.prepare_media.trace.stop_failed",
                   {
                     profile_name: profileName,
-                    message: error instanceof Error ? error.message : String(error)
-                  }
+                    message:
+                      error instanceof Error ? error.message : String(error),
+                  },
                 );
               }
             }
           }
-        }
+        },
       );
 
       return prepared;
@@ -3590,30 +3741,33 @@ export class LinkedInPostsService {
         {
           profile_name: profileName,
           requested_visibility: visibility,
-          artifact_paths: artifactPaths
-        }
+          artifact_paths: artifactPaths,
+        },
       );
     }
   }
 
   async prepareCreatePoll(
-    input: PrepareCreatePollPostInput
+    input: PrepareCreatePollPostInput,
   ): Promise<PreparedActionResult> {
     const profileName = input.profileName ?? "default";
     const lintResult = await lintOptionalLinkedInPostContent(
       input.text,
-      this.runtime.postSafetyLint
+      this.runtime.postSafetyLint,
     );
     const question = normalizePollQuestion(input.question);
     const options = normalizePollOptions(input.options);
     const durationDays = normalizePollDurationDays(input.durationDays);
-    const visibility = normalizeLinkedInPostVisibility(input.visibility, "public");
+    const visibility = normalizeLinkedInPostVisibility(
+      input.visibility,
+      "public",
+    );
     const tracePath = `linkedin/trace-post-poll-prepare-${Date.now()}.zip`;
     const artifactPaths: string[] = [tracePath];
 
     await this.runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: this.runtime.cdpUrl
+      cdpUrl: this.runtime.cdpUrl,
     });
 
     try {
@@ -3621,7 +3775,7 @@ export class LinkedInPostsService {
         {
           cdpUrl: this.runtime.cdpUrl,
           profileName,
-          headless: true
+          headless: true,
         },
         async (context) => {
           const page = await getOrCreatePage(context);
@@ -3631,48 +3785,53 @@ export class LinkedInPostsService {
             await context.tracing.start({
               screenshots: true,
               snapshots: true,
-              sources: true
+              sources: true,
             });
             tracingStarted = true;
 
-            const { composerRoot, triggerKey, rootKey } = await openPostComposer(
-              page,
-              this.runtime.selectorLocale,
-              artifactPaths
-            );
+            const { composerRoot, triggerKey, rootKey } =
+              await openPostComposer(
+                page,
+                this.runtime.selectorLocale,
+                artifactPaths,
+              );
             const pollButton = await findVisibleScopedLocatorOrThrow(
               composerRoot,
               createPollButtonCandidates(this.runtime.selectorLocale),
               "post_poll_button",
               artifactPaths,
-              page.url()
+              page.url(),
             );
 
             const screenshotPath = `linkedin/screenshot-post-poll-prepare-${Date.now()}.png`;
-            await captureScreenshotArtifact(this.runtime, page, screenshotPath, {
-              action: "prepare_create_poll_post",
-              profile_name: profileName,
-              visibility,
-              trigger_selector_key: triggerKey,
-              composer_selector_key: rootKey,
-              poll_button_selector_key: pollButton.key
-            });
+            await captureScreenshotArtifact(
+              this.runtime,
+              page,
+              screenshotPath,
+              {
+                action: "prepare_create_poll_post",
+                profile_name: profileName,
+                visibility,
+                trigger_selector_key: triggerKey,
+                composer_selector_key: rootKey,
+                poll_button_selector_key: pollButton.key,
+              },
+            );
             artifactPaths.push(screenshotPath);
 
             await closeComposerBestEffort(
               page,
               composerRoot,
-              this.runtime.selectorLocale
+              this.runtime.selectorLocale,
             );
 
-            const rateLimitState = this.runtime.rateLimiter.peek(
-              CREATE_POST_RATE_LIMIT_CONFIG
-            );
+            const rateLimitState: RateLimiterState =
+              this.runtime.rateLimiter.peek(CREATE_POST_RATE_LIMIT_CONFIG);
             const target = {
               profile_name: profileName,
               visibility,
               visibility_label: LINKEDIN_POST_VISIBILITY_MAP[visibility].label,
-              compose_url: LINKEDIN_FEED_URL
+              compose_url: LINKEDIN_FEED_URL,
             };
 
             const preview = {
@@ -3684,7 +3843,7 @@ export class LinkedInPostsService {
                   : {}),
                 question,
                 options,
-                duration_days: durationDays
+                duration_days: durationDays,
               },
               validation: {
                 text_provided: lintResult !== null,
@@ -3694,50 +3853,62 @@ export class LinkedInPostsService {
                       line_count: lintResult.validatedText.lineCount,
                       paragraph_count: lintResult.validatedText.paragraphCount,
                       contains_url: lintResult.validatedText.containsUrl,
-                      contains_mention: lintResult.validatedText.containsMention,
-                      contains_hashtag: lintResult.validatedText.containsHashtag,
+                      contains_mention:
+                        lintResult.validatedText.containsMention,
+                      contains_hashtag:
+                        lintResult.validatedText.containsHashtag,
                       checked_url_count: lintResult.urls.length,
-                      checked_urls: lintResult.urls
+                      checked_urls: lintResult.urls,
                     }
                   : {}),
                 max_length: this.runtime.postSafetyLint.maxLength,
                 linkedin_max_length: LINKEDIN_POST_MAX_LENGTH,
-                banned_phrase_count: this.runtime.postSafetyLint.bannedPhrases.length,
+                banned_phrase_count:
+                  this.runtime.postSafetyLint.bannedPhrases.length,
                 link_preview_validation_enabled:
                   this.runtime.postSafetyLint.validateLinkPreviews,
                 link_preview_validation_timeout_ms:
                   this.runtime.postSafetyLint.linkPreviewValidationTimeoutMs,
                 poll_option_count: options.length,
-                poll_duration_days: durationDays
+                poll_duration_days: durationDays,
               },
               artifacts: artifactPaths.map((path) => ({
                 type: path.endsWith(".zip") ? "trace" : "screenshot",
-                path
+                path,
               })),
-              rate_limit: formatRateLimitState(rateLimitState)
+              rate_limit: formatRateLimitState(rateLimitState),
             } satisfies Record<string, unknown>;
 
             return this.runtime.twoPhaseCommit.prepare({
               actionType: CREATE_POLL_POST_ACTION_TYPE,
               target,
               payload: {
-                ...(lintResult ? { text: lintResult.validatedText.normalizedText } : {}),
+                ...(lintResult
+                  ? { text: lintResult.validatedText.normalizedText }
+                  : {}),
                 question,
                 options,
                 duration_days: durationDays,
-                visibility
+                visibility,
               },
               preview,
-              ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+              ...(input.operatorNote
+                ? { operatorNote: input.operatorNote }
+                : {}),
             });
           } catch (error) {
             const failureScreenshot = `linkedin/screenshot-post-poll-prepare-error-${Date.now()}.png`;
             try {
-              await captureScreenshotArtifact(this.runtime, page, failureScreenshot, {
-                action: "prepare_create_poll_post_error",
-                profile_name: profileName,
-                visibility
-              });
+              await captureScreenshotArtifact(
+                this.runtime,
+                page,
+                failureScreenshot,
+                {
+                  action: "prepare_create_poll_post_error",
+                  profile_name: profileName,
+                  visibility,
+                },
+              );
               artifactPaths.push(failureScreenshot);
             } catch {
               // Best effort.
@@ -3750,18 +3921,19 @@ export class LinkedInPostsService {
                 profile_name: profileName,
                 current_url: page.url(),
                 requested_visibility: visibility,
-                artifact_paths: artifactPaths
-              }
+                artifact_paths: artifactPaths,
+              },
             );
           } finally {
             if (tracingStarted) {
               try {
-                const absoluteTracePath = this.runtime.artifacts.resolve(tracePath);
+                const absoluteTracePath =
+                  this.runtime.artifacts.resolve(tracePath);
                 await context.tracing.stop({ path: absoluteTracePath });
                 registerTraceArtifact(this.runtime, tracePath, {
                   action: "prepare_create_poll_post",
                   profile_name: profileName,
-                  visibility
+                  visibility,
                 });
               } catch (error) {
                 this.runtime.logger.log(
@@ -3769,13 +3941,14 @@ export class LinkedInPostsService {
                   "linkedin.post.prepare_poll.trace.stop_failed",
                   {
                     profile_name: profileName,
-                    message: error instanceof Error ? error.message : String(error)
-                  }
+                    message:
+                      error instanceof Error ? error.message : String(error),
+                  },
                 );
               }
             }
           }
-        }
+        },
       );
 
       return prepared;
@@ -3786,18 +3959,20 @@ export class LinkedInPostsService {
         {
           profile_name: profileName,
           requested_visibility: visibility,
-          artifact_paths: artifactPaths
-        }
+          artifact_paths: artifactPaths,
+        },
       );
     }
   }
 
-  async prepareEdit(input: PrepareEditPostInput): Promise<PreparedActionResult> {
+  async prepareEdit(
+    input: PrepareEditPostInput,
+  ): Promise<PreparedActionResult> {
     const profileName = input.profileName ?? "default";
     const postUrl = resolvePostUrl(input.postUrl);
     const lintResult = await lintLinkedInPostContent(
       input.text,
-      this.runtime.postSafetyLint
+      this.runtime.postSafetyLint,
     );
     const validatedText = lintResult.validatedText;
     const tracePath = `linkedin/trace-post-edit-prepare-${Date.now()}.zip`;
@@ -3805,7 +3980,7 @@ export class LinkedInPostsService {
 
     await this.runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: this.runtime.cdpUrl
+      cdpUrl: this.runtime.cdpUrl,
     });
 
     try {
@@ -3813,7 +3988,7 @@ export class LinkedInPostsService {
         {
           cdpUrl: this.runtime.cdpUrl,
           profileName,
-          headless: true
+          headless: true,
         },
         async (context) => {
           const page = await getOrCreatePage(context);
@@ -3823,57 +3998,67 @@ export class LinkedInPostsService {
             await context.tracing.start({
               screenshots: true,
               snapshots: true,
-              sources: true
+              sources: true,
             });
             tracingStarted = true;
 
             await page.goto(postUrl, { waitUntil: "domcontentloaded" });
             await waitForNetworkIdleBestEffort(page);
 
-            const targetPost = await findTargetPostLocator(page, postUrl, artifactPaths);
-            const currentSnippet = await extractPostSnippetFromLocator(targetPost.locator);
+            const targetPost = await findTargetPostLocator(
+              page,
+              postUrl,
+              artifactPaths,
+            );
+            const currentSnippet = await extractPostSnippetFromLocator(
+              targetPost.locator,
+            );
             const menuButtonKey = await openTargetPostActionMenu(
               page,
               targetPost,
               this.runtime.selectorLocale,
-              artifactPaths
+              artifactPaths,
             );
             const editAction = await findVisibleLocatorOrThrow(
               page,
               createPostMenuActionCandidates(
                 getPostUiActionLabels("edit", this.runtime.selectorLocale),
-                "post-edit"
+                "post-edit",
               ),
               "post_edit_menu_item",
-              artifactPaths
+              artifactPaths,
             );
 
             const screenshotPath = `linkedin/screenshot-post-edit-prepare-${Date.now()}.png`;
-            await captureScreenshotArtifact(this.runtime, page, screenshotPath, {
-              action: "prepare_edit_post",
-              profile_name: profileName,
-              post_url: postUrl,
-              target_post_selector_key: targetPost.key,
-              menu_button_selector_key: menuButtonKey,
-              edit_selector_key: editAction.key
-            });
+            await captureScreenshotArtifact(
+              this.runtime,
+              page,
+              screenshotPath,
+              {
+                action: "prepare_edit_post",
+                profile_name: profileName,
+                post_url: postUrl,
+                target_post_selector_key: targetPost.key,
+                menu_button_selector_key: menuButtonKey,
+                edit_selector_key: editAction.key,
+              },
+            );
             artifactPaths.push(screenshotPath);
             await page.keyboard.press("Escape").catch(() => undefined);
 
-            const rateLimitState = this.runtime.rateLimiter.peek(
-              EDIT_POST_RATE_LIMIT_CONFIG
-            );
+            const rateLimitState: RateLimiterState =
+              this.runtime.rateLimiter.peek(EDIT_POST_RATE_LIMIT_CONFIG);
             const target = {
               profile_name: profileName,
               post_url: postUrl,
-              current_verification_snippet: currentSnippet
+              current_verification_snippet: currentSnippet,
             };
 
             const preview = {
               summary: `Edit LinkedIn post ${postUrl}`,
               target,
               outbound: {
-                text: validatedText.normalizedText
+                text: validatedText.normalizedText,
               },
               validation: {
                 character_count: validatedText.characterCount,
@@ -3886,17 +4071,18 @@ export class LinkedInPostsService {
                 contains_hashtag: validatedText.containsHashtag,
                 checked_url_count: lintResult.urls.length,
                 checked_urls: lintResult.urls,
-                banned_phrase_count: this.runtime.postSafetyLint.bannedPhrases.length,
+                banned_phrase_count:
+                  this.runtime.postSafetyLint.bannedPhrases.length,
                 link_preview_validation_enabled:
                   this.runtime.postSafetyLint.validateLinkPreviews,
                 link_preview_validation_timeout_ms:
-                  this.runtime.postSafetyLint.linkPreviewValidationTimeoutMs
+                  this.runtime.postSafetyLint.linkPreviewValidationTimeoutMs,
               },
               artifacts: artifactPaths.map((path) => ({
                 type: path.endsWith(".zip") ? "trace" : "screenshot",
-                path
+                path,
               })),
-              rate_limit: formatRateLimitState(rateLimitState)
+              rate_limit: formatRateLimitState(rateLimitState),
             } satisfies Record<string, unknown>;
 
             return this.runtime.twoPhaseCommit.prepare({
@@ -3904,39 +4090,51 @@ export class LinkedInPostsService {
               target,
               payload: {
                 post_url: postUrl,
-                text: validatedText.normalizedText
+                text: validatedText.normalizedText,
               },
               preview,
-              ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+              ...(input.operatorNote
+                ? { operatorNote: input.operatorNote }
+                : {}),
             });
           } catch (error) {
             const failureScreenshot = `linkedin/screenshot-post-edit-prepare-error-${Date.now()}.png`;
             try {
-              await captureScreenshotArtifact(this.runtime, page, failureScreenshot, {
-                action: "prepare_edit_post_error",
-                profile_name: profileName,
-                post_url: postUrl
-              });
+              await captureScreenshotArtifact(
+                this.runtime,
+                page,
+                failureScreenshot,
+                {
+                  action: "prepare_edit_post_error",
+                  profile_name: profileName,
+                  post_url: postUrl,
+                },
+              );
               artifactPaths.push(failureScreenshot);
             } catch {
               // Best effort.
             }
 
-            throw toAutomationError(error, "Failed to prepare LinkedIn post edit.", {
-              profile_name: profileName,
-              current_url: page.url(),
-              post_url: postUrl,
-              artifact_paths: artifactPaths
-            });
+            throw toAutomationError(
+              error,
+              "Failed to prepare LinkedIn post edit.",
+              {
+                profile_name: profileName,
+                current_url: page.url(),
+                post_url: postUrl,
+                artifact_paths: artifactPaths,
+              },
+            );
           } finally {
             if (tracingStarted) {
               try {
-                const absoluteTracePath = this.runtime.artifacts.resolve(tracePath);
+                const absoluteTracePath =
+                  this.runtime.artifacts.resolve(tracePath);
                 await context.tracing.stop({ path: absoluteTracePath });
                 registerTraceArtifact(this.runtime, tracePath, {
                   action: "prepare_edit_post",
                   profile_name: profileName,
-                  post_url: postUrl
+                  post_url: postUrl,
                 });
               } catch (error) {
                 this.runtime.logger.log(
@@ -3944,13 +4142,14 @@ export class LinkedInPostsService {
                   "linkedin.post.prepare_edit.trace.stop_failed",
                   {
                     profile_name: profileName,
-                    message: error instanceof Error ? error.message : String(error)
-                  }
+                    message:
+                      error instanceof Error ? error.message : String(error),
+                  },
                 );
               }
             }
           }
-        }
+        },
       );
 
       return prepared;
@@ -3958,13 +4157,13 @@ export class LinkedInPostsService {
       throw toAutomationError(error, "Failed to prepare LinkedIn post edit.", {
         profile_name: profileName,
         post_url: postUrl,
-        artifact_paths: artifactPaths
+        artifact_paths: artifactPaths,
       });
     }
   }
 
   async prepareDelete(
-    input: PrepareDeletePostInput
+    input: PrepareDeletePostInput,
   ): Promise<PreparedActionResult> {
     const profileName = input.profileName ?? "default";
     const postUrl = resolvePostUrl(input.postUrl);
@@ -3973,7 +4172,7 @@ export class LinkedInPostsService {
 
     await this.runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: this.runtime.cdpUrl
+      cdpUrl: this.runtime.cdpUrl,
     });
 
     try {
@@ -3981,7 +4180,7 @@ export class LinkedInPostsService {
         {
           cdpUrl: this.runtime.cdpUrl,
           profileName,
-          headless: true
+          headless: true,
         },
         async (context) => {
           const page = await getOrCreatePage(context);
@@ -3991,105 +4190,127 @@ export class LinkedInPostsService {
             await context.tracing.start({
               screenshots: true,
               snapshots: true,
-              sources: true
+              sources: true,
             });
             tracingStarted = true;
 
             await page.goto(postUrl, { waitUntil: "domcontentloaded" });
             await waitForNetworkIdleBestEffort(page);
 
-            const targetPost = await findTargetPostLocator(page, postUrl, artifactPaths);
-            const currentSnippet = await extractPostSnippetFromLocator(targetPost.locator);
+            const targetPost = await findTargetPostLocator(
+              page,
+              postUrl,
+              artifactPaths,
+            );
+            const currentSnippet = await extractPostSnippetFromLocator(
+              targetPost.locator,
+            );
             const menuButtonKey = await openTargetPostActionMenu(
               page,
               targetPost,
               this.runtime.selectorLocale,
-              artifactPaths
+              artifactPaths,
             );
             const deleteAction = await findVisibleLocatorOrThrow(
               page,
               createPostMenuActionCandidates(
                 getPostUiActionLabels("delete", this.runtime.selectorLocale),
-                "post-delete"
+                "post-delete",
               ),
               "post_delete_menu_item",
-              artifactPaths
+              artifactPaths,
             );
 
             const screenshotPath = `linkedin/screenshot-post-delete-prepare-${Date.now()}.png`;
-            await captureScreenshotArtifact(this.runtime, page, screenshotPath, {
-              action: "prepare_delete_post",
-              profile_name: profileName,
-              post_url: postUrl,
-              target_post_selector_key: targetPost.key,
-              menu_button_selector_key: menuButtonKey,
-              delete_selector_key: deleteAction.key
-            });
+            await captureScreenshotArtifact(
+              this.runtime,
+              page,
+              screenshotPath,
+              {
+                action: "prepare_delete_post",
+                profile_name: profileName,
+                post_url: postUrl,
+                target_post_selector_key: targetPost.key,
+                menu_button_selector_key: menuButtonKey,
+                delete_selector_key: deleteAction.key,
+              },
+            );
             artifactPaths.push(screenshotPath);
             await page.keyboard.press("Escape").catch(() => undefined);
 
-            const rateLimitState = this.runtime.rateLimiter.peek(
-              DELETE_POST_RATE_LIMIT_CONFIG
-            );
+            const rateLimitState: RateLimiterState =
+              this.runtime.rateLimiter.peek(DELETE_POST_RATE_LIMIT_CONFIG);
             const target = {
               profile_name: profileName,
               post_url: postUrl,
-              current_verification_snippet: currentSnippet
+              current_verification_snippet: currentSnippet,
             };
 
             const preview = {
               summary: `Delete LinkedIn post ${postUrl}`,
               target,
               outbound: {
-                destructive: true
+                destructive: true,
               },
               validation: {
-                destructive: true
+                destructive: true,
               },
               artifacts: artifactPaths.map((path) => ({
                 type: path.endsWith(".zip") ? "trace" : "screenshot",
-                path
+                path,
               })),
-              rate_limit: formatRateLimitState(rateLimitState)
+              rate_limit: formatRateLimitState(rateLimitState),
             } satisfies Record<string, unknown>;
 
             return this.runtime.twoPhaseCommit.prepare({
               actionType: DELETE_POST_ACTION_TYPE,
               target,
               payload: {
-                post_url: postUrl
+                post_url: postUrl,
               },
               preview,
-              ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+              ...(input.operatorNote
+                ? { operatorNote: input.operatorNote }
+                : {}),
             });
           } catch (error) {
             const failureScreenshot = `linkedin/screenshot-post-delete-prepare-error-${Date.now()}.png`;
             try {
-              await captureScreenshotArtifact(this.runtime, page, failureScreenshot, {
-                action: "prepare_delete_post_error",
-                profile_name: profileName,
-                post_url: postUrl
-              });
+              await captureScreenshotArtifact(
+                this.runtime,
+                page,
+                failureScreenshot,
+                {
+                  action: "prepare_delete_post_error",
+                  profile_name: profileName,
+                  post_url: postUrl,
+                },
+              );
               artifactPaths.push(failureScreenshot);
             } catch {
               // Best effort.
             }
 
-            throw toAutomationError(error, "Failed to prepare LinkedIn post deletion.", {
-              profile_name: profileName,
-              current_url: page.url(),
-              post_url: postUrl,
-              artifact_paths: artifactPaths
-            });
+            throw toAutomationError(
+              error,
+              "Failed to prepare LinkedIn post deletion.",
+              {
+                profile_name: profileName,
+                current_url: page.url(),
+                post_url: postUrl,
+                artifact_paths: artifactPaths,
+              },
+            );
           } finally {
             if (tracingStarted) {
               try {
-                const absoluteTracePath = this.runtime.artifacts.resolve(tracePath);
+                const absoluteTracePath =
+                  this.runtime.artifacts.resolve(tracePath);
                 await context.tracing.stop({ path: absoluteTracePath });
                 registerTraceArtifact(this.runtime, tracePath, {
                   action: "prepare_delete_post",
                   profile_name: profileName,
-                  post_url: postUrl
+                  post_url: postUrl,
                 });
               } catch (error) {
                 this.runtime.logger.log(
@@ -4097,22 +4318,27 @@ export class LinkedInPostsService {
                   "linkedin.post.prepare_delete.trace.stop_failed",
                   {
                     profile_name: profileName,
-                    message: error instanceof Error ? error.message : String(error)
-                  }
+                    message:
+                      error instanceof Error ? error.message : String(error),
+                  },
                 );
               }
             }
           }
-        }
+        },
       );
 
       return prepared;
     } catch (error) {
-      throw toAutomationError(error, "Failed to prepare LinkedIn post deletion.", {
-        profile_name: profileName,
-        post_url: postUrl,
-        artifact_paths: artifactPaths
-      });
+      throw toAutomationError(
+        error,
+        "Failed to prepare LinkedIn post deletion.",
+        {
+          profile_name: profileName,
+          post_url: postUrl,
+          artifact_paths: artifactPaths,
+        },
+      );
     }
   }
 }
@@ -4121,7 +4347,7 @@ function getOptionalStringField(
   source: Record<string, unknown>,
   key: string,
   actionId: string,
-  location: "target" | "payload"
+  location: "target" | "payload",
 ): string | undefined {
   const value = source[key];
   if (value === undefined || value === null) {
@@ -4138,8 +4364,8 @@ function getOptionalStringField(
     {
       action_id: actionId,
       location,
-      key
-    }
+      key,
+    },
   );
 }
 
@@ -4147,7 +4373,7 @@ function getRequiredStringArrayField(
   source: Record<string, unknown>,
   key: string,
   actionId: string,
-  location: "target" | "payload"
+  location: "target" | "payload",
 ): string[] {
   const value = source[key];
   if (
@@ -4163,8 +4389,8 @@ function getRequiredStringArrayField(
     {
       action_id: actionId,
       location,
-      key
-    }
+      key,
+    },
   );
 }
 
@@ -4172,7 +4398,7 @@ function getRequiredIntegerField(
   source: Record<string, unknown>,
   key: string,
   actionId: string,
-  location: "target" | "payload"
+  location: "target" | "payload",
 ): number {
   const value = source[key];
   if (typeof value === "number" && Number.isInteger(value)) {
@@ -4185,38 +4411,46 @@ function getRequiredIntegerField(
     {
       action_id: actionId,
       location,
-      key
-    }
+      key,
+    },
   );
 }
 
-class CreatePostActionExecutor
-  implements ActionExecutor<LinkedInPostsExecutorRuntime>
-{
+class CreatePostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInPostsExecutorRuntime>
+    input: ActionExecutorInput<LinkedInPostsExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const runtime = input.runtime;
     const action = input.action;
     const profileName = getProfileName(action.target);
-    const text = getRequiredStringField(action.payload, "text", action.id, "payload");
+    const text = getRequiredStringField(
+      action.payload,
+      "text",
+      action.id,
+      "payload",
+    );
     const visibility = normalizeLinkedInPostVisibility(
-      getRequiredStringField(action.payload, "visibility", action.id, "payload"),
-      "public"
+      getRequiredStringField(
+        action.payload,
+        "visibility",
+        action.id,
+        "payload",
+      ),
+      "public",
     );
     const tracePath = `linkedin/trace-post-confirm-${Date.now()}.zip`;
     const artifactPaths: string[] = [tracePath];
 
     await runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: runtime.cdpUrl
+      cdpUrl: runtime.cdpUrl,
     });
 
     return runtime.profileManager.runWithContext(
       {
         cdpUrl: runtime.cdpUrl,
         profileName,
-        headless: true
+        headless: true,
       },
       async (context) => {
         const page = await getOrCreatePage(context);
@@ -4226,44 +4460,38 @@ class CreatePostActionExecutor
           await context.tracing.start({
             screenshots: true,
             snapshots: true,
-            sources: true
+            sources: true,
           });
           tracingStarted = true;
 
-          const rateLimitState = runtime.rateLimiter.consume(
-            CREATE_POST_RATE_LIMIT_CONFIG
-          );
-          if (!rateLimitState.allowed) {
-            throw new LinkedInBuddyError(
-              "RATE_LIMITED",
-              "LinkedIn create_post confirm is rate limited for the current window.",
-              {
-                action_id: action.id,
-                profile_name: profileName,
-                requested_visibility: visibility,
-                rate_limit: formatRateLimitState(rateLimitState)
-              }
-            );
-          }
+          const rateLimitState = consumeRateLimitOrThrow(runtime.rateLimiter, {
+            config: CREATE_POST_RATE_LIMIT_CONFIG,
+            message: createConfirmRateLimitMessage(CREATE_POST_ACTION_TYPE),
+            details: {
+              action_id: action.id,
+              profile_name: profileName,
+              requested_visibility: visibility,
+            },
+          });
 
           const { composerRoot, triggerKey, rootKey } = await openPostComposer(
             page,
             runtime.selectorLocale,
-            artifactPaths
+            artifactPaths,
           );
           const visibilityKey = await setPostVisibility(
             page,
             composerRoot,
             runtime.selectorLocale,
             visibility,
-            artifactPaths
+            artifactPaths,
           );
           const inputKey = await setComposerText(
             page,
             composerRoot,
             runtime.selectorLocale,
             text,
-            artifactPaths
+            artifactPaths,
           );
 
           const prePublishScreenshot = `linkedin/screenshot-post-confirm-before-${Date.now()}.png`;
@@ -4274,7 +4502,7 @@ class CreatePostActionExecutor
             trigger_selector_key: triggerKey,
             composer_selector_key: rootKey,
             visibility_selector_key: visibilityKey,
-            input_selector_key: inputKey
+            input_selector_key: inputKey,
           });
           artifactPaths.push(prePublishScreenshot);
 
@@ -4283,7 +4511,7 @@ class CreatePostActionExecutor
             createPublishButtonCandidates(runtime.selectorLocale),
             "post_publish_button",
             artifactPaths,
-            page.url()
+            page.url(),
           );
           const publishEnabled = await waitForCondition(async () => {
             try {
@@ -4302,25 +4530,37 @@ class CreatePostActionExecutor
                 profile_name: profileName,
                 requested_visibility: visibility,
                 selector_key: publishButton.key,
-                artifact_paths: artifactPaths
-              }
+                artifact_paths: artifactPaths,
+              },
             );
           }
 
           await publishButton.locator.click({ timeout: 5_000 });
-          await waitForCondition(async () => !(await isAnyLocatorVisible(composerRoot)), 10_000);
+          await waitForCondition(
+            async () => !(await isAnyLocatorVisible(composerRoot)),
+            10_000,
+          );
           await waitForNetworkIdleBestEffort(page, 10_000);
 
-          const verification = await verifyPublishedPost(page, text, artifactPaths);
+          const verification = await verifyPublishedPost(
+            page,
+            text,
+            artifactPaths,
+          );
 
           const postPublishScreenshot = `linkedin/screenshot-post-confirm-after-${Date.now()}.png`;
-          await captureScreenshotArtifact(runtime, page, postPublishScreenshot, {
-            action: CREATE_POST_ACTION_TYPE,
-            profile_name: profileName,
-            visibility,
-            published_post_url: verification.postUrl,
-            verification_surface: verification.surface
-          });
+          await captureScreenshotArtifact(
+            runtime,
+            page,
+            postPublishScreenshot,
+            {
+              action: CREATE_POST_ACTION_TYPE,
+              profile_name: profileName,
+              visibility,
+              published_post_url: verification.postUrl,
+              verification_surface: verification.surface,
+            },
+          );
           artifactPaths.push(postPublishScreenshot);
 
           return {
@@ -4331,9 +4571,9 @@ class CreatePostActionExecutor
               verification_snippet: createVerificationSnippet(text),
               published_post_url: verification.postUrl,
               verification_surface: verification.surface,
-              rate_limit: formatRateLimitState(rateLimitState)
+              rate_limit: formatRateLimitState(rateLimitState),
             },
-            artifacts: artifactPaths
+            artifacts: artifactPaths,
           };
         } catch (error) {
           const failureScreenshot = `linkedin/screenshot-post-confirm-error-${Date.now()}.png`;
@@ -4341,20 +4581,24 @@ class CreatePostActionExecutor
             await captureScreenshotArtifact(runtime, page, failureScreenshot, {
               action: `${CREATE_POST_ACTION_TYPE}_error`,
               profile_name: profileName,
-              visibility
+              visibility,
             });
             artifactPaths.push(failureScreenshot);
           } catch {
             // Best effort.
           }
 
-          throw toAutomationError(error, "Failed to execute LinkedIn create_post action.", {
-            action_id: action.id,
-            profile_name: profileName,
-            current_url: page.url(),
-            requested_visibility: visibility,
-            artifact_paths: artifactPaths
-          });
+          throw toAutomationError(
+            error,
+            "Failed to execute LinkedIn create_post action.",
+            {
+              action_id: action.id,
+              profile_name: profileName,
+              current_url: page.url(),
+              requested_visibility: visibility,
+              artifact_paths: artifactPaths,
+            },
+          );
         } finally {
           if (tracingStarted) {
             try {
@@ -4363,40 +4607,53 @@ class CreatePostActionExecutor
               registerTraceArtifact(runtime, tracePath, {
                 action: CREATE_POST_ACTION_TYPE,
                 profile_name: profileName,
-                visibility
+                visibility,
               });
             } catch (error) {
-              runtime.logger.log("warn", "linkedin.post.confirm.trace.stop_failed", {
-                action_id: action.id,
-                message: error instanceof Error ? error.message : String(error)
-              });
+              runtime.logger.log(
+                "warn",
+                "linkedin.post.confirm.trace.stop_failed",
+                {
+                  action_id: action.id,
+                  message:
+                    error instanceof Error ? error.message : String(error),
+                },
+              );
             }
           }
         }
-      }
+      },
     );
   }
 }
 
-class CreateMediaPostActionExecutor
-  implements ActionExecutor<LinkedInPostsExecutorRuntime>
-{
+class CreateMediaPostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInPostsExecutorRuntime>
+    input: ActionExecutorInput<LinkedInPostsExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const runtime = input.runtime;
     const action = input.action;
     const profileName = getProfileName(action.target);
-    const text = getRequiredStringField(action.payload, "text", action.id, "payload");
+    const text = getRequiredStringField(
+      action.payload,
+      "text",
+      action.id,
+      "payload",
+    );
     const visibility = normalizeLinkedInPostVisibility(
-      getRequiredStringField(action.payload, "visibility", action.id, "payload"),
-      "public"
+      getRequiredStringField(
+        action.payload,
+        "visibility",
+        action.id,
+        "payload",
+      ),
+      "public",
     );
     const mediaPaths = getRequiredStringArrayField(
       action.payload,
       "media_paths",
       action.id,
-      "payload"
+      "payload",
     );
     const attachments = validateLinkedInPostMediaAttachments(mediaPaths);
     const tracePath = `linkedin/trace-post-media-confirm-${Date.now()}.zip`;
@@ -4404,14 +4661,14 @@ class CreateMediaPostActionExecutor
 
     await runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: runtime.cdpUrl
+      cdpUrl: runtime.cdpUrl,
     });
 
     return runtime.profileManager.runWithContext(
       {
         cdpUrl: runtime.cdpUrl,
         profileName,
-        headless: true
+        headless: true,
       },
       async (context) => {
         const page = await getOrCreatePage(context);
@@ -4421,51 +4678,47 @@ class CreateMediaPostActionExecutor
           await context.tracing.start({
             screenshots: true,
             snapshots: true,
-            sources: true
+            sources: true,
           });
           tracingStarted = true;
 
-          const rateLimitState = runtime.rateLimiter.consume(
-            CREATE_POST_RATE_LIMIT_CONFIG
-          );
-          if (!rateLimitState.allowed) {
-            throw new LinkedInBuddyError(
-              "RATE_LIMITED",
-              "LinkedIn create_media_post confirm is rate limited for the current window.",
-              {
-                action_id: action.id,
-                profile_name: profileName,
-                requested_visibility: visibility,
-                rate_limit: formatRateLimitState(rateLimitState)
-              }
-            );
-          }
+          const rateLimitState = consumeRateLimitOrThrow(runtime.rateLimiter, {
+            config: CREATE_POST_RATE_LIMIT_CONFIG,
+            message: createConfirmRateLimitMessage(
+              CREATE_MEDIA_POST_ACTION_TYPE,
+            ),
+            details: {
+              action_id: action.id,
+              profile_name: profileName,
+              requested_visibility: visibility,
+            },
+          });
 
           const { composerRoot, triggerKey, rootKey } = await openPostComposer(
             page,
             runtime.selectorLocale,
-            artifactPaths
+            artifactPaths,
           );
           const visibilityKey = await setPostVisibility(
             page,
             composerRoot,
             runtime.selectorLocale,
             visibility,
-            artifactPaths
+            artifactPaths,
           );
           const inputKey = await setComposerText(
             page,
             composerRoot,
             runtime.selectorLocale,
             text,
-            artifactPaths
+            artifactPaths,
           );
           const { mediaButtonKey, mediaInputKey } = await attachMediaToComposer(
             page,
             composerRoot,
             runtime.selectorLocale,
             attachments,
-            artifactPaths
+            artifactPaths,
           );
 
           const prePublishScreenshot = `linkedin/screenshot-post-media-confirm-before-${Date.now()}.png`;
@@ -4480,7 +4733,7 @@ class CreateMediaPostActionExecutor
             media_button_selector_key: mediaButtonKey,
             media_input_selector_key: mediaInputKey,
             media_count: attachments.length,
-            media_kind: attachments[0]?.kind ?? null
+            media_kind: attachments[0]?.kind ?? null,
           });
           artifactPaths.push(prePublishScreenshot);
 
@@ -4489,7 +4742,7 @@ class CreateMediaPostActionExecutor
             createPublishButtonCandidates(runtime.selectorLocale),
             "post_publish_button",
             artifactPaths,
-            page.url()
+            page.url(),
           );
           const publishEnabled = await waitForCondition(async () => {
             try {
@@ -4508,30 +4761,39 @@ class CreateMediaPostActionExecutor
                 profile_name: profileName,
                 requested_visibility: visibility,
                 selector_key: publishButton.key,
-                artifact_paths: artifactPaths
-              }
+                artifact_paths: artifactPaths,
+              },
             );
           }
 
           await publishButton.locator.click({ timeout: 5_000 });
           await waitForCondition(
             async () => !(await isAnyLocatorVisible(composerRoot)),
-            10_000
+            10_000,
           );
           await waitForNetworkIdleBestEffort(page, 10_000);
 
-          const verification = await verifyPublishedPost(page, text, artifactPaths);
+          const verification = await verifyPublishedPost(
+            page,
+            text,
+            artifactPaths,
+          );
 
           const postPublishScreenshot = `linkedin/screenshot-post-media-confirm-after-${Date.now()}.png`;
-          await captureScreenshotArtifact(runtime, page, postPublishScreenshot, {
-            action: CREATE_MEDIA_POST_ACTION_TYPE,
-            profile_name: profileName,
-            visibility,
-            published_post_url: verification.postUrl,
-            verification_surface: verification.surface,
-            media_count: attachments.length,
-            media_kind: attachments[0]?.kind ?? null
-          });
+          await captureScreenshotArtifact(
+            runtime,
+            page,
+            postPublishScreenshot,
+            {
+              action: CREATE_MEDIA_POST_ACTION_TYPE,
+              profile_name: profileName,
+              visibility,
+              published_post_url: verification.postUrl,
+              verification_surface: verification.surface,
+              media_count: attachments.length,
+              media_kind: attachments[0]?.kind ?? null,
+            },
+          );
           artifactPaths.push(postPublishScreenshot);
 
           return {
@@ -4545,9 +4807,9 @@ class CreateMediaPostActionExecutor
               verification_snippet: createVerificationSnippet(text),
               published_post_url: verification.postUrl,
               verification_surface: verification.surface,
-              rate_limit: formatRateLimitState(rateLimitState)
+              rate_limit: formatRateLimitState(rateLimitState),
             },
-            artifacts: artifactPaths
+            artifacts: artifactPaths,
           };
         } catch (error) {
           const failureScreenshot = `linkedin/screenshot-post-media-confirm-error-${Date.now()}.png`;
@@ -4555,7 +4817,7 @@ class CreateMediaPostActionExecutor
             await captureScreenshotArtifact(runtime, page, failureScreenshot, {
               action: `${CREATE_MEDIA_POST_ACTION_TYPE}_error`,
               profile_name: profileName,
-              visibility
+              visibility,
             });
             artifactPaths.push(failureScreenshot);
           } catch {
@@ -4570,8 +4832,8 @@ class CreateMediaPostActionExecutor
               profile_name: profileName,
               current_url: page.url(),
               requested_visibility: visibility,
-              artifact_paths: artifactPaths
-            }
+              artifact_paths: artifactPaths,
+            },
           );
         } finally {
           if (tracingStarted) {
@@ -4581,44 +4843,67 @@ class CreateMediaPostActionExecutor
               registerTraceArtifact(runtime, tracePath, {
                 action: CREATE_MEDIA_POST_ACTION_TYPE,
                 profile_name: profileName,
-                visibility
+                visibility,
               });
             } catch (error) {
-              runtime.logger.log("warn", "linkedin.post.confirm_media.trace.stop_failed", {
-                action_id: action.id,
-                message: error instanceof Error ? error.message : String(error)
-              });
+              runtime.logger.log(
+                "warn",
+                "linkedin.post.confirm_media.trace.stop_failed",
+                {
+                  action_id: action.id,
+                  message:
+                    error instanceof Error ? error.message : String(error),
+                },
+              );
             }
           }
         }
-      }
+      },
     );
   }
 }
 
-class CreatePollPostActionExecutor
-  implements ActionExecutor<LinkedInPostsExecutorRuntime>
-{
+class CreatePollPostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInPostsExecutorRuntime>
+    input: ActionExecutorInput<LinkedInPostsExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const runtime = input.runtime;
     const action = input.action;
     const profileName = getProfileName(action.target);
-    const text = getOptionalStringField(action.payload, "text", action.id, "payload");
-    const question = getRequiredStringField(action.payload, "question", action.id, "payload");
+    const text = getOptionalStringField(
+      action.payload,
+      "text",
+      action.id,
+      "payload",
+    );
+    const question = getRequiredStringField(
+      action.payload,
+      "question",
+      action.id,
+      "payload",
+    );
     const options = getRequiredStringArrayField(
       action.payload,
       "options",
       action.id,
-      "payload"
+      "payload",
     );
     const durationDays = normalizePollDurationDays(
-      getRequiredIntegerField(action.payload, "duration_days", action.id, "payload")
+      getRequiredIntegerField(
+        action.payload,
+        "duration_days",
+        action.id,
+        "payload",
+      ),
     );
     const visibility = normalizeLinkedInPostVisibility(
-      getRequiredStringField(action.payload, "visibility", action.id, "payload"),
-      "public"
+      getRequiredStringField(
+        action.payload,
+        "visibility",
+        action.id,
+        "payload",
+      ),
+      "public",
     );
     const verificationText = text ?? question;
     const tracePath = `linkedin/trace-post-poll-confirm-${Date.now()}.zip`;
@@ -4626,14 +4911,14 @@ class CreatePollPostActionExecutor
 
     await runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: runtime.cdpUrl
+      cdpUrl: runtime.cdpUrl,
     });
 
     return runtime.profileManager.runWithContext(
       {
         cdpUrl: runtime.cdpUrl,
         profileName,
-        headless: true
+        headless: true,
       },
       async (context) => {
         const page = await getOrCreatePage(context);
@@ -4643,37 +4928,33 @@ class CreatePollPostActionExecutor
           await context.tracing.start({
             screenshots: true,
             snapshots: true,
-            sources: true
+            sources: true,
           });
           tracingStarted = true;
 
-          const rateLimitState = runtime.rateLimiter.consume(
-            CREATE_POST_RATE_LIMIT_CONFIG
-          );
-          if (!rateLimitState.allowed) {
-            throw new LinkedInBuddyError(
-              "RATE_LIMITED",
-              "LinkedIn create_poll_post confirm is rate limited for the current window.",
-              {
-                action_id: action.id,
-                profile_name: profileName,
-                requested_visibility: visibility,
-                rate_limit: formatRateLimitState(rateLimitState)
-              }
-            );
-          }
+          const rateLimitState = consumeRateLimitOrThrow(runtime.rateLimiter, {
+            config: CREATE_POST_RATE_LIMIT_CONFIG,
+            message: createConfirmRateLimitMessage(
+              CREATE_POLL_POST_ACTION_TYPE,
+            ),
+            details: {
+              action_id: action.id,
+              profile_name: profileName,
+              requested_visibility: visibility,
+            },
+          });
 
           const { composerRoot, triggerKey, rootKey } = await openPostComposer(
             page,
             runtime.selectorLocale,
-            artifactPaths
+            artifactPaths,
           );
           const visibilityKey = await setPostVisibility(
             page,
             composerRoot,
             runtime.selectorLocale,
             visibility,
-            artifactPaths
+            artifactPaths,
           );
           const inputKey = text
             ? await setComposerText(
@@ -4681,7 +4962,7 @@ class CreatePollPostActionExecutor
                 composerRoot,
                 runtime.selectorLocale,
                 text,
-                artifactPaths
+                artifactPaths,
               )
             : null;
           const pollFields = await fillPollComposerFields(
@@ -4691,7 +4972,7 @@ class CreatePollPostActionExecutor
             question,
             options,
             durationDays,
-            artifactPaths
+            artifactPaths,
           );
 
           const prePublishScreenshot = `linkedin/screenshot-post-poll-confirm-before-${Date.now()}.png`;
@@ -4708,7 +4989,7 @@ class CreatePollPostActionExecutor
             poll_option_selector_keys: pollFields.optionInputKeys,
             poll_duration_selector_key: pollFields.durationKey,
             poll_option_count: options.length,
-            poll_duration_days: durationDays
+            poll_duration_days: durationDays,
           });
           artifactPaths.push(prePublishScreenshot);
 
@@ -4717,7 +4998,7 @@ class CreatePollPostActionExecutor
             createPublishButtonCandidates(runtime.selectorLocale),
             "post_publish_button",
             artifactPaths,
-            page.url()
+            page.url(),
           );
           const publishEnabled = await waitForCondition(async () => {
             try {
@@ -4736,34 +5017,39 @@ class CreatePollPostActionExecutor
                 profile_name: profileName,
                 requested_visibility: visibility,
                 selector_key: publishButton.key,
-                artifact_paths: artifactPaths
-              }
+                artifact_paths: artifactPaths,
+              },
             );
           }
 
           await publishButton.locator.click({ timeout: 5_000 });
           await waitForCondition(
             async () => !(await isAnyLocatorVisible(composerRoot)),
-            10_000
+            10_000,
           );
           await waitForNetworkIdleBestEffort(page, 10_000);
 
           const verification = await verifyPublishedPost(
             page,
             verificationText,
-            artifactPaths
+            artifactPaths,
           );
 
           const postPublishScreenshot = `linkedin/screenshot-post-poll-confirm-after-${Date.now()}.png`;
-          await captureScreenshotArtifact(runtime, page, postPublishScreenshot, {
-            action: CREATE_POLL_POST_ACTION_TYPE,
-            profile_name: profileName,
-            visibility,
-            published_post_url: verification.postUrl,
-            verification_surface: verification.surface,
-            poll_option_count: options.length,
-            poll_duration_days: durationDays
-          });
+          await captureScreenshotArtifact(
+            runtime,
+            page,
+            postPublishScreenshot,
+            {
+              action: CREATE_POLL_POST_ACTION_TYPE,
+              profile_name: profileName,
+              visibility,
+              published_post_url: verification.postUrl,
+              verification_surface: verification.surface,
+              poll_option_count: options.length,
+              poll_duration_days: durationDays,
+            },
+          );
           artifactPaths.push(postPublishScreenshot);
 
           return {
@@ -4778,9 +5064,9 @@ class CreatePollPostActionExecutor
               verification_snippet: createVerificationSnippet(verificationText),
               published_post_url: verification.postUrl,
               verification_surface: verification.surface,
-              rate_limit: formatRateLimitState(rateLimitState)
+              rate_limit: formatRateLimitState(rateLimitState),
             },
-            artifacts: artifactPaths
+            artifacts: artifactPaths,
           };
         } catch (error) {
           const failureScreenshot = `linkedin/screenshot-post-poll-confirm-error-${Date.now()}.png`;
@@ -4788,7 +5074,7 @@ class CreatePollPostActionExecutor
             await captureScreenshotArtifact(runtime, page, failureScreenshot, {
               action: `${CREATE_POLL_POST_ACTION_TYPE}_error`,
               profile_name: profileName,
-              visibility
+              visibility,
             });
             artifactPaths.push(failureScreenshot);
           } catch {
@@ -4803,8 +5089,8 @@ class CreatePollPostActionExecutor
               profile_name: profileName,
               current_url: page.url(),
               requested_visibility: visibility,
-              artifact_paths: artifactPaths
-            }
+              artifact_paths: artifactPaths,
+            },
           );
         } finally {
           if (tracingStarted) {
@@ -4814,47 +5100,55 @@ class CreatePollPostActionExecutor
               registerTraceArtifact(runtime, tracePath, {
                 action: CREATE_POLL_POST_ACTION_TYPE,
                 profile_name: profileName,
-                visibility
+                visibility,
               });
             } catch (error) {
-              runtime.logger.log("warn", "linkedin.post.confirm_poll.trace.stop_failed", {
-                action_id: action.id,
-                message: error instanceof Error ? error.message : String(error)
-              });
+              runtime.logger.log(
+                "warn",
+                "linkedin.post.confirm_poll.trace.stop_failed",
+                {
+                  action_id: action.id,
+                  message:
+                    error instanceof Error ? error.message : String(error),
+                },
+              );
             }
           }
         }
-      }
+      },
     );
   }
 }
 
-class EditPostActionExecutor
-  implements ActionExecutor<LinkedInPostsExecutorRuntime>
-{
+class EditPostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInPostsExecutorRuntime>
+    input: ActionExecutorInput<LinkedInPostsExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const runtime = input.runtime;
     const action = input.action;
     const profileName = getProfileName(action.target);
     const postUrl = resolvePostUrl(
-      getRequiredStringField(action.payload, "post_url", action.id, "payload")
+      getRequiredStringField(action.payload, "post_url", action.id, "payload"),
     );
-    const text = getRequiredStringField(action.payload, "text", action.id, "payload");
+    const text = getRequiredStringField(
+      action.payload,
+      "text",
+      action.id,
+      "payload",
+    );
     const tracePath = `linkedin/trace-post-edit-confirm-${Date.now()}.zip`;
     const artifactPaths: string[] = [tracePath];
 
     await runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: runtime.cdpUrl
+      cdpUrl: runtime.cdpUrl,
     });
 
     return runtime.profileManager.runWithContext(
       {
         cdpUrl: runtime.cdpUrl,
         profileName,
-        headless: true
+        headless: true,
       },
       async (context) => {
         const page = await getOrCreatePage(context);
@@ -4864,42 +5158,42 @@ class EditPostActionExecutor
           await context.tracing.start({
             screenshots: true,
             snapshots: true,
-            sources: true
+            sources: true,
           });
           tracingStarted = true;
 
-          const rateLimitState = runtime.rateLimiter.consume(EDIT_POST_RATE_LIMIT_CONFIG);
-          if (!rateLimitState.allowed) {
-            throw new LinkedInBuddyError(
-              "RATE_LIMITED",
-              "LinkedIn edit_post confirm is rate limited for the current window.",
-              {
-                action_id: action.id,
-                profile_name: profileName,
-                post_url: postUrl,
-                rate_limit: formatRateLimitState(rateLimitState)
-              }
-            );
-          }
+          const rateLimitState = consumeRateLimitOrThrow(runtime.rateLimiter, {
+            config: EDIT_POST_RATE_LIMIT_CONFIG,
+            message: createConfirmRateLimitMessage(EDIT_POST_ACTION_TYPE),
+            details: {
+              action_id: action.id,
+              profile_name: profileName,
+              post_url: postUrl,
+            },
+          });
 
           await page.goto(postUrl, { waitUntil: "domcontentloaded" });
           await waitForNetworkIdleBestEffort(page);
 
-          const targetPost = await findTargetPostLocator(page, postUrl, artifactPaths);
+          const targetPost = await findTargetPostLocator(
+            page,
+            postUrl,
+            artifactPaths,
+          );
           const menuButtonKey = await openTargetPostActionMenu(
             page,
             targetPost,
             runtime.selectorLocale,
-            artifactPaths
+            artifactPaths,
           );
           const editAction = await findVisibleLocatorOrThrow(
             page,
             createPostMenuActionCandidates(
               getPostUiActionLabels("edit", runtime.selectorLocale),
-              "post-edit"
+              "post-edit",
             ),
             "post_edit_menu_item",
-            artifactPaths
+            artifactPaths,
           );
           await editAction.locator.click({ timeout: 5_000 });
 
@@ -4909,14 +5203,14 @@ class EditPostActionExecutor
             dialog,
             runtime.selectorLocale,
             text,
-            artifactPaths
+            artifactPaths,
           );
           const saveButton = await findVisibleScopedLocatorOrThrow(
             dialog,
             createScopedSaveButtonCandidates(runtime.selectorLocale),
             "post_edit_save_button",
             artifactPaths,
-            page.url()
+            page.url(),
           );
 
           const preSaveScreenshot = `linkedin/screenshot-post-edit-confirm-before-${Date.now()}.png`;
@@ -4928,7 +5222,7 @@ class EditPostActionExecutor
             menu_button_selector_key: menuButtonKey,
             edit_selector_key: editAction.key,
             input_selector_key: inputKey,
-            save_selector_key: saveButton.key
+            save_selector_key: saveButton.key,
           });
           artifactPaths.push(preSaveScreenshot);
 
@@ -4949,20 +5243,23 @@ class EditPostActionExecutor
                 profile_name: profileName,
                 post_url: postUrl,
                 selector_key: saveButton.key,
-                artifact_paths: artifactPaths
-              }
+                artifact_paths: artifactPaths,
+              },
             );
           }
 
           await saveButton.locator.click({ timeout: 5_000 });
-          await waitForCondition(async () => !(await isAnyLocatorVisible(dialog)), 10_000);
+          await waitForCondition(
+            async () => !(await isAnyLocatorVisible(dialog)),
+            10_000,
+          );
           await waitForNetworkIdleBestEffort(page, 10_000);
 
           const verification = await verifyUpdatedPostAtUrl(
             page,
             postUrl,
             text,
-            artifactPaths
+            artifactPaths,
           );
 
           const postSaveScreenshot = `linkedin/screenshot-post-edit-confirm-after-${Date.now()}.png`;
@@ -4970,7 +5267,7 @@ class EditPostActionExecutor
             action: EDIT_POST_ACTION_TYPE,
             profile_name: profileName,
             post_url: postUrl,
-            published_post_url: verification.postUrl
+            published_post_url: verification.postUrl,
           });
           artifactPaths.push(postSaveScreenshot);
 
@@ -4980,9 +5277,9 @@ class EditPostActionExecutor
               edited: true,
               post_url: postUrl,
               verification_snippet: createVerificationSnippet(text),
-              rate_limit: formatRateLimitState(rateLimitState)
+              rate_limit: formatRateLimitState(rateLimitState),
             },
-            artifacts: artifactPaths
+            artifacts: artifactPaths,
           };
         } catch (error) {
           const failureScreenshot = `linkedin/screenshot-post-edit-confirm-error-${Date.now()}.png`;
@@ -4990,20 +5287,24 @@ class EditPostActionExecutor
             await captureScreenshotArtifact(runtime, page, failureScreenshot, {
               action: `${EDIT_POST_ACTION_TYPE}_error`,
               profile_name: profileName,
-              post_url: postUrl
+              post_url: postUrl,
             });
             artifactPaths.push(failureScreenshot);
           } catch {
             // Best effort.
           }
 
-          throw toAutomationError(error, "Failed to execute LinkedIn edit_post action.", {
-            action_id: action.id,
-            profile_name: profileName,
-            current_url: page.url(),
-            post_url: postUrl,
-            artifact_paths: artifactPaths
-          });
+          throw toAutomationError(
+            error,
+            "Failed to execute LinkedIn edit_post action.",
+            {
+              action_id: action.id,
+              profile_name: profileName,
+              current_url: page.url(),
+              post_url: postUrl,
+              artifact_paths: artifactPaths,
+            },
+          );
         } finally {
           if (tracingStarted) {
             try {
@@ -5012,46 +5313,49 @@ class EditPostActionExecutor
               registerTraceArtifact(runtime, tracePath, {
                 action: EDIT_POST_ACTION_TYPE,
                 profile_name: profileName,
-                post_url: postUrl
+                post_url: postUrl,
               });
             } catch (error) {
-              runtime.logger.log("warn", "linkedin.post.confirm_edit.trace.stop_failed", {
-                action_id: action.id,
-                message: error instanceof Error ? error.message : String(error)
-              });
+              runtime.logger.log(
+                "warn",
+                "linkedin.post.confirm_edit.trace.stop_failed",
+                {
+                  action_id: action.id,
+                  message:
+                    error instanceof Error ? error.message : String(error),
+                },
+              );
             }
           }
         }
-      }
+      },
     );
   }
 }
 
-class DeletePostActionExecutor
-  implements ActionExecutor<LinkedInPostsExecutorRuntime>
-{
+class DeletePostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInPostsExecutorRuntime>
+    input: ActionExecutorInput<LinkedInPostsExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const runtime = input.runtime;
     const action = input.action;
     const profileName = getProfileName(action.target);
     const postUrl = resolvePostUrl(
-      getRequiredStringField(action.payload, "post_url", action.id, "payload")
+      getRequiredStringField(action.payload, "post_url", action.id, "payload"),
     );
     const tracePath = `linkedin/trace-post-delete-confirm-${Date.now()}.zip`;
     const artifactPaths: string[] = [tracePath];
 
     await runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: runtime.cdpUrl
+      cdpUrl: runtime.cdpUrl,
     });
 
     return runtime.profileManager.runWithContext(
       {
         cdpUrl: runtime.cdpUrl,
         profileName,
-        headless: true
+        headless: true,
       },
       async (context) => {
         const page = await getOrCreatePage(context);
@@ -5061,45 +5365,45 @@ class DeletePostActionExecutor
           await context.tracing.start({
             screenshots: true,
             snapshots: true,
-            sources: true
+            sources: true,
           });
           tracingStarted = true;
 
-          const rateLimitState = runtime.rateLimiter.consume(
-            DELETE_POST_RATE_LIMIT_CONFIG
-          );
-          if (!rateLimitState.allowed) {
-            throw new LinkedInBuddyError(
-              "RATE_LIMITED",
-              "LinkedIn delete_post confirm is rate limited for the current window.",
-              {
-                action_id: action.id,
-                profile_name: profileName,
-                post_url: postUrl,
-                rate_limit: formatRateLimitState(rateLimitState)
-              }
-            );
-          }
+          const rateLimitState = consumeRateLimitOrThrow(runtime.rateLimiter, {
+            config: DELETE_POST_RATE_LIMIT_CONFIG,
+            message: createConfirmRateLimitMessage(DELETE_POST_ACTION_TYPE),
+            details: {
+              action_id: action.id,
+              profile_name: profileName,
+              post_url: postUrl,
+            },
+          });
 
           await page.goto(postUrl, { waitUntil: "domcontentloaded" });
           await waitForNetworkIdleBestEffort(page);
 
-          const targetPost = await findTargetPostLocator(page, postUrl, artifactPaths);
-          const currentSnippet = await extractPostSnippetFromLocator(targetPost.locator);
+          const targetPost = await findTargetPostLocator(
+            page,
+            postUrl,
+            artifactPaths,
+          );
+          const currentSnippet = await extractPostSnippetFromLocator(
+            targetPost.locator,
+          );
           const menuButtonKey = await openTargetPostActionMenu(
             page,
             targetPost,
             runtime.selectorLocale,
-            artifactPaths
+            artifactPaths,
           );
           const deleteAction = await findVisibleLocatorOrThrow(
             page,
             createPostMenuActionCandidates(
               getPostUiActionLabels("delete", runtime.selectorLocale),
-              "post-delete"
+              "post-delete",
             ),
             "post_delete_menu_item",
-            artifactPaths
+            artifactPaths,
           );
 
           const preDeleteScreenshot = `linkedin/screenshot-post-delete-confirm-before-${Date.now()}.png`;
@@ -5110,7 +5414,7 @@ class DeletePostActionExecutor
             target_post_selector_key: targetPost.key,
             menu_button_selector_key: menuButtonKey,
             delete_selector_key: deleteAction.key,
-            current_verification_snippet: currentSnippet
+            current_verification_snippet: currentSnippet,
           });
           artifactPaths.push(preDeleteScreenshot);
 
@@ -5123,11 +5427,14 @@ class DeletePostActionExecutor
               createDeleteConfirmButtonCandidates(runtime.selectorLocale),
               "post_delete_confirm_button",
               artifactPaths,
-              page.url()
+              page.url(),
             );
             confirmButtonKey = confirmButton.key;
             await confirmButton.locator.click({ timeout: 5_000 });
-            await waitForCondition(async () => !(await isAnyLocatorVisible(dialog)), 10_000);
+            await waitForCondition(
+              async () => !(await isAnyLocatorVisible(dialog)),
+              10_000,
+            );
           }
           await waitForNetworkIdleBestEffort(page, 10_000);
 
@@ -5135,7 +5442,7 @@ class DeletePostActionExecutor
             page,
             postUrl,
             currentSnippet,
-            artifactPaths
+            artifactPaths,
           );
 
           const postDeleteScreenshot = `linkedin/screenshot-post-delete-confirm-after-${Date.now()}.png`;
@@ -5144,7 +5451,7 @@ class DeletePostActionExecutor
             profile_name: profileName,
             post_url: postUrl,
             confirm_selector_key: confirmButtonKey,
-            published_post_url: verification.postUrl
+            published_post_url: verification.postUrl,
           });
           artifactPaths.push(postDeleteScreenshot);
 
@@ -5154,9 +5461,9 @@ class DeletePostActionExecutor
               deleted: true,
               post_url: postUrl,
               verification_snippet: currentSnippet,
-              rate_limit: formatRateLimitState(rateLimitState)
+              rate_limit: formatRateLimitState(rateLimitState),
             },
-            artifacts: artifactPaths
+            artifacts: artifactPaths,
           };
         } catch (error) {
           const failureScreenshot = `linkedin/screenshot-post-delete-confirm-error-${Date.now()}.png`;
@@ -5164,7 +5471,7 @@ class DeletePostActionExecutor
             await captureScreenshotArtifact(runtime, page, failureScreenshot, {
               action: `${DELETE_POST_ACTION_TYPE}_error`,
               profile_name: profileName,
-              post_url: postUrl
+              post_url: postUrl,
             });
             artifactPaths.push(failureScreenshot);
           } catch {
@@ -5179,8 +5486,8 @@ class DeletePostActionExecutor
               profile_name: profileName,
               current_url: page.url(),
               post_url: postUrl,
-              artifact_paths: artifactPaths
-            }
+              artifact_paths: artifactPaths,
+            },
           );
         } finally {
           if (tracingStarted) {
@@ -5190,17 +5497,22 @@ class DeletePostActionExecutor
               registerTraceArtifact(runtime, tracePath, {
                 action: DELETE_POST_ACTION_TYPE,
                 profile_name: profileName,
-                post_url: postUrl
+                post_url: postUrl,
               });
             } catch (error) {
-              runtime.logger.log("warn", "linkedin.post.confirm_delete.trace.stop_failed", {
-                action_id: action.id,
-                message: error instanceof Error ? error.message : String(error)
-              });
+              runtime.logger.log(
+                "warn",
+                "linkedin.post.confirm_delete.trace.stop_failed",
+                {
+                  action_id: action.id,
+                  message:
+                    error instanceof Error ? error.message : String(error),
+                },
+              );
             }
           }
         }
-      }
+      },
     );
   }
 }
@@ -5211,6 +5523,6 @@ export function createPostActionExecutors(): ActionExecutorRegistry<LinkedInPost
     [CREATE_MEDIA_POST_ACTION_TYPE]: new CreateMediaPostActionExecutor(),
     [CREATE_POLL_POST_ACTION_TYPE]: new CreatePollPostActionExecutor(),
     [EDIT_POST_ACTION_TYPE]: new EditPostActionExecutor(),
-    [DELETE_POST_ACTION_TYPE]: new DeletePostActionExecutor()
+    [DELETE_POST_ACTION_TYPE]: new DeletePostActionExecutor(),
   };
 }
