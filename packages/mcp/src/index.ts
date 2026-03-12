@@ -12,7 +12,8 @@ export const LINKEDIN_INBOX_PREPARE_NEW_THREAD_TOOL =
 export const LINKEDIN_INBOX_PREPARE_ADD_RECIPIENTS_TOOL =
   "linkedin.inbox.prepare_add_recipients";
 export const LINKEDIN_INBOX_PREPARE_REACT_TOOL = "linkedin.inbox.prepare_react";
-export const LINKEDIN_INBOX_ARCHIVE_THREAD_TOOL = "linkedin.inbox.archive_thread";
+export const LINKEDIN_INBOX_ARCHIVE_THREAD_TOOL =
+  "linkedin.inbox.archive_thread";
 export const LINKEDIN_INBOX_UNARCHIVE_THREAD_TOOL =
   "linkedin.inbox.unarchive_thread";
 export const LINKEDIN_INBOX_MARK_UNREAD_TOOL = "linkedin.inbox.mark_unread";
@@ -24,7 +25,8 @@ export const LINKEDIN_COMPANY_PREPARE_FOLLOW_TOOL =
 export const LINKEDIN_COMPANY_PREPARE_UNFOLLOW_TOOL =
   "linkedin.company.prepare_unfollow";
 export const LINKEDIN_PROFILE_VIEW_TOOL = "linkedin.profile.view";
-export const LINKEDIN_PROFILE_VIEW_EDITABLE_TOOL = "linkedin.profile.view_editable";
+export const LINKEDIN_PROFILE_VIEW_EDITABLE_TOOL =
+  "linkedin.profile.view_editable";
 export const LINKEDIN_PROFILE_PREPARE_UPDATE_INTRO_TOOL =
   "linkedin.profile.prepare_update_intro";
 export const LINKEDIN_PROFILE_PREPARE_UPDATE_SETTINGS_TOOL =
@@ -70,7 +72,8 @@ export const LINKEDIN_CONNECTIONS_LIST_TOOL = "linkedin.connections.list";
 export const LINKEDIN_CONNECTIONS_PENDING_TOOL = "linkedin.connections.pending";
 export const LINKEDIN_CONNECTIONS_INVITE_TOOL = "linkedin.connections.invite";
 export const LINKEDIN_CONNECTIONS_ACCEPT_TOOL = "linkedin.connections.accept";
-export const LINKEDIN_CONNECTIONS_WITHDRAW_TOOL = "linkedin.connections.withdraw";
+export const LINKEDIN_CONNECTIONS_WITHDRAW_TOOL =
+  "linkedin.connections.withdraw";
 export const LINKEDIN_CONNECTIONS_PREPARE_IGNORE_TOOL =
   "linkedin.connections.prepare_ignore";
 export const LINKEDIN_CONNECTIONS_PREPARE_REMOVE_TOOL =
@@ -120,7 +123,8 @@ export const LINKEDIN_NEWSLETTER_LIST_TOOL = "linkedin.newsletter.list";
 export const LINKEDIN_NOTIFICATIONS_LIST_TOOL = "linkedin.notifications.list";
 export const LINKEDIN_NOTIFICATIONS_MARK_READ_TOOL =
   "linkedin.notifications.mark_read";
-export const LINKEDIN_NOTIFICATIONS_DISMISS_TOOL = "linkedin.notifications.dismiss";
+export const LINKEDIN_NOTIFICATIONS_DISMISS_TOOL =
+  "linkedin.notifications.dismiss";
 export const LINKEDIN_NOTIFICATIONS_PREFERENCES_GET_TOOL =
   "linkedin.notifications.preferences.get";
 export const LINKEDIN_NOTIFICATIONS_PREFERENCES_PREPARE_UPDATE_TOOL =
@@ -137,21 +141,40 @@ export const LINKEDIN_JOBS_PREPARE_EASY_APPLY_TOOL =
 export const LINKEDIN_GROUPS_SEARCH_TOOL = "linkedin.groups.search";
 export const LINKEDIN_GROUPS_VIEW_TOOL = "linkedin.groups.view";
 export const LINKEDIN_GROUPS_PREPARE_JOIN_TOOL = "linkedin.groups.prepare_join";
-export const LINKEDIN_GROUPS_PREPARE_LEAVE_TOOL = "linkedin.groups.prepare_leave";
+export const LINKEDIN_GROUPS_PREPARE_LEAVE_TOOL =
+  "linkedin.groups.prepare_leave";
 export const LINKEDIN_GROUPS_PREPARE_POST_TOOL = "linkedin.groups.prepare_post";
 export const LINKEDIN_EVENTS_SEARCH_TOOL = "linkedin.events.search";
 export const LINKEDIN_EVENTS_VIEW_TOOL = "linkedin.events.view";
 export const LINKEDIN_EVENTS_PREPARE_RSVP_TOOL = "linkedin.events.prepare_rsvp";
-export const LINKEDIN_ACTIVITY_WATCH_CREATE_TOOL = "linkedin.activity_watch.create";
+export const LINKEDIN_ACTIVITY_WATCH_CREATE_TOOL =
+  "linkedin.activity_watch.create";
 export const LINKEDIN_ACTIVITY_WATCH_LIST_TOOL = "linkedin.activity_watch.list";
-export const LINKEDIN_ACTIVITY_WATCH_PAUSE_TOOL = "linkedin.activity_watch.pause";
-export const LINKEDIN_ACTIVITY_WATCH_RESUME_TOOL = "linkedin.activity_watch.resume";
-export const LINKEDIN_ACTIVITY_WATCH_REMOVE_TOOL = "linkedin.activity_watch.remove";
-export const LINKEDIN_ACTIVITY_WEBHOOK_CREATE_TOOL = "linkedin.activity_webhook.create";
-export const LINKEDIN_ACTIVITY_WEBHOOK_LIST_TOOL = "linkedin.activity_webhook.list";
-export const LINKEDIN_ACTIVITY_WEBHOOK_PAUSE_TOOL = "linkedin.activity_webhook.pause";
-export const LINKEDIN_ACTIVITY_WEBHOOK_RESUME_TOOL = "linkedin.activity_webhook.resume";
-export const LINKEDIN_ACTIVITY_WEBHOOK_REMOVE_TOOL = "linkedin.activity_webhook.remove";
-export const LINKEDIN_ACTIVITY_EVENTS_LIST_TOOL = "linkedin.activity_events.list";
-export const LINKEDIN_ACTIVITY_DELIVERIES_LIST_TOOL = "linkedin.activity_deliveries.list";
-export const LINKEDIN_ACTIVITY_POLLER_RUN_ONCE_TOOL = "linkedin.activity_poller.run_once";
+export const LINKEDIN_ACTIVITY_WATCH_PAUSE_TOOL =
+  "linkedin.activity_watch.pause";
+export const LINKEDIN_ACTIVITY_WATCH_RESUME_TOOL =
+  "linkedin.activity_watch.resume";
+export const LINKEDIN_ACTIVITY_WATCH_REMOVE_TOOL =
+  "linkedin.activity_watch.remove";
+export const LINKEDIN_ACTIVITY_WEBHOOK_CREATE_TOOL =
+  "linkedin.activity_webhook.create";
+export const LINKEDIN_ACTIVITY_WEBHOOK_LIST_TOOL =
+  "linkedin.activity_webhook.list";
+export const LINKEDIN_ACTIVITY_WEBHOOK_PAUSE_TOOL =
+  "linkedin.activity_webhook.pause";
+export const LINKEDIN_ACTIVITY_WEBHOOK_RESUME_TOOL =
+  "linkedin.activity_webhook.resume";
+export const LINKEDIN_ACTIVITY_WEBHOOK_REMOVE_TOOL =
+  "linkedin.activity_webhook.remove";
+export const LINKEDIN_ACTIVITY_EVENTS_LIST_TOOL =
+  "linkedin.activity_events.list";
+export const LINKEDIN_ACTIVITY_DELIVERIES_LIST_TOOL =
+  "linkedin.activity_deliveries.list";
+export const LINKEDIN_ACTIVITY_POLLER_RUN_ONCE_TOOL =
+  "linkedin.activity_poller.run_once";
+
+export type {
+  LinkedInMcpInputSchema,
+  LinkedInMcpToolDefinition,
+} from "./toolSchema.js";
+export type { ToolResult, ToolErrorResult } from "./toolResults.js";
