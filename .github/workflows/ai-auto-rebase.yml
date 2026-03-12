@@ -1,0 +1,54 @@
+name: Auto-rebase AI branches
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  rebase:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Rebase conflicting AI PRs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Find open PRs on ai/* branches that are conflicting
+          prs=$(gh pr list --state open --json number,headRefName,mergeable \
+            --jq '.[] | select(.headRefName | startswith("ai/")) | select(.mergeable == "CONFLICTING") | "\(.number) \(.headRefName)"')
+
+          if [ -z "$prs" ]; then
+            echo "No conflicting AI PRs found"
+            exit 0
+          fi
+
+          echo "$prs" | while read -r number branch; do
+            echo "::group::Rebasing PR #$number ($branch)"
+
+            git fetch origin "$branch"
+            git checkout -B "$branch" "origin/$branch"
+
+            if git rebase origin/main; then
+              git push --force-with-lease origin "$branch"
+              echo "✅ PR #$number rebased successfully"
+            else
+              git rebase --abort
+              echo "⚠️ PR #$number has non-trivial conflicts, skipping"
+              gh pr comment "$number" --body "⚠️ Auto-rebase failed — this branch has conflicts with main that need manual resolution."
+            fi
+
+            echo "::endgroup::"
+          done
