@@ -1472,7 +1472,7 @@ async function maybeEmitCliFeedbackHint(error?: unknown): Promise<void> {
     });
 
     if (decision.showHint) {
-      writeCliNotice(buildFeedbackHintMessage());
+      writeCliNotice(buildFeedbackHintMessage(decision.reason));
     }
   } catch (trackingError) {
     writeCliWarning(

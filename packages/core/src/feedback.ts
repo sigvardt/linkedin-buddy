@@ -1,6 +1,13 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  readdir,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { LinkedInBuddyError, asLinkedInBuddyError } from "./errors.js";
@@ -12,10 +19,6 @@ export const LINKEDIN_BUDDY_FEEDBACK_HINT_EVERY_N_ENV =
   "LINKEDIN_BUDDY_FEEDBACK_HINT_EVERY_N";
 export const LINKEDIN_BUDDY_FEEDBACK_SESSION_IDLE_MS_ENV =
   "LINKEDIN_BUDDY_FEEDBACK_SESSION_IDLE_MS";
-export const LINKEDIN_ASSISTANT_FEEDBACK_HINT_EVERY_N_ENV =
-  LINKEDIN_BUDDY_FEEDBACK_HINT_EVERY_N_ENV;
-export const LINKEDIN_ASSISTANT_FEEDBACK_SESSION_IDLE_MS_ENV =
-  LINKEDIN_BUDDY_FEEDBACK_SESSION_IDLE_MS_ENV;
 
 export const DEFAULT_FEEDBACK_HINT_EVERY_N = 20;
 export const DEFAULT_FEEDBACK_SESSION_IDLE_MS = 30 * 60 * 1000;
@@ -29,6 +32,9 @@ const FEEDBACK_PENDING_FILE_EXTENSION = ".md";
 const FEEDBACK_METADATA_HEADER = "<!-- linkedin-buddy-feedback-metadata";
 const FEEDBACK_METADATA_FOOTER = "-->";
 const MAX_STORED_ERROR_STACK_CHARS = 12_000;
+export const GH_COMMAND_TIMEOUT_MS = 30_000;
+export const MAX_PENDING_FEEDBACK_FILES = 50;
+export const MAX_PENDING_FEEDBACK_FILE_BYTES = 512 * 1024;
 
 const EMAIL_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/giu;
 const LINKEDIN_URL_PATTERN =
@@ -46,8 +52,7 @@ const LINKEDIN_MEMBER_ID_PATTERN =
   /\b(?:member[_-]?id|memberId|fs_miniProfile|miniProfileUrn)\b\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu;
 const IPV4_PATTERN = /\b(?:\d{1,3}\.){3}\d{1,3}\b/gu;
 const UNIX_USER_PATH_PATTERN = /\/(?:Users|home)\/[^/\s]+(?:\/[^\s]*)?/gu;
-const WINDOWS_USER_PATH_PATTERN =
-  /[A-Za-z]:\\Users\\[^\\\s]+(?:\\[^\s]*)?/gu;
+const WINDOWS_USER_PATH_PATTERN = /[A-Za-z]:\\Users\\[^\\\s]+(?:\\[^\s]*)?/gu;
 const LONG_SECRET_BLOB_PATTERN = /\b[A-Za-z0-9+/_=-]{50,}\b/gu;
 const REPEATED_REDACTION_PATTERN =
   /\[REDACTED\](?:[\s,;:|/\\-]*\[REDACTED\])+/gu;
@@ -55,7 +60,7 @@ const REPEATED_REDACTION_PATTERN =
 const FEEDBACK_LABELS: Record<FeedbackType, string[]> = {
   bug: ["bug", "agent-feedback"],
   feature: ["enhancement", "agent-feedback"],
-  improvement: ["improvement", "agent-feedback"]
+  improvement: ["improvement", "agent-feedback"],
 };
 
 export interface FeedbackPaths {
@@ -165,7 +170,7 @@ export interface CommandResult {
 
 export type CommandRunner = (
   command: string,
-  args: string[]
+  args: string[],
 ) => Promise<CommandResult>;
 
 interface FeedbackStateFile {
@@ -192,19 +197,10 @@ function isFeedbackType(value: string): value is FeedbackType {
   return (FEEDBACK_TYPES as readonly string[]).includes(value);
 }
 
-function normalizeFeedbackType(value: string): FeedbackType {
-  const normalized = value.trim().toLowerCase();
-  if (isFeedbackType(normalized)) {
-    return normalized;
-  }
-
-  throw new LinkedInBuddyError(
-    "ACTION_PRECONDITION_FAILED",
-    `feedback type must be one of: ${FEEDBACK_TYPES.join(", ")}.`
-  );
-}
-
-function parsePositiveInteger(value: string | undefined, fallback: number): number {
+function parsePositiveInteger(
+  value: string | undefined,
+  fallback: number,
+): number {
   if (typeof value !== "string" || value.trim().length === 0) {
     return fallback;
   }
@@ -217,7 +213,10 @@ function parsePositiveInteger(value: string | undefined, fallback: number): numb
   return parsed;
 }
 
-function parseNonNegativeInteger(value: string | undefined, fallback: number): number {
+function parseNonNegativeInteger(
+  value: string | undefined,
+  fallback: number,
+): number {
   if (typeof value !== "string" || value.trim().length === 0) {
     return fallback;
   }
@@ -233,14 +232,14 @@ function parseNonNegativeInteger(value: string | undefined, fallback: number): n
 function resolveFeedbackHintEveryN(): number {
   return parsePositiveInteger(
     process.env[LINKEDIN_BUDDY_FEEDBACK_HINT_EVERY_N_ENV],
-    DEFAULT_FEEDBACK_HINT_EVERY_N
+    DEFAULT_FEEDBACK_HINT_EVERY_N,
   );
 }
 
 function resolveFeedbackSessionIdleMs(): number {
   return parseNonNegativeInteger(
     process.env[LINKEDIN_BUDDY_FEEDBACK_SESSION_IDLE_MS_ENV],
-    DEFAULT_FEEDBACK_SESSION_IDLE_MS
+    DEFAULT_FEEDBACK_SESSION_IDLE_MS,
   );
 }
 
@@ -253,7 +252,7 @@ export function resolveFeedbackPaths(baseDir?: string): FeedbackPaths {
   return {
     feedbackRootDir,
     pendingDir: path.join(feedbackRootDir, FEEDBACK_PENDING_DIRNAME),
-    statePath: path.join(feedbackRootDir, FEEDBACK_STATE_FILENAME)
+    statePath: path.join(feedbackRootDir, FEEDBACK_STATE_FILENAME),
   };
 }
 
@@ -281,7 +280,10 @@ function redactPattern(value: string, pattern: RegExp): [string, boolean] {
   return [redacted, redacted !== value];
 }
 
-function redactKeyValuePattern(value: string, pattern: RegExp): [string, boolean] {
+function redactKeyValuePattern(
+  value: string,
+  pattern: RegExp,
+): [string, boolean] {
   const redacted = value.replace(pattern, (match, ...rest: unknown[]) => {
     const offset = rest.at(-2);
     void offset;
@@ -316,7 +318,7 @@ export function scrubFeedbackText(value: string): {
     IPV4_PATTERN,
     UNIX_USER_PATH_PATTERN,
     WINDOWS_USER_PATH_PATTERN,
-    LONG_SECRET_BLOB_PATTERN
+    LONG_SECRET_BLOB_PATTERN,
   ];
 
   for (const pattern of patternReplacements) {
@@ -327,7 +329,7 @@ export function scrubFeedbackText(value: string): {
 
   const [secretRedacted, secretChanged] = redactKeyValuePattern(
     current,
-    SECRET_ASSIGNMENT_PATTERN
+    SECRET_ASSIGNMENT_PATTERN,
   );
   current = secretRedacted;
   redacted = redacted || secretChanged;
@@ -338,13 +340,14 @@ export function scrubFeedbackText(value: string): {
 
   return {
     redacted,
-    value: current
+    value: current,
   };
 }
 
-function scrubOptionalText(
-  value: string | null | undefined
-): { redacted: boolean; value?: string } {
+function scrubOptionalText(value: string | null | undefined): {
+  redacted: boolean;
+  value?: string;
+} {
   const normalized = trimOrUndefined(value);
   if (!normalized) {
     return { redacted: false };
@@ -353,7 +356,7 @@ function scrubOptionalText(
   const scrubbed = scrubFeedbackText(normalized);
   return {
     redacted: scrubbed.redacted,
-    value: scrubbed.value
+    value: scrubbed.value,
   };
 }
 
@@ -388,17 +391,19 @@ function normalizeWhitespace(value: string): string {
 }
 
 function buildTechnicalContextLines(
-  context: FeedbackTechnicalContext
+  context: FeedbackTechnicalContext,
 ): string[] {
   const lines = [
     `- Source: ${context.source}`,
     `- CLI version: ${context.cliVersion}`,
     `- Node.js version: ${context.nodeVersion}`,
     `- OS / architecture: ${context.os} / ${context.architecture}`,
-    `- Session duration: ${formatDuration(context.sessionDurationMs)}`
+    `- Session duration: ${formatDuration(context.sessionDurationMs)}`,
   ];
 
-  const lastInvocationName = trimOrUndefined(context.lastInvocationName ?? undefined);
+  const lastInvocationName = trimOrUndefined(
+    context.lastInvocationName ?? undefined,
+  );
   if (lastInvocationName) {
     lines.push(`- Last command/tool: ${lastInvocationName}`);
   }
@@ -409,7 +414,7 @@ function buildTechnicalContextLines(
   }
 
   const activeProfileName = trimOrUndefined(
-    context.activeProfileName ?? undefined
+    context.activeProfileName ?? undefined,
   );
   if (activeProfileName) {
     lines.push(`- Active profile name: ${activeProfileName}`);
@@ -429,7 +434,7 @@ function buildTechnicalContextLines(
 function buildFeedbackIssueBody(
   description: string,
   context: FeedbackTechnicalContext,
-  type: FeedbackType
+  type: FeedbackType,
 ): string {
   return [
     "## Feedback Type",
@@ -445,42 +450,47 @@ function buildFeedbackIssueBody(
     "",
     ...buildTechnicalContextLines(context),
     "",
-    "</details>"
+    "</details>",
   ].join("\n");
 }
 
 function buildFeedbackTitle(title: string): string {
   const normalizedTitle = title.trim();
-  const fallbackTitle = normalizedTitle.length > 0
-    ? normalizedTitle
-    : "Untitled feedback";
+  const fallbackTitle =
+    normalizedTitle.length > 0 ? normalizedTitle : "Untitled feedback";
   return `[Agent Feedback] ${fallbackTitle}`;
 }
 
 function normalizeFeedbackDraft(
-  input: FeedbackSubmissionInput
+  input: FeedbackSubmissionInput,
 ): NormalizedFeedbackDraft {
   const scrubbedTitle = scrubFeedbackText(normalizeWhitespace(input.title));
   const scrubbedDescription = scrubFeedbackText(
-    normalizeWhitespace(input.description)
+    normalizeWhitespace(input.description),
   );
   const scrubbedLastInvocation = scrubOptionalText(
-    input.technicalContext.lastInvocationName
+    input.technicalContext.lastInvocationName,
   );
-  const scrubbedErrorStack = scrubOptionalText(input.technicalContext.errorStack);
+  const scrubbedErrorStack = scrubOptionalText(
+    input.technicalContext.errorStack,
+  );
   const scrubbedProfileName = scrubOptionalText(
-    input.technicalContext.activeProfileName
+    input.technicalContext.activeProfileName,
   );
-  const scrubbedMcpToolName = scrubOptionalText(input.technicalContext.mcpToolName);
+  const scrubbedMcpToolName = scrubOptionalText(
+    input.technicalContext.mcpToolName,
+  );
   const scrubbedCliVersion = scrubFeedbackText(
-    normalizeWhitespace(input.technicalContext.cliVersion)
+    normalizeWhitespace(input.technicalContext.cliVersion),
   );
   const scrubbedNodeVersion = scrubFeedbackText(
-    normalizeWhitespace(input.technicalContext.nodeVersion)
+    normalizeWhitespace(input.technicalContext.nodeVersion),
   );
-  const scrubbedOs = scrubFeedbackText(normalizeWhitespace(input.technicalContext.os));
+  const scrubbedOs = scrubFeedbackText(
+    normalizeWhitespace(input.technicalContext.os),
+  );
   const scrubbedArchitecture = scrubFeedbackText(
-    normalizeWhitespace(input.technicalContext.architecture)
+    normalizeWhitespace(input.technicalContext.architecture),
   );
 
   const redactionApplied =
@@ -501,19 +511,27 @@ function normalizeFeedbackDraft(
     nodeVersion: scrubbedNodeVersion.value,
     os: scrubbedOs.value,
     architecture: scrubbedArchitecture.value,
-    sessionDurationMs: Math.max(0, Math.floor(input.technicalContext.sessionDurationMs)),
+    sessionDurationMs: Math.max(
+      0,
+      Math.floor(input.technicalContext.sessionDurationMs),
+    ),
     ...(scrubbedLastInvocation.value
       ? { lastInvocationName: scrubbedLastInvocation.value }
       : {}),
     ...(scrubbedErrorStack.value
-      ? { errorStack: clipText(scrubbedErrorStack.value, MAX_STORED_ERROR_STACK_CHARS) }
+      ? {
+          errorStack: clipText(
+            scrubbedErrorStack.value,
+            MAX_STORED_ERROR_STACK_CHARS,
+          ),
+        }
       : {}),
     ...(scrubbedProfileName.value
       ? { activeProfileName: scrubbedProfileName.value }
       : {}),
     ...(scrubbedMcpToolName.value
       ? { mcpToolName: scrubbedMcpToolName.value }
-      : {})
+      : {}),
   };
 
   return {
@@ -524,14 +542,14 @@ function normalizeFeedbackDraft(
     body: buildFeedbackIssueBody(
       scrubbedDescription.value,
       technicalContext,
-      input.type
-    )
+      input.type,
+    ),
   };
 }
 
 function serializePendingFeedbackFile(
   metadata: PendingFeedbackMetadata,
-  body: string
+  body: string,
 ): string {
   return [
     FEEDBACK_METADATA_HEADER,
@@ -539,11 +557,13 @@ function serializePendingFeedbackFile(
     FEEDBACK_METADATA_FOOTER,
     "",
     body.trim(),
-    ""
+    "",
   ].join("\n");
 }
 
-function parsePendingFeedbackContent(content: string): Omit<PendingFeedbackFile, "filePath"> {
+function parsePendingFeedbackContent(
+  content: string,
+): Omit<PendingFeedbackFile, "filePath"> {
   const trimmed = content.trimStart();
   if (
     !trimmed.startsWith(FEEDBACK_METADATA_HEADER) ||
@@ -551,7 +571,7 @@ function parsePendingFeedbackContent(content: string): Omit<PendingFeedbackFile,
   ) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "Pending feedback file is missing metadata."
+      "Pending feedback file is missing metadata.",
     );
   }
 
@@ -560,37 +580,45 @@ function parsePendingFeedbackContent(content: string): Omit<PendingFeedbackFile,
   if (footerIndex < 0) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "Pending feedback file metadata is malformed."
+      "Pending feedback file metadata is malformed.",
     );
   }
 
   const metadataJson = trimmed.slice(metadataStart, footerIndex).trim();
   const parsedMetadata = JSON.parse(metadataJson) as Record<string, unknown>;
-  const body = trimmed.slice(footerIndex + FEEDBACK_METADATA_FOOTER.length).trim();
+  const body = trimmed
+    .slice(footerIndex + FEEDBACK_METADATA_FOOTER.length)
+    .trim();
 
   const title = trimOrUndefined(
-    typeof parsedMetadata.title === "string" ? parsedMetadata.title : undefined
+    typeof parsedMetadata.title === "string" ? parsedMetadata.title : undefined,
   );
   const createdAt = trimOrUndefined(
     typeof parsedMetadata.createdAt === "string"
       ? parsedMetadata.createdAt
-      : undefined
+      : undefined,
   );
-  const typeValue = typeof parsedMetadata.type === "string"
-    ? parsedMetadata.type
-    : "";
+  const typeValue =
+    typeof parsedMetadata.type === "string" ? parsedMetadata.type : "";
   const labelsValue = Array.isArray(parsedMetadata.labels)
-    ? parsedMetadata.labels.filter((label): label is string => typeof label === "string")
+    ? parsedMetadata.labels.filter(
+        (label): label is string => typeof label === "string",
+      )
     : [];
   const redactionApplied =
     typeof parsedMetadata.redactionApplied === "boolean"
       ? parsedMetadata.redactionApplied
       : false;
 
-  if (!title || !createdAt || !isFeedbackType(typeValue) || labelsValue.length === 0) {
+  if (
+    !title ||
+    !createdAt ||
+    !isFeedbackType(typeValue) ||
+    labelsValue.length === 0
+  ) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "Pending feedback file metadata is incomplete."
+      "Pending feedback file metadata is incomplete.",
     );
   }
 
@@ -601,22 +629,37 @@ function parsePendingFeedbackContent(content: string): Omit<PendingFeedbackFile,
       labels: labelsValue,
       redactionApplied,
       title,
-      type: typeValue
-    }
+      type: typeValue,
+    },
   };
 }
 
 async function defaultCommandRunner(
   command: string,
-  args: string[]
+  args: string[],
 ): Promise<CommandResult> {
   return await new Promise<CommandResult>((resolve, reject) => {
     const child = spawn(command, args, {
-      stdio: ["ignore", "pipe", "pipe"]
+      stdio: ["ignore", "pipe", "pipe"],
     });
 
     let stdout = "";
     let stderr = "";
+    let settled = false;
+
+    const timeout = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      child.kill("SIGTERM");
+      reject(
+        new LinkedInBuddyError(
+          "UNKNOWN",
+          `Command timed out after ${GH_COMMAND_TIMEOUT_MS}ms: ${command} ${args.join(" ")}`,
+        ),
+      );
+    }, GH_COMMAND_TIMEOUT_MS);
 
     child.stdout.on("data", (chunk: Buffer | string) => {
       stdout += chunk.toString();
@@ -625,21 +668,29 @@ async function defaultCommandRunner(
       stderr += chunk.toString();
     });
     child.on("error", (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
       reject(error);
     });
     child.on("close", (code) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
       resolve({
         code: code ?? 1,
         stderr,
-        stdout
+        stdout,
       });
     });
   });
 }
 
-async function isGhAuthenticated(
-  runner: CommandRunner
-): Promise<boolean> {
+async function isGhAuthenticated(runner: CommandRunner): Promise<boolean> {
   try {
     const result = await runner("gh", ["auth", "status"]);
     return result.code === 0;
@@ -653,7 +704,7 @@ async function createGitHubIssue(
   body: string,
   labels: string[],
   repository: string,
-  runner: CommandRunner
+  runner: CommandRunner,
 ): Promise<string> {
   const args = [
     "issue",
@@ -663,7 +714,7 @@ async function createGitHubIssue(
     "--title",
     title,
     "--body",
-    body
+    body,
   ];
 
   for (const label of labels) {
@@ -672,21 +723,18 @@ async function createGitHubIssue(
 
   const result = await runner("gh", args);
   if (result.code !== 0) {
-    throw new LinkedInBuddyError(
-      "UNKNOWN",
-      "GitHub issue creation failed.",
-      {
-        stderr: result.stderr.trim(),
-        stdout: result.stdout.trim()
-      }
-    );
+    throw new LinkedInBuddyError("UNKNOWN", "GitHub issue creation failed.", {
+      stderr: result.stderr.trim(),
+      stdout: result.stdout.trim(),
+    });
   }
 
-  const issueUrl = trimOrUndefined(result.stdout) ?? trimOrUndefined(result.stderr);
+  const issueUrl =
+    trimOrUndefined(result.stdout) ?? trimOrUndefined(result.stderr);
   if (!issueUrl) {
     throw new LinkedInBuddyError(
       "UNKNOWN",
-      "GitHub issue creation did not return an issue URL."
+      "GitHub issue creation did not return an issue URL.",
     );
   }
 
@@ -696,17 +744,17 @@ async function createGitHubIssue(
 function buildPendingFeedbackFilePath(
   pendingDir: string,
   type: FeedbackType,
-  now: Date
+  now: Date,
 ): string {
   return path.join(
     pendingDir,
-    `${buildTimestamp(now)}-${type}${FEEDBACK_PENDING_FILE_EXTENSION}`
+    `${buildTimestamp(now)}-${type}${FEEDBACK_PENDING_FILE_EXTENSION}`,
   );
 }
 
 export function formatFeedbackDisplayPath(
   filePath: string,
-  baseDir?: string
+  baseDir?: string,
 ): string {
   const { feedbackRootDir } = resolveFeedbackPaths(baseDir);
   const relativePath = path.relative(feedbackRootDir, filePath);
@@ -724,25 +772,42 @@ export function formatFeedbackDisplayPath(
 
 export async function savePendingFeedback(
   input: FeedbackSubmissionInput,
-  options: { baseDir?: string; now?: Date; repository?: string } = {}
+  options: { baseDir?: string; now?: Date; repository?: string } = {},
 ): Promise<FeedbackSubmissionResult> {
   const draft = normalizeFeedbackDraft(input);
   const now = options.now ?? new Date();
   const paths = await ensureFeedbackDirs(options.baseDir);
-  const filePath = buildPendingFeedbackFilePath(paths.pendingDir, draft.type, now);
+
+  const existingPendingFiles = await listPendingFeedbackFiles(options.baseDir);
+  if (existingPendingFiles.length >= MAX_PENDING_FEEDBACK_FILES) {
+    throw new LinkedInBuddyError(
+      "ACTION_PRECONDITION_FAILED",
+      `Cannot save more than ${MAX_PENDING_FEEDBACK_FILES} pending feedback files. Run \`linkedin-buddy feedback --submit-pending\` or remove old files from ${paths.pendingDir}.`,
+      {
+        limit: MAX_PENDING_FEEDBACK_FILES,
+        current: existingPendingFiles.length,
+      },
+    );
+  }
+
+  const filePath = buildPendingFeedbackFilePath(
+    paths.pendingDir,
+    draft.type,
+    now,
+  );
 
   const metadata: PendingFeedbackMetadata = {
     createdAt: now.toISOString(),
     labels: draft.labels,
     redactionApplied: draft.redactionApplied,
     title: draft.title,
-    type: draft.type
+    type: draft.type,
   };
 
   await writeFile(
     filePath,
     serializePendingFeedbackFile(metadata, draft.body),
-    "utf8"
+    "utf8",
   );
 
   return {
@@ -753,7 +818,7 @@ export async function savePendingFeedback(
     repository: options.repository ?? FEEDBACK_GITHUB_REPOSITORY,
     status: "saved_pending",
     title: draft.title,
-    type: draft.type
+    type: draft.type,
   };
 }
 
@@ -764,7 +829,7 @@ export async function submitFeedback(
     now?: Date;
     repository?: string;
     runner?: CommandRunner;
-  } = {}
+  } = {},
 ): Promise<FeedbackSubmissionResult> {
   const repository = options.repository ?? FEEDBACK_GITHUB_REPOSITORY;
   const runner = options.runner ?? defaultCommandRunner;
@@ -774,7 +839,7 @@ export async function submitFeedback(
     return await savePendingFeedback(input, {
       ...(options.baseDir ? { baseDir: options.baseDir } : {}),
       ...(options.now ? { now: options.now } : {}),
-      repository
+      repository,
     });
   }
 
@@ -786,7 +851,7 @@ export async function submitFeedback(
       draft.body,
       draft.labels,
       repository,
-      runner
+      runner,
     );
 
     return {
@@ -797,29 +862,42 @@ export async function submitFeedback(
       status: "submitted",
       title: draft.title,
       type: draft.type,
-      url
+      url,
     };
   } catch {
     return await savePendingFeedback(input, {
       ...(options.baseDir ? { baseDir: options.baseDir } : {}),
       ...(options.now ? { now: options.now } : {}),
-      repository
+      repository,
     });
   }
 }
 
 export async function readPendingFeedbackFile(
-  filePath: string
+  filePath: string,
 ): Promise<PendingFeedbackFile> {
+  const fileStats = await stat(filePath);
+  if (fileStats.size > MAX_PENDING_FEEDBACK_FILE_BYTES) {
+    throw new LinkedInBuddyError(
+      "ACTION_PRECONDITION_FAILED",
+      `Pending feedback file exceeds the ${MAX_PENDING_FEEDBACK_FILE_BYTES} byte limit.`,
+      {
+        path: filePath,
+        size: fileStats.size,
+        limit: MAX_PENDING_FEEDBACK_FILE_BYTES,
+      },
+    );
+  }
+
   const content = await readFile(filePath, "utf8");
   return {
     filePath,
-    ...parsePendingFeedbackContent(content)
+    ...parsePendingFeedbackContent(content),
   };
 }
 
 export async function listPendingFeedbackFiles(
-  baseDir?: string
+  baseDir?: string,
 ): Promise<string[]> {
   const paths = resolveFeedbackPaths(baseDir);
 
@@ -828,16 +906,13 @@ export async function listPendingFeedbackFiles(
     return entries
       .filter(
         (entry) =>
-          entry.isFile() && entry.name.endsWith(FEEDBACK_PENDING_FILE_EXTENSION)
+          entry.isFile() &&
+          entry.name.endsWith(FEEDBACK_PENDING_FILE_EXTENSION),
       )
       .map((entry) => path.join(paths.pendingDir, entry.name))
       .sort((left, right) => left.localeCompare(right));
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return [];
     }
 
@@ -850,7 +925,7 @@ export async function submitPendingFeedback(
     baseDir?: string;
     repository?: string;
     runner?: CommandRunner;
-  } = {}
+  } = {},
 ): Promise<SubmitPendingFeedbackResult> {
   const repository = options.repository ?? FEEDBACK_GITHUB_REPOSITORY;
   const runner = options.runner ?? defaultCommandRunner;
@@ -862,14 +937,14 @@ export async function submitPendingFeedback(
       failures: [],
       repository,
       submitted: [],
-      submittedCount: 0
+      submittedCount: 0,
     };
   }
 
   if (!(await isGhAuthenticated(runner))) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "GitHub CLI authentication is required before pending feedback can be submitted. Run `gh auth login` first."
+      "GitHub CLI authentication is required before pending feedback can be submitted. Run `gh auth login` first.",
     );
   }
   const submitted: PendingFeedbackSubmissionItem[] = [];
@@ -883,20 +958,20 @@ export async function submitPendingFeedback(
         pendingFeedback.body,
         pendingFeedback.metadata.labels,
         repository,
-        runner
+        runner,
       );
       await unlink(filePath);
       submitted.push({
         filePath,
         title: pendingFeedback.metadata.title,
         type: pendingFeedback.metadata.type,
-        url
+        url,
       });
     } catch (error) {
       const normalizedError = asLinkedInBuddyError(error);
       failures.push({
         error: normalizedError.message,
-        filePath
+        filePath,
       });
     }
   }
@@ -906,7 +981,7 @@ export async function submitPendingFeedback(
     failures,
     repository,
     submitted,
-    submittedCount: submitted.length
+    submittedCount: submitted.length,
   };
 }
 
@@ -921,7 +996,7 @@ function createInitialFeedbackState(now: Date): FeedbackStateFile {
     lastSeenAt: timestamp,
     sessionHintShownAt: null,
     sessionId: randomUUID(),
-    sessionStartedAt: timestamp
+    sessionStartedAt: timestamp,
   };
 }
 
@@ -944,28 +1019,28 @@ async function readFeedbackState(baseDir?: string): Promise<FeedbackStateFile> {
             : null,
         invocationCount: parsed.invocationCount,
         lastErrorStack:
-          typeof parsed.lastErrorStack === "string" ? parsed.lastErrorStack : null,
+          typeof parsed.lastErrorStack === "string"
+            ? parsed.lastErrorStack
+            : null,
         lastInvocationName:
           typeof parsed.lastInvocationName === "string"
             ? parsed.lastInvocationName
             : null,
         lastMcpToolName:
-          typeof parsed.lastMcpToolName === "string" ? parsed.lastMcpToolName : null,
+          typeof parsed.lastMcpToolName === "string"
+            ? parsed.lastMcpToolName
+            : null,
         lastSeenAt: parsed.lastSeenAt,
         sessionHintShownAt:
           typeof parsed.sessionHintShownAt === "string"
             ? parsed.sessionHintShownAt
             : null,
         sessionId: parsed.sessionId,
-        sessionStartedAt: parsed.sessionStartedAt
+        sessionStartedAt: parsed.sessionStartedAt,
       };
     }
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return createInitialFeedbackState(new Date());
     }
   }
@@ -975,10 +1050,14 @@ async function readFeedbackState(baseDir?: string): Promise<FeedbackStateFile> {
 
 async function writeFeedbackState(
   state: FeedbackStateFile,
-  baseDir?: string
+  baseDir?: string,
 ): Promise<void> {
   const paths = await ensureFeedbackDirs(baseDir);
-  await writeFile(paths.statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  await writeFile(
+    paths.statePath,
+    `${JSON.stringify(state, null, 2)}\n`,
+    "utf8",
+  );
 }
 
 function hasSessionExpired(state: FeedbackStateFile, now: Date): boolean {
@@ -993,7 +1072,7 @@ function hasSessionExpired(state: FeedbackStateFile, now: Date): boolean {
 
 function buildSnapshot(
   state: FeedbackStateFile,
-  now: Date
+  now: Date,
 ): FeedbackStateSnapshot {
   const sessionStartedAtMs = Date.parse(state.sessionStartedAt);
   const sessionDurationMs = Number.isFinite(sessionStartedAtMs)
@@ -1008,7 +1087,7 @@ function buildSnapshot(
     lastMcpToolName: state.lastMcpToolName,
     sessionDurationMs,
     sessionId: state.sessionId,
-    sessionStartedAt: state.sessionStartedAt
+    sessionStartedAt: state.sessionStartedAt,
   };
 }
 
@@ -1017,7 +1096,7 @@ function normalizeInvocationName(value: string): string {
   if (normalized.length === 0) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "invocation name must not be empty."
+      "invocation name must not be empty.",
     );
   }
 
@@ -1039,7 +1118,7 @@ function normalizeErrorStack(error: unknown): string | null {
 }
 
 export async function recordFeedbackInvocation(
-  input: RecordFeedbackInvocationInput
+  input: RecordFeedbackInvocationInput,
 ): Promise<FeedbackHintDecision> {
   const now = input.now ?? new Date();
   const currentState = await readFeedbackState(input.baseDir);
@@ -1055,7 +1134,8 @@ export async function recordFeedbackInvocation(
   state.activeProfileName = normalizedProfileName ?? state.activeProfileName;
 
   if (input.source === "mcp") {
-    state.lastMcpToolName = trimOrUndefined(input.mcpToolName) ?? state.lastInvocationName;
+    state.lastMcpToolName =
+      trimOrUndefined(input.mcpToolName) ?? state.lastInvocationName;
   }
 
   const normalizedErrorStack = normalizeErrorStack(input.error);
@@ -1080,20 +1160,29 @@ export async function recordFeedbackInvocation(
   return {
     showHint: typeof reason === "string",
     snapshot: buildSnapshot(state, now),
-    ...(reason ? { reason } : {})
+    ...(reason ? { reason } : {}),
   };
 }
 
 export async function readFeedbackStateSnapshot(
-  options: { baseDir?: string; now?: Date } = {}
+  options: { baseDir?: string; now?: Date } = {},
 ): Promise<FeedbackStateSnapshot> {
   const now = options.now ?? new Date();
   const state = await readFeedbackState(options.baseDir);
   return buildSnapshot(state, now);
 }
 
-export function buildFeedbackHintMessage(): string {
-  return "Found a bug or have an idea? Run `linkedin-buddy feedback` to file it directly.";
+export function buildFeedbackHintMessage(
+  reason?: FeedbackHintDecision["reason"],
+): string {
+  switch (reason) {
+    case "error":
+      return "Ran into an issue? Run `linkedin-buddy feedback` to report it.";
+    case "nth_invocation":
+      return "Enjoying LinkedIn Buddy? Run `linkedin-buddy feedback` to share suggestions.";
+    default:
+      return "Found a bug or have an idea? Run `linkedin-buddy feedback` to file it directly.";
+  }
 }
 
 export function createFeedbackTechnicalContext(input: {
@@ -1105,28 +1194,31 @@ export function createFeedbackTechnicalContext(input: {
   snapshot: FeedbackStateSnapshot;
   source: "cli" | "mcp";
 }): FeedbackTechnicalContext {
+  const { snapshot } = input;
+  const mcpToolName = input.mcpToolName ?? snapshot.lastMcpToolName;
+
   return {
+    activeProfileName: snapshot.activeProfileName,
     architecture: input.architecture ?? os.arch(),
     cliVersion: input.cliVersion,
+    errorStack: snapshot.lastErrorStack,
+    lastInvocationName: snapshot.lastInvocationName,
+    mcpToolName: mcpToolName ?? undefined,
     nodeVersion: input.nodeVersion ?? process.version,
     os: input.os ?? `${os.platform()} ${os.release()}`,
-    sessionDurationMs: input.snapshot.sessionDurationMs,
+    sessionDurationMs: snapshot.sessionDurationMs,
     source: input.source,
-    ...(input.snapshot.activeProfileName !== undefined
-      ? { activeProfileName: input.snapshot.activeProfileName }
-      : {}),
-    ...(input.snapshot.lastErrorStack !== undefined
-      ? { errorStack: input.snapshot.lastErrorStack }
-      : {}),
-    ...(input.snapshot.lastInvocationName !== undefined
-      ? { lastInvocationName: input.snapshot.lastInvocationName }
-      : {}),
-    ...(input.mcpToolName ?? input.snapshot.lastMcpToolName
-      ? { mcpToolName: input.mcpToolName ?? input.snapshot.lastMcpToolName }
-      : {})
   };
 }
 
 export function normalizeFeedbackInputType(value: string): FeedbackType {
-  return normalizeFeedbackType(value);
+  const normalized = value.trim().toLowerCase();
+  if (isFeedbackType(normalized)) {
+    return normalized;
+  }
+
+  throw new LinkedInBuddyError(
+    "ACTION_PRECONDITION_FAILED",
+    `feedback type must be one of: ${FEEDBACK_TYPES.join(", ")}.`,
+  );
 }

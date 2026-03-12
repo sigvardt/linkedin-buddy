@@ -8,14 +8,14 @@ const feedbackCliMocks = vi.hoisted(() => ({
   readFeedbackStateSnapshot: vi.fn(),
   recordFeedbackInvocation: vi.fn(),
   submitFeedback: vi.fn(),
-  submitPendingFeedback: vi.fn()
+  submitPendingFeedback: vi.fn(),
 }));
 
 vi.mock("node:readline/promises", () => ({
   createInterface: feedbackCliMocks.createInterface.mockImplementation(() => ({
     close: feedbackCliMocks.close,
-    question: feedbackCliMocks.question
-  }))
+    question: feedbackCliMocks.question,
+  })),
 }));
 
 vi.mock("@linkedin-buddy/core", async () => {
@@ -25,7 +25,7 @@ vi.mock("@linkedin-buddy/core", async () => {
     readFeedbackStateSnapshot: feedbackCliMocks.readFeedbackStateSnapshot,
     recordFeedbackInvocation: feedbackCliMocks.recordFeedbackInvocation,
     submitFeedback: feedbackCliMocks.submitFeedback,
-    submitPendingFeedback: feedbackCliMocks.submitPendingFeedback
+    submitPendingFeedback: feedbackCliMocks.submitPendingFeedback,
   };
 });
 
@@ -34,22 +34,22 @@ import { runCli } from "../src/bin/linkedin.js";
 function setInteractiveMode(inputIsTty: boolean, outputIsTty: boolean): void {
   Object.defineProperty(stdin, "isTTY", {
     configurable: true,
-    value: inputIsTty
+    value: inputIsTty,
   });
   Object.defineProperty(stdout, "isTTY", {
     configurable: true,
-    value: outputIsTty
+    value: outputIsTty,
   });
   Object.defineProperty(process.stderr, "isTTY", {
     configurable: true,
-    value: outputIsTty
+    value: outputIsTty,
   });
 }
 
 describe("linkedin feedback CLI", () => {
   let consoleLogSpy: ReturnType<typeof vi.spyOn>;
   let previousAssistantHome: string | undefined;
-  let stderrWriteSpy: ReturnType<typeof vi.spyOn>;
+  let stderrWriteSpy: { mockRestore: () => void };
   let stdoutChunks: string[] = [];
   let stderrChunks: string[] = [];
 
@@ -69,7 +69,7 @@ describe("linkedin feedback CLI", () => {
       lastMcpToolName: null,
       sessionDurationMs: 60_000,
       sessionId: "session-1",
-      sessionStartedAt: "2026-03-11T10:00:00.000Z"
+      sessionStartedAt: "2026-03-11T10:00:00.000Z",
     });
     feedbackCliMocks.recordFeedbackInvocation.mockResolvedValue({
       showHint: false,
@@ -81,8 +81,8 @@ describe("linkedin feedback CLI", () => {
         lastMcpToolName: null,
         sessionDurationMs: 61_000,
         sessionId: "session-1",
-        sessionStartedAt: "2026-03-11T10:00:00.000Z"
-      }
+        sessionStartedAt: "2026-03-11T10:00:00.000Z",
+      },
     });
     feedbackCliMocks.submitFeedback.mockResolvedValue({
       body: "body",
@@ -92,7 +92,7 @@ describe("linkedin feedback CLI", () => {
       status: "submitted",
       title: "[Agent Feedback] Prompted title",
       type: "bug",
-      url: "https://github.com/sigvardt/linkedin-buddy/issues/321"
+      url: "https://github.com/sigvardt/linkedin-buddy/issues/321",
     });
     feedbackCliMocks.submitPendingFeedback.mockResolvedValue({
       failureCount: 0,
@@ -100,24 +100,29 @@ describe("linkedin feedback CLI", () => {
       repository: "sigvardt/linkedin-buddy",
       submitted: [
         {
-          filePath: "/tmp/assistant-home/.linkedin-buddy/pending-feedback/2026-03-11-bug.md",
+          filePath:
+            "/tmp/assistant-home/.linkedin-buddy/pending-feedback/2026-03-11-bug.md",
           title: "[Agent Feedback] Saved item",
           type: "bug",
-          url: "https://github.com/sigvardt/linkedin-buddy/issues/322"
-        }
+          url: "https://github.com/sigvardt/linkedin-buddy/issues/322",
+        },
       ],
-      submittedCount: 1
+      submittedCount: 1,
     });
 
-    consoleLogSpy = vi.spyOn(console, "log").mockImplementation((value?: unknown) => {
-      stdoutChunks.push(String(value ?? ""));
-    });
+    consoleLogSpy = vi
+      .spyOn(console, "log")
+      .mockImplementation((value?: unknown) => {
+        stdoutChunks.push(String(value ?? ""));
+      });
     stderrWriteSpy = vi
       .spyOn(process.stderr, "write")
-      .mockImplementation((...args: Parameters<typeof process.stderr.write>) => {
-        stderrChunks.push(String(args[0]));
-        return true;
-      });
+      .mockImplementation(
+        (...args: Parameters<typeof process.stderr.write>) => {
+          stderrChunks.push(String(args[0]));
+          return true;
+        },
+      );
   });
 
   afterEach(() => {
@@ -143,23 +148,72 @@ describe("linkedin feedback CLI", () => {
       expect.objectContaining({
         type: "bug",
         title: "Prompted title",
-        description: "It failed after reconnect."
-      })
+        description: "It failed after reconnect.",
+      }),
     );
     expect(stdoutChunks.join("\n")).toContain("Feedback filed:");
     expect(stderrChunks.join("")).toContain("Detailed explanation.");
   });
 
   it("submits saved pending feedback files", async () => {
+    await runCli(["node", "linkedin-buddy", "feedback", "--submit-pending"]);
+
+    expect(feedbackCliMocks.submitPendingFeedback).toHaveBeenCalledTimes(1);
+    expect(stdoutChunks.join("\n")).toContain(
+      "Submitted 1 pending feedback file",
+    );
+    expect(stdoutChunks.join("\n")).toContain(
+      ".linkedin-buddy/pending-feedback/",
+    );
+  });
+
+  it("refuses interactive prompts in non-interactive mode", async () => {
+    setInteractiveMode(false, true);
+
+    await expect(
+      runCli(["node", "linkedin-buddy", "feedback"]),
+    ).rejects.toThrow("non-interactive mode");
+    expect(feedbackCliMocks.submitFeedback).not.toHaveBeenCalled();
+  });
+
+  it("prints feedback result as json when requested", async () => {
     await runCli([
       "node",
       "linkedin-buddy",
       "feedback",
-      "--submit-pending"
+      "--type",
+      "bug",
+      "--title",
+      "json title",
+      "--description",
+      "json description",
+      "--json",
     ]);
 
-    expect(feedbackCliMocks.submitPendingFeedback).toHaveBeenCalledTimes(1);
-    expect(stdoutChunks.join("\n")).toContain("Submitted 1 pending feedback file");
-    expect(stdoutChunks.join("\n")).toContain(".linkedin-buddy/pending-feedback/");
+    const output = stdoutChunks.join("\n");
+    const parsed = JSON.parse(output) as Record<string, unknown>;
+
+    expect(parsed.status).toBe("submitted");
+    expect(parsed.type).toBe("bug");
+    expect(parsed.title).toBe("[Agent Feedback] Prompted title");
+    expect(parsed.url).toBe(
+      "https://github.com/sigvardt/linkedin-buddy/issues/321",
+    );
+  });
+
+  it("throws for invalid feedback type argument", async () => {
+    await expect(
+      runCli([
+        "node",
+        "linkedin-buddy",
+        "feedback",
+        "--type",
+        "invalid",
+        "--title",
+        "bad type",
+        "--description",
+        "bad",
+      ]),
+    ).rejects.toThrow("feedback type must be one of");
   });
 });

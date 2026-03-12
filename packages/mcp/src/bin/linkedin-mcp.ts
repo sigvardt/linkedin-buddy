@@ -571,7 +571,8 @@ function shouldTrackMcpFeedback(toolName: string): boolean {
 }
 
 function addFeedbackHintToResult<T extends ToolResult | ToolErrorResult>(
-  result: T
+  result: T,
+  reason?: Parameters<typeof buildFeedbackHintMessage>[0],
 ): T {
   const firstContent = result.content[0];
   if (!firstContent || firstContent.type !== "text") {
@@ -580,7 +581,7 @@ function addFeedbackHintToResult<T extends ToolResult | ToolErrorResult>(
 
   try {
     const parsed = JSON.parse(firstContent.text) as Record<string, unknown>;
-    parsed.feedback_hint = buildFeedbackHintMessage();
+    parsed.feedback_hint = buildFeedbackHintMessage(reason);
 
     return {
       ...result,
@@ -7930,7 +7931,7 @@ export async function handleToolCall(
         ...(profileName ? { activeProfileName: profileName } : {})
       });
 
-      return decision.showHint ? addFeedbackHintToResult(result) : result;
+      return decision.showHint ? addFeedbackHintToResult(result, decision.reason) : result;
     }
 
     errorForTracking = new LinkedInBuddyError(
@@ -7951,7 +7952,7 @@ export async function handleToolCall(
     });
 
     return decision.showHint
-      ? addFeedbackHintToResult(unknownToolResult)
+      ? addFeedbackHintToResult(unknownToolResult, decision.reason)
       : unknownToolResult;
   } catch (error) {
     errorForTracking = error;
@@ -7976,7 +7977,7 @@ export async function handleToolCall(
         error: errorForTracking
       });
 
-      return decision.showHint ? addFeedbackHintToResult(errorResult) : errorResult;
+      return decision.showHint ? addFeedbackHintToResult(errorResult, decision.reason) : errorResult;
     } catch {
       return errorResult;
     }
