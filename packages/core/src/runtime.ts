@@ -362,7 +362,6 @@ export function createCoreRuntime(
       ...postExecutors,
       ...publishingExecutors,
       ...notificationExecutors,
-      ...publishingExecutors,
       ...privacySettingExecutors,
       ...eventExecutors,
       [TEST_ECHO_ACTION_TYPE]: testEchoExecutor

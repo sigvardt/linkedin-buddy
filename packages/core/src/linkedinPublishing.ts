@@ -92,6 +92,13 @@ const LINKEDIN_NEWSLETTER_CADENCE_LABELS: Record<
   }
 };
 
+export const ARTICLE_TITLE_MAX_LENGTH = 150;
+export const ARTICLE_BODY_MAX_LENGTH = 125_000;
+export const NEWSLETTER_TITLE_MAX_LENGTH = 64;
+export const NEWSLETTER_DESCRIPTION_MAX_LENGTH = 300;
+export const NEWSLETTER_ISSUE_TITLE_MAX_LENGTH = 150;
+export const NEWSLETTER_ISSUE_BODY_MAX_LENGTH = 125_000;
+
 export interface PrepareCreateArticleInput {
   profileName?: string;
   title: string;
@@ -278,6 +285,7 @@ function requireSingleLineText(
   label: string,
   options: {
     allowUrl?: boolean;
+    maxLength?: number;
   } = {}
 ): string {
   const normalizedValue = normalizeText(value);
@@ -302,10 +310,21 @@ function requireSingleLineText(
     );
   }
 
+
+  if (options.maxLength && normalizedValue.length > options.maxLength) {
+    throw new LinkedInBuddyError(
+      "ACTION_PRECONDITION_FAILED",
+      `${label} exceeds maximum length of ${options.maxLength} characters (got ${normalizedValue.length}).`,
+    );
+  }
   return normalizedValue;
 }
 
-function requireLongFormText(value: string, label: string): string {
+function requireLongFormText(
+  value: string,
+  label: string,
+  options: { maxLength?: number } = {},
+): string {
   const normalizedValue = normalizeLine(
     value.replace(/\r\n/gu, "\n").replace(/\r/gu, "\n")
   );
@@ -324,6 +343,13 @@ function requireLongFormText(value: string, label: string): string {
     );
   }
 
+
+  if (options.maxLength && normalizedValue.length > options.maxLength) {
+    throw new LinkedInBuddyError(
+      "ACTION_PRECONDITION_FAILED",
+      `${label} exceeds maximum length of ${options.maxLength} characters (got ${normalizedValue.length}).`,
+    );
+  }
   return normalizedValue;
 }
 
@@ -1412,8 +1438,8 @@ export class LinkedInArticlesService {
     input: PrepareCreateArticleInput
   ): Promise<PreparedActionResult> {
     const profileName = input.profileName ?? "default";
-    const title = requireSingleLineText(input.title, "Article title");
-    const body = requireLongFormText(input.body, "Article body");
+    const title = requireSingleLineText(input.title, "Article title", { maxLength: ARTICLE_TITLE_MAX_LENGTH });
+    const body = requireLongFormText(input.body, "Article body", { maxLength: ARTICLE_BODY_MAX_LENGTH });
     const tracePath = `linkedin/trace-article-prepare-${Date.now()}.zip`;
     const artifactPaths: string[] = [tracePath];
 
@@ -1702,10 +1728,11 @@ export class LinkedInNewslettersService {
     input: PrepareCreateNewsletterInput
   ): Promise<PreparedActionResult> {
     const profileName = input.profileName ?? "default";
-    const title = requireSingleLineText(input.title, "Newsletter title");
+    const title = requireSingleLineText(input.title, "Newsletter title", { maxLength: NEWSLETTER_TITLE_MAX_LENGTH });
     const description = requireSingleLineText(
       input.description,
-      "Newsletter description"
+      "Newsletter description",
+      { maxLength: NEWSLETTER_DESCRIPTION_MAX_LENGTH }
     );
     const cadence = normalizeNewsletterCadence(input.cadence);
     const tracePath = `linkedin/trace-newsletter-prepare-${Date.now()}.zip`;
@@ -1863,8 +1890,8 @@ export class LinkedInNewslettersService {
   ): Promise<PreparedActionResult> {
     const profileName = input.profileName ?? "default";
     const newsletter = requireSingleLineText(input.newsletter, "newsletter");
-    const title = requireSingleLineText(input.title, "Issue title");
-    const body = requireLongFormText(input.body, "Issue body");
+    const title = requireSingleLineText(input.title, "Issue title", { maxLength: NEWSLETTER_ISSUE_TITLE_MAX_LENGTH });
+    const body = requireLongFormText(input.body, "Issue body", { maxLength: NEWSLETTER_ISSUE_BODY_MAX_LENGTH });
     const tracePath = `linkedin/trace-newsletter-issue-prepare-${Date.now()}.zip`;
     const artifactPaths: string[] = [tracePath];
 
