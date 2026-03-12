@@ -116,7 +116,7 @@ export async function checkStoredSessionHealth(
   const requestedSessionName = resolveSessionName(sessionName);
   const store = new LinkedInSessionStore(baseDir);
 
-  let sessionExists = false;
+  let sessionExists: boolean;
   try {
     sessionExists = await store.exists(requestedSessionName);
   } catch (error) {
