@@ -4,13 +4,13 @@ on:
   push:
     branches: [main]
   schedule:
-    # Run every 15 minutes to catch conflicts even when no PRs are merging
     - cron: '*/15 * * * *'
   workflow_dispatch: {}
 
 permissions:
   contents: write
   pull-requests: write
+  issues: write
 
 jobs:
   rebase:
@@ -30,7 +30,7 @@ jobs:
         if: github.event_name == 'push'
         run: sleep 60
 
-      - name: Rebase or recycle conflicting AI PRs
+      - name: Rebase conflicting AI PRs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -54,23 +54,38 @@ jobs:
               echo "✅ PR #$number rebased successfully"
             else
               git rebase --abort
-              echo "⚠️ PR #$number has non-trivial conflicts — closing PR and recycling issue"
+              echo "⚠️ PR #$number has non-trivial conflicts — relabeling for AI to resolve"
 
               # Extract issue number from branch name (ai/issue-NNN-...)
-              issue_num=$(echo "$branch" | grep -oP 'issue-\K\d+' || true)
+              issue_num=$(echo "$branch" | sed -E 's|^ai/issue-([0-9]+).*|\1|')
 
-              # Close the stale PR
-              gh pr close "$number" --comment "🔄 Closing: merge conflicts can't be auto-resolved. Issue relabeled for a fresh attempt from current main." --delete-branch || true
-
-              if [ -n "$issue_num" ]; then
-                # Remove all AI state labels and reset to ai-task
+              if [ -n "$issue_num" ] && [ "$issue_num" != "$branch" ]; then
+                # Keep the PR open — the AI will resolve conflicts on the existing branch
+                # Just relabel the issue so the orchestrator picks it up
                 gh issue edit "$issue_num" \
                   --remove-label "ai-in-progress" \
                   --remove-label "ai-review-ready" \
-                  --remove-label "ai-blocked" \
-                  --add-label "ai-task" 2>/dev/null || true
-                gh issue comment "$issue_num" --body "♻️ PR #$number closed due to non-trivial merge conflicts. Relabeled to \`ai-task\` — orchestrator will retry with a fresh branch from current main."
-                echo "Recycled issue #$issue_num back to ai-task"
+                  --add-label "ai-task,ai-debugging" 2>/dev/null || true
+
+                # Get the conflict file list
+                conflict_files=$(git rebase origin/main 2>&1 | grep "CONFLICT" | head -10 || echo "Could not determine conflicting files")
+                git rebase --abort 2>/dev/null || true
+
+                # Post context so the AI knows exactly what to fix
+                gh issue comment "$issue_num" --body "## ⚠️ Merge Conflicts — Fix Needed
+
+**Branch:** \`$branch\` (PR #$number still open — resolve conflicts on existing branch, don't start fresh)
+
+**Conflicts:**
+\`\`\`
+$conflict_files
+\`\`\`
+
+**Action:** Relabeled to \`ai-task\`. Orchestrator will pick this up — check out the existing branch, run \`git rebase origin/main\`, resolve the conflicts, force-push. Do NOT create a new branch or PR."
+
+                gh pr comment "$number" --body "⚠️ Auto-rebase failed due to merge conflicts. Issue #$issue_num relabeled for the orchestrator to resolve conflicts on this branch."
+
+                echo "Relabeled issue #$issue_num for AI conflict resolution"
               fi
             fi
 
