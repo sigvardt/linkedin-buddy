@@ -48,8 +48,10 @@
     "better-sqlite3": "^12.6.2",
     "fflate": "^0.8.2",
     "playwright-core": "^1.50.1",
+    "playwright-extra": "^4.3.6",
     "pngjs": "^7.0.0",
-    "proper-lockfile": "^4.1.2"
+    "proper-lockfile": "^4.1.2",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",

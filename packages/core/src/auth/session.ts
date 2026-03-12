@@ -72,6 +72,12 @@ export interface HeadlessLoginOptions extends SessionOptions {
   retryOnRateLimit?: boolean;
   maxRetries?: number;
   retryBaseDelayMs?: number;
+  /** When true, retry in headed mode if a CAPTCHA checkpoint is detected. */
+  headedFallback?: boolean;
+  /** When true, force headed (non-headless) mode for the login attempt. */
+  headed?: boolean;
+  /** When true, browse LinkedIn organically before attempting login. */
+  warmProfile?: boolean;
 }
 
 /** Result returned by the headless credential-based login flow. */
@@ -314,6 +320,23 @@ export class LinkedInAuthService {
       ...(await this.performHeadlessLogin(options)),
       evasion: this.evasion,
     };
+
+    // Headed fallback: if CAPTCHA detected and headed fallback is enabled,
+    // retry the entire login flow in headed (non-headless) mode.
+    if (
+      result.checkpointType === "captcha" &&
+      (options.headedFallback ?? false) &&
+      !options.headed
+    ) {
+      result = {
+        ...(await this.performHeadlessLogin({ ...options, headed: true })),
+        evasion: this.evasion,
+      };
+      if (result.authenticated || result.checkpointType !== "rate_limited") {
+        return result;
+      }
+    }
+
     if (!retryOnRateLimit || result.checkpointType !== "rate_limited") {
       return result;
     }
@@ -342,15 +365,22 @@ export class LinkedInAuthService {
     const cdpUrl = options.cdpUrl ?? this.cdpUrl;
     const timeoutMs = options.timeoutMs ?? 60_000;
     const pollIntervalMs = options.pollIntervalMs ?? 2_000;
+    const useHeaded = options.headed ?? false;
+    const warmProfile = options.warmProfile ?? false;
 
     return this.profileManager.runWithContext(
       {
         cdpUrl,
         profileName,
-        headless: true,
+        headless: !useHeaded,
       },
       async (context) => {
         const page = await getPage(context);
+
+        if (warmProfile) {
+          await this.warmBrowserProfile(page);
+        }
+
         await page.goto("https://www.linkedin.com/login", {
           waitUntil: "domcontentloaded",
         });
@@ -673,6 +703,30 @@ export class LinkedInAuthService {
     state: RateLimitState | null;
   }> {
     return isInRateLimitCooldown();
+  }
+
+  /**
+   * Browse LinkedIn pages organically before login to build a normal-looking
+   * session fingerprint. Visits the public homepage and scrolls naturally.
+   */
+  private async warmBrowserProfile(page: Page): Promise<void> {
+    try {
+      await page.goto("https://www.linkedin.com/", {
+        waitUntil: "domcontentloaded",
+        timeout: 15_000,
+      });
+
+      const scrollDelay = 800 + Math.random() * 1_200;
+      await page.waitForTimeout(scrollDelay);
+
+      await page.mouse.wheel(0, 200 + Math.random() * 300);
+      await page.waitForTimeout(1_000 + Math.random() * 2_000);
+
+      await page.mouse.wheel(0, 150 + Math.random() * 250);
+      await page.waitForTimeout(500 + Math.random() * 1_000);
+    } catch {
+      // Warming is best-effort — failures should not block login.
+    }
   }
 
   async openLogin(options: OpenLoginOptions = {}): Promise<OpenLoginResult> {
