@@ -116,6 +116,131 @@ async function sleep(ms: number): Promise<void> {
   });
 }
 
+const LOGIN_CHECKPOINT_VERIFICATION_CODE_SELECTORS = [
+  "input[name='pin']",
+  "input#input__phone_verification_pin",
+  "input[name*='verification']",
+  "input[name*='code']",
+] as const;
+
+const LOGIN_CHECKPOINT_APP_APPROVAL_SELECTORS = [
+  "[data-test-id='auth-app-approval']",
+] as const;
+
+const LOGIN_CHECKPOINT_APP_APPROVAL_TEXT = /approve|verify.*app|app.*verify/i;
+
+const CAPTCHA_DIAGNOSTIC_SELECTORS = [
+  "[data-sitekey]",
+  "iframe[src*='recaptcha']",
+  "iframe[src*='hcaptcha']",
+  "img[alt*='captcha' i]",
+  "#captcha",
+] as const;
+
+async function detectVisibleSelectorCandidate(
+  page: Page,
+  selectors: readonly string[],
+): Promise<{ selector: string; index: number } | null> {
+  for (let index = 0; index < selectors.length; index += 1) {
+    const selector = selectors[index]!;
+    if (await isVisibleSafe(page, selector)) {
+      return { selector, index };
+    }
+  }
+
+  return null;
+}
+
+type LoginCheckpointType =
+  | "verification_code"
+  | "app_approval"
+  | "captcha"
+  | "unknown";
+
+type LoginCheckpointClassification = {
+  checkpointType: LoginCheckpointType;
+  metadata: {
+    detected_selectors: string[];
+  };
+};
+
+async function classifyLoginCheckpoint(
+  page: Page,
+): Promise<LoginCheckpointClassification> {
+  const detectedSelectors: string[] = [];
+
+  const codeSelectorMatch = await detectVisibleSelectorCandidate(
+    page,
+    LOGIN_CHECKPOINT_VERIFICATION_CODE_SELECTORS,
+  );
+  if (codeSelectorMatch) {
+    detectedSelectors.push(codeSelectorMatch.selector);
+    return {
+      checkpointType: "verification_code",
+      metadata: {
+        detected_selectors: detectedSelectors,
+      },
+    };
+  }
+
+  const appApprovalSelectorMatch = await detectVisibleSelectorCandidate(
+    page,
+    LOGIN_CHECKPOINT_APP_APPROVAL_SELECTORS,
+  );
+  if (appApprovalSelectorMatch) {
+    detectedSelectors.push(appApprovalSelectorMatch.selector);
+    return {
+      checkpointType: "app_approval",
+      metadata: {
+        detected_selectors: detectedSelectors,
+      },
+    };
+  }
+
+  const appApprovalTextVisible =
+    "getByText" in page && typeof page.getByText === "function"
+      ? await page
+          .getByText(LOGIN_CHECKPOINT_APP_APPROVAL_TEXT)
+          .first()
+          .isVisible({ timeout: 1_000 })
+          .catch(() => false)
+      : false;
+  if (appApprovalTextVisible) {
+    detectedSelectors.push("text:/approve|verify.*app|app.*verify/i");
+    return {
+      checkpointType: "app_approval",
+      metadata: {
+        detected_selectors: detectedSelectors,
+      },
+    };
+  }
+
+  const captchaDetected = await detectCaptcha(page);
+  if (captchaDetected) {
+    const captchaMatch = await detectVisibleSelectorCandidate(
+      page,
+      CAPTCHA_DIAGNOSTIC_SELECTORS,
+    );
+    if (captchaMatch) {
+      detectedSelectors.push(captchaMatch.selector);
+    }
+
+    return {
+      checkpointType: "captcha",
+      metadata: {
+        detected_selectors: detectedSelectors,
+      },
+    };
+  }
+
+  return {
+    checkpointType: "unknown",
+    metadata: {
+      detected_selectors: detectedSelectors,
+    },
+  };
+}
+
 /**
  * Dismiss LinkedIn's cookie consent banner when present. The banner renders as
  * an `artdeco-global-alert` overlay with a `<header>` that intercepts pointer
@@ -518,44 +643,23 @@ export class LinkedInAuthService {
               };
             }
 
-            const hasCodeInput = await isVisibleSafe(
-              page,
-              "input[name='pin'], input#input__phone_verification_pin, input[name*='verification'], input[name*='code']",
-            );
-            const hasCaptcha = await detectCaptcha(page);
+            const checkpointClassification =
+              await classifyLoginCheckpoint(page);
+            const checkpointType = checkpointClassification.checkpointType;
 
-            let hasAppApproval = false;
-            if (!hasCodeInput && !hasCaptcha) {
-              const hasAppApprovalMarker = await isVisibleSafe(
-                page,
-                "[data-test-id='auth-app-approval']",
+            if (
+              checkpointClassification.metadata.detected_selectors.length > 0
+            ) {
+              this.logger?.log(
+                "info",
+                "auth.session.login.checkpoint_classified",
+                {
+                  checkpoint_type: checkpointType,
+                  detected_selectors:
+                    checkpointClassification.metadata.detected_selectors,
+                },
               );
-
-              if (hasAppApprovalMarker) {
-                hasAppApproval = true;
-              } else {
-                try {
-                  hasAppApproval = await page
-                    .getByText(/approve|verify.*app|app.*verify/i)
-                    .first()
-                    .isVisible({ timeout: 1_000 });
-                } catch {
-                  hasAppApproval = false;
-                }
-              }
             }
-
-            const checkpointType:
-              | "verification_code"
-              | "app_approval"
-              | "captcha"
-              | "unknown" = hasCodeInput
-              ? "verification_code"
-              : hasAppApproval
-                ? "app_approval"
-                : hasCaptcha
-                  ? "captcha"
-                  : "unknown";
 
             if (checkpointType === "verification_code") {
               if (options.mfaCode && !mfaCodeSubmitted) {

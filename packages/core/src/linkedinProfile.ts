@@ -1451,8 +1451,15 @@ export function normalizeLinkedInProfileUrl(target: string): string {
       : `${parsedUrl.pathname}/`;
 
     return `${parsedUrl.origin}${pathname}`;
-  } catch {
-    return resolved;
+  } catch (error) {
+    throw asLinkedInBuddyError(
+      error,
+      "ACTION_PRECONDITION_FAILED",
+      "Profile URL normalization failed.",
+      {
+        profile_url: resolved,
+      },
+    );
   }
 }
 
@@ -3602,13 +3609,25 @@ async function clickLocatorAndWaitForOverlay(
 }
 
 export async function navigateToOwnProfile(page: Page): Promise<void> {
+  const navigationTimeoutMs = 30_000;
+  const ownProfileUrl = resolveProfileUrl("me");
+
   try {
-    await page.goto(resolveProfileUrl("me"), { waitUntil: "domcontentloaded" });
+    await page.goto(ownProfileUrl, { waitUntil: "domcontentloaded" });
   } catch (error) {
     if (
       !(error instanceof playwrightErrors.TimeoutError) ||
       !(await canRecoverOwnProfileNavigationTimeout(page))
     ) {
+      if (error instanceof playwrightErrors.TimeoutError) {
+        Object.assign(error, {
+          navigationContext: {
+            current_url: page.url(),
+            target_url: ownProfileUrl,
+            timeout_ms: navigationTimeoutMs,
+          },
+        });
+      }
       throw error;
     }
   }
@@ -4486,7 +4505,8 @@ async function fillSplitProfileIntroLocationField(
     PROFILE_INTRO_LOCATION_CITY_FIELD_DEFINITION,
   );
   if (!cityField && updatedField) {
-    await page.waitForTimeout(250);
+    // Wait for LinkedIn to render the dependent city field after country updates.
+    await page.waitForTimeout(400);
     cityField = await findDialogFieldLocatorByDefinition(
       dialog,
       PROFILE_INTRO_LOCATION_CITY_FIELD_DEFINITION,
@@ -4567,7 +4587,8 @@ async function fillDialogField(
   await replaceDialogFieldValue(locator, stringValue);
 
   if (definition.control === "select" || isTypeaheadField) {
-    await page.waitForTimeout(250);
+    // Let LinkedIn hydrate typeahead options before keyboard selection.
+    await page.waitForTimeout(400);
     await page.keyboard.press("ArrowDown").catch(() => undefined);
     await page.keyboard.press("Enter").catch(() => undefined);
     return;
@@ -5610,7 +5631,8 @@ async function addFeaturedLink(
   );
 
   await fillDialogField(page, dialog, FEATURED_LINK_FIELD_DEFINITIONS[0], url);
-  await page.waitForTimeout(300);
+  // Give LinkedIn time to materialize link preview/title fields from URL metadata.
+  await page.waitForTimeout(400);
   await fillDialogFieldIfPresent(
     page,
     dialog,
@@ -5856,7 +5878,8 @@ async function dragLocatorToTarget(
     { steps: 20 },
   );
   await page.mouse.up();
-  await page.waitForTimeout(350);
+  // Allow drag-drop reordering animations and DOM reconciliation to settle.
+  await page.waitForTimeout(400);
 }
 
 async function reorderFeaturedItems(
