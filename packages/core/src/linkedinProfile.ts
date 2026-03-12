@@ -30,6 +30,15 @@ import {
 } from "./rateLimiter.js";
 import type { LinkedInSelectorLocale } from "./selectorLocale.js";
 import { getLinkedInSelectorPhrases } from "./selectorLocale.js";
+import {
+  normalizeText,
+  isRecord,
+  getOrCreatePage,
+  escapeCssAttributeValue,
+  isAbsoluteUrl,
+  escapeRegExp,
+  buildTextRegex
+} from "./shared.js";
 import type {
   ActionExecutor,
   ActionExecutorInput,
@@ -1268,10 +1277,6 @@ async function extractEditableSettings(
   }
 }
 
-function normalizeText(value: string | null | undefined): string {
-  return (value ?? "").replace(/\s+/g, " ").trim();
-}
-
 export async function readEditableFieldValue(locator: Locator): Promise<string> {
   try {
     return normalizeText(
@@ -1376,10 +1381,6 @@ function createProfileRateLimitGuard(
         ...details
       }
     });
-}
-
-function isAbsoluteUrl(value: string): boolean {
-  return /^https?:\/\//i.test(value);
 }
 
 export function resolveProfileUrl(target: string | undefined): string {
@@ -2023,14 +2024,6 @@ function inferFeaturedItemKind(
   return /newsletter|article|post/i.test(rawText) ? "post" : "media";
 }
 
-async function getOrCreatePage(context: BrowserContext): Promise<Page> {
-  const existing = context.pages()[0];
-  if (existing) {
-    return existing;
-  }
-  return context.newPage();
-}
-
 /* eslint-disable no-undef -- DOM types (ParentNode, Element) are valid inside page.evaluate() */
 async function extractProfileData(
   page: Page,
@@ -2454,10 +2447,6 @@ interface LinkedInProfileTopCardSummary {
   connection_degree: string;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function dedupeStrings(values: readonly string[]): string[] {
   return [...new Set(values.map((value) => normalizeText(value)).filter(Boolean))];
 }
@@ -2583,14 +2572,6 @@ function normalizeFieldKey(value: string): string {
   return value.replace(/[^a-z0-9]+/gi, "").toLowerCase();
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function escapeCssAttributeValue(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-}
-
 export function isProfileIntroEditHref(href: string | null | undefined): boolean {
   if (typeof href !== "string") {
     return false;
@@ -2617,12 +2598,6 @@ function buildProfileIntroEditHrefSelector(): string {
   return PROFILE_INTRO_EDIT_HREF_PATTERNS.map(
     (pattern) => `a[href*="${escapeCssAttributeValue(pattern)}"]`
   ).join(", ");
-}
-
-function buildTextRegex(labels: readonly string[], exact = false): RegExp {
-  const normalizedLabels = dedupeStrings(labels);
-  const pattern = normalizedLabels.map((label) => escapeRegExp(label)).join("|");
-  return new RegExp(exact ? `^(?:${pattern})$` : `(?:${pattern})`, "i");
 }
 
 function buildAriaLabelContainsSelector(
@@ -6283,7 +6258,7 @@ async function executeAddProfileSkill(
       profileName,
       headless: true
     },
-    async (context) => {
+    async (context: BrowserContext) => {
       const page = await getOrCreatePage(context);
       return executeConfirmActionWithArtifacts({
         runtime,

@@ -29,6 +29,16 @@ import {
   buildLinkedInSelectorPhraseRegex,
   formatLinkedInSelectorRegexHint,
 } from "./selectorLocale.js";
+import {
+  normalizeText,
+  isRecord,
+  getOrCreatePage,
+  escapeCssAttributeValue,
+  isAbsoluteUrl,
+  escapeRegExp,
+  isLocatorVisible,
+  buildTextRegex,
+} from "./shared.js";
 import { createFeedPostComposerTriggerCandidates } from "./feedPostComposerTriggerSelectors.js";
 import type {
   ActionExecutor,
@@ -285,14 +295,6 @@ export const DEFAULT_LINKEDIN_POST_SAFETY_LINT_CONFIG: LinkedInPostSafetyLintCon
     validateLinkPreviews: false,
     linkPreviewValidationTimeoutMs: DEFAULT_LINK_PREVIEW_VALIDATION_TIMEOUT_MS,
   };
-
-function normalizeText(value: string | null | undefined): string {
-  return (value ?? "").replace(/\s+/g, " ").trim();
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function parseOptionalPositiveInteger(
   value: unknown,
@@ -1066,10 +1068,6 @@ async function lintOptionalLinkedInPostContent(
   return lintLinkedInPostContent(normalizedValue, config);
 }
 
-function isAbsoluteUrl(value: string): boolean {
-  return /^https?:\/\//i.test(value);
-}
-
 function resolvePostUrl(postUrl: string): string {
   const trimmedPostUrl = normalizeText(postUrl);
   if (!trimmedPostUrl) {
@@ -1157,24 +1155,6 @@ function extractActivityId(value: string): string {
 
   const match = /(\d{6,})/.exec(normalized);
   return match?.[1] ?? "";
-}
-
-function escapeCssAttributeValue(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-}
-
-function buildTextRegex(labels: readonly string[], exact = false): RegExp {
-  const normalizedLabels = Array.from(
-    new Set(
-      labels
-        .map((label) => normalizeText(label))
-        .filter((label) => label.length > 0),
-    ),
-  );
-  const pattern = normalizedLabels
-    .map((label) => escapeRegExp(label))
-    .join("|");
-  return new RegExp(exact ? `^(?:${pattern})$` : `(?:${pattern})`, "i");
 }
 
 function determineMediaKind(extension: string): LinkedInPostMediaKind | null {
@@ -1446,21 +1426,8 @@ function toAutomationError(
   return asLinkedInBuddyError(error, "UNKNOWN", message);
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function createVerificationSnippet(text: string): string {
   return normalizeText(text).slice(0, 120);
-}
-
-async function getOrCreatePage(context: BrowserContext): Promise<Page> {
-  const existing = context.pages()[0];
-  if (existing) {
-    return existing;
-  }
-
-  return context.newPage();
 }
 
 async function captureScreenshotArtifact(
@@ -1499,14 +1466,6 @@ async function waitForCondition(
   }
 
   return false;
-}
-
-async function isLocatorVisible(locator: Locator): Promise<boolean> {
-  try {
-    return await locator.first().isVisible();
-  } catch {
-    return false;
-  }
 }
 
 async function isAnyLocatorVisible(locator: Locator): Promise<boolean> {
@@ -3362,7 +3321,7 @@ export class LinkedInPostsService {
           profileName,
           headless: true,
         },
-        async (context) => {
+        async (context: BrowserContext) => {
           const page = await getOrCreatePage(context);
           let tracingStarted = false;
 

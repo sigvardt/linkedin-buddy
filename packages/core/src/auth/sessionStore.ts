@@ -14,6 +14,7 @@ import {
 } from "playwright-core";
 import { ensureConfigPaths, resolveConfigPaths } from "../config.js";
 import { LinkedInBuddyError, asLinkedInBuddyError } from "../errors.js";
+import { getOrCreatePage } from "../shared.js";
 import { wrapLinkedInBrowserContext } from "../linkedinPage.js";
 import {
   inspectLinkedInSession,
@@ -886,12 +887,6 @@ export class LinkedInSessionStore {
 
     return restoredSession;
   }
-}
-
-async function getOrCreatePage(context: BrowserContext) {
-  const existingPage = context.pages()[0];
-
-  return existingPage ?? context.newPage();
 }
 
 async function restoreOriginStorageToContext(

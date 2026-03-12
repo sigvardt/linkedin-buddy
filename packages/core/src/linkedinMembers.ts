@@ -1,4 +1,4 @@
-import { type BrowserContext, type Locator, type Page } from "playwright-core";
+import { type Locator, type Page } from "playwright-core";
 import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
 import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
@@ -27,6 +27,13 @@ import {
   buildLinkedInSelectorPhraseRegex,
   formatLinkedInSelectorRegexHint
 } from "./selectorLocale.js";
+import {
+  normalizeText,
+  getOrCreatePage,
+  escapeRegExp,
+  escapeCssAttributeValue,
+  dedupePhrases
+} from "./shared.js";
 import type {
   ActionExecutor,
   ActionExecutorInput,
@@ -116,10 +123,6 @@ interface VisibleLocatorCandidate {
   locatorFactory: (root: Page | Locator) => Locator;
 }
 
-function normalizeText(value: string | null | undefined): string {
-  return (value ?? "").replace(/\s+/g, " ").trim();
-}
-
 function getMemberRateLimitConfig(actionType: string): ConsumeRateLimitInput {
   const config = (
     MEMBER_RATE_LIMIT_CONFIGS as Record<string, ConsumeRateLimitInput>
@@ -132,32 +135,6 @@ function getMemberRateLimitConfig(actionType: string): ConsumeRateLimitInput {
   }
 
   return config;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function escapeCssAttributeValue(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-}
-
-function dedupePhrases(values: readonly string[]): string[] {
-  const seen = new Set<string>();
-  const deduped: string[] = [];
-
-  for (const value of values) {
-    const normalized = normalizeText(value);
-    const key = normalized.toLowerCase();
-    if (!normalized || seen.has(key)) {
-      continue;
-    }
-
-    seen.add(key);
-    deduped.push(normalized);
-  }
-
-  return deduped;
 }
 
 function buildLocalizedPhraseList(
@@ -200,15 +177,6 @@ async function waitForCondition(
   }
 
   return condition();
-}
-
-async function getOrCreatePage(context: BrowserContext): Promise<Page> {
-  const existing = context.pages()[0];
-  if (existing) {
-    return existing;
-  }
-
-  return context.newPage();
 }
 
 async function findVisibleLocator(

@@ -14,6 +14,13 @@ import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
 import {
+  normalizeText,
+  getOrCreatePage,
+  escapeCssAttributeValue,
+  escapeRegExp,
+  isLocatorVisible
+} from "./shared.js";
+import {
   consumeRateLimitOrThrow,
   createConfirmRateLimitMessage,
   peekRateLimitPreview,
@@ -179,10 +186,6 @@ interface EditorSurface {
   triggerKey: string;
 }
 
-function normalizeText(value: string | null | undefined): string {
-  return (value ?? "").replace(/\s+/gu, " ").trim();
-}
-
 function getPublishingRateLimitConfig(
   actionType: string
 ): ConsumeRateLimitInput {
@@ -257,14 +260,6 @@ function containsUnsupportedControlCharacters(value: string): boolean {
 
 function normalizeLine(value: string): string {
   return value.replace(/[ \t]+\n/gu, "\n").replace(/[ \t]+$/gu, "").trim();
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-}
-
-function escapeCssAttributeValue(value: string): string {
-  return value.replace(/\\/gu, "\\\\").replace(/"/gu, '\\"');
 }
 
 function buildLocalizedRegex(
@@ -491,15 +486,6 @@ function toAutomationError(
   return asLinkedInBuddyError(error, "UNKNOWN", message);
 }
 
-async function getOrCreatePage(context: BrowserContext): Promise<Page> {
-  const existing = context.pages()[0];
-  if (existing) {
-    return existing;
-  }
-
-  return context.newPage();
-}
-
 async function captureScreenshotArtifact(
   runtime: LinkedInPublishingExecutorRuntime,
   page: Page,
@@ -538,14 +524,6 @@ async function waitForCondition(
   }
 
   return condition();
-}
-
-async function isLocatorVisible(locator: Locator): Promise<boolean> {
-  try {
-    return await locator.first().isVisible();
-  } catch {
-    return false;
-  }
 }
 
 async function findVisibleLocatorOrThrow(

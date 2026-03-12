@@ -1,9 +1,9 @@
-import { type BrowserContext, type Page } from "playwright-core";
 import type { LinkedInAuthService } from "./auth/session.js";
 import { LinkedInBuddyError, asLinkedInBuddyError } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
+import { normalizeText, getOrCreatePage } from "./shared.js";
 
 export interface LinkedInSearchResult {
   name: string;
@@ -139,18 +139,6 @@ export interface LinkedInSearchRuntime {
   cdpUrl?: string | undefined;
   profileManager: ProfileManager;
   logger: JsonEventLogger;
-}
-
-function normalizeText(value: string | null | undefined): string {
-  return (value ?? "").replace(/\s+/g, " ").trim();
-}
-
-async function getOrCreatePage(context: BrowserContext): Promise<Page> {
-  const existing = context.pages()[0];
-  if (existing) {
-    return existing;
-  }
-  return context.newPage();
 }
 
 function readSearchLimit(value: number | undefined): number {

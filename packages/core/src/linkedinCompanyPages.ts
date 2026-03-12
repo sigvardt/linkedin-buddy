@@ -1,4 +1,4 @@
-import { type BrowserContext, type Locator, type Page } from "playwright-core";
+import { type Locator, type Page } from "playwright-core";
 import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
 import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
@@ -20,6 +20,7 @@ import type {
   ActionExecutorResult,
   TwoPhaseCommitService
 } from "./twoPhaseCommit.js";
+import { normalizeText, getOrCreatePage, isAbsoluteUrl } from "./shared.js";
 
 /* eslint-disable no-undef -- DOM types are valid inside page.evaluate() */
 
@@ -80,14 +81,6 @@ export interface LinkedInCompanyPagesRuntime
 
 export const FOLLOW_COMPANY_PAGE_ACTION_TYPE = "company.follow";
 export const UNFOLLOW_COMPANY_PAGE_ACTION_TYPE = "company.unfollow";
-
-function normalizeText(value: string | null | undefined): string {
-  return (value ?? "").replace(/\s+/g, " ").trim();
-}
-
-function isAbsoluteUrl(value: string): boolean {
-  return /^https?:\/\//i.test(value);
-}
 
 export function resolveCompanyPageUrl(target: string): string {
   const trimmedTarget = normalizeText(target);
@@ -175,14 +168,6 @@ function extractCompanySlug(url: string): string | null {
   } catch {
     return slug;
   }
-}
-
-async function getOrCreatePage(context: BrowserContext): Promise<Page> {
-  const existing = context.pages()[0];
-  if (existing) {
-    return existing;
-  }
-  return context.newPage();
 }
 
 async function waitForCompanyPageReady(page: Page): Promise<void> {

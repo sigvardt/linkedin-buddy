@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { type BrowserContext, type Locator, type Page } from "playwright-core";
+import { type Locator, type Page } from "playwright-core";
 import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
 import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
@@ -10,6 +10,12 @@ import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
 import type { LinkedInSelectorLocale } from "./selectorLocale.js";
+import {
+  normalizeText,
+  getOrCreatePage,
+  escapeRegExp,
+  dedupePhrases,
+} from "./shared.js";
 import type {
   ActionExecutor,
   ActionExecutorInput,
@@ -220,32 +226,6 @@ export const NOTIFICATION_LIST_MAX_LIMIT = 100;
 /** Maximum number of notification cards to scan when locating a specific notification by ID. */
 export const NOTIFICATION_SCAN_MAX_LIMIT = 200;
 
-function normalizeText(value: string | null | undefined): string {
-  return (value ?? "").replace(/\s+/g, " ").trim();
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function dedupePhrases(values: readonly string[]): string[] {
-  const seen = new Set<string>();
-  const deduped: string[] = [];
-
-  for (const value of values) {
-    const normalized = normalizeText(value);
-    const key = normalized.toLowerCase();
-    if (!normalized || seen.has(key)) {
-      continue;
-    }
-
-    seen.add(key);
-    deduped.push(normalized);
-  }
-
-  return deduped;
-}
-
 function buildPhraseRegex(
   phrases: readonly string[],
   options: { exact?: boolean } = {},
@@ -413,14 +393,6 @@ async function waitForCondition(
   }
 
   return condition();
-}
-
-async function getOrCreatePage(context: BrowserContext): Promise<Page> {
-  const existing = context.pages()[0];
-  if (existing) {
-    return existing;
-  }
-  return context.newPage();
 }
 
 async function findVisibleLocator(

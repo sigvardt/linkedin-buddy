@@ -1,4 +1,4 @@
-import { type BrowserContext, type Page } from "playwright-core";
+import { type Page } from "playwright-core";
 import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
 import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
@@ -18,6 +18,7 @@ import {
   type RateLimiter
 } from "./rateLimiter.js";
 import type { LinkedInSelectorLocale } from "./selectorLocale.js";
+import { normalizeText, getOrCreatePage, escapeRegExp } from "./shared.js";
 import type {
   ActionExecutor,
   ActionExecutorInput,
@@ -124,14 +125,6 @@ interface EventDetailSnapshot {
   rsvp_state: LinkedInEventRsvpState;
 }
 
-function normalizeText(value: string | null | undefined): string {
-  return (value ?? "").replace(/\s+/g, " ").trim();
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function readSearchLimit(value: number | undefined): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return 10;
@@ -171,15 +164,6 @@ async function waitForCondition(
   }
 
   return condition();
-}
-
-async function getOrCreatePage(context: BrowserContext): Promise<Page> {
-  const existing = context.pages()[0];
-  if (existing) {
-    return existing;
-  }
-
-  return context.newPage();
 }
 
 function extractEventId(value: string): string {

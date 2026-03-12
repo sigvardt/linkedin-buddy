@@ -1,4 +1,4 @@
-import { type BrowserContext, type Page } from "playwright-core";
+import { type Page } from "playwright-core";
 import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
 import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
@@ -28,6 +28,7 @@ import type {
   ActionExecutorResult,
   TwoPhaseCommitService
 } from "./twoPhaseCommit.js";
+import { normalizeText, getOrCreatePage, escapeRegExp } from "./shared.js";
 
 export const GROUP_JOIN_ACTION_TYPE = "groups.join";
 export const GROUP_LEAVE_ACTION_TYPE = "groups.leave";
@@ -152,10 +153,6 @@ interface GroupDetailSnapshot {
   membership_state: LinkedInGroupMembershipState;
 }
 
-function normalizeText(value: string | null | undefined): string {
-  return (value ?? "").replace(/\s+/g, " ").trim();
-}
-
 function getGroupRateLimitConfig(actionType: string): ConsumeRateLimitInput {
   const config = (
     GROUP_RATE_LIMIT_CONFIGS as Record<string, ConsumeRateLimitInput>
@@ -168,10 +165,6 @@ function getGroupRateLimitConfig(actionType: string): ConsumeRateLimitInput {
   }
 
   return config;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function readSearchLimit(value: number | undefined): number {
@@ -213,15 +206,6 @@ async function waitForCondition(
   }
 
   return condition();
-}
-
-async function getOrCreatePage(context: BrowserContext): Promise<Page> {
-  const existing = context.pages()[0];
-  if (existing) {
-    return existing;
-  }
-
-  return context.newPage();
 }
 
 function extractGroupId(value: string): string {

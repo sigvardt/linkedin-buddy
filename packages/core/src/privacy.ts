@@ -4,6 +4,7 @@ import {
   createHash,
   randomBytes
 } from "node:crypto";
+import { isRecord } from "./shared.js";
 
 export const PRIVACY_REDACTION_MODES = ["off", "partial", "full"] as const;
 export type PrivacyRedactionMode = (typeof PRIVACY_REDACTION_MODES)[number];
@@ -72,10 +73,6 @@ function clampExcerptLength(value: number): number {
   }
 
   return Math.max(8, Math.min(512, Math.floor(value)));
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function objectLooksLikePerson(parent: Record<string, unknown> | undefined): boolean {

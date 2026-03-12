@@ -2,7 +2,6 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import {
   errors as playwrightErrors,
-  type BrowserContext,
   type Locator,
   type Page
 } from "playwright-core";
@@ -19,6 +18,7 @@ import {
   type LinkedInSelectorLocale
 } from "./selectorLocale.js";
 import { createFeedPostComposerTriggerCandidates } from "./feedPostComposerTriggerSelectors.js";
+import { getOrCreatePage } from "./shared.js";
 
 /**
  * Canonical LinkedIn page identifiers covered by the built-in selector audit.
@@ -610,14 +610,6 @@ function validateAuditPageUrl(page: LinkedInSelectorAuditPage, value: string): v
       `Selector audit page ${page} must use http or https.`
     );
   }
-}
-
-function getOrCreatePage(context: BrowserContext): Promise<Page> {
-  const existing = context.pages()[0];
-  if (existing) {
-    return Promise.resolve(existing);
-  }
-  return context.newPage();
 }
 
 function createMissingStrategyResult(

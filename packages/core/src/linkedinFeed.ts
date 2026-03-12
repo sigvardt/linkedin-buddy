@@ -30,6 +30,13 @@ import {
   formatLinkedInSelectorRegexHint,
   valueContainsLinkedInSelectorPhrase,
 } from "./selectorLocale.js";
+import {
+  normalizeText,
+  getOrCreatePage,
+  escapeCssAttributeValue,
+  isAbsoluteUrl,
+  isLocatorVisible,
+} from "./shared.js";
 import type {
   ActionExecutor,
   ActionExecutorInput,
@@ -289,10 +296,6 @@ interface PostRepostButtonState {
   className: string;
 }
 
-function normalizeText(value: string | null | undefined): string {
-  return (value ?? "").replace(/\s+/g, " ").trim();
-}
-
 function createVerificationSnippet(text: string): string {
   return normalizeText(text).slice(0, 120);
 }
@@ -326,10 +329,6 @@ export function normalizeLinkedInFeedReaction(
       supported_reactions: LINKEDIN_FEED_REACTION_TYPES,
     },
   );
-}
-
-function isAbsoluteUrl(value: string): boolean {
-  return /^https?:\/\//i.test(value);
 }
 
 function resolvePostUrl(postUrl: string): string {
@@ -378,14 +377,6 @@ function resolvePostUrl(postUrl: string): string {
   return `https://www.linkedin.com/feed/update/${encodeURIComponent(trimmedPostUrl)}/`;
 }
 
-async function getOrCreatePage(context: BrowserContext): Promise<Page> {
-  const existing = context.pages()[0];
-  if (existing) {
-    return existing;
-  }
-  return context.newPage();
-}
-
 function extractPostIdentity(value: string): string {
   const normalized = normalizeText(value);
   if (!normalized) {
@@ -427,10 +418,6 @@ function extractActivityId(value: string): string {
 
   const match = /(\d{6,})/.exec(normalized);
   return match?.[1] ?? "";
-}
-
-function escapeCssAttributeValue(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
 function toAbsoluteLinkedInPostUrl(postId: string): string {
@@ -952,14 +939,6 @@ async function waitForCondition(
   }
 
   return condition();
-}
-
-async function isLocatorVisible(locator: Locator): Promise<boolean> {
-  try {
-    return await locator.isVisible();
-  } catch {
-    return false;
-  }
 }
 
 async function isAnyLocatorVisible(
@@ -2058,7 +2037,7 @@ export class LikePostActionExecutor implements ActionExecutor<LinkedInFeedExecut
         profileName,
         headless: true,
       },
-      async (context) => {
+      async (context: BrowserContext) => {
         const page = await getOrCreatePage(context);
 
         return executeConfirmActionWithArtifacts({

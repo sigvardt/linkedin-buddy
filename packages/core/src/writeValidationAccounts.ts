@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { ensureConfigPaths, resolveConfigPaths } from "./config.js";
 import { LinkedInBuddyError } from "./errors.js";
+import { isRecord } from "./shared.js";
 import {
   normalizeLinkedInFeedReaction,
   type LinkedInFeedReaction
@@ -94,10 +95,6 @@ export interface UpsertWriteValidationAccountInput {
 }
 
 type JsonRecord = Record<string, unknown>;
-
-function isRecord(value: unknown): value is JsonRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function assertJsonRecord(
   value: unknown,

@@ -22,6 +22,7 @@ import {
 import { normalizeLinkedInProfileUrl } from "./linkedinProfile.js";
 import type { JsonEventLogger } from "./logging.js";
 import { createRunId } from "./run.js";
+import { isRecord } from "./shared.js";
 
 const FOLLOWUP_PREPARATION_LANE = "followup_preparation";
 const SCHEDULER_OPERATOR_NOTE = "Prepared by local scheduler.";
@@ -326,10 +327,6 @@ function isFollowupPreparationCandidate(
     connection.followup_status === "failed" ||
     connection.followup_status === "expired"
   );
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }
 
 function getRequiredTargetField(

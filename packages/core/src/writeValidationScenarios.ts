@@ -1,4 +1,5 @@
 import { LinkedInBuddyError } from "./errors.js";
+import { normalizeText } from "./shared.js";
 import {
   LIKE_POST_ACTION_TYPE,
   normalizeLinkedInFeedReaction,
@@ -29,10 +30,6 @@ import {
 import type { WriteValidationAccountTargets } from "./writeValidationAccounts.js";
 
 const WRITE_VALIDATION_OPERATOR_NOTE = "Tier 3 write-validation harness";
-
-function normalizeText(value: string | null | undefined): string {
-  return (value ?? "").replace(/\s+/gu, " ").trim();
-}
 
 function createWriteValidationTag(): string {
   return new Date().toISOString();
