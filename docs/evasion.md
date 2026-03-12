@@ -402,6 +402,42 @@ const profile = resolveEvasionProfile(evasion.level);
 console.log(evasion.summary, profile.mouseOvershootFactor);
 ```
 
+## Headless login limitations
+
+LinkedIn's anti-automation systems actively detect headless browser logins. Even
+with `paranoid` evasion and stealth plugins enabled, headless login attempts may
+trigger a CAPTCHA checkpoint that cannot be solved without human interaction.
+Repeated headless attempts against the same account can escalate to a temporary
+account restriction.
+
+### What happens
+
+1. Headless login fills and submits the credential form.
+2. LinkedIn redirects to `/checkpoint/lg/login-submit` with a CAPTCHA challenge.
+3. The CLI detects the CAPTCHA, records a rate-limit cooldown, and exits.
+4. Subsequent headless login attempts within the cooldown window are blocked
+   automatically (exponential backoff: 2 h → 4 h → 8 h).
+
+### Recommended authentication methods
+
+| Method            | Command                                                       | Notes                                                       |
+| ----------------- | ------------------------------------------------------------- | ----------------------------------------------------------- |
+| Interactive login | `linkedin login --profile <name>`                             | Opens a headed browser. Human completes any challenge.      |
+| Session capture   | `linkedin auth session --session <name>`                      | Imports an encrypted session from a manual browser login.   |
+| Cookie transplant | `linkedin auth import-cookies --profile <name> --file <path>` | Reuses an exported session from another profile or machine. |
+| Headless login    | `linkedin login --headless --email <e> --password <p>`        | Works when no CAPTCHA is triggered. Use sparingly.          |
+
+### Reducing CAPTCHA risk for headless login
+
+- Use `--warm-profile` to browse LinkedIn organically before the login attempt.
+- Use `--headed-fallback` to automatically retry in headed mode when a CAPTCHA
+  is detected.
+- Avoid running headless login more than once per session window. The CLI tracks
+  CAPTCHA encounters and enforces a cooldown to prevent account restrictions.
+- Before headless login, the CLI clears non-essential tracking cookies from the
+  persistent profile to reduce the chance of being classified as a returning
+  automated visitor.
+
 ## Troubleshooting
 
 ### LinkedIn still shows a checkpoint, login wall, or CAPTCHA

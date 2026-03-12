@@ -8,14 +8,22 @@ export interface HeadlessLoginProgressReporterOptions {
   writeLine?: (line: string) => void;
 }
 
-function readBoolean(payload: Record<string, unknown>, key: string): boolean | null {
+function readBoolean(
+  payload: Record<string, unknown>,
+  key: string,
+): boolean | null {
   const value = payload[key];
   return typeof value === "boolean" ? value : null;
 }
 
-function readString(payload: Record<string, unknown>, key: string): string | null {
+function readString(
+  payload: Record<string, unknown>,
+  key: string,
+): string | null {
   const value = payload[key];
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : null;
 }
 
 function formatFieldLabel(fieldLabel: string | null): string {
@@ -55,7 +63,9 @@ export class HeadlessLoginProgressReporter {
 
   constructor(options: HeadlessLoginProgressReporterOptions = {}) {
     this.enabled = options.enabled ?? true;
-    this.writeLine = options.writeLine ?? ((line: string) => process.stderr.write(`${line}\n`));
+    this.writeLine =
+      options.writeLine ??
+      ((line: string) => process.stderr.write(`${line}\n`));
   }
 
   handleLog(entry: HeadlessLoginProgressLogEntry): void {
@@ -66,7 +76,7 @@ export class HeadlessLoginProgressReporter {
     if (entry.event === "cli.login.headless.start") {
       const profileName = readString(entry.payload, "profileName");
       this.writeLine(
-        `Starting headless login${profileName ? ` for profile ${profileName}` : ""}.`
+        `Starting headless login${profileName ? ` for profile ${profileName}` : ""}.`,
       );
       return;
     }
@@ -77,7 +87,9 @@ export class HeadlessLoginProgressReporter {
         return;
       }
 
-      this.writeLine(`Typing ${formatFieldLabel(fieldLabel)} with human-like cadence...`);
+      this.writeLine(
+        `Typing ${formatFieldLabel(fieldLabel)} with human-like cadence...`,
+      );
       return;
     }
 
@@ -88,7 +100,9 @@ export class HeadlessLoginProgressReporter {
         return;
       }
 
-      this.writeLine(`Typed ${formatFieldLabel(fieldLabel)} with simulated keystrokes.`);
+      this.writeLine(
+        `Typed ${formatFieldLabel(fieldLabel)} with simulated keystrokes.`,
+      );
       return;
     }
 
@@ -97,7 +111,7 @@ export class HeadlessLoginProgressReporter {
       const reason = readString(entry.payload, "reason");
       const method = readString(entry.payload, "method");
       this.writeLine(
-        `Typing ${formatFieldLabel(fieldLabel)} fell back to direct input via ${formatFallbackMethod(method)} because ${formatFallbackReason(reason)}.`
+        `Typing ${formatFieldLabel(fieldLabel)} fell back to direct input via ${formatFallbackMethod(method)} because ${formatFallbackReason(reason)}.`,
       );
       return;
     }
@@ -105,7 +119,7 @@ export class HeadlessLoginProgressReporter {
     if (entry.event === "humanize.typing.fallback_failed") {
       const fieldLabel = readString(entry.payload, "field_label");
       this.writeLine(
-        `Typing ${formatFieldLabel(fieldLabel)} could not fall back to direct input.`
+        `Typing ${formatFieldLabel(fieldLabel)} could not fall back to direct input.`,
       );
       return;
     }
@@ -121,7 +135,9 @@ export class HeadlessLoginProgressReporter {
     }
 
     if (readBoolean(entry.payload, "timedOut")) {
-      this.writeLine("Headless login timed out before LinkedIn confirmed the session.");
+      this.writeLine(
+        "Headless login timed out before LinkedIn confirmed the session.",
+      );
       return;
     }
 
@@ -131,23 +147,55 @@ export class HeadlessLoginProgressReporter {
         this.writeLine(
           readBoolean(entry.payload, "mfaRequired")
             ? "Headless login requires a LinkedIn verification code."
-            : "Headless login stopped at a LinkedIn verification-code checkpoint."
+            : "Headless login stopped at a LinkedIn verification-code checkpoint.",
         );
         return;
       case "app_approval":
         this.writeLine("Headless login is waiting for LinkedIn app approval.");
         return;
-      case "captcha":
-        this.writeLine("Headless login stopped at a LinkedIn CAPTCHA checkpoint.");
+      case "captcha": {
+        const captchaCooldownUntil = readString(
+          entry.payload,
+          "rateLimitUntil",
+        );
+        this.writeLine(
+          "Headless login stopped at a LinkedIn CAPTCHA checkpoint.",
+        );
+        if (captchaCooldownUntil) {
+          this.writeLine(
+            `Cooldown active until ${captchaCooldownUntil}. Subsequent headless attempts will be blocked.`,
+          );
+        }
+        this.writeLine(
+          'Use "linkedin login" (non-headless) or "linkedin auth session" to authenticate manually.',
+        );
         return;
+      }
       case "rate_limited":
         this.writeLine("Headless login hit LinkedIn's rate-limit checkpoint.");
         return;
-      case "unknown":
-        this.writeLine("Headless login stopped at an unknown LinkedIn checkpoint.");
+      case "unknown": {
+        const unknownCooldownUntil = readString(
+          entry.payload,
+          "rateLimitUntil",
+        );
+        this.writeLine(
+          "Headless login stopped at an unknown LinkedIn checkpoint.",
+        );
+        if (unknownCooldownUntil) {
+          this.writeLine(
+            `Cooldown active until ${unknownCooldownUntil}. Subsequent headless attempts will be blocked.`,
+          );
+        }
+        this.writeLine(
+          'Use "linkedin login" (non-headless) or "linkedin auth session" to authenticate manually.',
+        );
         return;
+      }
       default:
-        this.writeLine("Headless login finished without an authenticated session.");
+        this.writeLine(
+          "Headless login finished without an authenticated session.",
+        );
     }
   }
 }

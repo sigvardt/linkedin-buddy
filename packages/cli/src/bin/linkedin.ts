@@ -5245,6 +5245,8 @@ async function runHeadlessLogin(
       checkpoint: result.checkpoint,
       checkpointType: result.checkpointType,
       mfaRequired: result.mfaRequired,
+      rateLimitActive: result.rateLimitActive,
+      rateLimitUntil: result.rateLimitUntil,
     });
 
     printJson({ run_id: runtime.runId, ...result });

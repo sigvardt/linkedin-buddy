@@ -185,7 +185,7 @@ describe("HeadlessLoginResult interface", () => {
     expect(result.mfaRequired).toBeUndefined();
   });
 
-  it("can represent a captcha checkpoint", () => {
+  it("can represent a captcha checkpoint with cooldown", () => {
     const result: HeadlessLoginResult = {
       authenticated: false,
       checkedAt: new Date().toISOString(),
@@ -194,11 +194,15 @@ describe("HeadlessLoginResult interface", () => {
       timedOut: false,
       checkpoint: true,
       checkpointType: "captcha",
+      rateLimitActive: true,
+      rateLimitUntil: "2026-02-23T12:00:00.000Z",
     };
     expect(result.checkpointType).toBe("captcha");
+    expect(result.rateLimitActive).toBe(true);
+    expect(result.rateLimitUntil).toBeDefined();
   });
 
-  it("can represent an unknown checkpoint type", () => {
+  it("can represent an unknown checkpoint type with cooldown", () => {
     const result: HeadlessLoginResult = {
       authenticated: false,
       checkedAt: new Date().toISOString(),
@@ -207,8 +211,12 @@ describe("HeadlessLoginResult interface", () => {
       timedOut: false,
       checkpoint: true,
       checkpointType: "unknown",
+      rateLimitActive: true,
+      rateLimitUntil: "2026-02-23T12:00:00.000Z",
     };
     expect(result.checkpointType).toBe("unknown");
+    expect(result.rateLimitActive).toBe(true);
+    expect(result.rateLimitUntil).toBeDefined();
   });
 
   it("can represent a rate_limited checkpoint type", () => {
