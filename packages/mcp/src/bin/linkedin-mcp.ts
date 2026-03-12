@@ -1595,7 +1595,7 @@ async function handleProfilePrepareUpdatePublicProfile(
     if (!vanityName && !customProfileUrl && !publicProfileUrl) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        "vanityName, customProfileUrl, or publicProfileUrl is required."
+        'At least one of vanityName, customProfileUrl, or publicProfileUrl is required. Provide a vanity slug (e.g. "avery-cole") or a full LinkedIn profile URL.'
       );
     }
 
@@ -5274,7 +5274,7 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
       {
         name: LINKEDIN_PROFILE_PREPARE_UPDATE_SETTINGS_TOOL,
         description:
-          "Prepare a LinkedIn profile settings update (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+          'Prepare a LinkedIn profile settings update (two-phase: returns confirm token). Currently supports changing the industry field. Use linkedin.actions.confirm to execute. Example: { "industry": "Software Development" }',
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -5286,7 +5286,7 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
             },
             industry: {
               type: "string",
-              description: "Primary professional category / industry."
+              description: 'Primary professional category / industry as shown on LinkedIn. Example values: "Software Development", "Financial Services", "Marketing and Advertising".'
             },
             operatorNote: {
               type: "string",
@@ -5298,7 +5298,7 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
       {
         name: LINKEDIN_PROFILE_PREPARE_UPDATE_PUBLIC_PROFILE_TOOL,
         description:
-          "Prepare a LinkedIn public profile URL / vanity URL update (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+          'Prepare a LinkedIn public profile URL / vanity URL update (two-phase: returns confirm token). Provide exactly one of vanityName, customProfileUrl, or publicProfileUrl. Vanity name must be 3–100 chars, letters/digits/hyphens only. Use linkedin.actions.confirm to execute. Example: { "vanityName": "avery-cole" }',
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -5309,17 +5309,17 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
             },
             vanityName: {
               type: "string",
-              description: "Requested public profile vanity name (slug only)."
+              description: 'Requested public profile vanity name (slug only, 3–100 chars, letters/digits/hyphens). Example: "avery-cole".'
             },
             customProfileUrl: {
               type: "string",
               description:
-                "Requested public profile vanity name or full LinkedIn profile URL. Alias for vanityName."
+                'Requested public profile vanity name or full LinkedIn profile URL. Alias for vanityName. Example: "https://www.linkedin.com/in/avery-cole/".'
             },
             publicProfileUrl: {
               type: "string",
               description:
-                "Requested public profile URL. Use this instead of vanityName if you already have a linkedin.com/in/... URL."
+                'Requested public profile URL. Use this instead of vanityName if you already have a linkedin.com/in/... URL. Example: "https://www.linkedin.com/in/avery-cole/".'
             },
             operatorNote: {
               type: "string",

@@ -647,10 +647,9 @@ function describeSectionItem(
     case "experience":
     case "education":
     case "certifications":
+    case "languages":
     case "volunteer_experience":
     case "honors_awards":
-      return joinSummaryParts(item.primary_text, item.secondary_text);
-    case "languages":
       return joinSummaryParts(item.primary_text, item.secondary_text);
     case "projects":
       return readString(item.primary_text);

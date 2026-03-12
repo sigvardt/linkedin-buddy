@@ -11276,7 +11276,7 @@ export function createCliProgram(): Command {
     )
     .requiredOption(
       "--industry <industry>",
-      "Primary professional category / industry",
+      'Primary professional category / industry (e.g. "Software Development")',
     )
     .option("-p, --profile <profile>", "Profile name", "default")
     .option(
@@ -11309,7 +11309,7 @@ export function createCliProgram(): Command {
     )
     .argument(
       "<vanityName>",
-      "Custom public profile vanity name or linkedin.com/in/ URL",
+      'Custom public profile vanity name (e.g. "avery-cole") or linkedin.com/in/ URL. Must be 3\u2013100 chars, letters/digits/hyphens only.',
     )
     .option("-p, --profile <profile>", "Profile name", "default")
     .option(
