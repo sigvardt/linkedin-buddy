@@ -7,7 +7,7 @@ on:
 
 permissions:
   issues: write
-  contents: write
+  contents: read
   pull-requests: write
 
 jobs:
@@ -27,11 +27,28 @@ jobs:
           echo "issue_number=$ISSUE_NUM" >> "$GITHUB_OUTPUT"
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
 
-          # Find the PR for this branch
           PR_NUM=$(gh pr list --repo "${{ github.repository }}" --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
           echo "pr_number=$PR_NUM" >> "$GITHUB_OUTPUT"
 
-      - name: Close stale PR and recycle issue
+      - name: Get CI failure details
+        id: failure
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RUN_ID="${{ github.event.workflow_run.id }}"
+          REPO="${{ github.repository }}"
+
+          # Get failed job logs summary
+          FAILED_JOBS=$(gh run view "$RUN_ID" --repo "$REPO" --json jobs --jq '[.jobs[] | select(.conclusion == "failure") | .name] | join(", ")' 2>/dev/null || echo "unknown")
+          echo "failed_jobs=$FAILED_JOBS" >> "$GITHUB_OUTPUT"
+
+          # Try to get the actual error output
+          ERROR_LOG=$(gh run view "$RUN_ID" --repo "$REPO" --log-failed 2>/dev/null | grep -E "(error|Error|FAIL|✖)" | head -10 | sed 's/"/\\"/g' || echo "Could not retrieve error details")
+          
+          # Write to file to avoid shell escaping issues
+          echo "$ERROR_LOG" > /tmp/error_log.txt
+
+      - name: Post failure context and relabel for retry
         if: steps.extract.outputs.issue_number != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -39,28 +56,35 @@ jobs:
           ISSUE_NUM="${{ steps.extract.outputs.issue_number }}"
           PR_NUM="${{ steps.extract.outputs.pr_number }}"
           BRANCH="${{ steps.extract.outputs.branch }}"
+          FAILED_JOBS="${{ steps.failure.outputs.failed_jobs }}"
           REPO="${{ github.repository }}"
           RUN_URL="${{ github.event.workflow_run.html_url }}"
+          ERROR_LOG=$(cat /tmp/error_log.txt)
 
-          echo "Issue: #$ISSUE_NUM, PR: #$PR_NUM, Branch: $BRANCH"
-
-          # Close the PR if it exists
-          if [ -n "$PR_NUM" ]; then
-            gh pr close "$PR_NUM" --repo "$REPO" \
-              --comment "🔄 CI failed — closing PR and recycling issue for fresh attempt. [Failed CI run]($RUN_URL)" \
-              --delete-branch || true
-          fi
-
-          # Relabel issue back to ai-task
+          # Keep the PR open — the AI will fix the issue on the existing branch
+          # Just relabel the issue so the orchestrator picks it up
           gh issue edit "$ISSUE_NUM" --repo "$REPO" \
             --remove-label "ai-in-progress" \
             --remove-label "ai-review-ready" \
-            --remove-label "ai-blocked" \
             --add-label "ai-task,ai-debugging" 2>/dev/null || true
 
-          gh issue comment "$ISSUE_NUM" --repo "$REPO" \
-            --body "## ♻️ CI Failure Recovery
+          # Post detailed failure context so the AI knows exactly what to fix
+          cat > /tmp/comment.md << COMMENT_EOF
+          ## ⚠️ CI Failure — Fix Needed
 
-CI failed on branch \`$BRANCH\`. PR #$PR_NUM closed and issue relabeled to \`ai-task\` for the orchestrator to retry with a fresh branch from current main.
+          **Branch:** \`$BRANCH\` (PR #$PR_NUM still open — fix on existing branch, don't start fresh)
+          **Failed jobs:** $FAILED_JOBS
+          **Run:** [View CI logs]($RUN_URL)
 
-[View failed CI run]($RUN_URL)"
+          **Error output:**
+          \`\`\`
+          $ERROR_LOG
+          \`\`\`
+
+          **Action:** Relabeled to \`ai-task\`. Orchestrator will pick this up — check out the existing branch, fix the CI error above, and push. Do NOT create a new branch or PR.
+          COMMENT_EOF
+
+          # Trim leading whitespace from heredoc
+          sed -i 's/^          //' /tmp/comment.md
+
+          gh issue comment "$ISSUE_NUM" --repo "$REPO" --body-file /tmp/comment.md
