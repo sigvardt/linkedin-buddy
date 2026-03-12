@@ -89,6 +89,12 @@ npm exec -w @linkedin-buddy/cli -- linkedin auth session --session default
 npm exec -w @linkedin-buddy/cli -- linkedin search "developer relations" --category people --limit 5
 ```
 
+> **Tip:** The CLI installs three equivalent binaries — `linkedin`, `linkedin-buddy`, and `lbud`. After a global `npm install` (once published) any of these work directly:
+>
+> ```bash
+> lbud search "developer relations" --category people --limit 5
+> ```
+
 ## Demo
 
 <p align="center">

@@ -66,7 +66,7 @@ If you touch outbound LinkedIn actions:
 
 This repo has three public surfaces that should stay in sync:
 
-- `linkedin` CLI
+- `linkedin` CLI (also available as `linkedin-buddy` and `lbud`)
 - `linkedin-mcp`
 - `@linkedin-buddy/core`
 
