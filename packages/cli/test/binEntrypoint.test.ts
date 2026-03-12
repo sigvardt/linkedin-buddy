@@ -16,7 +16,7 @@ describe("CLI entrypoint detection", () => {
     }
   });
 
-  it("treats symlinked bin aliases as direct execution", async () => {
+  it("treats symlinked lbud alias as direct execution", async () => {
     tempDir = await mkdtemp(path.join(os.tmpdir(), "linkedin-cli-entrypoint-"));
 
     const targetPath = path.join(tempDir, "linkedin.js");
@@ -25,7 +25,23 @@ describe("CLI entrypoint detection", () => {
     await writeFile(targetPath, "#!/usr/bin/env node\n", "utf8");
     await symlink(targetPath, aliasPath);
 
-    expect(isDirectExecution(pathToFileURL(targetPath).href, aliasPath)).toBe(true);
+    expect(isDirectExecution(pathToFileURL(targetPath).href, aliasPath)).toBe(
+      true,
+    );
+  });
+
+  it("treats symlinked linkedin-buddy alias as direct execution", async () => {
+    tempDir = await mkdtemp(path.join(os.tmpdir(), "linkedin-cli-entrypoint-"));
+
+    const targetPath = path.join(tempDir, "linkedin.js");
+    const aliasPath = path.join(tempDir, "linkedin-buddy");
+
+    await writeFile(targetPath, "#!/usr/bin/env node\n", "utf8");
+    await symlink(targetPath, aliasPath);
+
+    expect(isDirectExecution(pathToFileURL(targetPath).href, aliasPath)).toBe(
+      true,
+    );
   });
 
   it("rejects unrelated entrypoints", async () => {
@@ -37,6 +53,8 @@ describe("CLI entrypoint detection", () => {
     await writeFile(targetPath, "#!/usr/bin/env node\n", "utf8");
     await writeFile(otherPath, "#!/usr/bin/env node\n", "utf8");
 
-    expect(isDirectExecution(pathToFileURL(targetPath).href, otherPath)).toBe(false);
+    expect(isDirectExecution(pathToFileURL(targetPath).href, otherPath)).toBe(
+      false,
+    );
   });
 });
