@@ -496,7 +496,26 @@ export class LinkedInAuthService {
         const signInButton = page.locator(
           "button[type='submit'][data-litms-control-urn='login-submit'], button[type='submit']:has-text('Sign in')",
         );
-        await signInButton.first().click();
+
+        try {
+          await signInButton.first().click();
+        } catch {
+          await page
+            .evaluate(() => {
+              const form = document.querySelector<HTMLFormElement>(
+                "form.login__form, form[action*='login-submit'], form[data-id='sign-in-form']",
+              );
+              if (form) {
+                form.submit();
+                return;
+              }
+              const btn = document.querySelector<HTMLButtonElement>(
+                "button[type='submit']",
+              );
+              btn?.click();
+            })
+            .catch(() => undefined);
+        }
 
         await page.waitForTimeout(2_000);
 
@@ -658,25 +677,33 @@ export class LinkedInAuthService {
             } else if (checkpointType === "app_approval") {
               // Continue polling while LinkedIn awaits approval from a trusted device.
             } else if (checkpointType === "captcha") {
-              const rateLimitState = await recordRateLimit();
-              return {
-                ...status,
-                timedOut: false,
-                checkpoint: true,
-                checkpointType: "captcha",
-                rateLimitActive: true,
-                rateLimitUntil: rateLimitState.rateLimitedUntil,
-              };
+              if (!useHeaded) {
+                const rateLimitState = await recordRateLimit();
+                return {
+                  ...status,
+                  timedOut: false,
+                  checkpoint: true,
+                  checkpointType: "captcha",
+                  rateLimitActive: true,
+                  rateLimitUntil: rateLimitState.rateLimitedUntil,
+                };
+              }
+              // In headed mode, continue polling so the user can solve
+              // the CAPTCHA manually in the visible browser window.
             } else {
-              const rateLimitState = await recordRateLimit();
-              return {
-                ...status,
-                timedOut: false,
-                checkpoint: true,
-                checkpointType: "unknown",
-                rateLimitActive: true,
-                rateLimitUntil: rateLimitState.rateLimitedUntil,
-              };
+              if (!useHeaded) {
+                const rateLimitState = await recordRateLimit();
+                return {
+                  ...status,
+                  timedOut: false,
+                  checkpoint: true,
+                  checkpointType: "unknown",
+                  rateLimitActive: true,
+                  rateLimitUntil: rateLimitState.rateLimitedUntil,
+                };
+              }
+              // In headed mode, continue polling for unknown checkpoints
+              // to allow manual resolution in the visible browser.
             }
           }
 
