@@ -1,0 +1,66 @@
+name: AI CI Failure Recovery
+
+on:
+  check_suite:
+    types: [completed]
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  recover:
+    if: >
+      github.event.check_suite.conclusion == 'failure' &&
+      startsWith(github.event.check_suite.head_branch, 'ai/issue-')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract issue number from branch
+        id: extract
+        run: |
+          BRANCH="${{ github.event.check_suite.head_branch }}"
+          # Branch format: ai/issue-{number}-{slug}
+          ISSUE_NUM=$(echo "$BRANCH" | sed -E 's|^ai/issue-([0-9]+).*|\1|')
+          echo "issue_number=$ISSUE_NUM" >> "$GITHUB_OUTPUT"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Re-label issue for retry
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueNumber = parseInt('${{ steps.extract.outputs.issue_number }}');
+            const branch = '${{ steps.extract.outputs.branch }}';
+            
+            // Remove ai-in-progress, add ai-task so orchestrator picks it up again
+            try {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                name: 'ai-in-progress'
+              });
+            } catch (e) {
+              // Label might not exist, that's fine
+            }
+            
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              labels: ['ai-task', 'ai-debugging']
+            });
+            
+            // Post a comment noting the CI failure
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body: `## ⚠️ CI Failure Detected
+
+CI failed on branch \`${branch}\`.
+
+**Action:** Re-queued for the orchestrator to pick up and fix.
+
+[View CI run](${runUrl})`
+            });
