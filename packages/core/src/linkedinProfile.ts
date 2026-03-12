@@ -307,22 +307,19 @@ export interface PrepareUpdateIntroInput {
   operatorNote?: string;
 }
 
-export interface PrepareUpdateProfileSettingsInput {
+export interface PrepareUpdateSettingsInput {
   profileName?: string;
   industry?: string;
   operatorNote?: string;
 }
 
-export interface PrepareUpdateProfilePublicProfileInput {
+export interface PrepareUpdatePublicProfileInput {
   profileName?: string;
   vanityName?: string;
   customProfileUrl?: string;
   publicProfileUrl?: string;
   operatorNote?: string;
 }
-
-export type PrepareUpdateSettingsInput = PrepareUpdateProfileSettingsInput;
-export type PrepareUpdatePublicProfileInput = PrepareUpdateProfilePublicProfileInput;
 
 export interface PrepareUpsertSectionItemInput {
   profileName?: string;
@@ -1618,6 +1615,31 @@ function normalizeLinkedInFeaturedPostUrl(value: string | undefined): string {
   }
 }
 
+function validateVanityNameFormat(slug: string, rawInput: string): void {
+  if (slug.length < 3 || slug.length > 100) {
+    throw new LinkedInBuddyError(
+      "ACTION_PRECONDITION_FAILED",
+      `Vanity name must be between 3 and 100 characters (got ${String(slug.length)}). LinkedIn rejects vanity names outside this range.`,
+      {
+        value: rawInput,
+        vanityName: slug,
+        length: slug.length,
+      }
+    );
+  }
+
+  if (!/^[a-zA-Z0-9-]+$/u.test(slug)) {
+    throw new LinkedInBuddyError(
+      "ACTION_PRECONDITION_FAILED",
+      "Vanity name may only contain letters, digits, and hyphens. LinkedIn rejects other characters.",
+      {
+        value: rawInput,
+        vanityName: slug,
+      }
+    );
+  }
+}
+
 function normalizeLinkedInVanityName(value: string | undefined): string {
   const normalizedValue = requireNonEmptyText(
     value,
@@ -1633,13 +1655,14 @@ function normalizeLinkedInVanityName(value: string | undefined): string {
     if (trimmed.length === 0 || /[/?#]/.test(trimmed)) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        "vanityName must be a LinkedIn vanity slug or linkedin.com/in/ URL.",
+        'vanityName must be a plain slug (e.g. "avery-cole") or a linkedin.com/in/ URL. Got a value with path separators or query characters.',
         {
           value: normalizedValue
         }
       );
     }
 
+    validateVanityNameFormat(trimmed, normalizedValue);
     return trimmed;
   }
 
@@ -1653,14 +1676,16 @@ function normalizeLinkedInVanityName(value: string | undefined): string {
     if (!isLinkedInDomain || !vanityMatch?.[1]) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        "publicProfileUrl must point to linkedin.com/in/<vanity-name>/.",
+        'publicProfileUrl must be a LinkedIn profile URL like "https://www.linkedin.com/in/your-name/". The URL must be on linkedin.com and include /in/<vanity-name>/.',
         {
           value: normalizedValue
         }
       );
     }
 
-    return decodeURIComponent(vanityMatch[1]);
+    const slug = decodeURIComponent(vanityMatch[1]);
+    validateVanityNameFormat(slug, normalizedValue);
+    return slug;
   } catch (error) {
     if (error instanceof LinkedInBuddyError) {
       throw error;
@@ -1680,7 +1705,7 @@ function buildLinkedInPublicProfileUrl(vanityName: string): string {
 
 function normalizePreparedPublicProfileInput(
   input: Pick<
-    PrepareUpdateProfilePublicProfileInput,
+    PrepareUpdatePublicProfileInput,
     "vanityName" | "customProfileUrl" | "publicProfileUrl"
   >
 ): {
@@ -7931,7 +7956,7 @@ export class LinkedInProfileService {
   }
 
   prepareUpdateSettings(
-    input: PrepareUpdateProfileSettingsInput
+    input: PrepareUpdateSettingsInput
   ): PreparedActionResult {
     const profileName = input.profileName ?? "default";
     const updates = normalizeEditableValues(
@@ -7963,7 +7988,7 @@ export class LinkedInProfileService {
   }
 
   prepareUpdatePublicProfile(
-    input: PrepareUpdateProfilePublicProfileInput
+    input: PrepareUpdatePublicProfileInput
   ): PreparedActionResult {
     const profileName = input.profileName ?? "default";
     const publicProfile = normalizePreparedPublicProfileInput(input);
