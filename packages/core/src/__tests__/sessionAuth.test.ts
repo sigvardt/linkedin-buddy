@@ -144,7 +144,6 @@ function createContextWithPage(page: Page): BrowserContext {
     pages: vi.fn(() => [page]),
     newPage: vi.fn(async () => page),
     cookies: vi.fn(async () => []),
-    clearCookies: vi.fn(async () => undefined),
     addCookies: vi.fn(async () => undefined),
   } as unknown as BrowserContext;
 }
