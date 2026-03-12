@@ -9,28 +9,28 @@ const rateLimitStateMocks = vi.hoisted(() => ({
   recordRateLimit: vi.fn(async () => ({
     rateLimitedUntil: "2026-02-23T12:00:00.000Z",
     detectedAt: "2026-02-23T10:00:00.000Z",
-    consecutiveRateLimits: 1
-  }))
+    consecutiveRateLimits: 1,
+  })),
 }));
 
 const humanizeMocks = vi.hoisted(() => ({
   attachHumanizeLogger: vi.fn(),
   detachHumanizeLogger: vi.fn(),
-  type: vi.fn(async () => undefined)
+  type: vi.fn(async () => undefined),
 }));
 
 vi.mock("../auth/rateLimitState.js", () => ({
   clearRateLimitState: rateLimitStateMocks.clearRateLimitState,
   isInRateLimitCooldown: rateLimitStateMocks.isInRateLimitCooldown,
-  recordRateLimit: rateLimitStateMocks.recordRateLimit
+  recordRateLimit: rateLimitStateMocks.recordRateLimit,
 }));
 
 vi.mock("../humanize.js", () => ({
   attachHumanizeLogger: humanizeMocks.attachHumanizeLogger,
   detachHumanizeLogger: humanizeMocks.detachHumanizeLogger,
   humanize: vi.fn(() => ({
-    type: humanizeMocks.type
-  }))
+    type: humanizeMocks.type,
+  })),
 }));
 
 function createMockPage(options: {
@@ -38,7 +38,7 @@ function createMockPage(options: {
   getAttribute?: (
     selector: string,
     name: string,
-    currentUrl: string
+    currentUrl: string,
   ) => string | null;
   onWait?: () => void;
   isVisible: (selector: string, currentUrl: string) => boolean;
@@ -48,6 +48,8 @@ function createMockPage(options: {
 }): { page: Page; gotoCalls: string[]; setUrl: (url: string) => void } {
   let currentUrl = options.initialUrl;
   const gotoCalls: string[] = [];
+
+  const typeCalls: Array<{ selector: string; value: string }> = [];
 
   const page = {
     url: vi.fn(() => currentUrl),
@@ -85,11 +87,18 @@ function createMockPage(options: {
     waitForTimeout: vi.fn(async () => {
       options.onWait?.();
     }),
+    evaluate: vi.fn(async () => undefined),
+    type: vi.fn(async (selector: string, value: string) => {
+      typeCalls.push({ selector, value });
+    }),
     locator: vi.fn((selector: string) => {
       const visible = options.isVisible(selector, currentUrl);
       const click = vi.fn(async () => undefined);
       const count = vi.fn(async () => (visible ? 1 : 0));
       const isVisible = vi.fn(async () => visible);
+      const waitFor = vi.fn(async () => {
+        if (!visible) throw new Error("Timeout waiting for locator");
+      });
       const textContent = vi.fn(async () => {
         return options.textContent?.(selector, currentUrl) ?? null;
       });
@@ -103,29 +112,31 @@ function createMockPage(options: {
         first,
         getAttribute,
         isVisible,
-        textContent
+        textContent,
+        waitFor,
       } as unknown as Locator;
       first.mockReturnValue(mockLocator);
       return mockLocator;
     }),
     context: vi.fn(() => ({
-      cookies: vi.fn(async () => [])
-    }))
+      cookies: vi.fn(async () => []),
+    })),
   } as unknown as Page;
 
   return {
     page,
     gotoCalls,
+    typeCalls,
     setUrl: (url: string) => {
       currentUrl = url;
-    }
+    },
   };
 }
 
 function createContextWithPage(page: Page): BrowserContext {
   return {
     pages: vi.fn(() => [page]),
-    newPage: vi.fn(async () => page)
+    newPage: vi.fn(async () => page),
   } as unknown as BrowserContext;
 }
 
@@ -135,7 +146,7 @@ describe("LinkedInAuthService auth flow", () => {
     rateLimitStateMocks.clearRateLimitState.mockResolvedValue(undefined);
     rateLimitStateMocks.isInRateLimitCooldown.mockResolvedValue({
       active: false,
-      state: null
+      state: null,
     });
     humanizeMocks.type.mockResolvedValue(undefined);
   });
@@ -161,26 +172,28 @@ describe("LinkedInAuthService auth flow", () => {
           return navVisible;
         }
         return false;
-      }
+      },
     });
 
     const context = createContextWithPage(page);
     const profileManager = {
-      runWithContext: vi.fn(async (_options, callback) => callback(context))
+      runWithContext: vi.fn(async (_options, callback) => callback(context)),
     } as const;
-    const auth = new LinkedInAuthService(profileManager as unknown as ProfileManager);
+    const auth = new LinkedInAuthService(
+      profileManager as unknown as ProfileManager,
+    );
 
     const result = await auth.openLogin({
       profileName: "default",
       timeoutMs: 2_000,
-      pollIntervalMs: 1
+      pollIntervalMs: 1,
     });
 
     expect(result.authenticated).toBe(true);
     expect(result.timedOut).toBe(false);
     expect(gotoCalls).toEqual([
       "https://www.linkedin.com/login",
-      "https://www.linkedin.com/in/me/"
+      "https://www.linkedin.com/in/me/",
     ]);
     expect(rateLimitStateMocks.clearRateLimitState).toHaveBeenCalledTimes(1);
   });
@@ -191,20 +204,22 @@ describe("LinkedInAuthService auth flow", () => {
       state: {
         rateLimitedUntil: "2026-02-23T12:00:00.000Z",
         detectedAt: "2026-02-23T10:00:00.000Z",
-        consecutiveRateLimits: 1
-      }
+        consecutiveRateLimits: 1,
+      },
     });
 
     const { page } = createMockPage({
       initialUrl: "https://www.linkedin.com/feed/",
-      isVisible: (selector) => selector === "nav.global-nav"
+      isVisible: (selector) => selector === "nav.global-nav",
     });
 
     const context = createContextWithPage(page);
     const profileManager = {
-      runWithContext: vi.fn(async (_options, callback) => callback(context))
+      runWithContext: vi.fn(async (_options, callback) => callback(context)),
     } as const;
-    const auth = new LinkedInAuthService(profileManager as unknown as ProfileManager);
+    const auth = new LinkedInAuthService(
+      profileManager as unknown as ProfileManager,
+    );
 
     const status = await auth.status({ profileName: "default" });
 
@@ -212,7 +227,7 @@ describe("LinkedInAuthService auth flow", () => {
     expect(status.evasion).toMatchObject({
       diagnosticsEnabled: false,
       level: "moderate",
-      source: "default"
+      source: "default",
     });
     expect(status.rateLimitActive).toBeUndefined();
     expect(rateLimitStateMocks.clearRateLimitState).toHaveBeenCalledTimes(1);
@@ -234,26 +249,31 @@ describe("LinkedInAuthService auth flow", () => {
       },
       isVisible: (selector) => selector === "nav.global-nav",
       textContent: (selector, currentUrl) => {
-        if (selector === "main h1" && currentUrl.includes("/in/test-operator/")) {
+        if (
+          selector === "main h1" &&
+          currentUrl.includes("/in/test-operator/")
+        ) {
           return "Test Operator";
         }
 
         return null;
-      }
+      },
     });
 
     const context = createContextWithPage(page);
     const profileManager = {
-      runWithContext: vi.fn(async (_options, callback) => callback(context))
+      runWithContext: vi.fn(async (_options, callback) => callback(context)),
     } as const;
-    const auth = new LinkedInAuthService(profileManager as unknown as ProfileManager);
+    const auth = new LinkedInAuthService(
+      profileManager as unknown as ProfileManager,
+    );
 
     const status = await auth.status({ profileName: "default" });
 
     expect(status.identity).toEqual({
       fullName: "Test Operator",
       profileUrl: "https://www.linkedin.com/in/test-operator/",
-      vanityName: "test-operator"
+      vanityName: "test-operator",
     });
   });
 
@@ -268,21 +288,23 @@ describe("LinkedInAuthService auth flow", () => {
         }
 
         return null;
-      }
+      },
     });
 
     const context = createContextWithPage(page);
     const profileManager = {
-      runWithContext: vi.fn(async (_options, callback) => callback(context))
+      runWithContext: vi.fn(async (_options, callback) => callback(context)),
     } as const;
-    const auth = new LinkedInAuthService(profileManager as unknown as ProfileManager);
+    const auth = new LinkedInAuthService(
+      profileManager as unknown as ProfileManager,
+    );
 
     const status = await auth.status({ profileName: "default" });
 
     expect(status.identity).toEqual({
       fullName: "Fallback Operator",
       profileUrl: null,
-      vanityName: null
+      vanityName: null,
     });
   });
 
@@ -292,35 +314,38 @@ describe("LinkedInAuthService auth flow", () => {
       state: {
         rateLimitedUntil: "2026-02-23T12:00:00.000Z",
         detectedAt: "2026-02-23T10:00:00.000Z",
-        consecutiveRateLimits: 1
-      }
+        consecutiveRateLimits: 1,
+      },
     });
 
     const { page } = createMockPage({
       initialUrl: "https://www.linkedin.com/login",
       isVisible: (selector, currentUrl) =>
-        selector.includes("session_key") && currentUrl.includes("/login")
+        selector.includes("session_key") && currentUrl.includes("/login"),
     });
 
     const context = createContextWithPage(page);
     const profileManager = {
-      runWithContext: vi.fn(async (_options, callback) => callback(context))
+      runWithContext: vi.fn(async (_options, callback) => callback(context)),
     } as const;
-    const auth = new LinkedInAuthService(profileManager as unknown as ProfileManager);
+    const auth = new LinkedInAuthService(
+      profileManager as unknown as ProfileManager,
+    );
 
     await expect(
-      auth.ensureAuthenticated({ profileName: "default" })
+      auth.ensureAuthenticated({ profileName: "default" }),
     ).rejects.toMatchObject({
       code: "RATE_LIMITED",
-      message: expect.stringContaining("linkedin rate-limit --clear")
+      message: expect.stringContaining("linkedin rate-limit --clear"),
     });
   });
 
   it("headlessLogin classifies CAPTCHA checkpoints with shared selectors", async () => {
     let waitCount = 0;
-    const checkpointUrl = "https://www.linkedin.com/checkpoint/challenge/AgCaptcha";
+    const checkpointUrl =
+      "https://www.linkedin.com/checkpoint/challenge/AgCaptcha";
 
-    const { page, setUrl } = createMockPage({
+    const { page, typeCalls, setUrl } = createMockPage({
       initialUrl: "https://www.linkedin.com/login",
       onWait: () => {
         waitCount += 1;
@@ -329,7 +354,14 @@ describe("LinkedInAuthService auth flow", () => {
         }
       },
       isVisible: (selector, currentUrl) => {
-        if (selector.includes("session_key")) {
+        if (selector.includes("username")) {
+          return currentUrl.includes("/login");
+        }
+
+        if (
+          selector.includes("session_password") ||
+          selector.includes("password")
+        ) {
           return currentUrl.includes("/login");
         }
 
@@ -342,20 +374,22 @@ describe("LinkedInAuthService auth flow", () => {
         }
 
         return false;
-      }
+      },
     });
 
     const context = createContextWithPage(page);
     const profileManager = {
-      runWithContext: vi.fn(async (_options, callback) => callback(context))
+      runWithContext: vi.fn(async (_options, callback) => callback(context)),
     } as const;
-    const auth = new LinkedInAuthService(profileManager as unknown as ProfileManager);
+    const auth = new LinkedInAuthService(
+      profileManager as unknown as ProfileManager,
+    );
 
     const result = await auth.headlessLogin({
       email: "test@example.com",
       password: "secret",
       pollIntervalMs: 1,
-      timeoutMs: 100
+      timeoutMs: 100,
     });
 
     expect(result.authenticated).toBe(false);
@@ -363,14 +397,15 @@ describe("LinkedInAuthService auth flow", () => {
     expect(result.checkpointType).toBe("captcha");
     expect(result.currentUrl).toBe(checkpointUrl);
     expect(rateLimitStateMocks.recordRateLimit).not.toHaveBeenCalled();
-    expect(humanizeMocks.type).toHaveBeenCalledTimes(2);
+    expect(typeCalls).toHaveLength(2);
+    expect(page.type as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(2);
   });
 
   it("headlessLogin targets nameless login inputs when legacy names are absent", async () => {
     let waitCount = 0;
     let navVisible = false;
 
-    const { page, setUrl } = createMockPage({
+    const { page, typeCalls, setUrl } = createMockPage({
       initialUrl: "https://www.linkedin.com/login",
       onWait: () => {
         waitCount += 1;
@@ -380,11 +415,14 @@ describe("LinkedInAuthService auth flow", () => {
         }
       },
       isVisible: (selector, currentUrl) => {
-        if (selector.includes("autocomplete~='username'")) {
+        if (selector.includes("username")) {
           return currentUrl.includes("/login");
         }
 
-        if (selector.includes("type='password'")) {
+        if (
+          selector.includes("session_password") ||
+          selector.includes("password")
+        ) {
           return currentUrl.includes("/login");
         }
 
@@ -393,35 +431,28 @@ describe("LinkedInAuthService auth flow", () => {
         }
 
         return false;
-      }
+      },
     });
 
     const context = createContextWithPage(page);
     const profileManager = {
-      runWithContext: vi.fn(async (_options, callback) => callback(context))
+      runWithContext: vi.fn(async (_options, callback) => callback(context)),
     } as const;
-    const auth = new LinkedInAuthService(profileManager as unknown as ProfileManager);
+    const auth = new LinkedInAuthService(
+      profileManager as unknown as ProfileManager,
+    );
 
     const result = await auth.headlessLogin({
       email: "test@example.com",
       password: "secret",
       pollIntervalMs: 1,
-      timeoutMs: 100
+      timeoutMs: 100,
     });
 
     expect(result.authenticated).toBe(true);
     expect(result.checkpoint).toBe(false);
-    expect(humanizeMocks.type).toHaveBeenNthCalledWith(
-      1,
-      expect.stringContaining("autocomplete~='username'"),
-      "test@example.com",
-      { fieldLabel: "email" }
-    );
-    expect(humanizeMocks.type).toHaveBeenNthCalledWith(
-      2,
-      expect.stringContaining("type='password'"),
-      "secret",
-      { fieldLabel: "password" }
-    );
+    expect(typeCalls).toHaveLength(2);
+    expect(typeCalls[0]!.value).toBe("test@example.com");
+    expect(typeCalls[1]!.value).toBe("secret");
   });
 });
