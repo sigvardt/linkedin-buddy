@@ -49,6 +49,7 @@ export * from "./runtime.js";
 export * from "./scheduler.js";
 export * from "./selectorAudit.js";
 export * from "./selectorLocale.js";
+export * from "./shared.js";
 export * from "./stealth.js";
 export * from "./writeValidation.js";
 export * from "./webhookDelivery.js";
