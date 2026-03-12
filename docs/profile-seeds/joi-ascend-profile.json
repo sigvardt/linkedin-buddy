@@ -1,0 +1,127 @@
+{
+  "intro": {
+    "firstName": "Joi",
+    "lastName": "Ascend",
+    "headline": "Tech Lead at Signikant | Developer Tooling, AI Workflows, Platform Engineering",
+    "location": "Copenhagen, Denmark",
+    "industry": "Software Development",
+    "customProfileUrl": "joi-ascend"
+  },
+  "about": "I lead technical delivery at Signikant, where we build developer tooling and AI-assisted workflow infrastructure. My work sits at the intersection of platform engineering, developer experience, and applied AI — helping teams ship faster without trading away clarity or maintainability.\n\nMost of my time goes into designing systems that are easy to operate, extend, and debug. I care about incremental delivery, clean observability, and giving small teams the leverage to move like larger ones. When tooling is good, people focus on the problem instead of fighting the process.\n\nBefore Signikant, I spent time across backend services, quality engineering, and product-facing TypeScript/Node.js work in the Copenhagen tech community. I'm always interested in how we can make developer workflows more transparent and less fragile.",
+  "experience": [
+    {
+      "title": "Tech Lead",
+      "company": "Signikant",
+      "employmentType": "Full-time",
+      "location": "Copenhagen, Denmark",
+      "currentlyWorkingHere": true,
+      "startMonth": "January",
+      "startYear": "2024",
+      "description": "Lead architecture and delivery for developer tooling, AI workflow orchestration, and platform engineering. Design systems for agent-driven development, code quality automation, and human-in-the-loop review workflows."
+    },
+    {
+      "title": "Senior Software Engineer",
+      "company": "Signikant",
+      "employmentType": "Full-time",
+      "location": "Copenhagen, Denmark",
+      "startMonth": "March",
+      "startYear": "2022",
+      "endMonth": "December",
+      "endYear": "2023",
+      "description": "Built internal tooling and backend services supporting product delivery, developer experience, and operational reliability across the engineering organization."
+    },
+    {
+      "title": "Software Engineer",
+      "company": "Nordic Digital Labs",
+      "employmentType": "Full-time",
+      "location": "Copenhagen, Denmark",
+      "startMonth": "August",
+      "startYear": "2019",
+      "endMonth": "February",
+      "endYear": "2022",
+      "description": "Worked on product and platform surfaces in TypeScript and Node.js, with a focus on API design, testing infrastructure, and deployment pipelines."
+    }
+  ],
+  "education": [
+    {
+      "school": "University of Copenhagen",
+      "degree": "MSc",
+      "fieldOfStudy": "Computer Science",
+      "startMonth": "September",
+      "startYear": "2017",
+      "endMonth": "June",
+      "endYear": "2019",
+      "description": "Focus areas: distributed systems, software architecture, and applied machine learning."
+    },
+    {
+      "school": "IT University of Copenhagen",
+      "degree": "BSc",
+      "fieldOfStudy": "Software Development",
+      "startMonth": "September",
+      "startYear": "2014",
+      "endMonth": "June",
+      "endYear": "2017",
+      "description": "Coursework in algorithms, databases, human-computer interaction, and web engineering."
+    }
+  ],
+  "certifications": [
+    {
+      "name": "AWS Certified Solutions Architect – Associate",
+      "issuingOrganization": "Amazon Web Services",
+      "issueMonth": "March",
+      "issueYear": "2023",
+      "credentialId": "SAA-C03-2023-JA"
+    }
+  ],
+  "languages": [
+    {
+      "name": "English",
+      "proficiency": "Full professional proficiency"
+    },
+    {
+      "name": "Danish",
+      "proficiency": "Native or bilingual proficiency"
+    }
+  ],
+  "projects": [
+    {
+      "title": "Agent Orchestration Platform",
+      "description": "Designed and built a multi-agent orchestration system for parallel code development, supporting isolated worktrees, PR lifecycle management, and CI-aware recovery.",
+      "startMonth": "February",
+      "startYear": "2024"
+    },
+    {
+      "title": "Developer Workflow Toolkit",
+      "description": "Created a reusable CLI and TypeScript SDK for LinkedIn automation workflows, including search, inbox, feed, and profile management with safe two-phase write operations.",
+      "startMonth": "June",
+      "startYear": "2023"
+    }
+  ],
+  "volunteerExperience": [
+    {
+      "role": "Technical Mentor",
+      "organization": "Coding Pirates Denmark",
+      "cause": "Education",
+      "startMonth": "September",
+      "startYear": "2021",
+      "description": "Mentor young people in programming fundamentals, creative problem-solving, and collaborative software projects."
+    }
+  ],
+  "skills": [
+    "TypeScript",
+    "JavaScript",
+    "Node.js",
+    "Python",
+    "Platform Engineering",
+    "Developer Tooling",
+    "Applied AI",
+    "Agent Orchestration",
+    "CI/CD",
+    "Docker",
+    "AWS",
+    "PostgreSQL",
+    "Playwright",
+    "Observability",
+    "Technical Leadership"
+  ]
+}

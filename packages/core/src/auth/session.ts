@@ -1,29 +1,30 @@
+/* eslint-disable no-undef -- DOM types are valid inside page.evaluate() */
 import type { BrowserContext, Page } from "playwright-core";
 import { resolveEvasionConfig, type EvasionConfig } from "../config.js";
 import { detectCaptcha } from "../evasion/browser.js";
 import { LinkedInBuddyError } from "../errors.js";
-import { attachHumanizeLogger, detachHumanizeLogger, humanize } from "../humanize.js";
+import { attachHumanizeLogger, detachHumanizeLogger } from "../humanize.js";
 import type { JsonEventLogger } from "../logging.js";
 import { ProfileManager } from "../profileManager.js";
 import {
   inspectAuthenticatedLinkedInIdentity,
   inspectLinkedInSession,
   isRateLimitedChallengeUrl,
-  type LinkedInSessionIdentity
+  type LinkedInSessionIdentity,
 } from "./sessionInspection.js";
 import {
   LINKEDIN_LOGIN_EMAIL_INPUT_SELECTOR,
-  LINKEDIN_LOGIN_PASSWORD_INPUT_SELECTOR
+  LINKEDIN_LOGIN_PASSWORD_INPUT_SELECTOR,
 } from "./loginSelectors.js";
 import {
   DEFAULT_LINKEDIN_SELECTOR_LOCALE,
-  type LinkedInSelectorLocale
+  type LinkedInSelectorLocale,
 } from "../selectorLocale.js";
 import {
   clearRateLimitState,
   isInRateLimitCooldown,
   recordRateLimit,
-  type RateLimitState
+  type RateLimitState,
 } from "./rateLimitState.js";
 
 /** Authentication snapshot for a LinkedIn browser profile. */
@@ -109,10 +110,41 @@ async function sleep(ms: number): Promise<void> {
   });
 }
 
-async function enrichAuthenticatedSessionStatus<T extends { authenticated: boolean }>(
-  page: Page,
-  status: T
-): Promise<T & { identity?: LinkedInSessionIdentity }> {
+/**
+ * Dismiss LinkedIn's cookie consent banner when present. The banner renders as
+ * an `artdeco-global-alert` overlay with a `<header>` that intercepts pointer
+ * events, preventing normal Playwright clicks on both the banner buttons and
+ * the login form inputs underneath. We click via JS then remove the overlay
+ * DOM to guarantee the form is unblocked.
+ */
+async function dismissCookieConsentBanner(page: Page): Promise<void> {
+  if (typeof page.evaluate !== "function") return;
+
+  const dismissed = await page
+    .evaluate(() => {
+      const btn = document.querySelector<HTMLButtonElement>(
+        "button[action-type='ACCEPT'], button[action-type='DENY']",
+      );
+      if (btn && btn.offsetWidth > 0) {
+        btn.click();
+      }
+      for (const el of document.querySelectorAll(
+        ".artdeco-global-alert--COOKIE_CONSENT, .artdeco-global-alert",
+      )) {
+        el.remove();
+      }
+      return true;
+    })
+    .catch(() => false);
+
+  if (dismissed) {
+    await sleep(500);
+  }
+}
+
+async function enrichAuthenticatedSessionStatus<
+  T extends { authenticated: boolean },
+>(page: Page, status: T): Promise<T & { identity?: LinkedInSessionIdentity }> {
   if (!status.authenticated) {
     return status;
   }
@@ -121,7 +153,7 @@ async function enrichAuthenticatedSessionStatus<T extends { authenticated: boole
   return identity
     ? {
         ...status,
-        identity
+        identity,
       }
     : status;
 }
@@ -130,10 +162,9 @@ export class LinkedInAuthService {
   constructor(
     private readonly profileManager: ProfileManager,
     private readonly cdpUrl?: string,
-    private readonly selectorLocale: LinkedInSelectorLocale =
-      DEFAULT_LINKEDIN_SELECTOR_LOCALE,
+    private readonly selectorLocale: LinkedInSelectorLocale = DEFAULT_LINKEDIN_SELECTOR_LOCALE,
     private readonly logger?: Pick<JsonEventLogger, "log">,
-    private readonly evasion: EvasionConfig = resolveEvasionConfig()
+    private readonly evasion: EvasionConfig = resolveEvasionConfig(),
   ) {}
 
   /** Checks whether the profile currently looks authenticated to LinkedIn. */
@@ -145,34 +176,34 @@ export class LinkedInAuthService {
       {
         cdpUrl,
         profileName,
-        headless: true
+        headless: true,
       },
       async (context) => {
         const page = await getPage(context);
         await page.goto("https://www.linkedin.com/feed/", {
-          waitUntil: "domcontentloaded"
+          waitUntil: "domcontentloaded",
         });
         const status = await inspectLinkedInSession(page, {
-          selectorLocale: this.selectorLocale
+          selectorLocale: this.selectorLocale,
         });
         if (status.authenticated) {
           await clearRateLimitState();
         }
         return enrichAuthenticatedSessionStatus(page, status);
-      }
+      },
     );
 
     if (status.authenticated) {
       const resolvedStatus = {
         ...status,
-        evasion: this.evasion
+        evasion: this.evasion,
       };
       this.logger?.log("debug", "auth.session.status.checked", {
         authenticated: true,
         current_url: status.currentUrl,
         evasion_level: this.evasion.level,
         profileName,
-        reason: status.reason
+        reason: status.reason,
       });
 
       return resolvedStatus;
@@ -185,7 +216,7 @@ export class LinkedInAuthService {
         evasion: this.evasion,
         reason: `${status.reason} Rate-limit cooldown is active until ${cooldown.state.rateLimitedUntil}.`,
         rateLimitActive: true,
-        rateLimitUntil: cooldown.state.rateLimitedUntil
+        rateLimitUntil: cooldown.state.rateLimitedUntil,
       };
 
       this.logger?.log("debug", "auth.session.status.checked", {
@@ -195,7 +226,7 @@ export class LinkedInAuthService {
         evasion_level: this.evasion.level,
         profileName,
         rate_limit_active: true,
-        reason: resolvedStatus.reason
+        reason: resolvedStatus.reason,
       });
 
       return resolvedStatus;
@@ -203,7 +234,7 @@ export class LinkedInAuthService {
 
     const resolvedStatus = {
       ...status,
-      evasion: this.evasion
+      evasion: this.evasion,
     };
     this.logger?.log("debug", "auth.session.status.checked", {
       authenticated: false,
@@ -212,14 +243,16 @@ export class LinkedInAuthService {
       evasion_level: this.evasion.level,
       profileName,
       rate_limit_active: false,
-      reason: status.reason
+      reason: status.reason,
     });
 
     return resolvedStatus;
   }
 
   /** Throws a structured error when the session is not currently authenticated. */
-  async ensureAuthenticated(options: SessionOptions = {}): Promise<SessionStatus> {
+  async ensureAuthenticated(
+    options: SessionOptions = {},
+  ): Promise<SessionStatus> {
     const status = await this.status(options);
 
     if (!status.authenticated) {
@@ -237,29 +270,27 @@ export class LinkedInAuthService {
         evasion_level: status.evasion?.level,
         profileName: options.profileName ?? "default",
         rate_limit_active: status.rateLimitActive ?? false,
-        reason: status.reason
+        reason: status.reason,
       });
-      throw new LinkedInBuddyError(
-        code,
-        `${status.reason} ${guidance}`,
-        {
-          profile_name: options.profileName ?? "default",
-          current_url: status.currentUrl,
-          checked_at: status.checkedAt,
-          ...(status.evasion ? { evasion_level: status.evasion.level } : {}),
-          rate_limit_active: status.rateLimitActive ?? false,
-          ...(status.rateLimitUntil
-            ? { rate_limit_until: status.rateLimitUntil }
-            : {})
-        }
-      );
+      throw new LinkedInBuddyError(code, `${status.reason} ${guidance}`, {
+        profile_name: options.profileName ?? "default",
+        current_url: status.currentUrl,
+        checked_at: status.checkedAt,
+        ...(status.evasion ? { evasion_level: status.evasion.level } : {}),
+        rate_limit_active: status.rateLimitActive ?? false,
+        ...(status.rateLimitUntil
+          ? { rate_limit_until: status.rateLimitUntil }
+          : {}),
+      });
     }
 
     return status;
   }
 
   /** Runs the headless login flow and optionally retries rate-limit checkpoints. */
-  async headlessLogin(options: HeadlessLoginOptions): Promise<HeadlessLoginResult> {
+  async headlessLogin(
+    options: HeadlessLoginOptions,
+  ): Promise<HeadlessLoginResult> {
     const cooldown = await isInRateLimitCooldown();
     if (cooldown.active && cooldown.state) {
       return {
@@ -271,7 +302,7 @@ export class LinkedInAuthService {
         timedOut: false,
         checkpoint: false,
         rateLimitActive: true,
-        rateLimitUntil: cooldown.state.rateLimitedUntil
+        rateLimitUntil: cooldown.state.rateLimitedUntil,
       };
     }
 
@@ -281,19 +312,20 @@ export class LinkedInAuthService {
 
     let result = {
       ...(await this.performHeadlessLogin(options)),
-      evasion: this.evasion
+      evasion: this.evasion,
     };
     if (!retryOnRateLimit || result.checkpointType !== "rate_limited") {
       return result;
     }
 
     for (let attempt = 1; attempt <= maxRetries; attempt += 1) {
-      const backoffMs = retryBaseDelayMs * 2 ** (attempt - 1) + Math.random() * 5_000;
+      const backoffMs =
+        retryBaseDelayMs * 2 ** (attempt - 1) + Math.random() * 5_000;
       await sleep(backoffMs);
 
       result = {
         ...(await this.performHeadlessLogin(options)),
-        evasion: this.evasion
+        evasion: this.evasion,
       };
       if (result.checkpointType !== "rate_limited") {
         return result;
@@ -304,7 +336,7 @@ export class LinkedInAuthService {
   }
 
   private async performHeadlessLogin(
-    options: HeadlessLoginOptions
+    options: HeadlessLoginOptions,
   ): Promise<HeadlessLoginResult> {
     const profileName = options.profileName ?? "default";
     const cdpUrl = options.cdpUrl ?? this.cdpUrl;
@@ -315,52 +347,99 @@ export class LinkedInAuthService {
       {
         cdpUrl,
         profileName,
-        headless: true
+        headless: true,
       },
       async (context) => {
         const page = await getPage(context);
         await page.goto("https://www.linkedin.com/login", {
-          waitUntil: "domcontentloaded"
+          waitUntil: "domcontentloaded",
         });
 
         const currentUrl = page.url();
-        if (!currentUrl.includes("/login") && !currentUrl.includes("/checkpoint")) {
+        if (
+          !currentUrl.includes("/login") &&
+          !currentUrl.includes("/checkpoint")
+        ) {
           const earlyStatus = await inspectLinkedInSession(page, {
-            selectorLocale: this.selectorLocale
+            selectorLocale: this.selectorLocale,
           });
           if (earlyStatus.authenticated) {
             await clearRateLimitState();
             const resolvedEarlyStatus = await enrichAuthenticatedSessionStatus(
               page,
-              earlyStatus
+              earlyStatus,
             );
             return {
               ...resolvedEarlyStatus,
               timedOut: false,
-              checkpoint: false
+              checkpoint: false,
             };
           }
         }
 
-        // Human-like typing for credentials
+        await dismissCookieConsentBanner(page);
+
+        const emailInputVisible = await page
+          .locator(LINKEDIN_LOGIN_EMAIL_INPUT_SELECTOR)
+          .first()
+          .waitFor({ state: "visible", timeout: 8_000 })
+          .then(() => true)
+          .catch(() => false);
+
+        if (!emailInputVisible) {
+          // LinkedIn "returning user" variant: the email field is a hidden
+          // input (sometimes a session token, sometimes the email itself) and
+          // only the password field is shown. If the password field is visible
+          // we can submit directly; otherwise clear cookies to get the full
+          // login form.
+          const passwordVisible = await page
+            .locator(LINKEDIN_LOGIN_PASSWORD_INPUT_SELECTOR)
+            .first()
+            .isVisible({ timeout: 3_000 })
+            .catch(() => false);
+
+          if (!passwordVisible) {
+            await context.clearCookies({ domain: ".linkedin.com" });
+            await page.goto("https://www.linkedin.com/login", {
+              waitUntil: "domcontentloaded",
+            });
+            await dismissCookieConsentBanner(page);
+            await page
+              .locator(LINKEDIN_LOGIN_EMAIL_INPUT_SELECTOR)
+              .first()
+              .waitFor({ state: "visible", timeout: 10_000 });
+          } else {
+            // Inject the email into the hidden session_key field via JS so the
+            // server receives the correct address on form submission.
+            await page
+              .evaluate((email: string) => {
+                const el = document.querySelector<HTMLInputElement>(
+                  "input[name='session_key']",
+                );
+                if (el) el.value = email;
+              }, options.email)
+              .catch(() => undefined);
+          }
+        }
+
         if (this.logger) {
           attachHumanizeLogger(page, this.logger);
         }
 
         try {
-          const hp = humanize(page);
-          await hp.type(LINKEDIN_LOGIN_EMAIL_INPUT_SELECTOR, options.email, {
-            fieldLabel: "email"
-          });
-          await hp.type(LINKEDIN_LOGIN_PASSWORD_INPUT_SELECTOR, options.password, {
-            fieldLabel: "password"
-          });
+          if (emailInputVisible) {
+            await page.type(LINKEDIN_LOGIN_EMAIL_INPUT_SELECTOR, options.email);
+          }
+          await page.type(
+            LINKEDIN_LOGIN_PASSWORD_INPUT_SELECTOR,
+            options.password,
+          );
         } finally {
           detachHumanizeLogger(page);
         }
 
         const signInButton = page.locator(
-          "button[type='submit'][data-litms-control-urn='login-submit'], button[type='submit']:has-text('Sign in')"
+          "button[type='submit'][data-litms-control-urn='login-submit'], button[type='submit']:has-text('Sign in')",
         );
         await signInButton.first().click();
 
@@ -371,19 +450,19 @@ export class LinkedInAuthService {
 
         while (Date.now() < deadline) {
           const status = await inspectLinkedInSession(page, {
-            selectorLocale: this.selectorLocale
+            selectorLocale: this.selectorLocale,
           });
 
           if (status.authenticated) {
             await clearRateLimitState();
             const resolvedStatus = await enrichAuthenticatedSessionStatus(
               page,
-              status
+              status,
             );
             return {
               ...resolvedStatus,
               timedOut: false,
-              checkpoint: false
+              checkpoint: false,
             };
           }
 
@@ -405,13 +484,13 @@ export class LinkedInAuthService {
                 checkpoint: true,
                 checkpointType: "rate_limited",
                 rateLimitActive: true,
-                rateLimitUntil: rateLimitState.rateLimitedUntil
+                rateLimitUntil: rateLimitState.rateLimitedUntil,
               };
             }
 
             const hasCodeInput = await isVisibleSafe(
               page,
-              "input[name='pin'], input#input__phone_verification_pin, input[name*='verification'], input[name*='code']"
+              "input[name='pin'], input#input__phone_verification_pin, input[name*='verification'], input[name*='code']",
             );
             const hasCaptcha = await detectCaptcha(page);
 
@@ -419,7 +498,7 @@ export class LinkedInAuthService {
             if (!hasCodeInput && !hasCaptcha) {
               const hasAppApprovalMarker = await isVisibleSafe(
                 page,
-                "[data-test-id='auth-app-approval']"
+                "[data-test-id='auth-app-approval']",
               );
 
               if (hasAppApprovalMarker) {
@@ -451,12 +530,12 @@ export class LinkedInAuthService {
             if (checkpointType === "verification_code") {
               if (options.mfaCode && !mfaCodeSubmitted) {
                 const codeInput = page.locator(
-                  "input[name='pin'], input#input__phone_verification_pin, input[name*='verification'], input[name*='code']"
+                  "input[name='pin'], input#input__phone_verification_pin, input[name*='verification'], input[name*='code']",
                 );
                 await codeInput.first().fill(options.mfaCode);
 
                 const submitButton = page.locator(
-                  "button[type='submit'], button#two-step-submit-button"
+                  "button[type='submit'], button#two-step-submit-button",
                 );
                 await submitButton.first().click();
                 mfaCodeSubmitted = true;
@@ -468,22 +547,23 @@ export class LinkedInAuthService {
                     authenticated: false,
                     checkedAt: new Date().toISOString(),
                     currentUrl: "unknown (page closed)",
-                    reason: "Page closed after MFA code submission — code may be invalid or expired",
+                    reason:
+                      "Page closed after MFA code submission — code may be invalid or expired",
                     timedOut: false,
                     checkpoint: true,
                     checkpointType: "verification_code",
-                    mfaRequired: true
+                    mfaRequired: true,
                   };
                 }
               } else if (!mfaCodeSubmitted && options.mfaCallback) {
                 const interactiveCode = await options.mfaCallback();
                 if (interactiveCode) {
                   const codeInput = page.locator(
-                    "input[name='pin'], input#input__phone_verification_pin, input[name*='verification'], input[name*='code']"
+                    "input[name='pin'], input#input__phone_verification_pin, input[name*='verification'], input[name*='code']",
                   );
                   await codeInput.first().fill(interactiveCode);
                   const submitButton = page.locator(
-                    "button[type='submit'], button#two-step-submit-button"
+                    "button[type='submit'], button#two-step-submit-button",
                   );
                   await submitButton.first().click();
                   mfaCodeSubmitted = true;
@@ -494,11 +574,12 @@ export class LinkedInAuthService {
                       authenticated: false,
                       checkedAt: new Date().toISOString(),
                       currentUrl: "unknown (page closed)",
-                      reason: "Page closed after MFA code submission — code may be invalid or expired",
+                      reason:
+                        "Page closed after MFA code submission — code may be invalid or expired",
                       timedOut: false,
                       checkpoint: true,
                       checkpointType: "verification_code",
-                      mfaRequired: true
+                      mfaRequired: true,
                     };
                   }
                 } else {
@@ -507,7 +588,7 @@ export class LinkedInAuthService {
                     timedOut: false,
                     checkpoint: true,
                     checkpointType: "verification_code",
-                    mfaRequired: true
+                    mfaRequired: true,
                   };
                 }
               } else if (!options.mfaCode && !options.mfaCallback) {
@@ -516,7 +597,7 @@ export class LinkedInAuthService {
                   timedOut: false,
                   checkpoint: true,
                   checkpointType: "verification_code",
-                  mfaRequired: true
+                  mfaRequired: true,
                 };
               }
             } else if (checkpointType === "app_approval") {
@@ -526,21 +607,21 @@ export class LinkedInAuthService {
                 ...status,
                 timedOut: false,
                 checkpoint: true,
-                checkpointType: "captcha"
+                checkpointType: "captcha",
               };
             } else {
               return {
                 ...status,
                 timedOut: false,
                 checkpoint: true,
-                checkpointType: "unknown"
+                checkpointType: "unknown",
               };
             }
           }
 
           const loginErrorVisible = await isVisibleSafe(
             page,
-            "#error-for-password, #error-for-username, .form__label--error, div[role='alert']"
+            "#error-for-password, #error-for-username, .form__label--error, div[role='alert']",
           );
 
           if (loginErrorVisible) {
@@ -550,7 +631,7 @@ export class LinkedInAuthService {
               currentUrl: page.url(),
               reason: "Invalid credentials",
               timedOut: false,
-              checkpoint: false
+              checkpoint: false,
             };
           }
 
@@ -563,17 +644,17 @@ export class LinkedInAuthService {
               currentUrl: "unknown (page closed)",
               reason: "Page closed unexpectedly during login polling",
               timedOut: false,
-              checkpoint: false
+              checkpoint: false,
             };
           }
         }
 
         const finalStatus = await inspectLinkedInSession(page, {
-          selectorLocale: this.selectorLocale
+          selectorLocale: this.selectorLocale,
         });
         const resolvedFinalStatus = await enrichAuthenticatedSessionStatus(
           page,
-          finalStatus
+          finalStatus,
         );
         if (resolvedFinalStatus.authenticated) {
           await clearRateLimitState();
@@ -581,9 +662,9 @@ export class LinkedInAuthService {
         return {
           ...resolvedFinalStatus,
           timedOut: true,
-          checkpoint: false
+          checkpoint: false,
         };
-      }
+      },
     );
   }
 
@@ -604,16 +685,16 @@ export class LinkedInAuthService {
       {
         cdpUrl,
         profileName,
-        headless: false
+        headless: false,
       },
       async (context) => {
         const page = await getPage(context);
         await page.goto("https://www.linkedin.com/login", {
-          waitUntil: "domcontentloaded"
+          waitUntil: "domcontentloaded",
         });
 
         let status = await inspectLinkedInSession(page, {
-          selectorLocale: this.selectorLocale
+          selectorLocale: this.selectorLocale,
         });
         const deadline = Date.now() + timeoutMs;
 
@@ -623,16 +704,19 @@ export class LinkedInAuthService {
           } catch {
             return {
               ...status,
-              timedOut: false
+              timedOut: false,
             };
           }
 
           status = await inspectLinkedInSession(page, {
-            selectorLocale: this.selectorLocale
+            selectorLocale: this.selectorLocale,
           });
         }
 
-        const resolvedStatus = await enrichAuthenticatedSessionStatus(page, status);
+        const resolvedStatus = await enrichAuthenticatedSessionStatus(
+          page,
+          status,
+        );
 
         if (resolvedStatus.authenticated) {
           await clearRateLimitState();
@@ -640,9 +724,9 @@ export class LinkedInAuthService {
 
         return {
           ...resolvedStatus,
-          timedOut: !resolvedStatus.authenticated
+          timedOut: !resolvedStatus.authenticated,
         };
-      }
+      },
     );
   }
 }
