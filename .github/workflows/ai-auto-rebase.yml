@@ -3,10 +3,14 @@ name: Auto-rebase AI branches
 on:
   push:
     branches: [main]
+  schedule:
+    # Run every 15 minutes to catch conflicts even when no PRs are merging
+    - cron: '*/15 * * * *'
+  workflow_dispatch: {}
 
 permissions:
   contents: write
-  pull-requests: read
+  pull-requests: write
 
 jobs:
   rebase:
@@ -23,9 +27,10 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Wait for GitHub merge status computation
-        run: sleep 30
+        if: github.event_name == 'push'
+        run: sleep 60
 
-      - name: Rebase conflicting AI PRs
+      - name: Rebase or recycle conflicting AI PRs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -49,19 +54,24 @@ jobs:
               echo "✅ PR #$number rebased successfully"
             else
               git rebase --abort
-              echo "⚠️ PR #$number has non-trivial conflicts"
+              echo "⚠️ PR #$number has non-trivial conflicts — closing PR and recycling issue"
 
-              # Get the linked issue number from the PR branch name (ai/issue-NNN-...)
+              # Extract issue number from branch name (ai/issue-NNN-...)
               issue_num=$(echo "$branch" | grep -oP 'issue-\K\d+' || true)
 
-              if [ -n "$issue_num" ]; then
-                # Relabel the issue so the orchestrator spawns a new session to resolve conflicts
-                gh issue edit "$issue_num" --remove-label "ai-in-progress" --add-label "ai-task,ai-priority:high" 2>/dev/null || true
-                gh issue comment "$issue_num" --body "⚠️ Auto-rebase of branch \`$branch\` failed due to non-trivial merge conflicts with main. Relabeled to \`ai-task\` so the orchestrator can spawn a fresh session to resolve them."
-                echo "Relabeled issue #$issue_num back to ai-task"
-              fi
+              # Close the stale PR
+              gh pr close "$number" --comment "🔄 Closing: merge conflicts can't be auto-resolved. Issue relabeled for a fresh attempt from current main." --delete-branch || true
 
-              gh pr comment "$number" --body "⚠️ Auto-rebase failed — this branch has merge conflicts that couldn't be resolved automatically. The linked issue has been relabeled for the orchestrator to retry with a fresh worktree from main."
+              if [ -n "$issue_num" ]; then
+                # Remove all AI state labels and reset to ai-task
+                gh issue edit "$issue_num" \
+                  --remove-label "ai-in-progress" \
+                  --remove-label "ai-review-ready" \
+                  --remove-label "ai-blocked" \
+                  --add-label "ai-task" 2>/dev/null || true
+                gh issue comment "$issue_num" --body "♻️ PR #$number closed due to non-trivial merge conflicts. Relabeled to \`ai-task\` — orchestrator will retry with a fresh branch from current main."
+                echo "Recycled issue #$issue_num back to ai-task"
+              fi
             fi
 
             echo "::endgroup::"
