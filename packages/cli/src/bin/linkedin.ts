@@ -63,6 +63,7 @@ import {
   createCoreRuntime,
   checkLinkedInFixtureStaleness,
   captureLinkedInSession,
+  checkStoredSessionHealth,
   deleteLocalData,
   loadLinkedInFixtureSet,
   normalizeLinkedInFeedReaction,
@@ -2224,6 +2225,72 @@ async function runAuthSessionCapture(
     session_file: result.filePath,
     session_name: result.sessionName,
   });
+}
+
+async function runManualLogin(
+  input: {
+    sessionName: string;
+    timeoutMinutes: number;
+    evasionLevel?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
+  assertNoExternalSessionOverrideForStoredSession(cdpUrl);
+  assertInteractiveTerminal(
+    "capture a stored LinkedIn session via manual login",
+  );
+
+  writeCliNotice(
+    `Opening a stealth-hardened Chromium window to capture session "${input.sessionName}".`,
+  );
+  writeCliNotice(
+    "Sign in manually. The browser closes automatically after the authenticated session is stored.",
+  );
+  writeCliNotice(
+    "Leave the LinkedIn window open after sign-in until the CLI confirms the session was captured. Press Ctrl+C if you need to cancel.",
+  );
+
+  const result = await captureLinkedInSession({
+    sessionName: input.sessionName,
+    timeoutMs: input.timeoutMinutes * 60_000,
+    stealth: true,
+    ...(input.evasionLevel ? { evasionLevel: input.evasionLevel } : {}),
+  });
+
+  printJson({
+    authenticated: result.authenticated,
+    captured_at: result.capturedAt,
+    checked_at: result.checkedAt,
+    current_url: result.currentUrl,
+    li_at_expires_at: result.liAtCookieExpiresAt,
+    session_file: result.filePath,
+    session_name: result.sessionName,
+    ...(result.fingerprint ? { fingerprint_captured: true } : {}),
+    ...(result.fingerprintPath
+      ? { fingerprint_path: result.fingerprintPath }
+      : {}),
+  });
+}
+
+async function runSessionCheck(sessionName: string): Promise<void> {
+  const result = await checkStoredSessionHealth(sessionName);
+  printJson({
+    healthy: result.healthy,
+    session_name: result.sessionName,
+    checked_at: result.checkedAt,
+    reason: result.reason,
+    session_exists: result.sessionExists,
+    has_auth_cookie: result.hasAuthCookie,
+    auth_cookie_expires_at: result.authCookieExpiresAt,
+    auth_cookie_expires_in_ms: result.authCookieExpiresInMs,
+    has_browser_fingerprint: result.hasBrowserFingerprint,
+    cookie_count: result.cookieCount,
+    guidance: result.guidance,
+  });
+
+  if (!result.healthy) {
+    process.exitCode = 1;
+  }
 }
 
 function isStoredSessionRefreshError(error: unknown): boolean {
@@ -9980,6 +10047,16 @@ export function createCliProgram(): Command {
       "Browse LinkedIn organically before login to reduce CAPTCHA risk",
       false,
     )
+    .option(
+      "--manual",
+      "Capture an encrypted stored session via manual browser login (stealth-hardened)",
+      false,
+    )
+    .option(
+      "-s, --session <session>",
+      "Stored session name (used with --manual)",
+      "default",
+    )
     .option("--email <email>", "LinkedIn email (or set LINKEDIN_EMAIL env var)")
     .option(
       "--password <password>",
@@ -10002,6 +10079,8 @@ export function createCliProgram(): Command {
         headed: boolean;
         headedFallback: boolean;
         warmProfile: boolean;
+        manual: boolean;
+        session: string;
         email?: string;
         password?: string;
         mfaCode?: string;
@@ -10011,6 +10090,17 @@ export function createCliProgram(): Command {
           options.timeoutMinutes,
           "timeout-minutes",
         );
+
+        if (options.manual) {
+          await runManualLogin(
+            {
+              sessionName: coerceProfileName(options.session, "session"),
+              timeoutMinutes,
+            },
+            readCdpUrl(),
+          );
+          return;
+        }
 
         if (options.headless) {
           const email = options.email ?? process.env.LINKEDIN_EMAIL;
@@ -10066,6 +10156,35 @@ export function createCliProgram(): Command {
         }
       },
     );
+
+  const sessionCommand = program
+    .command("session")
+    .description("Manage stored encrypted LinkedIn sessions");
+
+  sessionCommand
+    .command("check")
+    .description(
+      "Validate the health of a stored LinkedIn session without launching a browser",
+    )
+    .option("-s, --session <session>", "Stored session name", "default")
+    .addHelpText(
+      "after",
+      [
+        "",
+        "Checks:",
+        "  - whether the encrypted session file exists on disk",
+        "  - whether the li_at authentication cookie is present",
+        "  - whether the li_at cookie has expired",
+        "  - whether a browser fingerprint is stored for the session",
+        "",
+        "Examples:",
+        "  linkedin session check",
+        "  linkedin session check --session smoke",
+      ].join("\n"),
+    )
+    .action(async (options: { session: string }) => {
+      await runSessionCheck(coerceProfileName(options.session, "session"));
+    });
 
   const runFixtureRecordCommand = async (options: {
     har: boolean;

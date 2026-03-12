@@ -21,6 +21,10 @@ import {
   resolveStealthConfig,
   type StealthConfig,
 } from "./stealth.js";
+import {
+  applyBrowserFingerprint,
+  loadBrowserFingerprint,
+} from "./auth/fingerprint.js";
 
 type PersistentLaunchOptions = NonNullable<
   Parameters<typeof chromium.launchPersistentContext>[1]
@@ -131,6 +135,19 @@ export class ProfileManager {
       const executablePath = process.env.PLAYWRIGHT_EXECUTABLE_PATH;
       if (executablePath) {
         launchOptions.executablePath = executablePath;
+      }
+
+      // Apply stored browser fingerprint (viewport, locale, timezone, user
+      // agent) when available so headless sessions reuse the same identity
+      // captured during manual login.
+      try {
+        const fingerprint = await loadBrowserFingerprint(profileName);
+        if (fingerprint) {
+          const fpOptions = applyBrowserFingerprint(fingerprint);
+          launchOptions = { ...launchOptions, ...fpOptions };
+        }
+      } catch {
+        // Fingerprint loading is best-effort; proceed without it.
       }
 
       // Apply stealth-specific launch options (viewport, locale, timezone,

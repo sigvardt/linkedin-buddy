@@ -2,22 +2,33 @@ import {
   createCipheriv,
   createDecipheriv,
   createHash,
-  randomBytes
+  randomBytes,
 } from "node:crypto";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { type Browser, type BrowserContext } from "playwright-core";
 import {
-  chromium,
-  type Browser,
-  type BrowserContext
-} from "playwright-core";
-import { ensureConfigPaths, resolveConfigPaths } from "../config.js";
+  ensureConfigPaths,
+  resolveConfigPaths,
+  resolveEvasionConfig,
+} from "../config.js";
 import { LinkedInBuddyError, asLinkedInBuddyError } from "../errors.js";
 import { wrapLinkedInBrowserContext } from "../linkedinPage.js";
 import {
+  applyStealthLaunchOptions,
+  createStealthChromium,
+  hardenBrowserContext,
+  resolveStealthConfig,
+} from "../stealth.js";
+import {
+  captureBrowserFingerprint,
+  saveBrowserFingerprint,
+  type BrowserFingerprint,
+} from "./fingerprint.js";
+import {
   inspectLinkedInSession,
-  type LinkedInSessionInspection
+  type LinkedInSessionInspection,
 } from "./sessionInspection.js";
 
 /**
@@ -38,7 +49,7 @@ const LINKEDIN_AUTH_COOKIE_NAMES = new Set([
   "JSESSIONID",
   "liap",
   "bscookie",
-  "bcookie"
+  "bcookie",
 ]);
 
 type StorageStateCookie = LinkedInBrowserStorageState["cookies"][number];
@@ -59,10 +70,13 @@ export interface LinkedInSessionCookieMetadata {
 }
 
 function isSupportedSameSite(
-  value: unknown
+  value: unknown,
 ): value is LinkedInSessionCookieMetadata["sameSite"] | undefined {
   return (
-    value === undefined || value === "Lax" || value === "Strict" || value === "None"
+    value === undefined ||
+    value === "Lax" ||
+    value === "Strict" ||
+    value === "None"
   );
 }
 
@@ -70,8 +84,12 @@ function isLinkedInCookie(cookie: Pick<StorageStateCookie, "domain">): boolean {
   return cookie.domain.toLowerCase().includes("linkedin.com");
 }
 
-function isLinkedInAuthCookie(cookie: Pick<StorageStateCookie, "name" | "domain">): boolean {
-  return isLinkedInCookie(cookie) && LINKEDIN_AUTH_COOKIE_NAMES.has(cookie.name);
+function isLinkedInAuthCookie(
+  cookie: Pick<StorageStateCookie, "name" | "domain">,
+): boolean {
+  return (
+    isLinkedInCookie(cookie) && LINKEDIN_AUTH_COOKIE_NAMES.has(cookie.name)
+  );
 }
 
 function toCookieExpiresAt(expires: number): string | null {
@@ -88,7 +106,7 @@ function toCookieExpiresAt(expires: number): string | null {
  */
 export function summarizeLinkedInSessionCookies(
   cookies: readonly StorageStateCookie[],
-  options: { nowMs?: number } = {}
+  options: { nowMs?: number } = {},
 ): LinkedInSessionCookieMetadata[] {
   const nowMs = options.nowMs ?? Date.now();
 
@@ -107,12 +125,18 @@ export function summarizeLinkedInSessionCookies(
         expiresInMs,
         httpOnly: cookie.httpOnly,
         secure: cookie.secure,
-        sameSite: cookie.sameSite
+        sameSite: cookie.sameSite,
       };
     })
     .sort((left, right) => {
-      const leftExpiry = left.expiresAt === null ? Number.POSITIVE_INFINITY : new Date(left.expiresAt).getTime();
-      const rightExpiry = right.expiresAt === null ? Number.POSITIVE_INFINITY : new Date(right.expiresAt).getTime();
+      const leftExpiry =
+        left.expiresAt === null
+          ? Number.POSITIVE_INFINITY
+          : new Date(left.expiresAt).getTime();
+      const rightExpiry =
+        right.expiresAt === null
+          ? Number.POSITIVE_INFINITY
+          : new Date(right.expiresAt).getTime();
 
       if (leftExpiry !== rightExpiry) {
         return leftExpiry - rightExpiry;
@@ -127,7 +151,7 @@ export function summarizeLinkedInSessionCookies(
  * storage-state snapshot.
  */
 export function getLinkedInSessionFingerprint(
-  storageState: Pick<LinkedInBrowserStorageState, "cookies">
+  storageState: Pick<LinkedInBrowserStorageState, "cookies">,
 ): string {
   const authCookiePayload = storageState.cookies
     .filter((cookie) => isLinkedInAuthCookie(cookie))
@@ -144,7 +168,7 @@ export function getLinkedInSessionFingerprint(
       expires: cookie.expires,
       httpOnly: cookie.httpOnly,
       secure: cookie.secure,
-      sameSite: cookie.sameSite
+      sameSite: cookie.sameSite,
     }));
 
   return createHash("sha256")
@@ -158,9 +182,11 @@ export function getLinkedInSessionFingerprint(
  */
 export async function restoreLinkedInSessionCookies(
   context: BrowserContext,
-  storageState: LinkedInBrowserStorageState
+  storageState: LinkedInBrowserStorageState,
 ): Promise<void> {
-  const cookiesToRestore = storageState.cookies.filter((cookie) => isLinkedInCookie(cookie));
+  const cookiesToRestore = storageState.cookies.filter((cookie) =>
+    isLinkedInCookie(cookie),
+  );
   if (cookiesToRestore.length === 0) {
     return;
   }
@@ -233,8 +259,7 @@ export interface RestoreStoredLinkedInSessionOptions {
 /**
  * Result returned when a stored LinkedIn session snapshot is restored.
  */
-export interface RestoreStoredLinkedInSessionResult
-  extends LoadStoredLinkedInSessionResult {
+export interface RestoreStoredLinkedInSessionResult extends LoadStoredLinkedInSessionResult {
   restoredFromBackup: boolean;
   restoredSessionName: string;
 }
@@ -244,6 +269,10 @@ export interface RestoreStoredLinkedInSessionResult
  */
 export interface CaptureLinkedInSessionOptions {
   baseDir?: string;
+  /** When true, apply stealth/evasion hardening to the capture browser. */
+  stealth?: boolean;
+  /** Evasion level to use if stealth is enabled. Defaults to env/config. */
+  evasionLevel?: string;
   pollIntervalMs?: number;
   sessionName?: string;
   timeoutMs?: number;
@@ -253,17 +282,23 @@ export interface CaptureLinkedInSessionOptions {
  * Result returned by `captureLinkedInSession()` after a successful manual login
  * capture.
  */
-export interface CaptureLinkedInSessionResult
-  extends StoredLinkedInSessionMetadata {
+export interface CaptureLinkedInSessionResult extends StoredLinkedInSessionMetadata {
   authenticated: true;
   checkedAt: string;
   currentUrl: string;
+  /** Browser fingerprint captured during manual login, if available. */
+  fingerprint?: BrowserFingerprint;
+  /** On-disk path where the fingerprint was stored. */
+  fingerprintPath?: string;
 }
 
 function withPlaywrightInstallHint(error: unknown): Error {
-  if (error instanceof Error && error.message.includes("Executable doesn't exist")) {
+  if (
+    error instanceof Error &&
+    error.message.includes("Executable doesn't exist")
+  ) {
     return new Error(
-      'Playwright browser executable is missing. Install Chromium with "npx playwright install chromium" or set PLAYWRIGHT_EXECUTABLE_PATH.'
+      'Playwright browser executable is missing. Install Chromium with "npx playwright install chromium" or set PLAYWRIGHT_EXECUTABLE_PATH.',
     );
   }
 
@@ -279,7 +314,7 @@ function normalizeSessionName(sessionName: string | undefined): string {
   if (normalized.length === 0) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "session name must not be empty."
+      "session name must not be empty.",
     );
   }
 
@@ -288,8 +323,8 @@ function normalizeSessionName(sessionName: string | undefined): string {
       "ACTION_PRECONDITION_FAILED",
       "session name must not contain path separators or relative path segments.",
       {
-        session_name: normalized
-      }
+        session_name: normalized,
+      },
     );
   }
 
@@ -302,28 +337,28 @@ function getBackupSessionName(sessionName: string, index: number): string {
 
 function getFallbackSessionNames(
   sessionName: string,
-  maxBackups: number
+  maxBackups: number,
 ): string[] {
   const normalizedSessionName = normalizeSessionName(sessionName);
   return [
     normalizedSessionName,
     ...Array.from({ length: maxBackups }, (_, index) =>
-      getBackupSessionName(normalizedSessionName, index + 1)
-    )
+      getBackupSessionName(normalizedSessionName, index + 1),
+    ),
   ];
 }
 
 function getLinkedInAuthCookie(
-  storageState: LinkedInBrowserStorageState
+  storageState: LinkedInBrowserStorageState,
 ): LinkedInBrowserStorageState["cookies"][number] | undefined {
   return storageState.cookies.find(
-    (cookie) => cookie.name === "li_at" && cookie.value.trim().length > 0
+    (cookie) => cookie.name === "li_at" && cookie.value.trim().length > 0,
   );
 }
 
 function isStoredSessionExpired(
   storageState: LinkedInBrowserStorageState,
-  referenceTimeMs: number = Date.now()
+  referenceTimeMs: number = Date.now(),
 ): boolean {
   const authCookie = getLinkedInAuthCookie(storageState);
   if (!authCookie) {
@@ -341,16 +376,16 @@ function createStoredSessionValidationError(
   message: string,
   sessionName: string,
   filePath: string,
-  cause?: Error
+  cause?: Error,
 ): LinkedInBuddyError {
   return new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
     message,
     {
       file_path: filePath,
-      session_name: sessionName
+      session_name: sessionName,
     },
-    cause ? { cause } : undefined
+    cause ? { cause } : undefined,
   );
 }
 
@@ -376,20 +411,26 @@ function decodeBase64Url(value: string, label: string): Buffer {
       "ACTION_PRECONDITION_FAILED",
       `Stored LinkedIn session ${label} is malformed. Capture a fresh session and retry.`,
       {
-        label
+        label,
       },
       {
-        cause: error instanceof Error ? error : undefined
-      }
+        cause: error instanceof Error ? error : undefined,
+      },
     );
   }
 }
 
 function getLinkedInAuthCookieExpiry(
-  storageState: LinkedInBrowserStorageState
+  storageState: LinkedInBrowserStorageState,
 ): string | null {
-  const authCookie = storageState.cookies.find((cookie) => cookie.name === "li_at");
-  if (!authCookie || typeof authCookie.expires !== "number" || authCookie.expires <= 0) {
+  const authCookie = storageState.cookies.find(
+    (cookie) => cookie.name === "li_at",
+  );
+  if (
+    !authCookie ||
+    typeof authCookie.expires !== "number" ||
+    authCookie.expires <= 0
+  ) {
     return null;
   }
 
@@ -400,10 +441,10 @@ function createStoredSessionMetadata(
   sessionName: string,
   filePath: string,
   storageState: LinkedInBrowserStorageState,
-  capturedAt: string = new Date().toISOString()
+  capturedAt: string = new Date().toISOString(),
 ): StoredLinkedInSessionMetadata {
   const hasLinkedInAuthCookie = storageState.cookies.some(
-    (cookie) => cookie.name === "li_at" && cookie.value.trim().length > 0
+    (cookie) => cookie.name === "li_at" && cookie.value.trim().length > 0,
   );
 
   return {
@@ -416,13 +457,13 @@ function createStoredSessionMetadata(
     sessionName,
     sessionCookieFingerprint: getLinkedInSessionFingerprint(storageState),
     sessionCookies: summarizeLinkedInSessionCookies(storageState.cookies, {
-      nowMs: new Date(capturedAt).getTime()
-    })
+      nowMs: new Date(capturedAt).getTime(),
+    }),
   };
 }
 
 function toStoredMetadataRecord(
-  metadata: StoredLinkedInSessionMetadata
+  metadata: StoredLinkedInSessionMetadata,
 ): StoredLinkedInSessionMetadataRecord {
   return {
     capturedAt: metadata.capturedAt,
@@ -434,13 +475,15 @@ function toStoredMetadataRecord(
     ...(metadata.sessionCookieFingerprint
       ? { sessionCookieFingerprint: metadata.sessionCookieFingerprint }
       : {}),
-    ...(metadata.sessionCookies ? { sessionCookies: metadata.sessionCookies } : {})
+    ...(metadata.sessionCookies
+      ? { sessionCookies: metadata.sessionCookies }
+      : {}),
   };
 }
 
 function toStoredMetadata(
   metadata: StoredLinkedInSessionMetadataRecord,
-  filePath: string
+  filePath: string,
 ): StoredLinkedInSessionMetadata {
   return {
     capturedAt: metadata.capturedAt,
@@ -453,7 +496,9 @@ function toStoredMetadata(
     ...(metadata.sessionCookieFingerprint
       ? { sessionCookieFingerprint: metadata.sessionCookieFingerprint }
       : {}),
-    ...(metadata.sessionCookies ? { sessionCookies: metadata.sessionCookies } : {})
+    ...(metadata.sessionCookies
+      ? { sessionCookies: metadata.sessionCookies }
+      : {}),
   };
 }
 
@@ -488,7 +533,7 @@ async function readOrCreateMasterKey(storeDir: string): Promise<Buffer> {
 function validateEnvelope(
   envelope: unknown,
   sessionName: string,
-  filePath: string
+  filePath: string,
 ): StoredLinkedInSessionEnvelope {
   if (
     typeof envelope !== "object" ||
@@ -503,7 +548,7 @@ function validateEnvelope(
     throw createStoredSessionValidationError(
       `Stored LinkedIn session "${sessionName}" is malformed. Capture a fresh session and retry.`,
       sessionName,
-      filePath
+      filePath,
     );
   }
 
@@ -520,11 +565,12 @@ function validateEnvelope(
     throw createStoredSessionValidationError(
       `Stored LinkedIn session "${sessionName}" is unreadable. Capture a fresh session and retry.`,
       sessionName,
-      filePath
+      filePath,
     );
   }
 
-  const metadata = normalizedEnvelope.metadata as Partial<StoredLinkedInSessionMetadataRecord>;
+  const metadata =
+    normalizedEnvelope.metadata as Partial<StoredLinkedInSessionMetadataRecord>;
   if (
     typeof metadata.sessionName !== "string" ||
     typeof metadata.capturedAt !== "string" ||
@@ -545,11 +591,13 @@ function validateEnvelope(
             typeof cookie.name === "string" &&
             typeof cookie.domain === "string" &&
             typeof cookie.path === "string" &&
-            (cookie.expiresAt === null || typeof cookie.expiresAt === "string") &&
-            (cookie.expiresInMs === null || typeof cookie.expiresInMs === "number") &&
+            (cookie.expiresAt === null ||
+              typeof cookie.expiresAt === "string") &&
+            (cookie.expiresInMs === null ||
+              typeof cookie.expiresInMs === "number") &&
             typeof cookie.httpOnly === "boolean" &&
             typeof cookie.secure === "boolean" &&
-            isSupportedSameSite((cookie as { sameSite?: unknown }).sameSite)
+            isSupportedSameSite((cookie as { sameSite?: unknown }).sameSite),
         ))
     ) ||
     !(
@@ -560,7 +608,7 @@ function validateEnvelope(
     throw createStoredSessionValidationError(
       `Stored LinkedIn session "${sessionName}" is unreadable. Capture a fresh session and retry.`,
       sessionName,
-      filePath
+      filePath,
     );
   }
 
@@ -580,15 +628,17 @@ function validateEnvelope(
       ...(metadata.sessionCookieFingerprint
         ? { sessionCookieFingerprint: metadata.sessionCookieFingerprint }
         : {}),
-      ...(metadata.sessionCookies ? { sessionCookies: metadata.sessionCookies } : {})
-    }
+      ...(metadata.sessionCookies
+        ? { sessionCookies: metadata.sessionCookies }
+        : {}),
+    },
   };
 }
 
 function validateStorageState(
   value: unknown,
   sessionName: string,
-  filePath: string
+  filePath: string,
 ): LinkedInBrowserStorageState {
   if (
     typeof value !== "object" ||
@@ -601,7 +651,7 @@ function validateStorageState(
     throw createStoredSessionValidationError(
       `Stored LinkedIn session "${sessionName}" could not be decoded. Capture a fresh session and retry.`,
       sessionName,
-      filePath
+      filePath,
     );
   }
 
@@ -620,12 +670,12 @@ export function resolveLinkedInSessionStoreDir(baseDir?: string): string {
  */
 export function resolveStoredLinkedInSessionPath(
   sessionName: string = "default",
-  baseDir?: string
+  baseDir?: string,
 ): string {
   const normalizedSessionName = normalizeSessionName(sessionName);
   return path.join(
     resolveLinkedInSessionStoreDir(baseDir),
-    `${normalizedSessionName}${SESSION_FILE_SUFFIX}`
+    `${normalizedSessionName}${SESSION_FILE_SUFFIX}`,
   );
 }
 
@@ -652,7 +702,7 @@ export class LinkedInSessionStore {
    */
   async save(
     sessionName: string,
-    storageState: LinkedInBrowserStorageState
+    storageState: LinkedInBrowserStorageState,
   ): Promise<StoredLinkedInSessionMetadata> {
     const normalizedSessionName = normalizeSessionName(sessionName);
     ensureConfigPaths(resolveConfigPaths(this.baseDir));
@@ -663,7 +713,7 @@ export class LinkedInSessionStore {
     const metadata = createStoredSessionMetadata(
       normalizedSessionName,
       filePath,
-      storageState
+      storageState,
     );
 
     const encryptionKey = await readOrCreateMasterKey(storeDir);
@@ -672,7 +722,7 @@ export class LinkedInSessionStore {
     const plaintext = JSON.stringify(storageState);
     const ciphertext = Buffer.concat([
       cipher.update(plaintext, "utf8"),
-      cipher.final()
+      cipher.final(),
     ]);
     const tag = cipher.getAuthTag();
 
@@ -682,7 +732,7 @@ export class LinkedInSessionStore {
       ciphertext: encodeBase64Url(ciphertext),
       iv: encodeBase64Url(iv),
       tag: encodeBase64Url(tag),
-      metadata: toStoredMetadataRecord(metadata)
+      metadata: toStoredMetadataRecord(metadata),
     };
 
     await writeFile(filePath, `${JSON.stringify(envelope, null, 2)}\n`, "utf8");
@@ -698,7 +748,7 @@ export class LinkedInSessionStore {
   async saveWithBackups(
     sessionName: string,
     storageState: LinkedInBrowserStorageState,
-    options: SaveStoredLinkedInSessionOptions = {}
+    options: SaveStoredLinkedInSessionOptions = {},
   ): Promise<StoredLinkedInSessionMetadata> {
     const normalizedSessionName = normalizeSessionName(sessionName);
     const maxBackups = Math.max(0, options.maxBackups ?? 2);
@@ -707,7 +757,7 @@ export class LinkedInSessionStore {
       for (let backupIndex = maxBackups; backupIndex >= 2; backupIndex -= 1) {
         const sourceBackupName = getBackupSessionName(
           normalizedSessionName,
-          backupIndex - 1
+          backupIndex - 1,
         );
 
         if (!(await this.exists(sourceBackupName))) {
@@ -717,7 +767,7 @@ export class LinkedInSessionStore {
         const sourceBackup = await this.load(sourceBackupName);
         await this.save(
           getBackupSessionName(normalizedSessionName, backupIndex),
-          sourceBackup.storageState
+          sourceBackup.storageState,
         );
       }
 
@@ -725,7 +775,7 @@ export class LinkedInSessionStore {
         const previousPrimary = await this.load(normalizedSessionName);
         await this.save(
           getBackupSessionName(normalizedSessionName, 1),
-          previousPrimary.storageState
+          previousPrimary.storageState,
         );
       }
     }
@@ -751,7 +801,9 @@ export class LinkedInSessionStore {
   /**
    * Loads and decrypts a named stored LinkedIn session snapshot.
    */
-  async load(sessionName: string = "default"): Promise<LoadStoredLinkedInSessionResult> {
+  async load(
+    sessionName: string = "default",
+  ): Promise<LoadStoredLinkedInSessionResult> {
     const normalizedSessionName = normalizeSessionName(sessionName);
     const filePath = this.getSessionPath(normalizedSessionName);
 
@@ -765,8 +817,8 @@ export class LinkedInSessionStore {
           `No stored LinkedIn session named "${normalizedSessionName}" was found. Run "linkedin-buddy auth session --session ${normalizedSessionName}" first.`,
           {
             file_path: filePath,
-            session_name: normalizedSessionName
-          }
+            session_name: normalizedSessionName,
+          },
         );
       }
       throw error;
@@ -775,7 +827,7 @@ export class LinkedInSessionStore {
     const parsedEnvelope = validateEnvelope(
       JSON.parse(rawEnvelope) as unknown,
       normalizedSessionName,
-      filePath
+      filePath,
     );
     const storeDir = resolveLinkedInSessionStoreDir(this.baseDir);
     const encryptionKey = await readOrCreateMasterKey(storeDir);
@@ -785,30 +837,32 @@ export class LinkedInSessionStore {
       const decipher = createDecipheriv(
         "aes-256-gcm",
         encryptionKey,
-        decodeBase64Url(parsedEnvelope.iv, "iv")
+        decodeBase64Url(parsedEnvelope.iv, "iv"),
       );
       decipher.setAuthTag(decodeBase64Url(parsedEnvelope.tag, "tag"));
       const decryptedPayload = Buffer.concat([
-        decipher.update(decodeBase64Url(parsedEnvelope.ciphertext, "ciphertext")),
-        decipher.final()
+        decipher.update(
+          decodeBase64Url(parsedEnvelope.ciphertext, "ciphertext"),
+        ),
+        decipher.final(),
       ]).toString("utf8");
       storageState = validateStorageState(
         JSON.parse(decryptedPayload) as unknown,
         normalizedSessionName,
-        filePath
+        filePath,
       );
     } catch (error) {
       throw createStoredSessionValidationError(
         `Stored LinkedIn session "${normalizedSessionName}" could not be decrypted. Capture a fresh session and retry.`,
         normalizedSessionName,
         filePath,
-        error instanceof Error ? error : undefined
+        error instanceof Error ? error : undefined,
       );
     }
 
     return {
       metadata: toStoredMetadata(parsedEnvelope.metadata, filePath),
-      storageState
+      storageState,
     };
   }
 
@@ -818,7 +872,7 @@ export class LinkedInSessionStore {
    */
   async loadLatestAvailable(
     sessionName: string = "default",
-    options: RestoreStoredLinkedInSessionOptions = {}
+    options: RestoreStoredLinkedInSessionOptions = {},
   ): Promise<RestoreStoredLinkedInSessionResult> {
     const normalizedSessionName = normalizeSessionName(sessionName);
     const maxBackups = Math.max(0, options.maxBackups ?? 2);
@@ -826,7 +880,7 @@ export class LinkedInSessionStore {
 
     for (const candidateSessionName of getFallbackSessionNames(
       normalizedSessionName,
-      maxBackups
+      maxBackups,
     )) {
       try {
         const loadedSession = await this.load(candidateSessionName);
@@ -840,7 +894,7 @@ export class LinkedInSessionStore {
         return {
           ...loadedSession,
           restoredFromBackup: candidateSessionName !== normalizedSessionName,
-          restoredSessionName: candidateSessionName
+          restoredSessionName: candidateSessionName,
         };
       } catch (error) {
         if (
@@ -862,11 +916,11 @@ export class LinkedInSessionStore {
         session_name: normalizedSessionName,
         ...(lastValidationError instanceof Error
           ? { cause: lastValidationError.message }
-          : {})
+          : {}),
       },
       lastValidationError instanceof Error
         ? { cause: lastValidationError }
-        : undefined
+        : undefined,
     );
   }
 
@@ -877,9 +931,12 @@ export class LinkedInSessionStore {
   async restoreToContext(
     context: BrowserContext,
     sessionName: string = "default",
-    options: RestoreStoredLinkedInSessionOptions = {}
+    options: RestoreStoredLinkedInSessionOptions = {},
   ): Promise<RestoreStoredLinkedInSessionResult> {
-    const restoredSession = await this.loadLatestAvailable(sessionName, options);
+    const restoredSession = await this.loadLatestAvailable(
+      sessionName,
+      options,
+    );
 
     await context.addCookies(restoredSession.storageState.cookies);
     await restoreOriginStorageToContext(context, restoredSession.storageState);
@@ -896,7 +953,7 @@ async function getOrCreatePage(context: BrowserContext) {
 
 async function restoreOriginStorageToContext(
   context: BrowserContext,
-  storageState: LinkedInBrowserStorageState
+  storageState: LinkedInBrowserStorageState,
 ): Promise<void> {
   if (storageState.origins.length === 0) {
     return;
@@ -907,7 +964,7 @@ async function restoreOriginStorageToContext(
   for (const originState of storageState.origins) {
     try {
       await page.goto(originState.origin, {
-        waitUntil: "domcontentloaded"
+        waitUntil: "domcontentloaded",
       });
       await page.evaluate((localStorageEntries) => {
         globalThis.localStorage.clear();
@@ -924,11 +981,11 @@ async function restoreOriginStorageToContext(
 async function waitForManualLogin(
   context: BrowserContext,
   timeoutMs: number,
-  pollIntervalMs: number
+  pollIntervalMs: number,
 ): Promise<LinkedInSessionInspection> {
   const page = await getOrCreatePage(context);
   await page.goto("https://www.linkedin.com/login", {
-    waitUntil: "domcontentloaded"
+    waitUntil: "domcontentloaded",
   });
 
   const deadline = Date.now() + timeoutMs;
@@ -946,8 +1003,8 @@ async function waitForManualLogin(
       {
         current_url: lastStatus.currentUrl,
         reason: lastStatus.reason,
-        timeout_ms: timeoutMs
-      }
+        timeout_ms: timeoutMs,
+      },
     );
   }
 
@@ -959,7 +1016,7 @@ async function waitForManualLogin(
  * persists the resulting authenticated session snapshot.
  */
 export async function captureLinkedInSession(
-  options: CaptureLinkedInSessionOptions = {}
+  options: CaptureLinkedInSessionOptions = {},
 ): Promise<CaptureLinkedInSessionResult> {
   const sessionName = normalizeSessionName(options.sessionName);
   const timeoutMs = options.timeoutMs ?? DEFAULT_CAPTURE_TIMEOUT_MS;
@@ -969,13 +1026,13 @@ export async function captureLinkedInSession(
   if (timeoutMs <= 0 || !Number.isFinite(timeoutMs)) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "timeoutMs must be a positive number."
+      "timeoutMs must be a positive number.",
     );
   }
   if (pollIntervalMs <= 0 || !Number.isFinite(pollIntervalMs)) {
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
-      "pollIntervalMs must be a positive number."
+      "pollIntervalMs must be a positive number.",
     );
   }
 
@@ -983,17 +1040,48 @@ export async function captureLinkedInSession(
   let context: BrowserContext | undefined;
   try {
     const executablePath = process.env.PLAYWRIGHT_EXECUTABLE_PATH;
-    browser = await chromium.launch({
-      headless: false,
-      ...(executablePath ? { executablePath } : {})
-    });
+    const useStealth = options.stealth ?? true;
+    const evasion = resolveEvasionConfig(
+      options.evasionLevel ? { level: options.evasionLevel } : {},
+    );
+    const stealthConfig = resolveStealthConfig(evasion.level);
+    const effectiveStealthConfig = useStealth
+      ? stealthConfig
+      : { ...stealthConfig, enabled: false };
+
+    const launcher = await createStealthChromium(effectiveStealthConfig);
+    const launchOptions = applyStealthLaunchOptions(
+      {
+        headless: false,
+        ...(executablePath ? { executablePath } : {}),
+      },
+      effectiveStealthConfig,
+    );
+    browser = await launcher.launch(launchOptions);
     context = await browser.newContext();
+    await hardenBrowserContext(context, effectiveStealthConfig);
     const status = await waitForManualLogin(
       wrapLinkedInBrowserContext(context),
       timeoutMs,
-      pollIntervalMs
+      pollIntervalMs,
     );
     const storageState = await context.storageState();
+    // Capture browser fingerprint from the authenticated page
+    const page = context.pages()[0];
+    let fingerprint: BrowserFingerprint | undefined;
+    let fingerprintPath: string | undefined;
+    if (page) {
+      try {
+        fingerprint = await captureBrowserFingerprint(page);
+        fingerprintPath = await saveBrowserFingerprint(
+          fingerprint,
+          sessionName,
+          options.baseDir,
+        );
+      } catch {
+        // Fingerprint capture is best-effort; session capture is the priority.
+      }
+    }
     const store = new LinkedInSessionStore(options.baseDir);
     const metadata = await store.save(sessionName, storageState);
 
@@ -1003,22 +1091,24 @@ export async function captureLinkedInSession(
         "LinkedIn login appeared successful, but no authenticated session cookie was captured. Capture the session again after the home feed loads fully.",
         {
           current_url: status.currentUrl,
-          session_name: sessionName
-        }
+          session_name: sessionName,
+        },
       );
     }
 
     return {
       ...metadata,
+      ...(fingerprint ? { fingerprint } : {}),
+      ...(fingerprintPath ? { fingerprintPath } : {}),
       authenticated: true,
       checkedAt: status.checkedAt,
-      currentUrl: status.currentUrl
+      currentUrl: status.currentUrl,
     };
   } catch (error) {
     throw asLinkedInBuddyError(
       withPlaywrightInstallHint(error),
       error instanceof LinkedInBuddyError ? error.code : "UNKNOWN",
-      "Failed to capture the LinkedIn browser session."
+      "Failed to capture the LinkedIn browser session.",
     );
   } finally {
     if (context) {
