@@ -1,28 +1,25 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   LINKEDIN_SESSION_STATUS_TOOL,
-  SUBMIT_FEEDBACK_TOOL
+  SUBMIT_FEEDBACK_TOOL,
 } from "../index.js";
 
 const feedbackMcpMocks = vi.hoisted(() => ({
   createCoreRuntime: vi.fn(),
   readFeedbackStateSnapshot: vi.fn(),
   recordFeedbackInvocation: vi.fn(),
-  submitFeedback: vi.fn()
+  submitFeedback: vi.fn(),
 }));
 
 vi.mock("@linkedin-buddy/core", async () => {
-  const actual =
-    await vi.importActual<typeof import("@linkedin-buddy/core")>(
-      "@linkedin-buddy/core"
-    );
+  const actual = await vi.importActual("@linkedin-buddy/core");
 
   return {
     ...actual,
     createCoreRuntime: feedbackMcpMocks.createCoreRuntime,
     readFeedbackStateSnapshot: feedbackMcpMocks.readFeedbackStateSnapshot,
     recordFeedbackInvocation: feedbackMcpMocks.recordFeedbackInvocation,
-    submitFeedback: feedbackMcpMocks.submitFeedback
+    submitFeedback: feedbackMcpMocks.submitFeedback,
   };
 });
 
@@ -38,15 +35,15 @@ describe("feedback MCP tooling", () => {
           authenticated: true,
           evasion: {
             diagnosticsEnabled: false,
-            level: "moderate"
-          }
-        })
+            level: "moderate",
+          },
+        }),
       },
       close: vi.fn(),
       logger: {
-        log: vi.fn()
+        log: vi.fn(),
       },
-      runId: "run-mcp-feedback"
+      runId: "run-mcp-feedback",
     });
     feedbackMcpMocks.readFeedbackStateSnapshot.mockResolvedValue({
       activeProfileName: "default",
@@ -56,7 +53,7 @@ describe("feedback MCP tooling", () => {
       lastMcpToolName: "linkedin.feed.list",
       sessionDurationMs: 120_000,
       sessionId: "session-1",
-      sessionStartedAt: "2026-03-11T10:00:00.000Z"
+      sessionStartedAt: "2026-03-11T10:00:00.000Z",
     });
     feedbackMcpMocks.recordFeedbackInvocation.mockResolvedValue({
       reason: "session_first",
@@ -69,8 +66,8 @@ describe("feedback MCP tooling", () => {
         lastMcpToolName: "linkedin.session.status",
         sessionDurationMs: 180_000,
         sessionId: "session-1",
-        sessionStartedAt: "2026-03-11T10:00:00.000Z"
-      }
+        sessionStartedAt: "2026-03-11T10:00:00.000Z",
+      },
     });
     feedbackMcpMocks.submitFeedback.mockResolvedValue({
       body: "body",
@@ -81,7 +78,7 @@ describe("feedback MCP tooling", () => {
       title: "[Agent Feedback] Add more logs",
       type: "feature",
       pendingFilePath:
-        "/tmp/assistant-home/.linkedin-buddy/pending-feedback/2026-03-11-feature.md"
+        "/tmp/assistant-home/.linkedin-buddy/pending-feedback/2026-03-11-feature.md",
     });
 
     ({ handleToolCall } = await import("../bin/linkedin-mcp.js"));
@@ -91,7 +88,8 @@ describe("feedback MCP tooling", () => {
     const result = await handleToolCall(SUBMIT_FEEDBACK_TOOL, {
       type: "feature",
       title: "Add more logs",
-      description: "The MCP surface should preserve a little more debug context."
+      description:
+        "The MCP surface should preserve a little more debug context.",
     });
 
     expect("isError" in result && result.isError).toBe(false);
@@ -99,32 +97,78 @@ describe("feedback MCP tooling", () => {
       expect.objectContaining({
         type: "feature",
         title: "Add more logs",
-        description: "The MCP surface should preserve a little more debug context."
-      })
+        description:
+          "The MCP surface should preserve a little more debug context.",
+      }),
     );
 
-    const payload = JSON.parse(result.content[0]?.text ?? "{}") as Record<string, unknown>;
+    const payload = JSON.parse(result.content[0]?.text ?? "{}") as Record<
+      string,
+      unknown
+    >;
     expect(payload.status).toBe("saved_pending");
     expect(payload.pending_file_path).toBe(
-      ".linkedin-buddy/pending-feedback/2026-03-11-feature.md"
+      ".linkedin-buddy/pending-feedback/2026-03-11-feature.md",
     );
     expect(payload.feedback_hint).toBeUndefined();
   });
 
   it("adds a feedback hint to ordinary tool results when the tracker says to show one", async () => {
     const result = await handleToolCall(LINKEDIN_SESSION_STATUS_TOOL, {
-      profileName: "default"
+      profileName: "default",
     });
 
     expect("isError" in result && result.isError).toBe(false);
-    const payload = JSON.parse(result.content[0]?.text ?? "{}") as Record<string, unknown>;
+    const payload = JSON.parse(result.content[0]?.text ?? "{}") as Record<
+      string,
+      unknown
+    >;
     expect(payload.feedback_hint).toContain("linkedin-buddy feedback");
     expect(feedbackMcpMocks.recordFeedbackInvocation).toHaveBeenCalledWith(
       expect.objectContaining({
         invocationName: LINKEDIN_SESSION_STATUS_TOOL,
         mcpToolName: LINKEDIN_SESSION_STATUS_TOOL,
-        source: "mcp"
-      })
+        source: "mcp",
+      }),
     );
+  });
+
+  it("returns an error when submit_feedback title is missing", async () => {
+    const result = await handleToolCall(SUBMIT_FEEDBACK_TOOL, {
+      type: "feature",
+      description: "description",
+    });
+
+    expect("isError" in result && result.isError).toBe(true);
+  });
+
+  it("returns an error when submit_feedback description is empty", async () => {
+    const result = await handleToolCall(SUBMIT_FEEDBACK_TOOL, {
+      type: "feature",
+      title: "title",
+      description: "   ",
+    });
+
+    expect("isError" in result && result.isError).toBe(true);
+  });
+
+  it("does not add feedback hint to submit_feedback error results", async () => {
+    feedbackMcpMocks.submitFeedback.mockRejectedValueOnce(
+      new Error("submit failed"),
+    );
+
+    const result = await handleToolCall(SUBMIT_FEEDBACK_TOOL, {
+      type: "feature",
+      title: "title",
+      description: "description",
+    });
+
+    expect("isError" in result && result.isError).toBe(true);
+    const payload = JSON.parse(result.content[0]?.text ?? "{}") as Record<
+      string,
+      unknown
+    >;
+    expect(payload.feedback_hint).toBeUndefined();
+    expect(feedbackMcpMocks.recordFeedbackInvocation).not.toHaveBeenCalled();
   });
 });
