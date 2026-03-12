@@ -10,7 +10,7 @@ export const LINKEDIN_ANALYTICS_SURFACES = [
   "profile_views",
   "search_appearances",
   "content_metrics",
-  "post_metrics"
+  "post_metrics",
 ] as const;
 
 export type LinkedInAnalyticsSurface =
@@ -100,44 +100,46 @@ const LINKEDIN_SELF_PROFILE_URL = "https://www.linkedin.com/in/me/";
 const PROFILE_VIEW_KEYWORDS = [
   "profile view",
   "who viewed",
-  "viewed your profile"
+  "viewed your profile",
 ] as const;
 const SEARCH_APPEARANCES_KEYWORDS = ["search appearance"] as const;
 const CONTENT_METRICS_KEYWORDS = [
   "impression",
   "content",
   "engagement",
-  "creator analytics"
+  "creator analytics",
 ] as const;
 const CONTENT_METRICS_NEGATIVE_KEYWORDS = [
   ...PROFILE_VIEW_KEYWORDS,
-  ...SEARCH_APPEARANCES_KEYWORDS
+  ...SEARCH_APPEARANCES_KEYWORDS,
 ] as const;
 const IGNORED_ANALYTICS_LINES = new Set([
   "private to you",
-  "only visible to you"
+  "only visible to you",
 ]);
 
 function normalizeText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
 }
 
-function readAnalyticsLimit(
+export function readAnalyticsLimit(
   value: number | undefined,
-  fallback: number
+  fallback: number,
 ): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return fallback;
   }
 
-  return Math.max(1, Math.floor(value));
+  return Math.max(1, Math.min(Math.floor(value), 50));
 }
 
 function isAbsoluteUrl(value: string): boolean {
   return /^https?:\/\//i.test(value);
 }
 
-function toAbsoluteLinkedInUrl(value: string | null | undefined): string | null {
+export function toAbsoluteLinkedInUrl(
+  value: string | null | undefined,
+): string | null {
   const href = normalizeText(value);
   if (!href) {
     return null;
@@ -226,9 +228,9 @@ export function parseLinkedInAnalyticsNumber(value: string): number | null {
   return parsed * magnitude;
 }
 
-function inferAnalyticsMetricUnit(
+export function inferAnalyticsMetricUnit(
   label: string,
-  valueText: string
+  valueText: string,
 ): LinkedInAnalyticsMetricUnit {
   if (valueText.includes("%") || /\brate\b|\bpercent\b/i.test(label)) {
     return "percent";
@@ -237,8 +239,8 @@ function inferAnalyticsMetricUnit(
   return parseLinkedInAnalyticsNumber(valueText) === null ? "unknown" : "count";
 }
 
-function inferAnalyticsMetricTrend(
-  value: string | null | undefined
+export function inferAnalyticsMetricTrend(
+  value: string | null | undefined,
 ): LinkedInAnalyticsMetricTrend {
   const normalized = normalizeText(value).toLowerCase();
   if (!normalized) {
@@ -291,7 +293,7 @@ function isDeltaLikeLine(value: string): boolean {
 
 function createMetricDraft(
   line: string,
-  fallbackLabel: string
+  fallbackLabel: string,
 ): AnalyticsMetricDraft | null {
   const normalized = normalizeText(line);
   const valueText = extractMetricValueToken(normalized);
@@ -299,17 +301,18 @@ function createMetricDraft(
     return null;
   }
 
-  const label = normalizeText(normalized.replace(valueText, "")) || fallbackLabel;
+  const label =
+    normalizeText(normalized.replace(valueText, "")) || fallbackLabel;
   return {
     label,
     valueText,
-    deltaText: null
+    deltaText: null,
   };
 }
 
 function buildAnalyticsMetric(
   draft: AnalyticsMetricDraft,
-  observedAt: string
+  observedAt: string,
 ): LinkedInAnalyticsMetric {
   const label = normalizeText(draft.label) || "Metric";
   const metricKey = toLinkedInAnalyticsMetricKey(label);
@@ -327,14 +330,14 @@ function buildAnalyticsMetric(
     delta_text: draft.deltaText,
     unit,
     trend: inferAnalyticsMetricTrend(draft.deltaText),
-    observed_at: observedAt
+    observed_at: observedAt,
   };
 }
 
 function buildCardMetricsFromLines(
   title: string,
   lines: string[],
-  observedAt: string
+  observedAt: string,
 ): LinkedInAnalyticsMetric[] {
   const cleanedLines = lines
     .map((line) => normalizeText(line))
@@ -362,29 +365,27 @@ function buildCardMetricsFromLines(
   return drafts.map((draft) => buildAnalyticsMetric(draft, observedAt));
 }
 
-function flattenCardMetrics(cards: LinkedInAnalyticsCard[]): LinkedInAnalyticsMetric[] {
-  return cards.flatMap((card) => card.metrics);
-}
-
 function cardTextHaystack(card: LinkedInAnalyticsCard): string {
   return [
     card.card_key,
     card.title,
     card.description,
     card.href ?? "",
-    ...card.metrics.map((metric) => metric.label)
+    ...card.metrics.map((metric) => metric.label),
   ]
     .join(" ")
     .toLowerCase();
 }
 
-function matchesAnalyticsCard(
+export function matchesAnalyticsCard(
   card: LinkedInAnalyticsCard,
   keywords: readonly string[],
-  negativeKeywords: readonly string[] = []
+  negativeKeywords: readonly string[] = [],
 ): boolean {
   const haystack = cardTextHaystack(card);
-  if (negativeKeywords.some((keyword) => haystack.includes(keyword.toLowerCase()))) {
+  if (
+    negativeKeywords.some((keyword) => haystack.includes(keyword.toLowerCase()))
+  ) {
     return false;
   }
 
@@ -410,7 +411,7 @@ async function waitForAnalyticsSurface(page: Page): Promise<void> {
 
 /* eslint-disable no-undef -- DOM types are valid inside page.evaluate() */
 async function extractProfileAnalyticsCardSnapshots(
-  page: Page
+  page: Page,
 ): Promise<AnalyticsCardSnapshot[]> {
   return page.evaluate(() => {
     const normalize = (value: string | null | undefined): string =>
@@ -422,7 +423,9 @@ async function extractProfileAnalyticsCardSnapshots(
         .map((line) => normalize(line))
         .filter((line) => line.length > 0);
 
-    const toAbsoluteHref = (value: string | null | undefined): string | null => {
+    const toAbsoluteHref = (
+      value: string | null | undefined,
+    ): string | null => {
       const href = normalize(value);
       if (!href) {
         return null;
@@ -443,7 +446,7 @@ async function extractProfileAnalyticsCardSnapshots(
 
     const readTitle = (element: Element, lines: string[]): string => {
       const heading = normalize(
-        element.querySelector("h1, h2, h3, h4, strong, dt")?.textContent
+        element.querySelector("h1, h2, h3, h4, strong, dt")?.textContent,
       );
       if (heading) {
         return heading;
@@ -456,7 +459,7 @@ async function extractProfileAnalyticsCardSnapshots(
       /(profile views?|who viewed|viewed your profile|search appearances?|impressions?|content|engagement|analytics)/i;
     const relevantHrefPattern = /(analytics|profile-view|search-appear)/i;
     const candidates = Array.from(
-      document.querySelectorAll("a[href], button, article, li")
+      document.querySelectorAll("a[href], button, article, li"),
     ).filter((element) => {
       const text = readInnerText(element);
       if (!text || text.length > 400) {
@@ -464,7 +467,9 @@ async function extractProfileAnalyticsCardSnapshots(
       }
 
       const href = normalize(
-        element instanceof HTMLAnchorElement ? element.href : element.getAttribute("href")
+        element instanceof HTMLAnchorElement
+          ? element.href
+          : element.getAttribute("href"),
       );
 
       return relevantPattern.test(text) || relevantHrefPattern.test(href);
@@ -482,7 +487,7 @@ async function extractProfileAnalyticsCardSnapshots(
       const href = toAbsoluteHref(
         candidate instanceof HTMLAnchorElement
           ? candidate.href
-          : candidate.getAttribute("href")
+          : candidate.getAttribute("href"),
       );
       const description = lines
         .filter((line) => line !== title)
@@ -493,11 +498,14 @@ async function extractProfileAnalyticsCardSnapshots(
         title,
         description,
         href,
-        lines
+        lines,
       };
       const dedupeKey = `${title.toLowerCase()}|${href ?? ""}`;
       const existing = deduped.get(dedupeKey);
-      if (!existing || existing.lines.join(" ").length < lines.join(" ").length) {
+      if (
+        !existing ||
+        existing.lines.join(" ").length < lines.join(" ").length
+      ) {
         deduped.set(dedupeKey, snapshot);
       }
     }
@@ -509,19 +517,23 @@ async function extractProfileAnalyticsCardSnapshots(
 
 function toAnalyticsCards(
   snapshots: AnalyticsCardSnapshot[],
-  observedAt: string
+  observedAt: string,
 ): LinkedInAnalyticsCard[] {
   return snapshots
     .map((snapshot) => {
       const title = normalizeText(snapshot.title);
       const description = normalizeText(snapshot.description);
-      const metrics = buildCardMetricsFromLines(title, snapshot.lines, observedAt);
+      const metrics = buildCardMetricsFromLines(
+        title,
+        snapshot.lines,
+        observedAt,
+      );
       return {
         card_key: toLinkedInAnalyticsMetricKey(title),
         title,
         description,
         href: toAbsoluteLinkedInUrl(snapshot.href),
-        metrics
+        metrics,
       } satisfies LinkedInAnalyticsCard;
     })
     .filter((card) => card.title.length > 0)
@@ -530,7 +542,7 @@ function toAnalyticsCards(
 
 async function loadProfileAnalyticsCards(
   runtime: LinkedInAnalyticsRuntime,
-  profileName: string
+  profileName: string,
 ): Promise<{
   sourceUrl: string;
   observedAt: string;
@@ -538,39 +550,40 @@ async function loadProfileAnalyticsCards(
 }> {
   await runtime.auth.ensureAuthenticated({
     profileName,
-    cdpUrl: runtime.cdpUrl
+    cdpUrl: runtime.cdpUrl,
   });
 
   return runtime.profileManager.runWithContext(
     {
       cdpUrl: runtime.cdpUrl,
       profileName,
-      headless: true
+      headless: true,
     },
     async (context) => {
       const page = await getOrCreatePage(context);
       await page.goto(LINKEDIN_SELF_PROFILE_URL, {
-        waitUntil: "domcontentloaded"
+        waitUntil: "domcontentloaded",
+        timeout: 30_000,
       });
       await waitForAnalyticsSurface(page);
       const observedAt = new Date().toISOString();
       const cards = toAnalyticsCards(
         await extractProfileAnalyticsCardSnapshots(page),
-        observedAt
+        observedAt,
       );
       return {
         sourceUrl: page.url(),
         observedAt,
-        cards
+        cards,
       };
-    }
+    },
   );
 }
 
-function ensureMatchingCards(
+export function ensureMatchingCards(
   surface: LinkedInAnalyticsSurface,
   cards: LinkedInAnalyticsCard[],
-  availableCards: LinkedInAnalyticsCard[]
+  availableCards: LinkedInAnalyticsCard[],
 ): LinkedInAnalyticsCard[] {
   if (cards.length > 0) {
     return cards;
@@ -581,8 +594,8 @@ function ensureMatchingCards(
     `Could not locate LinkedIn analytics cards for ${surface}.`,
     {
       surface,
-      available_card_titles: availableCards.map((card) => card.title)
-    }
+      available_card_titles: availableCards.map((card) => card.title),
+    },
   );
 }
 
@@ -590,39 +603,45 @@ function buildSummary(
   surface: Exclude<LinkedInAnalyticsSurface, "post_metrics">,
   sourceUrl: string,
   observedAt: string,
-  cards: LinkedInAnalyticsCard[]
+  cards: LinkedInAnalyticsCard[],
 ): LinkedInAnalyticsSummary {
   return {
     surface,
     source_url: sourceUrl,
     observed_at: observedAt,
-    metrics: flattenCardMetrics(cards),
-    cards
+    metrics: cards.flatMap((card) => card.metrics),
+    cards,
   };
 }
 
 export class LinkedInAnalyticsService {
   constructor(private readonly runtime: LinkedInAnalyticsRuntime) {}
 
-  async getProfileViews(
-    input: ReadAnalyticsInput = {}
-  ): Promise<LinkedInAnalyticsSummary> {
-    const profileName = input.profileName ?? "default";
+  private resolveProfileName(profileName: string | undefined): string {
+    const normalizedProfileName = normalizeText(profileName);
+    return normalizedProfileName || "default";
+  }
+
+  private async fetchProfileSurface(input: {
+    surface: Exclude<LinkedInAnalyticsSurface, "post_metrics">;
+    profileName: string | undefined;
+    selectCards: (cards: LinkedInAnalyticsCard[]) => LinkedInAnalyticsCard[];
+    errorMessage: string;
+  }): Promise<LinkedInAnalyticsSummary> {
+    const profileName = this.resolveProfileName(input.profileName);
 
     try {
       const { sourceUrl, observedAt, cards } = await loadProfileAnalyticsCards(
         this.runtime,
-        profileName
+        profileName,
       );
       const matchedCards = ensureMatchingCards(
-        "profile_views",
-        cards.filter((card) =>
-          matchesAnalyticsCard(card, PROFILE_VIEW_KEYWORDS)
-        ),
-        cards
+        input.surface,
+        input.selectCards(cards),
+        cards,
       );
 
-      return buildSummary("profile_views", sourceUrl, observedAt, matchedCards);
+      return buildSummary(input.surface, sourceUrl, observedAt, matchedCards);
     } catch (error) {
       if (error instanceof LinkedInBuddyError) {
         throw error;
@@ -631,124 +650,95 @@ export class LinkedInAnalyticsService {
       throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
-        "Failed to read LinkedIn profile view analytics."
+        `${input.errorMessage} (profileName: ${profileName}).`,
       );
     }
+  }
+
+  async getProfileViews(
+    input: ReadAnalyticsInput = {},
+  ): Promise<LinkedInAnalyticsSummary> {
+    return this.fetchProfileSurface({
+      surface: "profile_views",
+      profileName: input.profileName,
+      selectCards: (cards) =>
+        cards.filter((card) =>
+          matchesAnalyticsCard(card, PROFILE_VIEW_KEYWORDS),
+        ),
+      errorMessage: "Failed to read LinkedIn profile view analytics.",
+    });
   }
 
   async getSearchAppearances(
-    input: ReadAnalyticsInput = {}
+    input: ReadAnalyticsInput = {},
   ): Promise<LinkedInAnalyticsSummary> {
-    const profileName = input.profileName ?? "default";
-
-    try {
-      const { sourceUrl, observedAt, cards } = await loadProfileAnalyticsCards(
-        this.runtime,
-        profileName
-      );
-      const matchedCards = ensureMatchingCards(
-        "search_appearances",
+    return this.fetchProfileSurface({
+      surface: "search_appearances",
+      profileName: input.profileName,
+      selectCards: (cards) =>
         cards.filter((card) =>
-          matchesAnalyticsCard(card, SEARCH_APPEARANCES_KEYWORDS)
+          matchesAnalyticsCard(card, SEARCH_APPEARANCES_KEYWORDS),
         ),
-        cards
-      );
-
-      return buildSummary(
-        "search_appearances",
-        sourceUrl,
-        observedAt,
-        matchedCards
-      );
-    } catch (error) {
-      if (error instanceof LinkedInBuddyError) {
-        throw error;
-      }
-
-      throw asLinkedInBuddyError(
-        error,
-        "UNKNOWN",
-        "Failed to read LinkedIn search appearance analytics."
-      );
-    }
+      errorMessage: "Failed to read LinkedIn search appearance analytics.",
+    });
   }
 
   async getContentMetrics(
-    input: ReadContentMetricsInput = {}
+    input: ReadContentMetricsInput = {},
   ): Promise<LinkedInAnalyticsSummary> {
-    const profileName = input.profileName ?? "default";
     const limit = readAnalyticsLimit(input.limit, 4);
 
-    try {
-      const { sourceUrl, observedAt, cards } = await loadProfileAnalyticsCards(
-        this.runtime,
-        profileName
-      );
-      const directMatches = cards.filter((card) =>
-        matchesAnalyticsCard(
-          card,
-          CONTENT_METRICS_KEYWORDS,
-          CONTENT_METRICS_NEGATIVE_KEYWORDS
-        )
-      );
-      const fallbackMatches = cards.filter(
-        (card) =>
-          !matchesAnalyticsCard(card, PROFILE_VIEW_KEYWORDS) &&
-          !matchesAnalyticsCard(card, SEARCH_APPEARANCES_KEYWORDS)
-      );
-      const matchedCards =
-        directMatches.length > 0
-          ? directMatches.slice(0, limit)
-          : fallbackMatches.slice(0, limit);
-      if (cards.length === 0) {
-        throw new LinkedInBuddyError(
-          "UI_CHANGED_SELECTOR_FAILED",
-          "Could not locate LinkedIn analytics cards for content_metrics.",
-          {
-            surface: "content_metrics",
-            available_card_titles: []
-          }
+    return this.fetchProfileSurface({
+      surface: "content_metrics",
+      profileName: input.profileName,
+      selectCards: (cards) => {
+        const directMatches = cards.filter((card) =>
+          matchesAnalyticsCard(
+            card,
+            CONTENT_METRICS_KEYWORDS,
+            CONTENT_METRICS_NEGATIVE_KEYWORDS,
+          ),
         );
-      }
+        const fallbackMatches = cards.filter(
+          (card) =>
+            !matchesAnalyticsCard(card, PROFILE_VIEW_KEYWORDS) &&
+            !matchesAnalyticsCard(card, SEARCH_APPEARANCES_KEYWORDS),
+        );
+        const matchedCards =
+          directMatches.length > 0
+            ? directMatches.slice(0, limit)
+            : fallbackMatches.slice(0, limit);
 
-      return buildSummary("content_metrics", sourceUrl, observedAt, matchedCards);
-    } catch (error) {
-      if (error instanceof LinkedInBuddyError) {
-        throw error;
-      }
-
-      throw asLinkedInBuddyError(
-        error,
-        "UNKNOWN",
-        "Failed to read LinkedIn content analytics."
-      );
-    }
+        return matchedCards;
+      },
+      errorMessage: "Failed to read LinkedIn content analytics.",
+    });
   }
 
   async getPostMetrics(
-    input: ReadPostMetricsInput
+    input: ReadPostMetricsInput,
   ): Promise<LinkedInPostMetricsSummary> {
-    const profileName = input.profileName ?? "default";
+    const profileName = this.resolveProfileName(input.profileName);
 
     try {
       const post = await this.runtime.feed.viewPost({
         profileName,
-        postUrl: input.postUrl
+        postUrl: input.postUrl,
       });
       const observedAt = new Date().toISOString();
       const metrics = [
         {
           label: "Reactions",
-          valueText: post.reactions_count
+          valueText: post.reactions_count,
         },
         {
           label: "Comments",
-          valueText: post.comments_count
+          valueText: post.comments_count,
         },
         {
           label: "Reposts",
-          valueText: post.reposts_count
-        }
+          valueText: post.reposts_count,
+        },
       ]
         .map((entry) => ({
           metric_key: toLinkedInAnalyticsMetricKey(entry.label),
@@ -759,10 +749,10 @@ export class LinkedInAnalyticsService {
           delta_text: null,
           unit: inferAnalyticsMetricUnit(entry.label, entry.valueText),
           trend: "unknown" as const,
-          observed_at: observedAt
+          observed_at: observedAt,
         }))
         .filter(
-          (metric) => metric.value_text.length > 0 || metric.value !== null
+          (metric) => metric.value_text.length > 0 || metric.value !== null,
         );
 
       const engagementTotal = metrics.reduce((total, metric) => {
@@ -787,17 +777,17 @@ export class LinkedInAnalyticsService {
               delta_text: null,
               unit: "count",
               trend: "unknown",
-              observed_at: observedAt
-            }
-          ]
-        }
+              observed_at: observedAt,
+            },
+          ],
+        },
       ];
 
       return {
         surface: "post_metrics",
         source_url: post.post_url,
         observed_at: observedAt,
-        metrics: flattenCardMetrics(cards),
+        metrics: cards.flatMap((card) => card.metrics),
         cards,
         post: {
           post_id: normalizeText(post.post_id),
@@ -805,8 +795,8 @@ export class LinkedInAnalyticsService {
           author_name: normalizeText(post.author_name),
           author_headline: normalizeText(post.author_headline),
           posted_at: normalizeText(post.posted_at),
-          text: normalizeText(post.text)
-        }
+          text: normalizeText(post.text),
+        },
       };
     } catch (error) {
       if (error instanceof LinkedInBuddyError) {
@@ -816,7 +806,7 @@ export class LinkedInAnalyticsService {
       throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
-        "Failed to read LinkedIn post metrics."
+        `Failed to read LinkedIn post metrics. (profileName: ${profileName}).`,
       );
     }
   }
