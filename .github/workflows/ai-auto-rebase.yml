@@ -53,7 +53,7 @@ jobs:
 
               if [ -n "$issue_num" ]; then
                 # Relabel the issue so the orchestrator spawns a new session to resolve conflicts
-                gh issue edit "$issue_num" --remove-label "ai-in-progress" --add-label "ai-task" 2>/dev/null || true
+                gh issue edit "$issue_num" --remove-label "ai-in-progress" --add-label "ai-task,ai-priority:high" 2>/dev/null || true
                 gh issue comment "$issue_num" --body "⚠️ Auto-rebase of branch \`$branch\` failed due to non-trivial merge conflicts with main. Relabeled to \`ai-task\` so the orchestrator can spawn a fresh session to resolve them."
                 echo "Relabeled issue #$issue_num back to ai-task"
               fi
