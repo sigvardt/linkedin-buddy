@@ -4,10 +4,7 @@ import type { ArtifactHelpers } from "./artifacts.js";
 import type { LinkedInAuthService } from "./auth/session.js";
 import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
 import type { ConfirmFailureArtifactConfig } from "./config.js";
-import {
-  LinkedInBuddyError,
-  asLinkedInBuddyError
-} from "./errors.js";
+import { LinkedInBuddyError, asLinkedInBuddyError } from "./errors.js";
 import { scrollLinkedInPageToBottom } from "./linkedinPage.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
@@ -17,7 +14,7 @@ import type {
   ActionExecutor,
   ActionExecutorInput,
   ActionExecutorResult,
-  TwoPhaseCommitService
+  TwoPhaseCommitService,
 } from "./twoPhaseCommit.js";
 
 export interface LinkedInNotification {
@@ -72,8 +69,7 @@ export interface NotificationPreferenceToggleState {
   selector_key: string | null;
 }
 
-export interface NotificationPreferenceChannelState
-  extends NotificationPreferenceToggleState {
+export interface NotificationPreferenceChannelState extends NotificationPreferenceToggleState {
   channel_key: LinkedInNotificationPreferenceChannel | null;
 }
 
@@ -114,7 +110,7 @@ export interface GetLinkedInNotificationPreferencesInput {
 export const LINKEDIN_NOTIFICATION_PREFERENCE_CHANNELS = [
   "in_app",
   "push",
-  "email"
+  "email",
 ] as const;
 
 export type LinkedInNotificationPreferenceChannel =
@@ -138,8 +134,7 @@ export interface LinkedInNotificationsExecutorRuntime {
   confirmFailureArtifacts: ConfirmFailureArtifactConfig;
 }
 
-export interface LinkedInNotificationsRuntime
-  extends LinkedInNotificationsExecutorRuntime {
+export interface LinkedInNotificationsRuntime extends LinkedInNotificationsExecutorRuntime {
   twoPhaseCommit: Pick<
     TwoPhaseCommitService<LinkedInNotificationsExecutorRuntime>,
     "prepare"
@@ -200,25 +195,30 @@ interface PreferenceSwitchLocatorMatch {
 
 const LINKEDIN_BASE_URL = "https://www.linkedin.com";
 const LINKEDIN_NOTIFICATIONS_URL = `${LINKEDIN_BASE_URL}/notifications/`;
-const LINKEDIN_NOTIFICATIONS_PREFERENCES_URL =
-  `${LINKEDIN_BASE_URL}/mypreferences/d/categories/notifications`;
+const LINKEDIN_NOTIFICATIONS_PREFERENCES_URL = `${LINKEDIN_BASE_URL}/mypreferences/d/categories/notifications`;
 const NOTIFICATION_CARD_SELECTOR =
   "article.nt-card, .notification-card, div[data-view-name='notification-card-container'], div[data-urn], article";
 const NOTIFICATION_CARD_ROOT_SELECTOR = `${NOTIFICATION_CARD_SELECTOR}, li`;
 
 const SETTINGS_MENU_LABELS = {
   en: ["Settings menu", "More actions"],
-  da: ["Indstillingsmenu", "Flere handlinger"]
+  da: ["Indstillingsmenu", "Flere handlinger"],
 } as const;
 
 const DELETE_NOTIFICATION_LABELS = {
   en: ["Delete notification"],
-  da: ["Slet notifikation", "Slet meddelelse"]
+  da: ["Slet notifikation", "Slet meddelelse"],
 } as const;
 
 export const DISMISS_NOTIFICATION_ACTION_TYPE = "notifications.dismiss";
 export const UPDATE_NOTIFICATION_PREFERENCE_ACTION_TYPE =
   "notifications.update_preference";
+
+/** Maximum number of notifications returned by {@link LinkedInNotificationsService.listNotifications}. */
+export const NOTIFICATION_LIST_MAX_LIMIT = 100;
+
+/** Maximum number of notification cards to scan when locating a specific notification by ID. */
+export const NOTIFICATION_SCAN_MAX_LIMIT = 200;
 
 function normalizeText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
@@ -248,10 +248,11 @@ function dedupePhrases(values: readonly string[]): string[] {
 
 function buildPhraseRegex(
   phrases: readonly string[],
-  options: { exact?: boolean } = {}
+  options: { exact?: boolean } = {},
 ): RegExp {
   const normalizedPhrases = dedupePhrases(phrases);
-  const body = normalizedPhrases.map((phrase) => escapeRegExp(phrase)).join("|") || "^$";
+  const body =
+    normalizedPhrases.map((phrase) => escapeRegExp(phrase)).join("|") || "^$";
   const pattern = options.exact ? `^(?:${body})$` : `(?:${body})`;
   return new RegExp(pattern, "iu");
 }
@@ -260,11 +261,11 @@ function buildLocalizedRegex(
   selectorLocale: LinkedInSelectorLocale,
   english: readonly string[],
   danish: readonly string[],
-  options: { exact?: boolean } = {}
+  options: { exact?: boolean } = {},
 ): RegExp {
   return buildPhraseRegex(
     selectorLocale === "da" ? [...danish, ...english] : [...english, ...danish],
-    options
+    options,
   );
 }
 
@@ -284,11 +285,11 @@ function readNotificationsLimit(value: number | undefined): number {
     return 20;
   }
 
-  return Math.max(1, Math.floor(value));
+  return Math.min(NOTIFICATION_LIST_MAX_LIMIT, Math.max(1, Math.floor(value)));
 }
 
 function readNotificationScanLimit(value: number = 50): number {
-  return Math.max(10, Math.floor(value));
+  return Math.min(NOTIFICATION_SCAN_MAX_LIMIT, Math.max(10, Math.floor(value)));
 }
 
 function splitPreferenceSummaryText(text: string): {
@@ -300,18 +301,18 @@ function splitPreferenceSummaryText(text: string): {
   if (!match?.[1]) {
     return {
       title: normalized,
-      summary: null
+      summary: null,
     };
   }
 
   return {
     title: normalizeText(match[1]),
-    summary: normalizeText(match[2])
+    summary: normalizeText(match[2]),
   };
 }
 
 function inferNotificationPreferenceChannel(
-  value: string
+  value: string,
 ): LinkedInNotificationPreferenceChannel | null {
   const normalized = normalizeText(value).toLowerCase();
   if (!normalized) {
@@ -337,10 +338,16 @@ function inferNotificationPreferenceChannel(
 }
 
 export function normalizeLinkedInNotificationPreferenceChannel(
-  value: string
+  value: string,
 ): LinkedInNotificationPreferenceChannel {
-  const normalized = normalizeText(value).toLowerCase().replace(/[-\s]+/gu, "_");
-  if (normalized === "in_app" || normalized === "push" || normalized === "email") {
+  const normalized = normalizeText(value)
+    .toLowerCase()
+    .replace(/[-\s]+/gu, "_");
+  if (
+    normalized === "in_app" ||
+    normalized === "push" ||
+    normalized === "email"
+  ) {
     return normalized;
   }
 
@@ -351,12 +358,12 @@ export function normalizeLinkedInNotificationPreferenceChannel(
 
   throw new LinkedInBuddyError(
     "ACTION_PRECONDITION_FAILED",
-    `channel must be one of: ${LINKEDIN_NOTIFICATION_PREFERENCE_CHANNELS.join(", ")}.`
+    `channel must be one of: ${LINKEDIN_NOTIFICATION_PREFERENCE_CHANNELS.join(", ")}.`,
   );
 }
 
 function resolveLinkedInNotificationPreferenceUrl(
-  value: string | undefined
+  value: string | undefined,
 ): string {
   const normalized = normalizeText(value);
   if (!normalized) {
@@ -376,20 +383,22 @@ function resolveLinkedInNotificationPreferenceUrl(
     normalized.includes("/notification-subcategories/") ||
     normalized.includes("/categories/notifications")
   ) {
-    const path = normalized.startsWith("mypreferences/") ? `/${normalized}` : normalized;
+    const path = normalized.startsWith("mypreferences/")
+      ? `/${normalized}`
+      : normalized;
     return new URL(path, LINKEDIN_BASE_URL).toString();
   }
 
   return new URL(
     `/mypreferences/d/notification-categories/${encodeURIComponent(normalized)}`,
-    LINKEDIN_BASE_URL
+    LINKEDIN_BASE_URL,
   ).toString();
 }
 
 async function waitForCondition(
   condition: () => Promise<boolean>,
   timeoutMs: number,
-  intervalMs: number = 250
+  intervalMs: number = 250,
 ): Promise<boolean> {
   const deadline = Date.now() + Math.max(0, timeoutMs);
 
@@ -416,14 +425,14 @@ async function getOrCreatePage(context: BrowserContext): Promise<Page> {
 
 async function findVisibleLocator(
   root: Page | Locator,
-  candidates: readonly VisibleLocatorCandidate[]
+  candidates: readonly VisibleLocatorCandidate[],
 ): Promise<{ locator: Locator; key: string } | null> {
   for (const candidate of candidates) {
     const locator = candidate.locatorFactory(root).first();
     if (await locator.isVisible().catch(() => false)) {
       return {
         locator,
-        key: candidate.key
+        key: candidate.key,
       };
     }
   }
@@ -438,14 +447,14 @@ async function waitForNotificationsSurface(page: Page): Promise<void> {
     "div[data-view-name='notification-card-container']",
     "div[data-urn]",
     "article",
-    "main"
+    "main",
   ];
 
   for (const selector of selectors) {
     try {
       await page.locator(selector).first().waitFor({
         state: "visible",
-        timeout: 5_000
+        timeout: 5_000,
       });
       return;
     } catch {
@@ -458,14 +467,14 @@ async function waitForNotificationsSurface(page: Page): Promise<void> {
     "Could not locate LinkedIn notification content.",
     {
       current_url: page.url(),
-      attempted_selectors: selectors
-    }
+      attempted_selectors: selectors,
+    },
   );
 }
 
 async function openNotificationsPage(page: Page): Promise<void> {
   await page.goto(LINKEDIN_NOTIFICATIONS_URL, {
-    waitUntil: "domcontentloaded"
+    waitUntil: "domcontentloaded",
   });
   await waitForNetworkIdleBestEffort(page);
   await waitForNotificationsSurface(page);
@@ -473,13 +482,13 @@ async function openNotificationsPage(page: Page): Promise<void> {
 
 async function openNotificationPreferencesPage(
   page: Page,
-  preferenceUrl: string
+  preferenceUrl: string,
 ): Promise<void> {
   const expectedPath = new URL(preferenceUrl).pathname;
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     await page.goto(preferenceUrl, {
-      waitUntil: "domcontentloaded"
+      waitUntil: "domcontentloaded",
     });
     await waitForNetworkIdleBestEffort(page);
 
@@ -509,13 +518,13 @@ async function openNotificationPreferencesPage(
 /* eslint-disable no-undef -- DOM types are valid inside page.evaluate() */
 async function extractNotificationSnapshots(
   page: Page,
-  limit: number
+  limit: number,
 ): Promise<NotificationSnapshot[]> {
   const candidates = await page.evaluate(
     ({
       maxNotifications,
       cardSelector,
-      cardRootSelector
+      cardRootSelector,
     }: {
       maxNotifications: number;
       cardSelector: string;
@@ -550,10 +559,11 @@ async function extractNotificationSnapshots(
       const pickHref = (root: ParentNode, selectors: string[]): string => {
         for (const selector of selectors) {
           const linkElement = root.querySelector(
-            selector
+            selector,
           ) as HTMLAnchorElement | null;
           const href = toAbsoluteHref(
-            normalize(linkElement?.getAttribute("href")) || normalize(linkElement?.href)
+            normalize(linkElement?.getAttribute("href")) ||
+              normalize(linkElement?.href),
           );
           if (href) {
             return href;
@@ -578,8 +588,10 @@ async function extractNotificationSnapshots(
           normalize(root.querySelector("[data-urn]")?.getAttribute("data-urn")),
           normalize(root.querySelector("[data-id]")?.getAttribute("data-id")),
           normalize(
-            root.querySelector("[data-notification-id]")?.getAttribute("data-notification-id")
-          )
+            root
+              .querySelector("[data-notification-id]")
+              ?.getAttribute("data-notification-id"),
+          ),
         ];
 
         for (const candidate of idCandidates) {
@@ -600,9 +612,10 @@ async function extractNotificationSnapshots(
         }
 
         const iconElement = root.querySelector(
-          "[class*='icon'], [class*='badge'], [data-test-icon], svg"
+          "[class*='icon'], [class*='badge'], [data-test-icon], svg",
         );
-        const signal = `${readClassName(iconElement)} ${readClassName(root)}`.toLowerCase();
+        const signal =
+          `${readClassName(iconElement)} ${readClassName(root)}`.toLowerCase();
         if (signal.includes("message")) {
           return "message";
         }
@@ -637,14 +650,15 @@ async function extractNotificationSnapshots(
         }
 
         const unreadIndicator = root.querySelector(
-          ".notification-status--unread, .notification-card__unread, .notification-card__unread-dot, .nt-card__unread, [data-test-notification-unread], [aria-label*='Unread'], [aria-label*='unread']"
+          ".notification-status--unread, .notification-card__unread, .notification-card__unread-dot, .nt-card__unread, [data-test-notification-unread], [aria-label*='Unread'], [aria-label*='unread']",
         );
         if (unreadIndicator) {
           return false;
         }
 
         const unreadData = normalize(
-          root.getAttribute("data-unread") ?? root.getAttribute("data-is-unread")
+          root.getAttribute("data-unread") ??
+            root.getAttribute("data-is-unread"),
         ).toLowerCase();
         if (unreadData === "true" || unreadData === "1") {
           return false;
@@ -657,10 +671,10 @@ async function extractNotificationSnapshots(
           [
             root.getAttribute("aria-label"),
             root.getAttribute("aria-description"),
-            root.querySelector("[aria-label]")?.getAttribute("aria-label")
+            root.querySelector("[aria-label]")?.getAttribute("aria-label"),
           ]
             .filter((value): value is string => typeof value === "string")
-            .join(" ")
+            .join(" "),
         ).toLowerCase();
 
         if (ariaSignal.includes("unread") || ariaSignal.includes("new")) {
@@ -673,13 +687,13 @@ async function extractNotificationSnapshots(
         return true;
       };
 
-      const cardCandidates = Array.from(globalThis.document.querySelectorAll(cardSelector));
+      const cardCandidates = Array.from(
+        globalThis.document.querySelectorAll(cardSelector),
+      );
       const uniqueCards: Element[] = [];
       const seenCards = new Set<Element>();
       for (const candidate of cardCandidates) {
-        const root =
-          candidate.closest(cardRootSelector) ??
-          candidate;
+        const root = candidate.closest(cardRootSelector) ?? candidate;
         if (seenCards.has(root)) {
           continue;
         }
@@ -704,7 +718,7 @@ async function extractNotificationSnapshots(
           "a[href*='/analytics/']",
           "a[href*='/jobs/view/']",
           "a[href*='/in/']",
-          "a"
+          "a",
         ]);
         const message =
           pickText(card, [
@@ -717,7 +731,7 @@ async function extractNotificationSnapshots(
             ".notification-card__body",
             ".notification-card__content",
             "p",
-            "span[dir='ltr']"
+            "span[dir='ltr']",
           ]) || normalize(card.textContent);
 
         const timestamp =
@@ -726,9 +740,8 @@ async function extractNotificationSnapshots(
             ".nt-card__time-ago",
             ".notification-card__timestamp",
             ".notification-card__time",
-            "[data-test-time-ago]"
-          ]) ||
-          normalize(card.querySelector("time")?.getAttribute("datetime"));
+            "[data-test-time-ago]",
+          ]) || normalize(card.querySelector("time")?.getAttribute("datetime"));
 
         notifications.push({
           raw_id: readRawNotificationId(card),
@@ -737,7 +750,7 @@ async function extractNotificationSnapshots(
           timestamp,
           link,
           is_read: inferReadState(card),
-          card_index: i
+          card_index: i,
         });
 
         if (notifications.length >= maxNotifications) {
@@ -750,8 +763,8 @@ async function extractNotificationSnapshots(
     {
       maxNotifications: Math.max(1, limit),
       cardSelector: NOTIFICATION_CARD_SELECTOR,
-      cardRootSelector: NOTIFICATION_CARD_ROOT_SELECTOR
-    }
+      cardRootSelector: NOTIFICATION_CARD_ROOT_SELECTOR,
+    },
   );
 
   return candidates
@@ -765,21 +778,21 @@ async function extractNotificationSnapshots(
           hashNotificationFingerprint({
             link,
             message,
-            timestamp
+            timestamp,
           }),
         type: normalizeText(candidate.type) || "notification",
         message,
         timestamp,
         link,
         is_read: Boolean(candidate.is_read),
-        card_index: Math.max(0, Math.floor(candidate.card_index))
+        card_index: Math.max(0, Math.floor(candidate.card_index)),
       } satisfies NotificationSnapshot;
     })
     .filter(
       (notification) =>
         notification.id.length > 0 ||
         notification.message.length > 0 ||
-        notification.link.length > 0
+        notification.link.length > 0,
     )
     .slice(0, limit);
 }
@@ -787,7 +800,7 @@ async function extractNotificationSnapshots(
 
 async function loadNotificationSnapshots(
   page: Page,
-  limit: number
+  limit: number,
 ): Promise<NotificationSnapshot[]> {
   let notifications = await extractNotificationSnapshots(page, limit);
 
@@ -803,19 +816,24 @@ async function loadNotificationSnapshots(
 async function findNotificationCard(
   page: Page,
   notificationId: string,
-  searchLimit: number = 50
+  searchLimit: number = 50,
 ): Promise<NotificationCardMatch | null> {
   const normalizedId = normalizeText(notificationId);
-  const snapshots = await loadNotificationSnapshots(page, readNotificationScanLimit(searchLimit));
+  const snapshots = await loadNotificationSnapshots(
+    page,
+    readNotificationScanLimit(searchLimit),
+  );
   const snapshot = snapshots.find((candidate) => candidate.id === normalizedId);
   if (!snapshot) {
     return null;
   }
 
-  const locator = page.locator(NOTIFICATION_CARD_SELECTOR).nth(snapshot.card_index);
+  const locator = page
+    .locator(NOTIFICATION_CARD_SELECTOR)
+    .nth(snapshot.card_index);
   return {
     snapshot,
-    locator
+    locator,
   };
 }
 
@@ -823,7 +841,7 @@ async function waitForNotificationState(
   page: Page,
   notificationId: string,
   matcher: (notification: NotificationSnapshot | null) => boolean,
-  searchLimit: number = 50
+  searchLimit: number = 50,
 ): Promise<boolean> {
   return waitForCondition(async () => {
     await openNotificationsPage(page);
@@ -833,39 +851,43 @@ async function waitForNotificationState(
 }
 
 async function clickNotificationPrimaryAction(
-  card: Locator
+  card: Locator,
 ): Promise<string | null> {
   const candidates = [
     {
       key: "headline-link",
       selectorHint: "card.locator('a.nt-card__headline')",
-      locatorFactory: (root: Page | Locator) => root.locator("a.nt-card__headline")
+      locatorFactory: (root: Page | Locator) =>
+        root.locator("a.nt-card__headline"),
     },
     {
       key: "body-link-button",
       selectorHint: "card.locator(\"button[role='link']\")",
-      locatorFactory: (root: Page | Locator) => root.locator("button[role='link']")
+      locatorFactory: (root: Page | Locator) =>
+        root.locator("button[role='link']"),
     },
     {
       key: "feed-link",
       selectorHint: "card.locator(\"a[href*='/feed/update/']\")",
-      locatorFactory: (root: Page | Locator) => root.locator("a[href*='/feed/update/']")
+      locatorFactory: (root: Page | Locator) =>
+        root.locator("a[href*='/feed/update/']"),
     },
     {
       key: "analytics-link",
       selectorHint: "card.locator(\"a[href*='/analytics/']\")",
-      locatorFactory: (root: Page | Locator) => root.locator("a[href*='/analytics/']")
+      locatorFactory: (root: Page | Locator) =>
+        root.locator("a[href*='/analytics/']"),
     },
     {
       key: "profile-link",
       selectorHint: "card.locator(\"a[href*='/in/']\")",
-      locatorFactory: (root: Page | Locator) => root.locator("a[href*='/in/']")
+      locatorFactory: (root: Page | Locator) => root.locator("a[href*='/in/']"),
     },
     {
       key: "fallback-link",
       selectorHint: "card.locator('a[href]')",
-      locatorFactory: (root: Page | Locator) => root.locator("a[href]")
-    }
+      locatorFactory: (root: Page | Locator) => root.locator("a[href]"),
+    },
   ] satisfies VisibleLocatorCandidate[];
 
   const match = await findVisibleLocator(card, candidates);
@@ -874,8 +896,10 @@ async function clickNotificationPrimaryAction(
       "UI_CHANGED_SELECTOR_FAILED",
       "Could not find a clickable LinkedIn notification target to mark as read.",
       {
-        attempted_selectors: candidates.map((candidate) => candidate.selectorHint)
-      }
+        attempted_selectors: candidates.map(
+          (candidate) => candidate.selectorHint,
+        ),
+      },
     );
   }
 
@@ -885,36 +909,36 @@ async function clickNotificationPrimaryAction(
 
 async function openNotificationSettingsMenu(
   card: Locator,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<string> {
   const regex = buildLocalizedRegex(
     selectorLocale,
     SETTINGS_MENU_LABELS.en,
-    SETTINGS_MENU_LABELS.da
+    SETTINGS_MENU_LABELS.da,
   );
   const candidates = [
     {
       key: "settings-trigger-data-attr",
       selectorHint: "card.locator('[data-nt-card-settings-dropdown-trigger]')",
       locatorFactory: (root: Page | Locator) =>
-        root.locator("[data-nt-card-settings-dropdown-trigger]")
+        root.locator("[data-nt-card-settings-dropdown-trigger]"),
     },
     {
       key: "settings-trigger-role",
       selectorHint: "card.getByRole(button, /settings menu/iu)",
       locatorFactory: (root: Page | Locator) =>
         root.getByRole("button", {
-          name: regex
-        })
+          name: regex,
+        }),
     },
     {
       key: "settings-trigger-aria-label",
       selectorHint: "card.locator('button[aria-label]')",
       locatorFactory: (root: Page | Locator) =>
         root.locator("button[aria-label]").filter({
-          hasText: /^$/u
-        })
-    }
+          hasText: /^$/u,
+        }),
+    },
   ] satisfies VisibleLocatorCandidate[];
 
   const match = await findVisibleLocator(card, candidates);
@@ -923,8 +947,10 @@ async function openNotificationSettingsMenu(
       "UI_CHANGED_SELECTOR_FAILED",
       "Could not find the LinkedIn notification settings menu trigger.",
       {
-        attempted_selectors: candidates.map((candidate) => candidate.selectorHint)
-      }
+        attempted_selectors: candidates.map(
+          (candidate) => candidate.selectorHint,
+        ),
+      },
     );
   }
 
@@ -935,12 +961,12 @@ async function openNotificationSettingsMenu(
 
 async function clickNotificationDismissAction(
   page: Page,
-  selectorLocale: LinkedInSelectorLocale
+  selectorLocale: LinkedInSelectorLocale,
 ): Promise<string> {
   const deleteRegex = buildLocalizedRegex(
     selectorLocale,
     DELETE_NOTIFICATION_LABELS.en,
-    DELETE_NOTIFICATION_LABELS.da
+    DELETE_NOTIFICATION_LABELS.da,
   );
   const candidates = [
     {
@@ -948,25 +974,27 @@ async function clickNotificationDismissAction(
       selectorHint: "page.getByRole(button, /Delete notification/iu)",
       locatorFactory: (root: Page | Locator) =>
         root.getByRole("button", {
-          name: deleteRegex
-        })
+          name: deleteRegex,
+        }),
     },
     {
       key: "dismiss-dropdown-button",
-      selectorHint: "page.locator('.nt-card-settings-dropdown__content button')",
+      selectorHint:
+        "page.locator('.nt-card-settings-dropdown__content button')",
       locatorFactory: (root: Page | Locator) =>
         root.locator(".nt-card-settings-dropdown__content button").filter({
-          hasText: deleteRegex
-        })
+          hasText: deleteRegex,
+        }),
     },
     {
       key: "dismiss-button-text",
-      selectorHint: "page.locator('button').filter({hasText: /Delete notification/iu})",
+      selectorHint:
+        "page.locator('button').filter({hasText: /Delete notification/iu})",
       locatorFactory: (root: Page | Locator) =>
         root.locator("button").filter({
-          hasText: deleteRegex
-        })
-    }
+          hasText: deleteRegex,
+        }),
+    },
   ] satisfies VisibleLocatorCandidate[];
 
   const match = await findVisibleLocator(page, candidates);
@@ -975,8 +1003,10 @@ async function clickNotificationDismissAction(
       "UI_CHANGED_SELECTOR_FAILED",
       "Could not find the dismiss action for the LinkedIn notification.",
       {
-        attempted_selectors: candidates.map((candidate) => candidate.selectorHint)
-      }
+        attempted_selectors: candidates.map(
+          (candidate) => candidate.selectorHint,
+        ),
+      },
     );
   }
 
@@ -987,7 +1017,7 @@ async function clickNotificationDismissAction(
 
 /* eslint-disable no-undef -- DOM types are valid inside page.evaluate() */
 async function readNotificationPreferencePageState(
-  page: Page
+  page: Page,
 ): Promise<NotificationPreferencePageState> {
   return page.evaluate(() => {
     const normalize = (value: string | null | undefined): string =>
@@ -998,7 +1028,9 @@ async function readNotificationPreferencePageState(
       if (labelledBy) {
         const ids = labelledBy.split(/\s+/u).filter(Boolean);
         const labels = ids
-          .map((id) => normalize(globalThis.document.getElementById(id)?.textContent))
+          .map((id) =>
+            normalize(globalThis.document.getElementById(id)?.textContent),
+          )
           .filter((value) => value.length > 0);
         if (labels.length > 0) {
           return labels.join(" ");
@@ -1012,7 +1044,9 @@ async function readNotificationPreferencePageState(
       return labelledText;
     };
 
-    const inferChannel = (value: string): LinkedInNotificationPreferenceChannel | null => {
+    const inferChannel = (
+      value: string,
+    ): LinkedInNotificationPreferenceChannel | null => {
       const normalized = normalize(value).toLowerCase();
       if (!normalized) {
         return null;
@@ -1038,7 +1072,7 @@ async function readNotificationPreferencePageState(
 
     const getDescription = (): string | null => {
       const paragraphs = Array.from(
-        globalThis.document.querySelectorAll("main p, [role='main'] p")
+        globalThis.document.querySelectorAll("main p, [role='main'] p"),
       )
         .map((element) => normalize(element.textContent))
         .filter((value) => value.length > 0);
@@ -1047,23 +1081,26 @@ async function readNotificationPreferencePageState(
 
     const readSwitches = (): NotificationPreferenceSwitchSnapshot[] => {
       return Array.from(
-        globalThis.document.querySelectorAll("input[role='switch']")
+        globalThis.document.querySelectorAll("input[role='switch']"),
       ).map((element) => {
         const input = element as HTMLInputElement;
         const selectorKey =
-          normalize(input.getAttribute("aria-labelledby")) || normalize(input.id) || null;
+          normalize(input.getAttribute("aria-labelledby")) ||
+          normalize(input.id) ||
+          null;
         const label = readSwitchLabel(input);
         return {
           label,
           enabled: Boolean(input.checked),
           selector_key: selectorKey,
-          channel_key: inferChannel(`${selectorKey ?? ""} ${label}`)
+          channel_key: inferChannel(`${selectorKey ?? ""} ${label}`),
         };
       });
     };
 
     const title =
-      normalize(globalThis.document.querySelector("h1")?.textContent) || "Notifications";
+      normalize(globalThis.document.querySelector("h1")?.textContent) ||
+      "Notifications";
     const preferenceUrl = globalThis.window.location.href;
     const pathName = globalThis.window.location.pathname;
     const description = getDescription();
@@ -1076,9 +1113,9 @@ async function readNotificationPreferencePageState(
           title,
           preference_url: preferenceUrl,
           description,
-          channels: switches
+          channels: switches,
         },
-        switches
+        switches,
       } satisfies NotificationPreferencePageState;
     }
 
@@ -1086,8 +1123,8 @@ async function readNotificationPreferencePageState(
       const switches = readSwitches();
       const subcategories = Array.from(
         globalThis.document.querySelectorAll(
-          "a[href*='/mypreferences/d/notification-subcategories/']"
-        )
+          "a[href*='/mypreferences/d/notification-subcategories/']",
+        ),
       )
         .map((element) => {
           const anchor = element as HTMLAnchorElement;
@@ -1098,10 +1135,13 @@ async function readNotificationPreferencePageState(
             title: normalize(match?.[1] ?? text),
             slug: href.replace(/\/+$/u, "").split("/").pop() ?? "",
             summary: normalize(match?.[2] ?? "") || null,
-            preference_url: href
+            preference_url: href,
           };
         })
-        .filter((subcategory) => subcategory.title.length > 0 && subcategory.preference_url);
+        .filter(
+          (subcategory) =>
+            subcategory.title.length > 0 && subcategory.preference_url,
+        );
 
       return {
         page: {
@@ -1113,19 +1153,19 @@ async function readNotificationPreferencePageState(
             ? {
                 label: switches[0].label,
                 enabled: switches[0].enabled,
-                selector_key: switches[0].selector_key
+                selector_key: switches[0].selector_key,
               }
             : null,
-          subcategories
+          subcategories,
         },
-        switches
+        switches,
       } satisfies NotificationPreferencePageState;
     }
 
     const categories = Array.from(
       globalThis.document.querySelectorAll(
-        "a[href*='/mypreferences/d/notification-categories/']"
-      )
+        "a[href*='/mypreferences/d/notification-categories/']",
+      ),
     )
       .map((element) => {
         const anchor = element as HTMLAnchorElement;
@@ -1133,19 +1173,21 @@ async function readNotificationPreferencePageState(
         return {
           title: normalize(anchor.textContent),
           slug: href.replace(/\/+$/u, "").split("/").pop() ?? "",
-          preference_url: href
+          preference_url: href,
         };
       })
-      .filter((category) => category.title.length > 0 && category.preference_url);
+      .filter(
+        (category) => category.title.length > 0 && category.preference_url,
+      );
 
     return {
       page: {
         view_type: "overview",
         title,
         preference_url: preferenceUrl,
-        categories
+        categories,
       },
-      switches: []
+      switches: [],
     } satisfies NotificationPreferencePageState;
   });
 }
@@ -1153,7 +1195,7 @@ async function readNotificationPreferencePageState(
 
 async function findPreferenceSwitchLocator(
   page: Page,
-  channel: LinkedInNotificationPreferenceChannel | undefined
+  channel: LinkedInNotificationPreferenceChannel | undefined,
 ): Promise<PreferenceSwitchLocatorMatch> {
   const switches = page.locator("input[role='switch']");
   const toggles = page.locator(".setting-toggle__toggle");
@@ -1170,7 +1212,9 @@ async function findPreferenceSwitchLocator(
           const ids = id.split(/\s+/u).filter(Boolean);
           return ids
             .map((part) => {
-              return (globalThis.document.getElementById(part)?.textContent ?? "")
+              return (
+                globalThis.document.getElementById(part)?.textContent ?? ""
+              )
                 .replace(/\s+/g, " ")
                 .trim();
             })
@@ -1179,7 +1223,7 @@ async function findPreferenceSwitchLocator(
         }, selectorKey)
       : "";
     const inferredChannel = inferNotificationPreferenceChannel(
-      `${selectorKey ?? ""} ${label}`
+      `${selectorKey ?? ""} ${label}`,
     );
 
     if (channel && inferredChannel !== channel) {
@@ -1193,27 +1237,27 @@ async function findPreferenceSwitchLocator(
       label: normalizeText(label),
       enabled: await locator.isChecked().catch(() => false),
       selectorKey,
-      channelKey: inferredChannel
+      channelKey: inferredChannel,
     };
   }
 
   if (channel) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      `Could not find the ${channel} notification preference switch on the page.`
+      `Could not find the ${channel} notification preference switch on the page.`,
     );
   }
 
   throw new LinkedInBuddyError(
     "TARGET_NOT_FOUND",
-    "Could not find a notification preference switch on the page."
+    "Could not find a notification preference switch on the page.",
   );
 }
 
 async function executeDismissNotification(
   runtime: LinkedInNotificationsExecutorRuntime,
   actionId: string,
-  target: Record<string, unknown>
+  target: Record<string, unknown>,
 ): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
   const profileName = String(target.profile_name ?? "default");
   const notificationId = String(target.notification_id ?? "");
@@ -1222,7 +1266,7 @@ async function executeDismissNotification(
     {
       cdpUrl: runtime.cdpUrl,
       profileName,
-      headless: true
+      headless: true,
     },
     async (context) => {
       const page = await getOrCreatePage(context);
@@ -1235,16 +1279,16 @@ async function executeDismissNotification(
         profileName,
         targetUrl: LINKEDIN_NOTIFICATIONS_URL,
         metadata: {
-          notification_id: notificationId
+          notification_id: notificationId,
         },
         errorDetails: {
-          notification_id: notificationId
+          notification_id: notificationId,
         },
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
             "UNKNOWN",
-            "Failed to execute LinkedIn notification dismiss action."
+            "Failed to execute LinkedIn notification dismiss action.",
           ),
         execute: async () => {
           await openNotificationsPage(page);
@@ -1254,25 +1298,25 @@ async function executeDismissNotification(
               "TARGET_NOT_FOUND",
               `Could not find LinkedIn notification ${notificationId}.`,
               {
-                notification_id: notificationId
-              }
+                notification_id: notificationId,
+              },
             );
           }
 
           const settingsMenuKey = await openNotificationSettingsMenu(
             match.locator,
-            runtime.selectorLocale
+            runtime.selectorLocale,
           );
           const dismissSelectorKey = await clickNotificationDismissAction(
             page,
-            runtime.selectorLocale
+            runtime.selectorLocale,
           );
 
           const removed = await waitForNotificationState(
             page,
             notificationId,
             (notification) => notification === null,
-            75
+            75,
           );
           if (!removed) {
             throw new LinkedInBuddyError(
@@ -1281,8 +1325,8 @@ async function executeDismissNotification(
               {
                 notification_id: notificationId,
                 settings_menu_key: settingsMenuKey,
-                dismiss_selector_key: dismissSelectorKey
-              }
+                dismiss_selector_key: dismissSelectorKey,
+              },
             );
           }
 
@@ -1292,13 +1336,13 @@ async function executeDismissNotification(
               status: "notification_dismissed",
               notification_id: notificationId,
               settings_menu_key: settingsMenuKey,
-              dismiss_selector_key: dismissSelectorKey
+              dismiss_selector_key: dismissSelectorKey,
             },
-            artifacts: []
+            artifacts: [],
           };
-        }
+        },
       });
-    }
+    },
   );
 }
 
@@ -1306,11 +1350,11 @@ async function executeUpdateNotificationPreference(
   runtime: LinkedInNotificationsExecutorRuntime,
   actionId: string,
   target: Record<string, unknown>,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
 ): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
   const profileName = String(target.profile_name ?? "default");
   const preferenceUrl = resolveLinkedInNotificationPreferenceUrl(
-    String(target.preference_url ?? payload.preference_url ?? "")
+    String(target.preference_url ?? payload.preference_url ?? ""),
   );
   const enabled = Boolean(payload.enabled);
   const channelRaw = normalizeText(String(payload.channel ?? ""));
@@ -1322,7 +1366,7 @@ async function executeUpdateNotificationPreference(
     {
       cdpUrl: runtime.cdpUrl,
       profileName,
-      headless: true
+      headless: true,
     },
     async (context) => {
       const page = await getOrCreatePage(context);
@@ -1337,18 +1381,18 @@ async function executeUpdateNotificationPreference(
         metadata: {
           preference_url: preferenceUrl,
           channel: channel ?? null,
-          enabled
+          enabled,
         },
         errorDetails: {
           preference_url: preferenceUrl,
           channel: channel ?? null,
-          enabled
+          enabled,
         },
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
             "UNKNOWN",
-            "Failed to execute LinkedIn notification preference update."
+            "Failed to execute LinkedIn notification preference update.",
           ),
         execute: async () => {
           await openNotificationPreferencesPage(page, preferenceUrl);
@@ -1357,14 +1401,14 @@ async function executeUpdateNotificationPreference(
           if (initialState.page.view_type === "overview") {
             throw new LinkedInBuddyError(
               "ACTION_PRECONDITION_FAILED",
-              "Notification preference updates require a category or subcategory page, not the overview."
+              "Notification preference updates require a category or subcategory page, not the overview.",
             );
           }
 
           if (initialState.page.view_type === "subcategory" && !channel) {
             throw new LinkedInBuddyError(
               "ACTION_PRECONDITION_FAILED",
-              "channel is required when updating a notification preference subcategory."
+              "channel is required when updating a notification preference subcategory.",
             );
           }
 
@@ -1375,18 +1419,21 @@ async function executeUpdateNotificationPreference(
               `${targetSwitch.label || "The selected notification preference"} is already ${enabled ? "enabled" : "disabled"}.`,
               {
                 preference_url: preferenceUrl,
-                channel: targetSwitch.channelKey ?? null
-              }
+                channel: targetSwitch.channelKey ?? null,
+              },
             );
           }
 
           await targetSwitch.toggleLocator.click({
-            timeout: 5_000
+            timeout: 5_000,
           });
           await page.waitForTimeout(750);
           await openNotificationPreferencesPage(page, preferenceUrl);
 
-          const refreshedSwitch = await findPreferenceSwitchLocator(page, channel);
+          const refreshedSwitch = await findPreferenceSwitchLocator(
+            page,
+            channel,
+          );
           if (refreshedSwitch.enabled !== enabled) {
             throw new LinkedInBuddyError(
               "UNKNOWN",
@@ -1394,8 +1441,8 @@ async function executeUpdateNotificationPreference(
               {
                 preference_url: preferenceUrl,
                 channel: refreshedSwitch.channelKey ?? channel ?? null,
-                selector_key: refreshedSwitch.selectorKey
-              }
+                selector_key: refreshedSwitch.selectorKey,
+              },
             );
           }
 
@@ -1409,51 +1456,47 @@ async function executeUpdateNotificationPreference(
               channel: refreshedSwitch.channelKey ?? null,
               previous_enabled: targetSwitch.enabled,
               enabled,
-              selector_key: refreshedSwitch.selectorKey
+              selector_key: refreshedSwitch.selectorKey,
             },
-            artifacts: []
+            artifacts: [],
           };
-        }
+        },
       });
-    }
+    },
   );
 }
 
-export class DismissNotificationActionExecutor
-  implements ActionExecutor<LinkedInNotificationsExecutorRuntime>
-{
+export class DismissNotificationActionExecutor implements ActionExecutor<LinkedInNotificationsExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInNotificationsExecutorRuntime>
+    input: ActionExecutorInput<LinkedInNotificationsExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const { result, artifacts } = await executeDismissNotification(
       input.runtime,
       input.action.id,
-      input.action.target
+      input.action.target,
     );
     return {
       ok: true,
       result,
-      artifacts
+      artifacts,
     };
   }
 }
 
-export class UpdateNotificationPreferenceActionExecutor
-  implements ActionExecutor<LinkedInNotificationsExecutorRuntime>
-{
+export class UpdateNotificationPreferenceActionExecutor implements ActionExecutor<LinkedInNotificationsExecutorRuntime> {
   async execute(
-    input: ActionExecutorInput<LinkedInNotificationsExecutorRuntime>
+    input: ActionExecutorInput<LinkedInNotificationsExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
     const { result, artifacts } = await executeUpdateNotificationPreference(
       input.runtime,
       input.action.id,
       input.action.target,
-      input.action.payload
+      input.action.payload,
     );
     return {
       ok: true,
       result,
-      artifacts
+      artifacts,
     };
   }
 }
@@ -1465,7 +1508,7 @@ export function createNotificationActionExecutors(): Record<
   return {
     [DISMISS_NOTIFICATION_ACTION_TYPE]: new DismissNotificationActionExecutor(),
     [UPDATE_NOTIFICATION_PREFERENCE_ACTION_TYPE]:
-      new UpdateNotificationPreferenceActionExecutor()
+      new UpdateNotificationPreferenceActionExecutor(),
   };
 }
 
@@ -1473,14 +1516,14 @@ export class LinkedInNotificationsService {
   constructor(private readonly runtime: LinkedInNotificationsRuntime) {}
 
   async listNotifications(
-    input: ListNotificationsInput = {}
+    input: ListNotificationsInput = {},
   ): Promise<LinkedInNotification[]> {
     const profileName = input.profileName ?? "default";
     const limit = readNotificationsLimit(input.limit);
 
     await this.runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: this.runtime.cdpUrl
+      cdpUrl: this.runtime.cdpUrl,
     });
 
     try {
@@ -1488,7 +1531,7 @@ export class LinkedInNotificationsService {
         {
           cdpUrl: this.runtime.cdpUrl,
           profileName,
-          headless: true
+          headless: true,
         },
         async (context) => {
           const page = await getOrCreatePage(context);
@@ -1501,10 +1544,10 @@ export class LinkedInNotificationsService {
               message: notification.message,
               timestamp: notification.timestamp,
               link: notification.link,
-              is_read: notification.is_read
+              is_read: notification.is_read,
             };
           });
-        }
+        },
       );
     } catch (error) {
       if (error instanceof LinkedInBuddyError) {
@@ -1513,26 +1556,26 @@ export class LinkedInNotificationsService {
       throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
-        "Failed to list LinkedIn notifications."
+        "Failed to list LinkedIn notifications.",
       );
     }
   }
 
   async markRead(
-    input: MarkNotificationReadInput
+    input: MarkNotificationReadInput,
   ): Promise<MarkNotificationReadResult> {
     const profileName = input.profileName ?? "default";
     const notificationId = normalizeText(input.notificationId);
     if (!notificationId) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        "notificationId is required."
+        "notificationId is required.",
       );
     }
 
     await this.runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: this.runtime.cdpUrl
+      cdpUrl: this.runtime.cdpUrl,
     });
 
     try {
@@ -1540,7 +1583,7 @@ export class LinkedInNotificationsService {
         {
           cdpUrl: this.runtime.cdpUrl,
           profileName,
-          headless: true
+          headless: true,
         },
         async (context) => {
           const page = await getOrCreatePage(context);
@@ -1551,8 +1594,8 @@ export class LinkedInNotificationsService {
               "TARGET_NOT_FOUND",
               `Could not find LinkedIn notification ${notificationId}.`,
               {
-                notification_id: notificationId
-              }
+                notification_id: notificationId,
+              },
             );
           }
 
@@ -1562,16 +1605,18 @@ export class LinkedInNotificationsService {
               was_already_read: true,
               notification_id: notificationId,
               link: match.snapshot.link,
-              selector_key: null
+              selector_key: null,
             };
           }
 
-          const selectorKey = await clickNotificationPrimaryAction(match.locator);
+          const selectorKey = await clickNotificationPrimaryAction(
+            match.locator,
+          );
           const verified = await waitForNotificationState(
             page,
             notificationId,
             (notification) => notification?.is_read === true,
-            75
+            75,
           );
           if (!verified) {
             throw new LinkedInBuddyError(
@@ -1579,8 +1624,8 @@ export class LinkedInNotificationsService {
               "LinkedIn notification mark_read action could not be verified after opening the notification.",
               {
                 notification_id: notificationId,
-                selector_key: selectorKey
-              }
+                selector_key: selectorKey,
+              },
             );
           }
 
@@ -1589,9 +1634,9 @@ export class LinkedInNotificationsService {
             was_already_read: false,
             notification_id: notificationId,
             link: match.snapshot.link,
-            selector_key: selectorKey
+            selector_key: selectorKey,
           };
-        }
+        },
       );
     } catch (error) {
       if (error instanceof LinkedInBuddyError) {
@@ -1600,28 +1645,30 @@ export class LinkedInNotificationsService {
       throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
-        "Failed to mark the LinkedIn notification as read."
+        "Failed to mark the LinkedIn notification as read.",
       );
     }
   }
 
   async prepareDismissNotification(
-    input: PrepareDismissLinkedInNotificationInput
-  ): Promise<ReturnType<LinkedInNotificationsRuntime["twoPhaseCommit"]["prepare"]>> {
+    input: PrepareDismissLinkedInNotificationInput,
+  ): Promise<
+    ReturnType<LinkedInNotificationsRuntime["twoPhaseCommit"]["prepare"]>
+  > {
     const profileName = input.profileName ?? "default";
     const notificationId = normalizeText(input.notificationId);
     if (!notificationId) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        "notificationId is required."
+        "notificationId is required.",
       );
     }
 
     const notification = await this.listNotifications({
       profileName,
-      limit: 75
+      limit: 75,
     }).then((notifications) =>
-      notifications.find((candidate) => candidate.id === notificationId)
+      notifications.find((candidate) => candidate.id === notificationId),
     );
 
     if (!notification) {
@@ -1629,8 +1676,8 @@ export class LinkedInNotificationsService {
         "TARGET_NOT_FOUND",
         `Could not find LinkedIn notification ${notificationId}.`,
         {
-          notification_id: notificationId
-        }
+          notification_id: notificationId,
+        },
       );
     }
 
@@ -1638,38 +1685,40 @@ export class LinkedInNotificationsService {
       profile_name: profileName,
       notification_id: notification.id,
       notification_link: notification.link,
-      notification_type: notification.type
+      notification_type: notification.type,
     } satisfies Record<string, unknown>;
     const preview = {
       summary: `Dismiss LinkedIn notification "${notification.message || notification.id}"`,
       target,
-      notification
+      notification,
     } satisfies Record<string, unknown>;
 
     return this.runtime.twoPhaseCommit.prepare({
       actionType: DISMISS_NOTIFICATION_ACTION_TYPE,
       target,
       payload: {
-        notification_id: notification.id
+        notification_id: notification.id,
       },
       preview,
       ...(input.operatorNote
         ? {
-            operatorNote: input.operatorNote
+            operatorNote: input.operatorNote,
           }
-        : {})
+        : {}),
     });
   }
 
   async getPreferences(
-    input: GetLinkedInNotificationPreferencesInput = {}
+    input: GetLinkedInNotificationPreferencesInput = {},
   ): Promise<LinkedInNotificationPreferencePage> {
     const profileName = input.profileName ?? "default";
-    const preferenceUrl = resolveLinkedInNotificationPreferenceUrl(input.preferenceUrl);
+    const preferenceUrl = resolveLinkedInNotificationPreferenceUrl(
+      input.preferenceUrl,
+    );
 
     await this.runtime.auth.ensureAuthenticated({
       profileName,
-      cdpUrl: this.runtime.cdpUrl
+      cdpUrl: this.runtime.cdpUrl,
     });
 
     try {
@@ -1677,7 +1726,7 @@ export class LinkedInNotificationsService {
         {
           cdpUrl: this.runtime.cdpUrl,
           profileName,
-          headless: true
+          headless: true,
         },
         async (context) => {
           const page = await getOrCreatePage(context);
@@ -1691,8 +1740,8 @@ export class LinkedInNotificationsService {
                 ...category,
                 title: normalizeText(category.title),
                 slug: normalizeText(category.slug),
-                preference_url: normalizeText(category.preference_url)
-              }))
+                preference_url: normalizeText(category.preference_url),
+              })),
             };
           }
 
@@ -1705,9 +1754,9 @@ export class LinkedInNotificationsService {
                   title: split.title || normalizeText(subcategory.title),
                   slug: normalizeText(subcategory.slug),
                   summary: subcategory.summary ?? split.summary,
-                  preference_url: normalizeText(subcategory.preference_url)
+                  preference_url: normalizeText(subcategory.preference_url),
                 };
-              })
+              }),
             };
           }
 
@@ -1715,10 +1764,10 @@ export class LinkedInNotificationsService {
             ...state.page,
             channels: state.page.channels.map((channel) => ({
               ...channel,
-              label: normalizeText(channel.label)
-            }))
+              label: normalizeText(channel.label),
+            })),
           };
-        }
+        },
       );
     } catch (error) {
       if (error instanceof LinkedInBuddyError) {
@@ -1727,28 +1776,32 @@ export class LinkedInNotificationsService {
       throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
-        "Failed to read LinkedIn notification preferences."
+        "Failed to read LinkedIn notification preferences.",
       );
     }
   }
 
   async prepareUpdatePreference(
-    input: PrepareUpdateLinkedInNotificationPreferenceInput
-  ): Promise<ReturnType<LinkedInNotificationsRuntime["twoPhaseCommit"]["prepare"]>> {
+    input: PrepareUpdateLinkedInNotificationPreferenceInput,
+  ): Promise<
+    ReturnType<LinkedInNotificationsRuntime["twoPhaseCommit"]["prepare"]>
+  > {
     const profileName = input.profileName ?? "default";
-    const preferenceUrl = resolveLinkedInNotificationPreferenceUrl(input.preferenceUrl);
+    const preferenceUrl = resolveLinkedInNotificationPreferenceUrl(
+      input.preferenceUrl,
+    );
     const channel = input.channel
       ? normalizeLinkedInNotificationPreferenceChannel(String(input.channel))
       : undefined;
     const page = await this.getPreferences({
       profileName,
-      preferenceUrl
+      preferenceUrl,
     });
 
     if (page.view_type === "overview") {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        "Notification preference updates require a category or subcategory page, not the overview."
+        "Notification preference updates require a category or subcategory page, not the overview.",
       );
     }
 
@@ -1756,18 +1809,18 @@ export class LinkedInNotificationsService {
       page.view_type === "category"
         ? {
             currentEnabled: page.master_toggle?.enabled ?? null,
-            label: page.master_toggle?.label ?? page.title
+            label: page.master_toggle?.label ?? page.title,
           }
         : (() => {
             if (!channel) {
               throw new LinkedInBuddyError(
                 "ACTION_PRECONDITION_FAILED",
-                "channel is required when updating a notification preference subcategory."
+                "channel is required when updating a notification preference subcategory.",
               );
             }
 
             const targetChannel = page.channels.find(
-              (candidate) => candidate.channel_key === channel
+              (candidate) => candidate.channel_key === channel,
             );
             if (!targetChannel) {
               throw new LinkedInBuddyError(
@@ -1775,14 +1828,14 @@ export class LinkedInNotificationsService {
                 `Could not find the ${channel} notification preference switch on ${page.title}.`,
                 {
                   preference_url: preferenceUrl,
-                  channel
-                }
+                  channel,
+                },
               );
             }
 
             return {
               currentEnabled: targetChannel.enabled,
-              label: targetChannel.label || page.title
+              label: targetChannel.label || page.title,
             };
           })();
 
@@ -1792,8 +1845,8 @@ export class LinkedInNotificationsService {
         `${targetState.label} is already ${input.enabled ? "enabled" : "disabled"}.`,
         {
           preference_url: preferenceUrl,
-          channel: channel ?? null
-        }
+          channel: channel ?? null,
+        },
       );
     }
 
@@ -1802,7 +1855,7 @@ export class LinkedInNotificationsService {
       preference_url: preferenceUrl,
       view_type: page.view_type,
       preference_title: page.title,
-      channel: channel ?? null
+      channel: channel ?? null,
     } satisfies Record<string, unknown>;
     const preview = {
       summary:
@@ -1811,7 +1864,7 @@ export class LinkedInNotificationsService {
           : `Set LinkedIn notification preference "${page.title}" (${channel}) to ${input.enabled ? "on" : "off"}`,
       target,
       current_enabled: targetState.currentEnabled,
-      enabled: input.enabled
+      enabled: input.enabled,
     } satisfies Record<string, unknown>;
 
     return this.runtime.twoPhaseCommit.prepare({
@@ -1820,14 +1873,14 @@ export class LinkedInNotificationsService {
       payload: {
         preference_url: preferenceUrl,
         enabled: input.enabled,
-        ...(channel ? { channel } : {})
+        ...(channel ? { channel } : {}),
       },
       preview,
       ...(input.operatorNote
         ? {
-            operatorNote: input.operatorNote
+            operatorNote: input.operatorNote,
           }
-        : {})
+        : {}),
     });
   }
 }
