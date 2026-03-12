@@ -15,7 +15,7 @@ import {
   createConfirmRateLimitMessage,
   formatRateLimitState,
 } from "./rateLimiter.js";
-import type { RateLimiter, RateLimiterState } from "./rateLimiter.js";
+import type { RateLimiter } from "./rateLimiter.js";
 import type {
   ActionExecutor,
   ActionExecutorInput,
@@ -183,6 +183,14 @@ const EASY_APPLY_RATE_LIMIT_CONFIG = {
   limit: 6,
 } as const;
 
+export const JOB_SEARCH_QUERY_MAX_LENGTH = 400;
+export const JOB_SEARCH_LIMIT_MAX = 100;
+export const JOB_ALERTS_LIMIT_MAX = 100;
+export const EASY_APPLY_COVER_LETTER_MAX_LENGTH = 4000;
+export const EASY_APPLY_PHONE_MAX_LENGTH = 30;
+export const EASY_APPLY_CITY_MAX_LENGTH = 200;
+export const EASY_APPLY_EMAIL_MAX_LENGTH = 254;
+
 const JOB_ALERTS_URL = "https://www.linkedin.com/jobs/job-alerts/";
 export const LINKEDIN_JOB_ALERTS_URL = JOB_ALERTS_URL;
 const EASY_APPLY_DIALOG_SELECTOR =
@@ -190,42 +198,6 @@ const EASY_APPLY_DIALOG_SELECTOR =
 const EASY_APPLY_FIELD_ATTR = "data-linkedin-assistant-easy-apply-field";
 const EASY_APPLY_GROUP_ATTR = "data-linkedin-assistant-easy-apply-group";
 const EASY_APPLY_OPTION_ATTR = "data-linkedin-assistant-easy-apply-option";
-
-interface JobSearchSnapshot {
-  job_id: string;
-  title: string;
-  company: string;
-  location: string;
-  posted_at: string;
-  job_url: string;
-  salary_range: string;
-  employment_type: string;
-}
-
-interface JobDetailSnapshot {
-  job_id: string;
-  title: string;
-  company: string;
-  company_url: string;
-  location: string;
-  posted_at: string;
-  description: string;
-  salary_range: string;
-  employment_type: string;
-  job_url: string;
-  applicant_count: string;
-  seniority_level: string;
-  is_remote: boolean;
-}
-
-interface JobAlertSnapshot {
-  alert_id: string;
-  query: string;
-  location: string;
-  frequency: string;
-  search_url: string;
-  enabled: boolean;
-}
 
 type EasyApplyFieldKind =
   | "text"
@@ -278,20 +250,16 @@ function normalizeLabelKey(value: string): string {
     .trim();
 }
 
-function readJobsLimit(value: number | undefined): number {
+function readLimit(
+  value: number | undefined,
+  defaultLimit: number,
+  maxLimit: number,
+): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    return 10;
+    return defaultLimit;
   }
 
-  return Math.max(1, Math.floor(value));
-}
-
-function readJobAlertsLimit(value: number | undefined): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return 20;
-  }
-
-  return Math.max(1, Math.floor(value));
+  return Math.max(1, Math.min(Math.floor(value), maxLimit));
 }
 
 function getProfileName(target: Record<string, unknown>): string {
@@ -591,9 +559,41 @@ function validateEasyApplyInput(
   }
 
   const phoneNumber = normalizeText(input.phoneNumber);
+
+  if (phoneNumber && phoneNumber.length > EASY_APPLY_PHONE_MAX_LENGTH) {
+    throw new LinkedInBuddyError(
+      "ACTION_PRECONDITION_FAILED",
+      `phoneNumber must not exceed ${EASY_APPLY_PHONE_MAX_LENGTH} characters.`,
+    );
+  }
+
   const city = normalizeText(input.city);
+
+  if (city && city.length > EASY_APPLY_CITY_MAX_LENGTH) {
+    throw new LinkedInBuddyError(
+      "ACTION_PRECONDITION_FAILED",
+      `city must not exceed ${EASY_APPLY_CITY_MAX_LENGTH} characters.`,
+    );
+  }
+
   const coverLetter = normalizeText(input.coverLetter);
+
+  if (coverLetter && coverLetter.length > EASY_APPLY_COVER_LETTER_MAX_LENGTH) {
+    throw new LinkedInBuddyError(
+      "ACTION_PRECONDITION_FAILED",
+      `coverLetter must not exceed ${EASY_APPLY_COVER_LETTER_MAX_LENGTH} characters.`,
+    );
+  }
+
   const email = validateEmail(input.email);
+
+  if (email && email.length > EASY_APPLY_EMAIL_MAX_LENGTH) {
+    throw new LinkedInBuddyError(
+      "ACTION_PRECONDITION_FAILED",
+      `email must not exceed ${EASY_APPLY_EMAIL_MAX_LENGTH} characters.`,
+    );
+  }
+
   const resumePath = validateResumePath(input.resumePath);
 
   return {
@@ -856,7 +856,7 @@ async function extractJobSearchResults(
         ),
       ).slice(0, maxJobs);
 
-      const results: JobSearchSnapshot[] = [];
+      const results: LinkedInJobSearchResult[] = [];
       for (const card of cards) {
         const jobUrl = pickHref(card, [
           "a[href*='/jobs/view/']",
@@ -1041,7 +1041,7 @@ async function extractJobDetail(
 
     const jobUrl = globalThis.window.location.href;
 
-    const result: JobDetailSnapshot = {
+    const result: LinkedInJobPosting = {
       job_id: passedJobId,
       title,
       company,
@@ -1149,7 +1149,7 @@ async function extractJobAlerts(
         ),
       ).filter((element) => isVisible(element));
 
-      const results: JobAlertSnapshot[] = [];
+      const results: LinkedInJobAlert[] = [];
       const seen = new Set<string>();
       for (const card of cards) {
         const text = normalize(card.textContent);
@@ -2785,9 +2785,7 @@ export class LinkedInJobsService {
     }
 
     const jobUrl = buildJobViewUrl(jobId);
-    const rateLimitState: RateLimiterState = this.runtime.rateLimiter.peek(
-      input.rateLimitConfig,
-    );
+    const rateLimitState = this.runtime.rateLimiter.peek(input.rateLimitConfig);
     const target = {
       profile_name: profileName,
       job_id: jobId,
@@ -2815,12 +2813,19 @@ export class LinkedInJobsService {
     const profileName = input.profileName ?? "default";
     const query = normalizeText(input.query);
     const location = normalizeText(input.location);
-    const limit = readJobsLimit(input.limit);
+    const limit = readLimit(input.limit, 10, JOB_SEARCH_LIMIT_MAX);
 
     if (!query) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
         "query is required.",
+      );
+    }
+
+    if (query.length > JOB_SEARCH_QUERY_MAX_LENGTH) {
+      throw new LinkedInBuddyError(
+        "ACTION_PRECONDITION_FAILED",
+        `query must not exceed ${JOB_SEARCH_QUERY_MAX_LENGTH} characters.`,
       );
     }
 
@@ -2950,7 +2955,7 @@ export class LinkedInJobsService {
     input: ListJobAlertsInput = {},
   ): Promise<ListJobAlertsOutput> {
     const profileName = input.profileName ?? "default";
-    const limit = readJobAlertsLimit(input.limit);
+    const limit = readLimit(input.limit, 20, JOB_ALERTS_LIMIT_MAX);
 
     await this.runtime.auth.ensureAuthenticated({
       profileName,
@@ -3008,8 +3013,15 @@ export class LinkedInJobsService {
       );
     }
 
+    if (query.length > JOB_SEARCH_QUERY_MAX_LENGTH) {
+      throw new LinkedInBuddyError(
+        "ACTION_PRECONDITION_FAILED",
+        `query must not exceed ${JOB_SEARCH_QUERY_MAX_LENGTH} characters.`,
+      );
+    }
+
     const searchUrl = buildJobSearchUrl(query, location || undefined);
-    const rateLimitState: RateLimiterState = this.runtime.rateLimiter.peek(
+    const rateLimitState = this.runtime.rateLimiter.peek(
       CREATE_JOB_ALERT_RATE_LIMIT_CONFIG,
     );
     const target = {
@@ -3050,6 +3062,13 @@ export class LinkedInJobsService {
     let searchUrl = providedSearch.normalizedUrl;
     let alertId = providedAlertId;
 
+    if (query.length > JOB_SEARCH_QUERY_MAX_LENGTH) {
+      throw new LinkedInBuddyError(
+        "ACTION_PRECONDITION_FAILED",
+        `query must not exceed ${JOB_SEARCH_QUERY_MAX_LENGTH} characters.`,
+      );
+    }
+
     if (!searchUrl && query) {
       searchUrl = buildJobSearchUrl(query, location || undefined);
     }
@@ -3089,7 +3108,7 @@ export class LinkedInJobsService {
     const resolvedAlertId =
       alertId ||
       buildJobAlertIdentifier(searchUrl, resolvedQuery, resolvedLocation);
-    const rateLimitState: RateLimiterState = this.runtime.rateLimiter.peek(
+    const rateLimitState = this.runtime.rateLimiter.peek(
       REMOVE_JOB_ALERT_RATE_LIMIT_CONFIG,
     );
     const target = {
@@ -3124,7 +3143,7 @@ export class LinkedInJobsService {
     preview: Record<string, unknown>;
   } {
     const validatedInput = validateEasyApplyInput(input);
-    const rateLimitState: RateLimiterState = this.runtime.rateLimiter.peek(
+    const rateLimitState = this.runtime.rateLimiter.peek(
       EASY_APPLY_RATE_LIMIT_CONFIG,
     );
 

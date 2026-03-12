@@ -250,6 +250,7 @@ See [`docs/repository-seo.md`](./docs/repository-seo.md) for the keyword targets
 | Articles and newsletters                 | [`docs/articles-newsletters.md`](./docs/articles-newsletters.md)         |
 | Notifications                            | [`docs/notifications.md`](./docs/notifications.md)                       |
 | Rate limiting                            | [`docs/rate-limiting.md`](./docs/rate-limiting.md)                       |
+| Jobs, alerts, and Easy Apply             | [`docs/jobs.md`](./docs/jobs.md)                                         |
 
 ## Contributing
 
