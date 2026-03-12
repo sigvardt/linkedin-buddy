@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  LINKEDIN_ANALYTICS_CONTENT_METRICS_TOOL,
   LINKEDIN_ANALYTICS_POST_METRICS_TOOL,
   LINKEDIN_ANALYTICS_PROFILE_VIEWS_TOOL,
+  LINKEDIN_ANALYTICS_SEARCH_APPEARANCES_TOOL,
   LINKEDIN_ARTICLE_PREPARE_CREATE_TOOL,
   LINKEDIN_ARTICLE_PREPARE_PUBLISH_TOOL,
   LINKEDIN_COMPANY_VIEW_TOOL,
@@ -28,27 +30,28 @@ import {
   LINKEDIN_NOTIFICATIONS_MARK_READ_TOOL,
   LINKEDIN_NOTIFICATIONS_PREFERENCES_GET_TOOL,
   LINKEDIN_NOTIFICATIONS_PREFERENCES_PREPARE_UPDATE_TOOL,
-  LINKEDIN_PRIVACY_GET_SETTINGS_TOOL
+  LINKEDIN_PRIVACY_GET_SETTINGS_TOOL,
 } from "../index.js";
 
 const runtimeFactory = vi.fn();
 
 vi.mock("@linkedin-buddy/core", async () => {
-  const actual =
-    await vi.importActual<typeof import("@linkedin-buddy/core")>(
-      "@linkedin-buddy/core"
-    );
+  const actual = await vi.importActual<typeof import("@linkedin-buddy/core")>(
+    "@linkedin-buddy/core",
+  );
 
   return {
     ...actual,
-    createCoreRuntime: runtimeFactory
+    createCoreRuntime: runtimeFactory,
   };
 });
 
 interface FakeRuntime {
   analytics: {
+    getContentMetrics: ReturnType<typeof vi.fn>;
     getPostMetrics: ReturnType<typeof vi.fn>;
     getProfileViews: ReturnType<typeof vi.fn>;
+    getSearchAppearances: ReturnType<typeof vi.fn>;
   };
   close: ReturnType<typeof vi.fn>;
   companyPages: {
@@ -106,49 +109,51 @@ function createFakeRuntime(): FakeRuntime {
   return {
     runId: "run_test",
     analytics: {
+      getContentMetrics: vi.fn(),
       getPostMetrics: vi.fn(),
-      getProfileViews: vi.fn()
+      getProfileViews: vi.fn(),
+      getSearchAppearances: vi.fn(),
     },
     close: vi.fn(),
     companyPages: {
       prepareFollowCompanyPage: vi.fn(),
-      viewCompanyPage: vi.fn()
+      viewCompanyPage: vi.fn(),
     },
     logger: {
-      log: vi.fn()
+      log: vi.fn(),
     },
     notifications: {
       getPreferences: vi.fn(),
       markRead: vi.fn(),
       prepareDismissNotification: vi.fn(),
-      prepareUpdatePreference: vi.fn()
+      prepareUpdatePreference: vi.fn(),
     },
     members: {
-      prepareReportMember: vi.fn()
+      prepareReportMember: vi.fn(),
     },
     groups: {
       searchGroups: vi.fn(),
       viewGroup: vi.fn(),
       prepareJoinGroup: vi.fn(),
       prepareLeaveGroup: vi.fn(),
-      preparePostToGroup: vi.fn()
+      preparePostToGroup: vi.fn(),
     },
     articles: {
       prepareCreate: vi.fn(),
-      preparePublish: vi.fn()
+      preparePublish: vi.fn(),
     },
     newsletters: {
       prepareCreate: vi.fn(),
       preparePublishIssue: vi.fn(),
-      list: vi.fn()
+      list: vi.fn(),
     },
     events: {
       searchEvents: vi.fn(),
       viewEvent: vi.fn(),
-      prepareRsvp: vi.fn()
+      prepareRsvp: vi.fn(),
     },
     privacySettings: {
-      getSettings: vi.fn()
+      getSettings: vi.fn(),
     },
     jobs: {
       listJobAlerts: vi.fn(),
@@ -156,8 +161,8 @@ function createFakeRuntime(): FakeRuntime {
       prepareEasyApply: vi.fn(),
       prepareRemoveJobAlert: vi.fn(),
       prepareSaveJob: vi.fn(),
-      prepareUnsaveJob: vi.fn()
-    }
+      prepareUnsaveJob: vi.fn(),
+    },
   };
 }
 
@@ -182,7 +187,7 @@ describe("handleToolCall", () => {
 
     const result = await handleToolCall(LINKEDIN_INBOX_SEARCH_RECIPIENTS_TOOL, {
       query: "Simon Miller",
-      limit: "5" as unknown as number
+      limit: "5" as unknown as number,
     });
 
     expect("isError" in result && result.isError).toBe(true);
@@ -191,8 +196,8 @@ describe("handleToolCall", () => {
       message: "limit must be a finite number.",
       details: {
         path: "limit",
-        actual_type: "string"
-      }
+        actual_type: "string",
+      },
     });
     expect(runtimeFactory).not.toHaveBeenCalled();
   });
@@ -206,18 +211,19 @@ describe("handleToolCall", () => {
         allowed_values: [
           "full_profile",
           "private_profile_characteristics",
-          "private_mode"
+          "private_mode",
         ],
         current_value: "private_mode",
         status: "available",
-        source_url: "https://www.linkedin.com/mypreferences/d/profile-viewing-options",
+        source_url:
+          "https://www.linkedin.com/mypreferences/d/profile-viewing-options",
         selector_key: "profile-viewing-mode-input-index-2",
-        message: null
-      }
+        message: null,
+      },
     ]);
 
     const result = await handleToolCall(LINKEDIN_PRIVACY_GET_SETTINGS_TOOL, {
-      profileName: "default"
+      profileName: "default",
     });
 
     expect("isError" in result && result.isError).toBe(false);
@@ -227,12 +233,12 @@ describe("handleToolCall", () => {
       settings: [
         expect.objectContaining({
           key: "profile_viewing_mode",
-          current_value: "private_mode"
-        })
-      ]
+          current_value: "private_mode",
+        }),
+      ],
     });
     expect(fakeRuntime.privacySettings.getSettings).toHaveBeenCalledWith({
-      profileName: "default"
+      profileName: "default",
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });
@@ -252,8 +258,8 @@ describe("handleToolCall", () => {
           delta_text: null,
           unit: "count",
           trend: "unknown",
-          observed_at: "2026-03-11T12:00:00.000Z"
-        }
+          observed_at: "2026-03-11T12:00:00.000Z",
+        },
       ],
       cards: [
         {
@@ -271,15 +277,15 @@ describe("handleToolCall", () => {
               delta_text: null,
               unit: "count",
               trend: "unknown",
-              observed_at: "2026-03-11T12:00:00.000Z"
-            }
-          ]
-        }
-      ]
+              observed_at: "2026-03-11T12:00:00.000Z",
+            },
+          ],
+        },
+      ],
     });
 
     const result = await handleToolCall(LINKEDIN_ANALYTICS_PROFILE_VIEWS_TOOL, {
-      profileName: "default"
+      profileName: "default",
     });
 
     expect("isError" in result && result.isError).toBe(false);
@@ -290,12 +296,146 @@ describe("handleToolCall", () => {
       metrics: [
         expect.objectContaining({
           metric_key: "profile_views",
-          value: 42
-        })
-      ]
+          value: 42,
+        }),
+      ],
     });
     expect(fakeRuntime.analytics.getProfileViews).toHaveBeenCalledWith({
-      profileName: "default"
+      profileName: "default",
+    });
+    expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns search-appearances analytics payloads through the MCP contract", async () => {
+    fakeRuntime.analytics.getSearchAppearances.mockResolvedValue({
+      surface: "search_appearances",
+      source_url: "https://www.linkedin.com/in/me/",
+      observed_at: "2026-03-11T12:00:00.000Z",
+      metrics: [
+        {
+          metric_key: "search_appearances",
+          label: "Search appearances",
+          value: 28,
+          value_text: "28",
+          delta_value: null,
+          delta_text: null,
+          unit: "count",
+          trend: "unknown",
+          observed_at: "2026-03-11T12:00:00.000Z",
+        },
+      ],
+      cards: [
+        {
+          card_key: "search_appearances",
+          title: "Search appearances",
+          description: "How often your profile appears in search.",
+          href: "https://www.linkedin.com/in/me/",
+          metrics: [
+            {
+              metric_key: "search_appearances",
+              label: "Search appearances",
+              value: 28,
+              value_text: "28",
+              delta_value: null,
+              delta_text: null,
+              unit: "count",
+              trend: "unknown",
+              observed_at: "2026-03-11T12:00:00.000Z",
+            },
+          ],
+        },
+      ],
+    });
+
+    const result = await handleToolCall(
+      LINKEDIN_ANALYTICS_SEARCH_APPEARANCES_TOOL,
+      {
+        profileName: "default",
+      },
+    );
+
+    expect("isError" in result && result.isError).toBe(false);
+    expect(parseToolPayload(result)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      surface: "search_appearances",
+      metrics: [
+        expect.objectContaining({
+          metric_key: "search_appearances",
+          value: 28,
+        }),
+      ],
+    });
+    expect(fakeRuntime.analytics.getSearchAppearances).toHaveBeenCalledWith({
+      profileName: "default",
+    });
+    expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns content-metrics analytics payloads through the MCP contract", async () => {
+    fakeRuntime.analytics.getContentMetrics.mockResolvedValue({
+      surface: "content_metrics",
+      source_url: "https://www.linkedin.com/in/me/",
+      observed_at: "2026-03-11T12:00:00.000Z",
+      metrics: [
+        {
+          metric_key: "impressions",
+          label: "Impressions",
+          value: 350,
+          value_text: "350",
+          delta_value: null,
+          delta_text: null,
+          unit: "count",
+          trend: "unknown",
+          observed_at: "2026-03-11T12:00:00.000Z",
+        },
+      ],
+      cards: [
+        {
+          card_key: "content_metrics",
+          title: "Creator analytics",
+          description: "Performance summary for your content.",
+          href: "https://www.linkedin.com/in/me/",
+          metrics: [
+            {
+              metric_key: "impressions",
+              label: "Impressions",
+              value: 350,
+              value_text: "350",
+              delta_value: null,
+              delta_text: null,
+              unit: "count",
+              trend: "unknown",
+              observed_at: "2026-03-11T12:00:00.000Z",
+            },
+          ],
+        },
+      ],
+    });
+
+    const result = await handleToolCall(
+      LINKEDIN_ANALYTICS_CONTENT_METRICS_TOOL,
+      {
+        profileName: "default",
+        limit: 3,
+      },
+    );
+
+    expect("isError" in result && result.isError).toBe(false);
+    expect(parseToolPayload(result)).toMatchObject({
+      run_id: "run_test",
+      profile_name: "default",
+      surface: "content_metrics",
+      metrics: [
+        expect.objectContaining({
+          metric_key: "impressions",
+          value: 350,
+        }),
+      ],
+    });
+    expect(fakeRuntime.analytics.getContentMetrics).toHaveBeenCalledWith({
+      profileName: "default",
+      limit: 3,
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });
@@ -306,15 +446,15 @@ describe("handleToolCall", () => {
       confirmToken: "ct_test",
       expiresAtMs: 123,
       preview: {
-        summary: "Report LinkedIn member target-user for spam"
-      }
+        summary: "Report LinkedIn member target-user for spam",
+      },
     });
 
     const result = await handleToolCall(LINKEDIN_MEMBERS_PREPARE_REPORT_TOOL, {
       profileName: "default",
       targetProfile: "target-user",
       reason: "spam",
-      details: "Repeated unsolicited outreach."
+      details: "Repeated unsolicited outreach.",
     });
 
     expect("isError" in result && result.isError).toBe(false);
@@ -322,13 +462,13 @@ describe("handleToolCall", () => {
       run_id: "run_test",
       profile_name: "default",
       preparedActionId: "pa_test",
-      confirmToken: "ct_test"
+      confirmToken: "ct_test",
     });
     expect(fakeRuntime.members.prepareReportMember).toHaveBeenCalledWith({
       profileName: "default",
       targetProfile: "target-user",
       reason: "spam",
-      details: "Repeated unsolicited outreach."
+      details: "Repeated unsolicited outreach.",
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });
@@ -339,12 +479,12 @@ describe("handleToolCall", () => {
       was_already_read: false,
       notification_id: "notif_1",
       link: "https://www.linkedin.com/feed/update/urn:li:activity:1",
-      selector_key: "headline-link"
+      selector_key: "headline-link",
     });
 
     const result = await handleToolCall(LINKEDIN_NOTIFICATIONS_MARK_READ_TOOL, {
       profileName: "default",
-      notificationId: "notif_1"
+      notificationId: "notif_1",
     });
 
     expect("isError" in result && result.isError).toBe(false);
@@ -352,11 +492,11 @@ describe("handleToolCall", () => {
       run_id: "run_test",
       profile_name: "default",
       marked_read: true,
-      notification_id: "notif_1"
+      notification_id: "notif_1",
     });
     expect(fakeRuntime.notifications.markRead).toHaveBeenCalledWith({
       profileName: "default",
-      notificationId: "notif_1"
+      notificationId: "notif_1",
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });
@@ -367,13 +507,13 @@ describe("handleToolCall", () => {
       confirmToken: "ct_notif",
       expiresAtMs: 789,
       preview: {
-        summary: "Dismiss notification"
-      }
+        summary: "Dismiss notification",
+      },
     });
 
     const result = await handleToolCall(LINKEDIN_NOTIFICATIONS_DISMISS_TOOL, {
       profileName: "default",
-      notificationId: "notif_1"
+      notificationId: "notif_1",
     });
 
     expect("isError" in result && result.isError).toBe(false);
@@ -381,11 +521,13 @@ describe("handleToolCall", () => {
       run_id: "run_test",
       profile_name: "default",
       preparedActionId: "pa_notif",
-      confirmToken: "ct_notif"
+      confirmToken: "ct_notif",
     });
-    expect(fakeRuntime.notifications.prepareDismissNotification).toHaveBeenCalledWith({
+    expect(
+      fakeRuntime.notifications.prepareDismissNotification,
+    ).toHaveBeenCalledWith({
       profileName: "default",
-      notificationId: "notif_1"
+      notificationId: "notif_1",
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });
@@ -394,22 +536,23 @@ describe("handleToolCall", () => {
     fakeRuntime.notifications.getPreferences.mockResolvedValue({
       view_type: "overview",
       title: "Notifications",
-      preference_url: "https://www.linkedin.com/mypreferences/d/categories/notifications",
+      preference_url:
+        "https://www.linkedin.com/mypreferences/d/categories/notifications",
       categories: [
         {
           title: "Posting and commenting",
           slug: "posting-and-commenting",
           preference_url:
-            "https://www.linkedin.com/mypreferences/d/notification-categories/posting-and-commenting"
-        }
-      ]
+            "https://www.linkedin.com/mypreferences/d/notification-categories/posting-and-commenting",
+        },
+      ],
     });
 
     const result = await handleToolCall(
       LINKEDIN_NOTIFICATIONS_PREFERENCES_GET_TOOL,
       {
-        profileName: "default"
-      }
+        profileName: "default",
+      },
     );
 
     expect("isError" in result && result.isError).toBe(false);
@@ -420,13 +563,13 @@ describe("handleToolCall", () => {
         view_type: "overview",
         categories: [
           expect.objectContaining({
-            slug: "posting-and-commenting"
-          })
-        ]
-      }
+            slug: "posting-and-commenting",
+          }),
+        ],
+      },
     });
     expect(fakeRuntime.notifications.getPreferences).toHaveBeenCalledWith({
-      profileName: "default"
+      profileName: "default",
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });
@@ -437,8 +580,8 @@ describe("handleToolCall", () => {
       confirmToken: "ct_pref",
       expiresAtMs: 999,
       preview: {
-        summary: "Update notification preference"
-      }
+        summary: "Update notification preference",
+      },
     });
 
     const result = await handleToolCall(
@@ -448,8 +591,8 @@ describe("handleToolCall", () => {
         preferenceUrl:
           "https://www.linkedin.com/mypreferences/d/notification-subcategories/comments-and-reactions",
         enabled: false,
-        channel: "push"
-      }
+        channel: "push",
+      },
     );
 
     expect("isError" in result && result.isError).toBe(false);
@@ -457,14 +600,16 @@ describe("handleToolCall", () => {
       run_id: "run_test",
       profile_name: "default",
       preparedActionId: "pa_pref",
-      confirmToken: "ct_pref"
+      confirmToken: "ct_pref",
     });
-    expect(fakeRuntime.notifications.prepareUpdatePreference).toHaveBeenCalledWith({
+    expect(
+      fakeRuntime.notifications.prepareUpdatePreference,
+    ).toHaveBeenCalledWith({
       profileName: "default",
       preferenceUrl:
         "https://www.linkedin.com/mypreferences/d/notification-subcategories/comments-and-reactions",
       enabled: false,
-      channel: "push"
+      channel: "push",
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });
@@ -481,15 +626,15 @@ describe("handleToolCall", () => {
           visibility: "Private Listed",
           member_count: "706,250 members",
           description: "Community for next-generation leaders.",
-          membership_state: "member"
-        }
-      ]
+          membership_state: "member",
+        },
+      ],
     });
 
     const result = await handleToolCall(LINKEDIN_GROUPS_SEARCH_TOOL, {
       profileName: "default",
       query: "technology",
-      limit: 5
+      limit: 5,
     });
 
     expect("isError" in result && result.isError).toBe(false);
@@ -499,14 +644,14 @@ describe("handleToolCall", () => {
       query: "technology",
       results: [
         expect.objectContaining({
-          group_id: "9806731"
-        })
-      ]
+          group_id: "9806731",
+        }),
+      ],
     });
     expect(fakeRuntime.groups.searchGroups).toHaveBeenCalledWith({
       profileName: "default",
       query: "technology",
-      limit: 5
+      limit: 5,
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });
@@ -527,12 +672,12 @@ describe("handleToolCall", () => {
       headquarters: "San Francisco, CA",
       specialties: "artificial intelligence and machine learning",
       overview: "OpenAI is an AI research and deployment company.",
-      follow_state: "following"
+      follow_state: "following",
     });
 
     const result = await handleToolCall(LINKEDIN_COMPANY_VIEW_TOOL, {
       profileName: "default",
-      target: "openai"
+      target: "openai",
     });
 
     expect("isError" in result && result.isError).toBe(false);
@@ -541,12 +686,12 @@ describe("handleToolCall", () => {
       profile_name: "default",
       company: {
         name: "OpenAI",
-        follow_state: "following"
-      }
+        follow_state: "following",
+      },
     });
     expect(fakeRuntime.companyPages.viewCompanyPage).toHaveBeenCalledWith({
       profileName: "default",
-      target: "openai"
+      target: "openai",
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });
@@ -561,12 +706,12 @@ describe("handleToolCall", () => {
       description: "Community for next-generation leaders.",
       about: "Community for next-generation leaders.",
       joined_at: "Apr 2024",
-      membership_state: "member"
+      membership_state: "member",
     });
 
     const result = await handleToolCall(LINKEDIN_GROUPS_VIEW_TOOL, {
       profileName: "default",
-      group: "9806731"
+      group: "9806731",
     });
 
     expect("isError" in result && result.isError).toBe(false);
@@ -575,12 +720,12 @@ describe("handleToolCall", () => {
       profile_name: "default",
       group: expect.objectContaining({
         group_id: "9806731",
-        membership_state: "member"
-      })
+        membership_state: "member",
+      }),
     });
     expect(fakeRuntime.groups.viewGroup).toHaveBeenCalledWith({
       profileName: "default",
-      group: "9806731"
+      group: "9806731",
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });
@@ -591,13 +736,13 @@ describe("handleToolCall", () => {
       confirmToken: "ct_group_join",
       expiresAtMs: 123,
       preview: {
-        summary: "Join LinkedIn group 63979"
-      }
+        summary: "Join LinkedIn group 63979",
+      },
     });
 
     const result = await handleToolCall(LINKEDIN_GROUPS_PREPARE_JOIN_TOOL, {
       profileName: "default",
-      group: "63979"
+      group: "63979",
     });
 
     expect("isError" in result && result.isError).toBe(false);
@@ -605,11 +750,11 @@ describe("handleToolCall", () => {
       run_id: "run_test",
       profile_name: "default",
       preparedActionId: "pa_group_join",
-      confirmToken: "ct_group_join"
+      confirmToken: "ct_group_join",
     });
     expect(fakeRuntime.groups.prepareJoinGroup).toHaveBeenCalledWith({
       profileName: "default",
-      group: "63979"
+      group: "63979",
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });
@@ -620,14 +765,14 @@ describe("handleToolCall", () => {
       confirmToken: "ct_group_leave",
       expiresAtMs: 123,
       preview: {
-        summary: "Leave LinkedIn group 9806731"
-      }
+        summary: "Leave LinkedIn group 9806731",
+      },
     });
 
     const result = await handleToolCall(LINKEDIN_GROUPS_PREPARE_LEAVE_TOOL, {
       profileName: "default",
       group: "9806731",
-      operatorNote: "Validation"
+      operatorNote: "Validation",
     });
 
     expect("isError" in result && result.isError).toBe(false);
@@ -635,12 +780,12 @@ describe("handleToolCall", () => {
       run_id: "run_test",
       profile_name: "default",
       preparedActionId: "pa_group_leave",
-      confirmToken: "ct_group_leave"
+      confirmToken: "ct_group_leave",
     });
     expect(fakeRuntime.groups.prepareLeaveGroup).toHaveBeenCalledWith({
       profileName: "default",
       group: "9806731",
-      operatorNote: "Validation"
+      operatorNote: "Validation",
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });
@@ -651,14 +796,14 @@ describe("handleToolCall", () => {
       confirmToken: "ct_group_post",
       expiresAtMs: 123,
       preview: {
-        summary: "Post to LinkedIn group 9806731"
-      }
+        summary: "Post to LinkedIn group 9806731",
+      },
     });
 
     const result = await handleToolCall(LINKEDIN_GROUPS_PREPARE_POST_TOOL, {
       profileName: "default",
       group: "9806731",
-      text: "Thanks for sharing this perspective."
+      text: "Thanks for sharing this perspective.",
     });
 
     expect("isError" in result && result.isError).toBe(false);
@@ -666,12 +811,12 @@ describe("handleToolCall", () => {
       run_id: "run_test",
       profile_name: "default",
       preparedActionId: "pa_group_post",
-      confirmToken: "ct_group_post"
+      confirmToken: "ct_group_post",
     });
     expect(fakeRuntime.groups.preparePostToGroup).toHaveBeenCalledWith({
       profileName: "default",
       group: "9806731",
-      text: "Thanks for sharing this perspective."
+      text: "Thanks for sharing this perspective.",
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });
@@ -682,14 +827,14 @@ describe("handleToolCall", () => {
       confirmToken: "ct_article_create",
       expiresAtMs: 123,
       preview: {
-        summary: 'Create LinkedIn article draft "Launch notes"'
-      }
+        summary: 'Create LinkedIn article draft "Launch notes"',
+      },
     });
 
     const result = await handleToolCall(LINKEDIN_ARTICLE_PREPARE_CREATE_TOOL, {
       profileName: "default",
       title: "Launch notes",
-      body: "A longer article body."
+      body: "A longer article body.",
     });
 
     expect("isError" in result && result.isError).toBe(false);
@@ -697,12 +842,12 @@ describe("handleToolCall", () => {
       run_id: "run_test",
       profile_name: "default",
       preparedActionId: "pa_article_create",
-      confirmToken: "ct_article_create"
+      confirmToken: "ct_article_create",
     });
     expect(fakeRuntime.articles.prepareCreate).toHaveBeenCalledWith({
       profileName: "default",
       title: "Launch notes",
-      body: "A longer article body."
+      body: "A longer article body.",
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });
@@ -713,13 +858,13 @@ describe("handleToolCall", () => {
       confirmToken: "ct_article_publish",
       expiresAtMs: 123,
       preview: {
-        summary: 'Publish LinkedIn article draft "Launch notes"'
-      }
+        summary: 'Publish LinkedIn article draft "Launch notes"',
+      },
     });
 
     const result = await handleToolCall(LINKEDIN_ARTICLE_PREPARE_PUBLISH_TOOL, {
       profileName: "default",
-      draftUrl: "https://www.linkedin.com/pulse/article/123/edit/"
+      draftUrl: "https://www.linkedin.com/pulse/article/123/edit/",
     });
 
     expect("isError" in result && result.isError).toBe(false);
@@ -727,11 +872,11 @@ describe("handleToolCall", () => {
       run_id: "run_test",
       profile_name: "default",
       preparedActionId: "pa_article_publish",
-      confirmToken: "ct_article_publish"
+      confirmToken: "ct_article_publish",
     });
     expect(fakeRuntime.articles.preparePublish).toHaveBeenCalledWith({
       profileName: "default",
-      draftUrl: "https://www.linkedin.com/pulse/article/123/edit/"
+      draftUrl: "https://www.linkedin.com/pulse/article/123/edit/",
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });
@@ -742,29 +887,32 @@ describe("handleToolCall", () => {
       confirmToken: "ct_newsletter_create",
       expiresAtMs: 123,
       preview: {
-        summary: 'Create LinkedIn newsletter "Builder Brief"'
-      }
+        summary: 'Create LinkedIn newsletter "Builder Brief"',
+      },
     });
 
-    const result = await handleToolCall(LINKEDIN_NEWSLETTER_PREPARE_CREATE_TOOL, {
-      profileName: "default",
-      title: "Builder Brief",
-      description: "Weekly notes from the product team.",
-      cadence: "weekly"
-    });
+    const result = await handleToolCall(
+      LINKEDIN_NEWSLETTER_PREPARE_CREATE_TOOL,
+      {
+        profileName: "default",
+        title: "Builder Brief",
+        description: "Weekly notes from the product team.",
+        cadence: "weekly",
+      },
+    );
 
     expect("isError" in result && result.isError).toBe(false);
     expect(parseToolPayload(result)).toMatchObject({
       run_id: "run_test",
       profile_name: "default",
       preparedActionId: "pa_newsletter_create",
-      confirmToken: "ct_newsletter_create"
+      confirmToken: "ct_newsletter_create",
     });
     expect(fakeRuntime.newsletters.prepareCreate).toHaveBeenCalledWith({
       profileName: "default",
       title: "Builder Brief",
       description: "Weekly notes from the product team.",
-      cadence: "weekly"
+      cadence: "weekly",
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });
@@ -775,8 +923,9 @@ describe("handleToolCall", () => {
       confirmToken: "ct_newsletter_issue",
       expiresAtMs: 123,
       preview: {
-        summary: 'Publish LinkedIn newsletter issue "March update" in Builder Brief'
-      }
+        summary:
+          'Publish LinkedIn newsletter issue "March update" in Builder Brief',
+      },
     });
 
     const result = await handleToolCall(
@@ -785,8 +934,8 @@ describe("handleToolCall", () => {
         profileName: "default",
         newsletter: "Builder Brief",
         title: "March update",
-        body: "Long-form issue body."
-      }
+        body: "Long-form issue body.",
+      },
     );
 
     expect("isError" in result && result.isError).toBe(false);
@@ -794,13 +943,13 @@ describe("handleToolCall", () => {
       run_id: "run_test",
       profile_name: "default",
       preparedActionId: "pa_newsletter_issue",
-      confirmToken: "ct_newsletter_issue"
+      confirmToken: "ct_newsletter_issue",
     });
     expect(fakeRuntime.newsletters.preparePublishIssue).toHaveBeenCalledWith({
       profileName: "default",
       newsletter: "Builder Brief",
       title: "March update",
-      body: "Long-form issue body."
+      body: "Long-form issue body.",
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });
@@ -811,13 +960,13 @@ describe("handleToolCall", () => {
       newsletters: [
         {
           title: "Builder Brief",
-          selected: false
-        }
-      ]
+          selected: false,
+        },
+      ],
     });
 
     const result = await handleToolCall(LINKEDIN_NEWSLETTER_LIST_TOOL, {
-      profileName: "default"
+      profileName: "default",
     });
 
     expect("isError" in result && result.isError).toBe(false);
@@ -827,12 +976,12 @@ describe("handleToolCall", () => {
       count: 1,
       newsletters: [
         expect.objectContaining({
-          title: "Builder Brief"
-        })
-      ]
+          title: "Builder Brief",
+        }),
+      ],
     });
     expect(fakeRuntime.newsletters.list).toHaveBeenCalledWith({
-      profileName: "default"
+      profileName: "default",
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });
@@ -851,15 +1000,15 @@ describe("handleToolCall", () => {
           attendee_count: "1,234 attendees",
           description: "A live session on leadership under pressure.",
           event_url: "https://www.linkedin.com/events/7433954919704973312/",
-          is_online: true
-        }
-      ]
+          is_online: true,
+        },
+      ],
     });
 
     const result = await handleToolCall(LINKEDIN_EVENTS_SEARCH_TOOL, {
       profileName: "default",
       query: "leadership",
-      limit: 5
+      limit: 5,
     });
 
     expect("isError" in result && result.isError).toBe(false);
@@ -869,14 +1018,14 @@ describe("handleToolCall", () => {
       query: "leadership",
       results: [
         expect.objectContaining({
-          event_id: "7433954919704973312"
-        })
-      ]
+          event_id: "7433954919704973312",
+        }),
+      ],
     });
     expect(fakeRuntime.events.searchEvents).toHaveBeenCalledWith({
       profileName: "default",
       query: "leadership",
-      limit: 5
+      limit: 5,
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });
@@ -892,12 +1041,12 @@ describe("handleToolCall", () => {
       attendee_count: "1,234 attendees",
       description: "A live session on leadership under pressure.",
       is_online: true,
-      rsvp_state: "not_responded"
+      rsvp_state: "not_responded",
     });
 
     const result = await handleToolCall(LINKEDIN_EVENTS_VIEW_TOOL, {
       profileName: "default",
-      event: "7433954919704973312"
+      event: "7433954919704973312",
     });
 
     expect("isError" in result && result.isError).toBe(false);
@@ -906,12 +1055,12 @@ describe("handleToolCall", () => {
       profile_name: "default",
       event: expect.objectContaining({
         event_id: "7433954919704973312",
-        rsvp_state: "not_responded"
-      })
+        rsvp_state: "not_responded",
+      }),
     });
     expect(fakeRuntime.events.viewEvent).toHaveBeenCalledWith({
       profileName: "default",
-      event: "7433954919704973312"
+      event: "7433954919704973312",
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });
@@ -922,13 +1071,13 @@ describe("handleToolCall", () => {
       confirmToken: "ct_event",
       expiresAtMs: 123,
       preview: {
-        summary: "RSVP attend for LinkedIn event 7433954919704973312"
-      }
+        summary: "RSVP attend for LinkedIn event 7433954919704973312",
+      },
     });
 
     const result = await handleToolCall(LINKEDIN_EVENTS_PREPARE_RSVP_TOOL, {
       profileName: "default",
-      event: "7433954919704973312"
+      event: "7433954919704973312",
     });
 
     expect("isError" in result && result.isError).toBe(false);
@@ -936,11 +1085,11 @@ describe("handleToolCall", () => {
       run_id: "run_test",
       profile_name: "default",
       preparedActionId: "pa_event",
-      confirmToken: "ct_event"
+      confirmToken: "ct_event",
     });
     expect(fakeRuntime.events.prepareRsvp).toHaveBeenCalledWith({
       profileName: "default",
-      event: "7433954919704973312"
+      event: "7433954919704973312",
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });
@@ -960,8 +1109,8 @@ describe("handleToolCall", () => {
           delta_text: null,
           unit: "count",
           trend: "unknown",
-          observed_at: "2026-03-11T12:00:00.000Z"
-        }
+          observed_at: "2026-03-11T12:00:00.000Z",
+        },
       ],
       cards: [
         {
@@ -979,10 +1128,10 @@ describe("handleToolCall", () => {
               delta_text: null,
               unit: "count",
               trend: "unknown",
-              observed_at: "2026-03-11T12:00:00.000Z"
-            }
-          ]
-        }
+              observed_at: "2026-03-11T12:00:00.000Z",
+            },
+          ],
+        },
       ],
       post: {
         post_id: "123",
@@ -990,13 +1139,13 @@ describe("handleToolCall", () => {
         author_name: "Joi Ascend",
         author_headline: "Automation operator",
         posted_at: "1d",
-        text: "Testing metrics."
-      }
+        text: "Testing metrics.",
+      },
     });
 
     const result = await handleToolCall(LINKEDIN_ANALYTICS_POST_METRICS_TOOL, {
       profileName: "default",
-      postUrl: "urn:li:activity:123"
+      postUrl: "urn:li:activity:123",
     });
 
     expect("isError" in result && result.isError).toBe(false);
@@ -1006,12 +1155,12 @@ describe("handleToolCall", () => {
       surface: "post_metrics",
       post: {
         post_id: "123",
-        author_name: "Joi Ascend"
-      }
+        author_name: "Joi Ascend",
+      },
     });
     expect(fakeRuntime.analytics.getPostMetrics).toHaveBeenCalledWith({
       profileName: "default",
-      postUrl: "urn:li:activity:123"
+      postUrl: "urn:li:activity:123",
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });
@@ -1022,26 +1171,26 @@ describe("handleToolCall", () => {
       confirmToken: "ct_job_save",
       expiresAtMs: 123,
       preview: {
-        summary: "Save LinkedIn job https://www.linkedin.com/jobs/view/123/"
-      }
+        summary: "Save LinkedIn job https://www.linkedin.com/jobs/view/123/",
+      },
     });
     fakeRuntime.jobs.prepareUnsaveJob.mockReturnValue({
       preparedActionId: "pa_job_unsave",
       confirmToken: "ct_job_unsave",
       expiresAtMs: 123,
       preview: {
-        summary: "Unsave LinkedIn job https://www.linkedin.com/jobs/view/123/"
-      }
+        summary: "Unsave LinkedIn job https://www.linkedin.com/jobs/view/123/",
+      },
     });
 
     const saveResult = await handleToolCall(LINKEDIN_JOBS_SAVE_TOOL, {
       profileName: "default",
-      jobId: "123"
+      jobId: "123",
     });
     const unsaveResult = await handleToolCall(LINKEDIN_JOBS_UNSAVE_TOOL, {
       profileName: "default",
       jobId: "123",
-      operatorNote: "cleanup"
+      operatorNote: "cleanup",
     });
 
     expect("isError" in saveResult && saveResult.isError).toBe(false);
@@ -1049,11 +1198,11 @@ describe("handleToolCall", () => {
       run_id: "run_test",
       profile_name: "default",
       preparedActionId: "pa_job_save",
-      confirmToken: "ct_job_save"
+      confirmToken: "ct_job_save",
     });
     expect(fakeRuntime.jobs.prepareSaveJob).toHaveBeenCalledWith({
       profileName: "default",
-      jobId: "123"
+      jobId: "123",
     });
 
     expect("isError" in unsaveResult && unsaveResult.isError).toBe(false);
@@ -1061,12 +1210,12 @@ describe("handleToolCall", () => {
       run_id: "run_test",
       profile_name: "default",
       preparedActionId: "pa_job_unsave",
-      confirmToken: "ct_job_unsave"
+      confirmToken: "ct_job_unsave",
     });
     expect(fakeRuntime.jobs.prepareUnsaveJob).toHaveBeenCalledWith({
       profileName: "default",
       jobId: "123",
-      operatorNote: "cleanup"
+      operatorNote: "cleanup",
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(2);
   });
@@ -1082,14 +1231,14 @@ describe("handleToolCall", () => {
           frequency: "Daily",
           search_url:
             "https://www.linkedin.com/jobs/search/?keywords=Staff%20Engineer&location=Remote",
-          enabled: true
-        }
-      ]
+          enabled: true,
+        },
+      ],
     });
 
     const result = await handleToolCall(LINKEDIN_JOBS_ALERTS_LIST_TOOL, {
       profileName: "default",
-      limit: 5
+      limit: 5,
     });
 
     expect("isError" in result && result.isError).toBe(false);
@@ -1100,13 +1249,13 @@ describe("handleToolCall", () => {
       alerts: [
         expect.objectContaining({
           alert_id: "alert-1",
-          enabled: true
-        })
-      ]
+          enabled: true,
+        }),
+      ],
     });
     expect(fakeRuntime.jobs.listJobAlerts).toHaveBeenCalledWith({
       profileName: "default",
-      limit: 5
+      limit: 5,
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });
@@ -1117,40 +1266,46 @@ describe("handleToolCall", () => {
       confirmToken: "ct_alert_create",
       expiresAtMs: 123,
       preview: {
-        summary: 'Create a LinkedIn job alert for "Staff Engineer" in Remote'
-      }
+        summary: 'Create a LinkedIn job alert for "Staff Engineer" in Remote',
+      },
     });
     fakeRuntime.jobs.prepareRemoveJobAlert.mockResolvedValue({
       preparedActionId: "pa_alert_remove",
       confirmToken: "ct_alert_remove",
       expiresAtMs: 123,
       preview: {
-        summary: 'Remove LinkedIn job alert for "Staff Engineer" in Remote'
-      }
+        summary: 'Remove LinkedIn job alert for "Staff Engineer" in Remote',
+      },
     });
 
-    const createResult = await handleToolCall(LINKEDIN_JOBS_ALERTS_CREATE_TOOL, {
-      profileName: "default",
-      query: "Staff Engineer",
-      location: "Remote"
-    });
-    const removeResult = await handleToolCall(LINKEDIN_JOBS_ALERTS_REMOVE_TOOL, {
-      profileName: "default",
-      alertId: "alert-1",
-      operatorNote: "cleanup"
-    });
+    const createResult = await handleToolCall(
+      LINKEDIN_JOBS_ALERTS_CREATE_TOOL,
+      {
+        profileName: "default",
+        query: "Staff Engineer",
+        location: "Remote",
+      },
+    );
+    const removeResult = await handleToolCall(
+      LINKEDIN_JOBS_ALERTS_REMOVE_TOOL,
+      {
+        profileName: "default",
+        alertId: "alert-1",
+        operatorNote: "cleanup",
+      },
+    );
 
     expect("isError" in createResult && createResult.isError).toBe(false);
     expect(parseToolPayload(createResult)).toMatchObject({
       run_id: "run_test",
       profile_name: "default",
       preparedActionId: "pa_alert_create",
-      confirmToken: "ct_alert_create"
+      confirmToken: "ct_alert_create",
     });
     expect(fakeRuntime.jobs.prepareCreateJobAlert).toHaveBeenCalledWith({
       profileName: "default",
       query: "Staff Engineer",
-      location: "Remote"
+      location: "Remote",
     });
 
     expect("isError" in removeResult && removeResult.isError).toBe(false);
@@ -1158,12 +1313,12 @@ describe("handleToolCall", () => {
       run_id: "run_test",
       profile_name: "default",
       preparedActionId: "pa_alert_remove",
-      confirmToken: "ct_alert_remove"
+      confirmToken: "ct_alert_remove",
     });
     expect(fakeRuntime.jobs.prepareRemoveJobAlert).toHaveBeenCalledWith({
       profileName: "default",
       alertId: "alert-1",
-      operatorNote: "cleanup"
+      operatorNote: "cleanup",
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(2);
   });
@@ -1174,8 +1329,9 @@ describe("handleToolCall", () => {
       confirmToken: "ct_easy_apply",
       expiresAtMs: 123,
       preview: {
-        summary: "Submit LinkedIn Easy Apply application for https://www.linkedin.com/jobs/view/123/"
-      }
+        summary:
+          "Submit LinkedIn Easy Apply application for https://www.linkedin.com/jobs/view/123/",
+      },
     });
 
     const result = await handleToolCall(LINKEDIN_JOBS_PREPARE_EASY_APPLY_TOOL, {
@@ -1184,8 +1340,8 @@ describe("handleToolCall", () => {
       email: "candidate@example.com",
       resumePath: "/tmp/resume.pdf",
       answers: {
-        "Years of experience": 8
-      }
+        "Years of experience": 8,
+      },
     });
 
     expect("isError" in result && result.isError).toBe(false);
@@ -1193,7 +1349,7 @@ describe("handleToolCall", () => {
       run_id: "run_test",
       profile_name: "default",
       preparedActionId: "pa_easy_apply",
-      confirmToken: "ct_easy_apply"
+      confirmToken: "ct_easy_apply",
     });
     expect(fakeRuntime.jobs.prepareEasyApply).toHaveBeenCalledWith({
       profileName: "default",
@@ -1201,8 +1357,8 @@ describe("handleToolCall", () => {
       email: "candidate@example.com",
       resumePath: "/tmp/resume.pdf",
       answers: {
-        "Years of experience": 8
-      }
+        "Years of experience": 8,
+      },
     });
     expect(fakeRuntime.close).toHaveBeenCalledTimes(1);
   });
