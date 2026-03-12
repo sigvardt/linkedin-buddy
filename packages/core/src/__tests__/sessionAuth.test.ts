@@ -137,6 +137,9 @@ function createContextWithPage(page: Page): BrowserContext {
   return {
     pages: vi.fn(() => [page]),
     newPage: vi.fn(async () => page),
+    cookies: vi.fn(async () => []),
+    clearCookies: vi.fn(async () => undefined),
+    addCookies: vi.fn(async () => undefined),
   } as unknown as BrowserContext;
 }
 
@@ -396,7 +399,9 @@ describe("LinkedInAuthService auth flow", () => {
     expect(result.checkpoint).toBe(true);
     expect(result.checkpointType).toBe("captcha");
     expect(result.currentUrl).toBe(checkpointUrl);
-    expect(rateLimitStateMocks.recordRateLimit).not.toHaveBeenCalled();
+    expect(rateLimitStateMocks.recordRateLimit).toHaveBeenCalledTimes(1);
+    expect(result.rateLimitActive).toBe(true);
+    expect(result.rateLimitUntil).toBe("2026-02-23T12:00:00.000Z");
     expect(typeCalls).toHaveLength(2);
     expect(page.type as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(2);
   });

@@ -377,6 +377,8 @@ export class LinkedInAuthService {
       async (context) => {
         const page = await getPage(context);
 
+        await this.clearNonEssentialLinkedInCookies(context);
+
         if (warmProfile) {
           await this.warmBrowserProfile(page);
         }
@@ -633,18 +635,24 @@ export class LinkedInAuthService {
             } else if (checkpointType === "app_approval") {
               // Continue polling while LinkedIn awaits approval from a trusted device.
             } else if (checkpointType === "captcha") {
+              const rateLimitState = await recordRateLimit();
               return {
                 ...status,
                 timedOut: false,
                 checkpoint: true,
                 checkpointType: "captcha",
+                rateLimitActive: true,
+                rateLimitUntil: rateLimitState.rateLimitedUntil,
               };
             } else {
+              const rateLimitState = await recordRateLimit();
               return {
                 ...status,
                 timedOut: false,
                 checkpoint: true,
                 checkpointType: "unknown",
+                rateLimitActive: true,
+                rateLimitUntil: rateLimitState.rateLimitedUntil,
               };
             }
           }
@@ -703,6 +711,29 @@ export class LinkedInAuthService {
     state: RateLimitState | null;
   }> {
     return isInRateLimitCooldown();
+  }
+
+  /**
+   * Clears non-essential LinkedIn tracking cookies from the persistent profile
+   * before a headless login attempt. Preserves the `li_at` session cookie so
+   * the early-auth shortcut still works when the session is already valid.
+   *
+   * This reduces the risk of LinkedIn classifying the browser as a returning
+   * automated visitor based on accumulated tracking cookies from prior runs.
+   */
+  private async clearNonEssentialLinkedInCookies(
+    context: BrowserContext,
+  ): Promise<void> {
+    try {
+      const cookies = await context.cookies("https://www.linkedin.com");
+      const sessionCookie = cookies.find((c) => c.name === "li_at");
+      await context.clearCookies({ domain: ".linkedin.com" });
+      if (sessionCookie) {
+        await context.addCookies([sessionCookie]);
+      }
+    } catch {
+      // Best effort — failures should not block login.
+    }
   }
 
   /**
