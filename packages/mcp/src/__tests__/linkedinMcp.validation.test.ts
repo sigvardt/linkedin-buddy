@@ -3,13 +3,16 @@ import { describe, expect, it } from "vitest";
 import {
   LINKEDIN_INBOX_SEARCH_RECIPIENTS_TOOL,
   LINKEDIN_PROFILE_PREPARE_UPSERT_SECTION_ITEM_TOOL,
-  LINKEDIN_SESSION_STATUS_TOOL
+  LINKEDIN_SESSION_STATUS_TOOL,
 } from "../index.js";
 import * as toolConstants from "../index.js";
 import {
   LINKEDIN_MCP_TOOL_DEFINITIONS,
+  readBoundedString,
+  readValidatedFilePath,
+  readValidatedUrl,
   validateToolArguments,
-  type LinkedInMcpInputSchema
+  type LinkedInMcpInputSchema,
 } from "../bin/linkedin-mcp.js";
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -49,7 +52,10 @@ function synthesizeValidValue(schema: LinkedInMcpInputSchema): unknown {
         value[key] = synthesizeValidValue(propertySchema);
       }
 
-      if (required.length === 0 && typeof schema.additionalProperties === "object") {
+      if (
+        required.length === 0 &&
+        typeof schema.additionalProperties === "object"
+      ) {
         value.sample = synthesizeValidValue(schema.additionalProperties);
       }
 
@@ -60,7 +66,9 @@ function synthesizeValidValue(schema: LinkedInMcpInputSchema): unknown {
   }
 }
 
-function synthesizeValidArgs(schema: LinkedInMcpInputSchema): Record<string, unknown> {
+function synthesizeValidArgs(
+  schema: LinkedInMcpInputSchema,
+): Record<string, unknown> {
   const value = synthesizeValidValue(schema);
   if (!isPlainObject(value)) {
     throw new Error("Expected an object-valued tool schema.");
@@ -108,7 +116,9 @@ function captureValidationFailure(action: () => unknown): LinkedInBuddyError {
 describe("MCP tool schema validation", () => {
   it("keeps the exported tool catalog in sync with the MCP definitions", () => {
     const exportedToolNames = [...Object.values(toolConstants)].sort();
-    const definedToolNames = LINKEDIN_MCP_TOOL_DEFINITIONS.map((tool) => tool.name).sort();
+    const definedToolNames = LINKEDIN_MCP_TOOL_DEFINITIONS.map(
+      (tool) => tool.name,
+    ).sort();
 
     expect(definedToolNames).toEqual(exportedToolNames);
   });
@@ -118,13 +128,13 @@ describe("MCP tool schema validation", () => {
       const assistantError = captureValidationFailure(() =>
         validateToolArguments(tool.name, {
           ...synthesizeValidArgs(tool.inputSchema),
-          unexpected: true
-        })
+          unexpected: true,
+        }),
       );
 
       expect(assistantError.message).toBe("unexpected is not allowed.");
       expect(assistantError.details).toMatchObject({
-        path: "unexpected"
+        path: "unexpected",
       });
     }
   });
@@ -138,27 +148,31 @@ describe("MCP tool schema validation", () => {
 
       const propertySchema = tool.inputSchema.properties?.[requiredKey];
       if (!propertySchema) {
-        throw new Error(`Missing property schema for ${tool.name}.${requiredKey}.`);
+        throw new Error(
+          `Missing property schema for ${tool.name}.${requiredKey}.`,
+        );
       }
 
       const args = synthesizeValidArgs(tool.inputSchema);
       args[requiredKey] = synthesizeTypeMismatchValue(propertySchema);
 
       const assistantError = captureValidationFailure(() =>
-        validateToolArguments(tool.name, args)
+        validateToolArguments(tool.name, args),
       );
 
       expect(assistantError.message).toContain(requiredKey);
       expect(assistantError.details).toMatchObject({
-        path: requiredKey
+        path: requiredKey,
       });
     }
   });
 
   it("rejects invalid enum values wherever root properties declare enums", () => {
     for (const tool of LINKEDIN_MCP_TOOL_DEFINITIONS) {
-      const enumProperty = Object.entries(tool.inputSchema.properties ?? {}).find(
-        ([, schema]) => Array.isArray(schema.enum) && schema.enum.length > 0
+      const enumProperty = Object.entries(
+        tool.inputSchema.properties ?? {},
+      ).find(
+        ([, schema]) => Array.isArray(schema.enum) && schema.enum.length > 0,
       );
       if (!enumProperty) {
         continue;
@@ -169,21 +183,24 @@ describe("MCP tool schema validation", () => {
       args[propertyName] = "__invalid_enum_value__";
 
       const assistantError = captureValidationFailure(() =>
-        validateToolArguments(tool.name, args)
+        validateToolArguments(tool.name, args),
       );
 
       expect(assistantError.message).toContain(propertyName);
       expect(assistantError.message).toContain("must be one of");
       expect(assistantError.details).toMatchObject({
-        path: propertyName
+        path: propertyName,
       });
     }
   });
 
   it("rejects mixed-type arrays for every string-array property", () => {
     for (const tool of LINKEDIN_MCP_TOOL_DEFINITIONS) {
-      const arrayProperty = Object.entries(tool.inputSchema.properties ?? {}).find(
-        ([, schema]) => schema.type === "array" && schema.items?.type === "string"
+      const arrayProperty = Object.entries(
+        tool.inputSchema.properties ?? {},
+      ).find(
+        ([, schema]) =>
+          schema.type === "array" && schema.items?.type === "string",
       );
       if (!arrayProperty) {
         continue;
@@ -194,13 +211,15 @@ describe("MCP tool schema validation", () => {
       args[propertyName] = [synthesizeValidValue(propertySchema.items!), 42];
 
       const assistantError = captureValidationFailure(() =>
-        validateToolArguments(tool.name, args)
+        validateToolArguments(tool.name, args),
       );
 
-      expect(assistantError.message).toBe(`${propertyName}[1] must be a string.`);
+      expect(assistantError.message).toBe(
+        `${propertyName}[1] must be a string.`,
+      );
       expect(assistantError.details).toMatchObject({
         path: `${propertyName}[1]`,
-        actual_type: "number"
+        actual_type: "number",
       });
     }
   });
@@ -210,36 +229,97 @@ describe("MCP tool schema validation", () => {
       validateToolArguments(LINKEDIN_PROFILE_PREPARE_UPSERT_SECTION_ITEM_TOOL, {
         section: "experience",
         values: {
-          headline: ["bad"]
-        }
-      })
+          headline: ["bad"],
+        },
+      }),
     );
 
     expect(assistantError.message).toBe(
-      "values.headline must match one of: string, number, boolean."
+      "values.headline must match one of: string, number, boolean.",
     );
     expect(assistantError.details).toMatchObject({
       path: "values.headline",
-      actual_type: "array"
+      actual_type: "array",
     });
   });
 
   it("treats undefined optional values as absent but still rejects undefined required inputs", () => {
     expect(() =>
       validateToolArguments(LINKEDIN_SESSION_STATUS_TOOL, {
-        profileName: undefined
-      })
+        profileName: undefined,
+      }),
     ).not.toThrow();
 
     const assistantError = captureValidationFailure(() =>
       validateToolArguments(LINKEDIN_INBOX_SEARCH_RECIPIENTS_TOOL, {
-        query: undefined
-      })
+        query: undefined,
+      }),
     );
 
     expect(assistantError.message).toBe("query is required.");
     expect(assistantError.details).toMatchObject({
-      path: "query"
+      path: "query",
     });
+  });
+});
+
+describe("MCP validation helpers", () => {
+  it("readBoundedString enforces max length for normal, boundary, and over-limit values", () => {
+    expect(readBoundedString({ text: "hello" }, "text", 10)).toBe("hello");
+
+    const boundaryValue = "x".repeat(8);
+    expect(readBoundedString({ text: boundaryValue }, "text", 8)).toBe(
+      boundaryValue,
+    );
+
+    const assistantError = captureValidationFailure(() =>
+      readBoundedString({ text: "x".repeat(9) }, "text", 8),
+    );
+
+    expect(assistantError.message).toBe("text must be 8 characters or fewer.");
+  });
+
+  it("readValidatedUrl accepts valid URLs and rejects malformed values", () => {
+    expect(
+      readValidatedUrl(
+        { postUrl: "https://www.linkedin.com/feed/" },
+        "postUrl",
+      ),
+    ).toBe("https://www.linkedin.com/feed/");
+    expect(
+      readValidatedUrl(
+        { postUrl: "HTTP://EXAMPLE.COM/some/path?x=1" },
+        "postUrl",
+      ),
+    ).toBe("http://example.com/some/path?x=1");
+
+    expect(() => readValidatedUrl({ postUrl: "not a url" }, "postUrl")).toThrow(
+      /postUrl must be a valid URL\./,
+    );
+    expect(() => readValidatedUrl({ postUrl: "https://" }, "postUrl")).toThrow(
+      /postUrl must be a valid URL\./,
+    );
+  });
+
+  it("readValidatedFilePath rejects traversal patterns and empty strings", () => {
+    expect(
+      readValidatedFilePath({ filePath: "./assets/photo.png" }, "filePath"),
+    ).toBe("./assets/photo.png");
+    expect(
+      readValidatedFilePath(
+        { filePath: "C:\\Users\\me\\banner.jpg" },
+        "filePath",
+      ),
+    ).toBe("C:\\Users\\me\\banner.jpg");
+
+    expect(() =>
+      readValidatedFilePath({ filePath: "../secret.txt" }, "filePath"),
+    ).toThrow(/filePath must not include path traversal segments\./);
+    expect(() =>
+      readValidatedFilePath({ filePath: "..\\secret.txt" }, "filePath"),
+    ).toThrow(/filePath must not include path traversal segments\./);
+    expect(() =>
+      readValidatedFilePath({ filePath: "   " }, "filePath"),
+    ).toThrow(/filePath is required\./);
   });
 });
