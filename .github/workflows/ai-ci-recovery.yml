@@ -1,66 +1,66 @@
 name: AI CI Failure Recovery
 
 on:
-  check_suite:
+  workflow_run:
+    workflows: ["CI"]
     types: [completed]
 
 permissions:
   issues: write
-  contents: read
+  contents: write
+  pull-requests: write
 
 jobs:
   recover:
     if: >
-      github.event.check_suite.conclusion == 'failure' &&
-      startsWith(github.event.check_suite.head_branch, 'ai/issue-')
+      github.event.workflow_run.conclusion == 'failure' &&
+      startsWith(github.event.workflow_run.head_branch, 'ai/')
     runs-on: ubuntu-latest
     steps:
-      - name: Extract issue number from branch
+      - name: Extract issue number and PR info
         id: extract
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          BRANCH="${{ github.event.check_suite.head_branch }}"
-          # Branch format: ai/issue-{number}-{slug}
+          BRANCH="${{ github.event.workflow_run.head_branch }}"
           ISSUE_NUM=$(echo "$BRANCH" | sed -E 's|^ai/issue-([0-9]+).*|\1|')
           echo "issue_number=$ISSUE_NUM" >> "$GITHUB_OUTPUT"
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
 
-      - name: Re-label issue for retry
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const issueNumber = parseInt('${{ steps.extract.outputs.issue_number }}');
-            const branch = '${{ steps.extract.outputs.branch }}';
-            
-            // Remove ai-in-progress, add ai-task so orchestrator picks it up again
-            try {
-              await github.rest.issues.removeLabel({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: issueNumber,
-                name: 'ai-in-progress'
-              });
-            } catch (e) {
-              // Label might not exist, that's fine
-            }
-            
-            await github.rest.issues.addLabels({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issueNumber,
-              labels: ['ai-task', 'ai-debugging']
-            });
-            
-            // Post a comment noting the CI failure
-            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: issueNumber,
-              body: `## ⚠️ CI Failure Detected
+          # Find the PR for this branch
+          PR_NUM=$(gh pr list --repo "${{ github.repository }}" --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          echo "pr_number=$PR_NUM" >> "$GITHUB_OUTPUT"
 
-CI failed on branch \`${branch}\`.
+      - name: Close stale PR and recycle issue
+        if: steps.extract.outputs.issue_number != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ISSUE_NUM="${{ steps.extract.outputs.issue_number }}"
+          PR_NUM="${{ steps.extract.outputs.pr_number }}"
+          BRANCH="${{ steps.extract.outputs.branch }}"
+          REPO="${{ github.repository }}"
+          RUN_URL="${{ github.event.workflow_run.html_url }}"
 
-**Action:** Re-queued for the orchestrator to pick up and fix.
+          echo "Issue: #$ISSUE_NUM, PR: #$PR_NUM, Branch: $BRANCH"
 
-[View CI run](${runUrl})`
-            });
+          # Close the PR if it exists
+          if [ -n "$PR_NUM" ]; then
+            gh pr close "$PR_NUM" --repo "$REPO" \
+              --comment "🔄 CI failed — closing PR and recycling issue for fresh attempt. [Failed CI run]($RUN_URL)" \
+              --delete-branch || true
+          fi
+
+          # Relabel issue back to ai-task
+          gh issue edit "$ISSUE_NUM" --repo "$REPO" \
+            --remove-label "ai-in-progress" \
+            --remove-label "ai-review-ready" \
+            --remove-label "ai-blocked" \
+            --add-label "ai-task,ai-debugging" 2>/dev/null || true
+
+          gh issue comment "$ISSUE_NUM" --repo "$REPO" \
+            --body "## ♻️ CI Failure Recovery
+
+CI failed on branch \`$BRANCH\`. PR #$PR_NUM closed and issue relabeled to \`ai-task\` for the orchestrator to retry with a fresh branch from current main.
+
+[View failed CI run]($RUN_URL)"
