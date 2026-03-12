@@ -1684,7 +1684,7 @@ async function handleProfilePrepareUpdatePublicProfile(
     if (!vanityName && !customProfileUrl && !publicProfileUrl) {
       throw new LinkedInBuddyError(
         "ACTION_PRECONDITION_FAILED",
-        "vanityName, customProfileUrl, or publicProfileUrl is required.",
+        'At least one of vanityName, customProfileUrl, or publicProfileUrl is required. Provide a vanity slug (e.g. "avery-cole") or a full LinkedIn profile URL.',
       );
     }
 
