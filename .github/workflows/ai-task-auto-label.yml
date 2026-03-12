@@ -1,0 +1,45 @@
+name: Auto-label ai-task
+
+on:
+  issues:
+    types: [opened, labeled, unlabeled]
+
+permissions:
+  issues: write
+
+jobs:
+  auto-label:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Auto-manage ai-task label
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const labels = issue.labels.map(l => l.name);
+            
+            // Labels that exclude ai-task
+            const excludeLabels = ['backlog', 'ai-in-progress', 'ai-blocked', 'ai-debugging', 'ai-review-ready', 'wontfix', 'duplicate', 'invalid'];
+            
+            const hasExclude = labels.some(l => excludeLabels.includes(l));
+            const hasAiTask = labels.includes('ai-task');
+            
+            if (hasExclude && hasAiTask) {
+              // Remove ai-task if an exclude label is present
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                name: 'ai-task'
+              });
+              console.log(`Removed ai-task from #${issue.number} (has exclude label)`);
+            } else if (!hasExclude && !hasAiTask) {
+              // Add ai-task if no exclude label and no ai-task
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                labels: ['ai-task']
+              });
+              console.log(`Added ai-task to #${issue.number}`);
+            }
