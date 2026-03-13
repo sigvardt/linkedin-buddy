@@ -44,6 +44,7 @@ import {
   evaluateDraftQuality,
   FEEDBACK_TYPES,
   formatFeedbackDisplayPath,
+  getAuthWhoami,
   getLinkedInSelectorLocaleConfigWarning,
   isPreparedActionEffectiveStatus,
   isSearchCategory,
@@ -2285,6 +2286,26 @@ async function runManualLogin(
       ? { fingerprint_path: result.fingerprintPath }
       : {}),
   });
+}
+
+async function runAuthWhoami(sessionName: string): Promise<void> {
+  const result = await getAuthWhoami(sessionName);
+  printJson({
+    authenticated: result.authenticated,
+    profile_name: result.profileName,
+    full_name: result.fullName,
+    vanity_name: result.vanityName,
+    session_age: result.sessionAge,
+    session_valid: result.sessionValid,
+    session_expires_at: result.sessionExpiresAt,
+    session_expires_in_ms: result.sessionExpiresInMs,
+    identity_cached_at: result.identityCachedAt,
+    guidance: result.guidance,
+  });
+
+  if (!result.authenticated) {
+    process.exitCode = 1;
+  }
 }
 
 async function runSessionCheck(sessionName: string): Promise<void> {
@@ -8945,6 +8966,39 @@ export function createCliProgram(): Command {
         readCdpUrl(),
       );
     });
+
+  const configureAuthStatusCommand = (command: Command): void => {
+    command
+      .description(
+        "Check authentication status for a stored session without launching a browser",
+      )
+      .option("-s, --session <session>", "Stored session name", "default")
+      .addHelpText(
+        "after",
+        [
+          "",
+          "Returns authentication state, session age, and cached identity.",
+          "Sub-second response — reads stored session files only, no browser launch.",
+          "",
+          "Identity is populated automatically when running browser-based commands",
+          "(e.g. linkedin status). If identity fields are null, run linkedin status first.",
+          "",
+          "Examples:",
+          "  linkedin auth status",
+          "  linkedin auth status --session smoke",
+          "  linkedin auth whoami",
+        ].join("\n"),
+      )
+      .action(async (options: { session: string }) => {
+        await runAuthWhoami(coerceProfileName(options.session, "session"));
+      });
+  };
+
+  configureAuthStatusCommand(authCommand.command("status"));
+  configureAuthStatusCommand(authCommand.command("whoami"));
+  configureAuthStatusCommand(
+    program.command("auth:status", { hidden: true }),
+  );
 
   const accountsCommand = program
     .command("accounts")

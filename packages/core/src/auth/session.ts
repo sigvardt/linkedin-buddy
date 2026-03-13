@@ -27,6 +27,7 @@ import {
   type RateLimitState,
 } from "./rateLimitState.js";
 import type { LinkedInSessionStore } from "./sessionStore.js";
+import { writeIdentityCache } from "./identityCache.js";
 
 /** Authentication snapshot for a LinkedIn browser profile. */
 export interface SessionStatus {
@@ -151,12 +152,23 @@ async function dismissCookieConsentBanner(page: Page): Promise<void> {
 
 async function enrichAuthenticatedSessionStatus<
   T extends { authenticated: boolean },
->(page: Page, status: T): Promise<T & { identity?: LinkedInSessionIdentity }> {
+>(
+  page: Page,
+  status: T,
+  options?: { profileName?: string },
+): Promise<T & { identity?: LinkedInSessionIdentity }> {
   if (!status.authenticated) {
     return status;
   }
 
   const identity = await inspectAuthenticatedLinkedInIdentity(page);
+  if (identity && options?.profileName) {
+    writeIdentityCache(options.profileName, {
+      fullName: identity.fullName,
+      vanityName: identity.vanityName,
+      profileUrl: identity.profileUrl,
+    }).catch(() => undefined);
+  }
   return identity
     ? {
         ...status,
@@ -197,7 +209,7 @@ export class LinkedInAuthService {
         if (status.authenticated) {
           await clearRateLimitState();
         }
-        return enrichAuthenticatedSessionStatus(page, status);
+        return enrichAuthenticatedSessionStatus(page, status, { profileName });
       },
     );
 
@@ -308,7 +320,9 @@ export class LinkedInAuthService {
               await clearRateLimitState();
             }
 
-            return enrichAuthenticatedSessionStatus(page, restored);
+            return enrichAuthenticatedSessionStatus(page, restored, {
+              profileName,
+            });
           },
         );
 
@@ -483,6 +497,7 @@ export class LinkedInAuthService {
             const resolvedEarlyStatus = await enrichAuthenticatedSessionStatus(
               page,
               earlyStatus,
+              { profileName },
             );
             return {
               ...resolvedEarlyStatus,
@@ -632,6 +647,7 @@ export class LinkedInAuthService {
             const resolvedStatus = await enrichAuthenticatedSessionStatus(
               page,
               status,
+              { profileName },
             );
             return {
               ...resolvedStatus,
@@ -843,6 +859,7 @@ export class LinkedInAuthService {
         const resolvedFinalStatus = await enrichAuthenticatedSessionStatus(
           page,
           finalStatus,
+          { profileName },
         );
         if (resolvedFinalStatus.authenticated) {
           await clearRateLimitState();
@@ -951,6 +968,7 @@ export class LinkedInAuthService {
         const resolvedStatus = await enrichAuthenticatedSessionStatus(
           page,
           status,
+          { profileName },
         );
 
         if (resolvedStatus.authenticated) {
