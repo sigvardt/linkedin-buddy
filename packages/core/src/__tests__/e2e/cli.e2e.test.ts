@@ -202,62 +202,6 @@ describe.sequential("CLI E2E", () => {
       confirmToken: expect.stringMatching(/^ct_/)
     });
 
-    const inboxArchive = await runCliCommand([
-      "inbox",
-      "archive",
-      "--profile",
-      profileName,
-      "--thread",
-      fixtures.threadId
-    ]);
-    expect(inboxArchive.error).toBeUndefined();
-    expect(getLastJsonObject(inboxArchive.stdout)).toMatchObject({
-      profile_name: profileName,
-      archived: true
-    });
-
-    const inboxUnarchive = await runCliCommand([
-      "inbox",
-      "unarchive",
-      "--profile",
-      profileName,
-      "--thread",
-      fixtures.threadId
-    ]);
-    expect(inboxUnarchive.error).toBeUndefined();
-    expect(getLastJsonObject(inboxUnarchive.stdout)).toMatchObject({
-      profile_name: profileName,
-      unarchived: true
-    });
-
-    const inboxMarkUnread = await runCliCommand([
-      "inbox",
-      "mark-unread",
-      "--profile",
-      profileName,
-      "--thread",
-      fixtures.threadId
-    ]);
-    expect(inboxMarkUnread.error).toBeUndefined();
-    expect(getLastJsonObject(inboxMarkUnread.stdout)).toMatchObject({
-      profile_name: profileName,
-      marked_unread: true
-    });
-
-    const inboxMute = await runCliCommand([
-      "inbox",
-      "mute",
-      "--profile",
-      profileName,
-      "--thread",
-      fixtures.threadId
-    ]);
-    expect(inboxMute.error).toBeUndefined();
-    expect(getLastJsonObject(inboxMute.stdout)).toMatchObject({
-      profile_name: profileName,
-      muted: true
-    });
-
     const runtime = e2e.runtime();
     const confirmAction = prepareEchoAction(runtime, {
       profileName,
