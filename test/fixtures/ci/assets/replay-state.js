@@ -519,7 +519,7 @@
         ${slug === "me" ? "" : `<div class="invitation-status">${sent ? "Invitation sent" : ""}</div>`}
       </section>
       ${slug === "me" ? "" : `
-        <section class="connect-dialog" hidden>
+        <section class="connect-dialog" role="dialog" hidden>
           <button class="connect-add-note">Add a note</button>
           <textarea name="message" aria-label="Invitation"></textarea>
           <button class="connect-send">Send</button>
