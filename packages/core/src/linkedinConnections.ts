@@ -1085,7 +1085,7 @@ async function executeSendInvitation(
       ];
 
       const dialogLocator = page
-        .locator("div[role='dialog'], aside[role='dialog']")
+        .locator("[role='dialog']")
         .first();
       const dialogAppeared = await dialogLocator
         .waitFor({ state: "visible", timeout: 5_000 })
