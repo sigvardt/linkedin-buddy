@@ -657,6 +657,8 @@ async function waitForCondition(
 
 async function waitForJobSearchSurface(page: Page): Promise<void> {
   const selectors = [
+    "li[data-occludable-job-id]",
+    "a[href*='/jobs/view/']",
     ".job-card-container",
     ".base-search-card",
     ".jobs-search-results-list",
@@ -687,6 +689,9 @@ async function waitForJobSearchSurface(page: Page): Promise<void> {
 
 async function waitForJobDetailSurface(page: Page): Promise<void> {
   const selectors = [
+    "#job-details",
+    "h1",
+    "a[href*='/company/']",
     ".job-details-jobs-unified-top-card",
     ".jobs-details",
     ".jobs-unified-top-card",
@@ -829,11 +834,18 @@ async function extractJobSearchResults(
       };
 
       const pickEmploymentType = (root: ParentNode): string => {
-        const signal = pickText(root, [
-          ".job-card-container__metadata-item",
-          ".job-card-container__job-insight",
-          ".base-search-card__metadata",
-        ]);
+        const insightText = normalize(
+          (
+            root.querySelector(".job-card-list__insight") as HTMLElement | null
+          )?.innerText,
+        );
+        const signal =
+          insightText ||
+          pickText(root, [
+            ".job-card-container__metadata-item",
+            ".job-card-container__job-insight",
+            ".base-search-card__metadata",
+          ]);
         if (!signal) {
           return "";
         }
@@ -845,7 +857,7 @@ async function extractJobSearchResults(
 
       const cards = Array.from(
         globalThis.document.querySelectorAll(
-          ".job-card-container, .base-search-card, .job-card-list__entity-lockup",
+          "li[data-occludable-job-id], .job-card-container, .base-search-card, .job-card-list__entity-lockup",
         ),
       ).slice(0, maxJobs);
 
@@ -861,28 +873,33 @@ async function extractJobSearchResults(
         results.push({
           job_id: extractJobId(jobUrl, card),
           title: pickText(card, [
+            "a[href*='/jobs/view/'] span[aria-hidden='true']",
             ".job-card-container__link",
-            ".base-search-card__title",
             ".job-card-list__title",
+            ".base-search-card__title",
           ]),
           company: pickText(card, [
+            ".artdeco-entity-lockup__subtitle span[dir='ltr']",
+            ".job-card-container__primary-description",
             ".job-card-container__company-name",
             ".base-search-card__subtitle",
-            ".job-card-container__primary-description",
           ]),
           location: pickText(card, [
-            ".job-card-container__metadata-wrapper",
-            ".job-search-card__location",
+            ".artdeco-entity-lockup__caption span[dir='ltr']",
+            ".job-card-container__metadata-wrapper span[dir='ltr']",
             ".job-card-container__metadata-item",
+            ".job-search-card__location",
           ]),
           posted_at: pickText(card, [
             "time",
+            ".job-card-container__listed-status",
             ".job-card-container__footer",
             ".job-card-container__listed-time",
           ]),
           job_url: jobUrl,
           salary_range: pickText(card, [
             ".job-card-container__salary-info",
+            ".salary-main-rail__salary-range",
             ".salary-main-rail__compensation-text",
           ]),
           employment_type: pickEmploymentType(card),
@@ -955,18 +972,70 @@ async function extractJobDetail(
       "a[href*='/company/']",
     ) as HTMLAnchorElement | null;
 
+    /* Collect non-title text blocks from the job detail top card via
+       structural DOM traversal (resilient to class name obfuscation). */
+    const collectTopCardTexts = (): string[] => {
+      const titleEl = main.querySelector("h1");
+      if (!titleEl) {
+        return [];
+      }
+
+      let topCard = titleEl.parentElement;
+      while (topCard && topCard !== main && topCard.tagName !== "MAIN") {
+        const hasCompanyLink = topCard.querySelector("a[href*='/company/']");
+        if (hasCompanyLink && topCard.children.length >= 2) {
+          break;
+        }
+        topCard = topCard.parentElement;
+      }
+      if (!topCard || topCard === main) {
+        return [];
+      }
+
+      const titleText = normalize(titleEl.textContent);
+
+      const candidates: string[] = [];
+
+      const dirSpans = Array.from(
+        topCard.querySelectorAll("span[dir='ltr']"),
+      );
+      for (const span of dirSpans) {
+        if (span.closest("h1") || span.closest("#job-details")) {
+          continue;
+        }
+        const ariaHidden = span.querySelector("span[aria-hidden='true']");
+        const text = normalize((ariaHidden ?? span).textContent);
+        if (text && text !== titleText) {
+          candidates.push(text);
+        }
+      }
+
+      const liItems = Array.from(topCard.querySelectorAll("li"));
+      for (const li of liItems) {
+        const text = normalize(li.textContent);
+        if (text && !candidates.includes(text)) {
+          candidates.push(text);
+        }
+      }
+
+      return candidates;
+    };
+
+    const topCardTexts = collectTopCardTexts();
+    const topCardBlob = topCardTexts.join(" ");
+
     const title = pickText(main, [
+      "h1",
       ".job-details-jobs-unified-top-card__job-title",
       ".jobs-unified-top-card__job-title",
       ".top-card-layout__title",
-      "h1",
     ]);
 
     const company = pickText(main, [
+      "a[href*='/company/']",
       ".job-details-jobs-unified-top-card__company-name",
       ".jobs-unified-top-card__company-name",
       ".top-card-layout__card-link",
-      "a[href*='/company/']",
     ]);
 
     const companyUrl = toAbsoluteHref(
@@ -974,26 +1043,55 @@ async function extractJobDetail(
         normalize(companyLinkElement?.href),
     );
 
-    const location = pickText(main, [
-      ".job-details-jobs-unified-top-card__bullet",
-      ".jobs-unified-top-card__subtitle-primary-grouping .jobs-unified-top-card__bullet",
-      ".top-card-layout__second-subline .topcard__flavor--bullet",
-      ".jobs-unified-top-card__workplace-type",
-    ]);
+    const location =
+      pickText(main, [
+        ".job-details-jobs-unified-top-card__bullet",
+        ".jobs-unified-top-card__subtitle-primary-grouping .jobs-unified-top-card__bullet",
+        ".top-card-layout__second-subline .topcard__flavor--bullet",
+        ".jobs-unified-top-card__workplace-type",
+      ]) ||
+      (() => {
+        const companyText = normalize(companyLinkElement?.textContent ?? "");
+        for (const text of topCardTexts) {
+          if (text === companyText || text === title) {
+            continue;
+          }
+          if (
+            /\b(?:remote|hybrid|on-site|on site)\b/i.test(text) ||
+            /,/.test(text)
+          ) {
+            return text;
+          }
+        }
+        return "";
+      })();
 
-    const postedAt = pickText(main, [
-      ".job-details-jobs-unified-top-card__posted-date",
-      ".jobs-unified-top-card__posted-date",
-      "time",
-      ".posted-time-ago__text",
-    ]);
+    const postedAt =
+      pickText(main, [
+        "time",
+        ".job-details-jobs-unified-top-card__posted-date",
+        ".jobs-unified-top-card__posted-date",
+        ".posted-time-ago__text",
+      ]) ||
+      (() => {
+        for (const text of topCardTexts) {
+          if (
+            /\b(?:\d+\s*(?:second|minute|hour|day|week|month|year)s?\s*ago|reposted)\b/i.test(
+              text,
+            )
+          ) {
+            return text;
+          }
+        }
+        return "";
+      })();
 
     const description = pickText(main, [
+      "#job-details",
       ".jobs-description__content",
       ".jobs-description-content__text",
       ".jobs-box__html-content",
       ".description__text",
-      "#job-details",
     ]);
 
     const insightTexts = Array.from(
@@ -1002,13 +1100,16 @@ async function extractJobDetail(
       ),
     ).map((el) => normalize(el.textContent));
 
-    const allInsights = insightTexts.join(" ");
+    const allInsights = [...insightTexts, topCardBlob]
+      .filter(Boolean)
+      .join(" ");
 
     const salaryRange =
       pickText(main, [
         ".salary-main-rail__compensation-text",
         ".job-details-jobs-unified-top-card__salary-info",
         ".compensation__salary",
+        ".salary-main-rail__salary-range",
       ]) ||
       (() => {
         const salaryMatch =
@@ -1028,14 +1129,26 @@ async function extractJobDetail(
       );
     const seniorityLevel = normalize(seniorityMatch?.[1] ?? "");
 
-    const applicantCount = pickText(main, [
-      ".jobs-unified-top-card__applicant-count",
-      ".job-details-jobs-unified-top-card__applicant-count",
-      ".num-applicants__caption",
-    ]);
+    const applicantCount =
+      pickText(main, [
+        ".jobs-unified-top-card__applicant-count",
+        ".job-details-jobs-unified-top-card__applicant-count",
+        ".num-applicants__caption",
+      ]) ||
+      (() => {
+        for (const text of topCardTexts) {
+          if (/\b\d+\s*applicants?\b/i.test(text)) {
+            return text;
+          }
+        }
+        const applicantMatch = /(\d[\d,]*\s*applicants?)/i.exec(allInsights);
+        return normalize(applicantMatch?.[1] ?? "");
+      })();
 
     const isRemote =
-      /\bremote\b/i.test(location) || /\bremote\b/i.test(allInsights);
+      /\bremote\b/i.test(location) ||
+      /\bremote\b/i.test(allInsights) ||
+      /\bremote\b/i.test(topCardBlob);
 
     const jobUrl = globalThis.window.location.href;
 
