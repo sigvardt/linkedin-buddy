@@ -60,6 +60,7 @@ export interface LinkedInFeedPost {
 export interface ViewFeedInput {
   profileName?: string;
   limit?: number;
+  mine?: boolean;
 }
 
 export interface ViewPostInput {
@@ -131,6 +132,8 @@ export interface LinkedInFeedRuntime extends LinkedInFeedExecutorRuntime {
 }
 
 const LINKEDIN_FEED_URL = "https://www.linkedin.com/feed/";
+const LINKEDIN_MY_ACTIVITY_URL =
+  "https://www.linkedin.com/in/me/recent-activity/all/";
 export const LIKE_POST_ACTION_TYPE = "feed.like_post";
 export const COMMENT_ON_POST_ACTION_TYPE = "feed.comment_on_post";
 export const REPOST_POST_ACTION_TYPE = "feed.repost_post";
@@ -3411,6 +3414,8 @@ export class LinkedInFeedService {
   async viewFeed(input: ViewFeedInput = {}): Promise<LinkedInFeedPost[]> {
     const profileName = input.profileName ?? "default";
     const limit = readFeedLimit(input.limit);
+    const mine = input.mine === true;
+    const targetUrl = mine ? LINKEDIN_MY_ACTIVITY_URL : LINKEDIN_FEED_URL;
 
     await this.runtime.auth.ensureAuthenticated({
       profileName,
@@ -3426,7 +3431,7 @@ export class LinkedInFeedService {
         },
         async (context) => {
           const page = await getOrCreatePage(context);
-          await page.goto(LINKEDIN_FEED_URL, { waitUntil: "domcontentloaded" });
+          await page.goto(targetUrl, { waitUntil: "domcontentloaded" });
           await waitForFeedSurface(page);
           const posts = await loadFeedPosts(page, limit);
           return posts.slice(0, limit);
@@ -3439,7 +3444,9 @@ export class LinkedInFeedService {
       throw asLinkedInBuddyError(
         error,
         "UNKNOWN",
-        "Failed to view LinkedIn feed.",
+        mine
+          ? "Failed to view your LinkedIn activity."
+          : "Failed to view LinkedIn feed.",
       );
     }
   }

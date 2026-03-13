@@ -11,7 +11,8 @@ import {
   SHARE_POST_ACTION_TYPE,
   UNSAVE_POST_ACTION_TYPE,
   createFeedActionExecutors,
-  normalizeLinkedInFeedReaction
+  normalizeLinkedInFeedReaction,
+  type ViewFeedInput
 } from "../linkedinFeed.js";
 
 describe("Feed action type constants", () => {
@@ -211,5 +212,35 @@ describe("reaction mapping", () => {
     expect(() => normalizeLinkedInFeedReaction("rocket")).toThrow(
       "reaction must be one of"
     );
+  });
+});
+
+describe("ViewFeedInput.mine", () => {
+  it("accepts mine flag in input", () => {
+    const input: ViewFeedInput = { mine: true, limit: 5 };
+    expect(input.mine).toBe(true);
+  });
+
+  it("defaults mine to undefined when omitted", () => {
+    const input: ViewFeedInput = { limit: 10 };
+    expect(input.mine).toBeUndefined();
+  });
+
+  it("accepts mine=false explicitly", () => {
+    const input: ViewFeedInput = { mine: false };
+    expect(input.mine).toBe(false);
+  });
+
+  it("accepts full input with mine, profile, and limit", () => {
+    const input: ViewFeedInput = {
+      profileName: "test-profile",
+      limit: 20,
+      mine: true,
+    };
+    expect(input).toEqual({
+      profileName: "test-profile",
+      limit: 20,
+      mine: true,
+    });
   });
 });
