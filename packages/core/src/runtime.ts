@@ -16,6 +16,7 @@ import {
 } from "./config.js";
 import { AssistantDatabase } from "./db/database.js";
 import { LinkedInAuthService } from "./auth/session.js";
+import { LinkedInSessionStore } from "./auth/sessionStore.js";
 import {
   createConnectionActionExecutors,
   LinkedInConnectionsService,
@@ -390,7 +391,8 @@ export function createCoreRuntime(
       options.cdpUrl,
       selectorLocale,
       logger,
-      evasion
+      evasion,
+      new LinkedInSessionStore(options.baseDir),
     ),
     profile: undefined as unknown as LinkedInProfileService,
     companyPages: undefined as unknown as LinkedInCompanyPagesService,
