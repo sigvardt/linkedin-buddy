@@ -22,7 +22,7 @@ import type {
   ActionExecutorResult,
   TwoPhaseCommitService,
 } from "./twoPhaseCommit.js";
-import { normalizeText, getOrCreatePage } from "./shared.js";
+import { dedupeRepeatedText, normalizeText, getOrCreatePage } from "./shared.js";
 
 export interface LinkedInJobSearchResult {
   job_id: string;
@@ -765,6 +765,33 @@ async function extractJobSearchResults(
 
       const origin = globalThis.window.location.origin;
 
+      const dedupeRepeatedText = (text: string): string => {
+        const normalized = normalize(text);
+        if (!normalized) {
+          return "";
+        }
+
+        if (normalized.length % 2 === 0) {
+          const midpoint = normalized.length / 2;
+          const firstHalf = normalize(normalized.slice(0, midpoint));
+          const secondHalf = normalize(normalized.slice(midpoint));
+          if (firstHalf && firstHalf === secondHalf) {
+            return firstHalf;
+          }
+        }
+
+        const words = normalized.split(" ");
+        for (let i = 1; i * 2 <= words.length; i += 1) {
+          const prefix = words.slice(0, i).join(" ");
+          const nextSegment = words.slice(i, i * 2).join(" ");
+          if (prefix === nextSegment) {
+            return normalize(words.slice(i).join(" "));
+          }
+        }
+
+        return normalized;
+      };
+
       const pickText = (root: ParentNode, selectors: string[]): string => {
         for (const selector of selectors) {
           const el = root.querySelector(selector);
@@ -772,7 +799,16 @@ async function extractJobSearchResults(
             continue;
           }
           const ariaHidden = el.querySelector("span[aria-hidden='true']");
-          const text = normalize((ariaHidden ?? el).textContent);
+          const ariaText = normalize(ariaHidden?.textContent);
+          if (ariaText) {
+            return ariaText;
+          }
+          const ltrSpan = el.querySelector("span[dir='ltr']");
+          const ltrText = normalize(ltrSpan?.textContent);
+          if (ltrText) {
+            return ltrText;
+          }
+          const text = dedupeRepeatedText(normalize(el.textContent));
           if (text) {
             return text;
           }
@@ -855,11 +891,17 @@ async function extractJobSearchResults(
         return normalize(match?.[1] ?? "");
       };
 
-      const cards = Array.from(
+      const rawCards = Array.from(
         globalThis.document.querySelectorAll(
           "li[data-occludable-job-id], .job-card-container, .base-search-card, .job-card-list__entity-lockup",
         ),
-      ).slice(0, maxJobs * 2);
+      );
+
+      const cards = rawCards
+        .filter(
+          (card) => !rawCards.some((other) => other !== card && other.contains(card)),
+        )
+        .slice(0, maxJobs * 2);
 
       const pickTimeText = (root: ParentNode): string => {
         const timeEl = root.querySelector("time");
@@ -867,8 +909,24 @@ async function extractJobSearchResults(
           return "";
         }
         const datetime = normalize(timeEl.getAttribute("datetime"));
-        const text = normalize(timeEl.textContent);
-        return text || datetime;
+
+        for (const node of Array.from(timeEl.childNodes)) {
+          if (node.nodeType === 3) {
+            const t = normalize(node.textContent);
+            if (t) {
+              return t;
+            }
+          }
+        }
+
+        if (timeEl.firstElementChild) {
+          const t = normalize(timeEl.firstElementChild.textContent);
+          if (t) {
+            return t;
+          }
+        }
+
+        return datetime || normalize(timeEl.textContent);
       };
 
       const results: LinkedInJobSearchResult[] = [];
@@ -882,11 +940,12 @@ async function extractJobSearchResults(
         ]);
 
         const jobId = extractJobId(jobUrl, card);
-        if (jobId && seen.has(jobId)) {
+        const dedupKey = jobId || jobUrl;
+        if (dedupKey && seen.has(dedupKey)) {
           continue;
         }
-        if (jobId) {
-          seen.add(jobId);
+        if (dedupKey) {
+          seen.add(dedupKey);
         }
 
         results.push({
@@ -900,6 +959,8 @@ async function extractJobSearchResults(
           company: pickText(card, [
             ".artdeco-entity-lockup__subtitle span[dir='ltr']",
             "a[href*='/company/'] span[dir='ltr']",
+            ".job-card-container__primary-description span[dir='ltr']",
+            ".artdeco-entity-lockup__subtitle",
             "a[href*='/company/']",
             ".job-card-container__primary-description",
             ".job-card-container__company-name",
@@ -941,7 +1002,7 @@ async function extractJobSearchResults(
   return snapshots
     .map((snapshot) => ({
       job_id: normalizeText(snapshot.job_id),
-      title: normalizeText(snapshot.title),
+      title: dedupeRepeatedText(snapshot.title),
       company: normalizeText(snapshot.company),
       location: normalizeText(snapshot.location),
       posted_at: normalizeText(snapshot.posted_at),

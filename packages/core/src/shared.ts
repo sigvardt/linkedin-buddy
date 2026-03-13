@@ -59,6 +59,44 @@ export function buildTextRegex(labels: readonly string[], exact = false): RegExp
   return new RegExp(exact ? `^(?:${pattern})$` : `(?:${pattern})`, "i");
 }
 
+/**
+ * Detects text that has been doubled due to concatenated visible /
+ * screen-reader spans and returns the clean single copy.
+ *
+ * Examples:
+ *   "TitleTitle"                                      -> "Title"
+ *   "Developer Developer with verification"           -> "Developer with verification"
+ *   "Software Engineer (C++) - RemoteSoftware ..."    -> "Software Engineer (C++) - Remote"
+ */
+export function dedupeRepeatedText(value: string | null | undefined): string {
+  const text = normalizeText(value);
+  if (text.length < 4) {
+    return text;
+  }
+
+  // Case 1: exact halves - "TitleTitle" or "Title Title"
+  if (text.length % 2 === 0) {
+    const mid = text.length / 2;
+    const first = normalizeText(text.slice(0, mid));
+    const second = normalizeText(text.slice(mid));
+    if (first && first === second) {
+      return first;
+    }
+  }
+
+  // Case 2: repeated word prefix - "Developer Developer with verification"
+  const words = text.split(" ");
+  for (let i = 1; i * 2 <= words.length; i += 1) {
+    const prefix = words.slice(0, i).join(" ");
+    const next = words.slice(i, i * 2).join(" ");
+    if (prefix === next) {
+      return normalizeText(words.slice(i).join(" "));
+    }
+  }
+
+  return text;
+}
+
 /** Returns the first open page in a browser context, or creates a new one. */
 export async function getOrCreatePage(context: BrowserContext): Promise<Page> {
   const existing = context.pages()[0];

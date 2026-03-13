@@ -2,6 +2,7 @@ import type { BrowserContext, Locator, Page } from "playwright-core";
 import { describe, expect, it, vi } from "vitest";
 import {
   buildTextRegex,
+  dedupeRepeatedText,
   dedupePhrases,
   escapeCssAttributeValue,
   escapeRegExp,
@@ -76,6 +77,46 @@ describe("shared", () => {
       expect(dedupePhrases(["  a  ", "a"])).toEqual(["a"]);
       expect(dedupePhrases(["", "  ", "valid"])).toEqual(["valid"]);
       expect(dedupePhrases(["x", "y", "x"])).toEqual(["x", "y"]);
+    });
+  });
+
+  describe("dedupeRepeatedText", () => {
+    it("returns empty string for falsy input", () => {
+      expect(dedupeRepeatedText(null)).toBe("");
+      expect(dedupeRepeatedText(undefined)).toBe("");
+      expect(dedupeRepeatedText("")).toBe("");
+    });
+
+    it("returns short text unchanged", () => {
+      expect(dedupeRepeatedText("Hi")).toBe("Hi");
+      expect(dedupeRepeatedText("abc")).toBe("abc");
+    });
+
+    it("removes exact-half duplication", () => {
+      expect(dedupeRepeatedText("TitleTitle")).toBe("Title");
+      expect(dedupeRepeatedText("Software Engineer (C++) - RemoteSoftware Engineer (C++) - Remote"))
+        .toBe("Software Engineer (C++) - Remote");
+    });
+
+    it("removes exact-half duplication with space separator", () => {
+      expect(dedupeRepeatedText("Title Title")).toBe("Title");
+    });
+
+    it("removes prefix-repeated duplication with trailing text", () => {
+      expect(dedupeRepeatedText("Developer Developer with verification"))
+        .toBe("Developer with verification");
+      expect(dedupeRepeatedText("Frontend-udvikler Frontend-udvikler with verification"))
+        .toBe("Frontend-udvikler with verification");
+    });
+
+    it("preserves text that is not doubled", () => {
+      expect(dedupeRepeatedText("Software Engineer")).toBe("Software Engineer");
+      expect(dedupeRepeatedText("Senior Full Stack Developer")).toBe("Senior Full Stack Developer");
+      expect(dedupeRepeatedText("Google")).toBe("Google");
+    });
+
+    it("normalizes whitespace", () => {
+      expect(dedupeRepeatedText("  Developer   Developer  ")).toBe("Developer");
     });
   });
 
