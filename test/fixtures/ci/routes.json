@@ -192,6 +192,36 @@
     },
     {
       "method": "GET",
+      "url": "https://www.linkedin.com/mypreferences/d/categories/notifications",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8"
+      },
+      "bodyPath": "pages/app.html",
+      "pageType": "notifications"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.linkedin.com/mypreferences/d/notification-categories/posting-and-commenting",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8"
+      },
+      "bodyPath": "pages/app.html",
+      "pageType": "notifications"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.linkedin.com/mypreferences/d/notification-subcategories/comments-and-reactions",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8"
+      },
+      "bodyPath": "pages/app.html",
+      "pageType": "notifications"
+    },
+    {
+      "method": "GET",
       "url": "https://www.linkedin.com/mynetwork/invite-connect/connections/",
       "status": 200,
       "headers": {

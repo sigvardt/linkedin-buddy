@@ -202,7 +202,7 @@ describe("Notifications E2E", () => {
 
     expectPreparedAction(prepared);
     expect(prepared.preview).toMatchObject({
-      preference_url: category.preference_url
+      target: { preference_url: category.preference_url }
     });
   }, 120_000);
 });
