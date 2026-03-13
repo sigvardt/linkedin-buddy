@@ -717,6 +717,19 @@
     `;
   }
 
+  function renderJobAlerts() {
+    const root = document.querySelector("#replay-root");
+    root.innerHTML = `
+      <main>
+        <article class="job-alert-card" data-job-alert-id="fixture-alert-1">
+          <h3 class="job-alert-card__title"><a href="https://www.linkedin.com/jobs/search/?keywords=software%20engineer&location=Copenhagen">software engineer</a></h3>
+          <div class="job-alert-card__location">Copenhagen, Denmark</div>
+          <div class="t-14">Daily</div>
+        </article>
+      </main>
+    `;
+  }
+
   function renderNotifications() {
     const root = document.querySelector("#replay-root");
     root.innerHTML = `
@@ -812,6 +825,11 @@
 
     if (normalizedPath === `/jobs/view/${JOB_ID}/`) {
       renderJobView();
+      return;
+    }
+
+    if (normalizedPath === "/jobs/job-alerts/") {
+      renderJobAlerts();
       return;
     }
 

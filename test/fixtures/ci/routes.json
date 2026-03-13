@@ -182,6 +182,16 @@
     },
     {
       "method": "GET",
+      "url": "https://www.linkedin.com/jobs/job-alerts/",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8"
+      },
+      "bodyPath": "pages/app.html",
+      "pageType": "jobs"
+    },
+    {
+      "method": "GET",
       "url": "https://www.linkedin.com/notifications/",
       "status": 200,
       "headers": {
