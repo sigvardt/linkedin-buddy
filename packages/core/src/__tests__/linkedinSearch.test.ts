@@ -20,13 +20,13 @@ describe("buildSearchUrl", () => {
 
   it("builds jobs search URL", () => {
     expect(buildSearchUrl("engineer", "jobs")).toBe(
-      "https://www.linkedin.com/search/results/jobs/?keywords=engineer"
+      "https://www.linkedin.com/jobs/search/?keywords=engineer"
     );
   });
 
   it("builds posts search URL", () => {
     expect(buildSearchUrl("OpenAI", "posts")).toBe(
-      "https://www.linkedin.com/search/results/posts/?keywords=OpenAI&skipRedirect=true"
+      "https://www.linkedin.com/search/results/content/?keywords=OpenAI"
     );
   });
 

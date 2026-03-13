@@ -173,9 +173,9 @@ export function buildSearchUrl(
     case "companies":
       return `https://www.linkedin.com/search/results/companies/?keywords=${encodedQuery}`;
     case "jobs":
-      return `https://www.linkedin.com/search/results/jobs/?keywords=${encodedQuery}`;
+      return `https://www.linkedin.com/jobs/search/?keywords=${encodedQuery}`;
     case "posts":
-      return `https://www.linkedin.com/search/results/posts/?keywords=${encodedQuery}&skipRedirect=true`;
+      return `https://www.linkedin.com/search/results/content/?keywords=${encodedQuery}`;
     case "groups":
       return `https://www.linkedin.com/search/results/groups/?keywords=${encodedQuery}`;
     case "events":
@@ -232,7 +232,7 @@ export class LinkedInSearchService {
           await waitForNetworkIdleBestEffort(page);
           await page
             .locator(
-              ".reusable-search__result-container, li.reusable-search__result-container"
+              "div[data-view-name='search-entity-result-universal-template'], .reusable-search__result-container"
             )
             .first()
             .waitFor({ state: "visible", timeout: 10_000 })
@@ -276,28 +276,64 @@ export class LinkedInSearchService {
               return "";
             };
 
+            /**
+             * Picks the Nth non-empty sibling text after an anchor element.
+             * LinkedIn places headline (index 0) and location (index 1) as
+             * sibling divs right after the name section (.t-roman.t-sans).
+             */
+            const pickSiblingText = (
+              root: ParentNode,
+              anchorSelector: string,
+              index: number
+            ): string => {
+              const anchor = root.querySelector(anchorSelector);
+              if (!anchor) {
+                return "";
+              }
+              let el = anchor.nextElementSibling;
+              let found = 0;
+              while (el) {
+                const text = normalize(el.textContent);
+                if (text) {
+                  if (found === index) {
+                    return text;
+                  }
+                  found++;
+                }
+                el = el.nextElementSibling;
+              }
+              return "";
+            };
+
             const cards = Array.from(
               globalThis.document.querySelectorAll(
-                ".reusable-search__result-container, li.reusable-search__result-container"
+                "div[data-view-name='search-entity-result-universal-template'], .reusable-search__result-container, li.reusable-search__result-container"
               )
             ).slice(0, lim);
 
             return cards.map((card) => ({
               name: pickText(card, [
+                "a[href*='/in/'] span[dir='ltr'] > span[aria-hidden='true']",
                 ".entity-result__title-text a span[aria-hidden='true']",
                 ".app-aware-link span[dir='ltr']"
               ]),
-              headline: pickText(card, [
-                ".entity-result__primary-subtitle",
-                ".entity-result__summary"
-              ]),
-              location: pickText(card, [".entity-result__secondary-subtitle"]),
+              headline:
+                pickSiblingText(card, ".t-roman.t-sans", 0) ||
+                pickText(card, [
+                  ".entity-result__primary-subtitle",
+                  ".entity-result__summary"
+                ]),
+              location:
+                pickSiblingText(card, ".t-roman.t-sans", 1) ||
+                pickText(card, [".entity-result__secondary-subtitle"]),
               profile_url: pickHref(card, ["a[href*='/in/']"]),
               connection_degree: pickText(card, [
+                ".entity-result__badge-text span[aria-hidden='true']",
                 ".entity-result__badge-text",
                 ".dist-value"
               ]),
               mutual_connections: pickText(card, [
+                ".reusable-search-simple-insight__text-container",
                 ".entity-result__summary",
                 ".member-insights"
               ])
@@ -369,7 +405,7 @@ export class LinkedInSearchService {
           await waitForNetworkIdleBestEffort(page);
           await page
             .locator(
-              ".reusable-search__result-container, li.reusable-search__result-container"
+              "div[data-view-name='search-entity-result-universal-template'], .reusable-search__result-container"
             )
             .first()
             .waitFor({ state: "visible", timeout: 10_000 })
@@ -398,9 +434,33 @@ export class LinkedInSearchService {
               return value.startsWith("/") ? `${origin}${value}` : `${origin}/${value}`;
             };
 
+            const pickSiblingText = (
+              root: ParentNode,
+              anchorSelector: string,
+              index: number
+            ): string => {
+              const anchor = root.querySelector(anchorSelector);
+              if (!anchor) {
+                return "";
+              }
+              let el = anchor.nextElementSibling;
+              let found = 0;
+              while (el) {
+                const text = normalize(el.textContent);
+                if (text) {
+                  if (found === index) {
+                    return text;
+                  }
+                  found++;
+                }
+                el = el.nextElementSibling;
+              }
+              return "";
+            };
+
             const cards = Array.from(
               globalThis.document.querySelectorAll(
-                ".reusable-search__result-container, li.reusable-search__result-container"
+                "div[data-view-name='search-entity-result-universal-template'], .reusable-search__result-container, li.reusable-search__result-container"
               )
             ).slice(0, lim);
 
@@ -409,13 +469,31 @@ export class LinkedInSearchService {
                 "a[href*='/company/']"
               ) as HTMLAnchorElement | null;
               const logoElement = card.querySelector("img") as HTMLImageElement | null;
+
+              const nameLink = card.querySelector(
+                ".t-roman.t-sans a[data-test-app-aware-link]"
+              );
+              const name = nameLink
+                ? normalize(nameLink.textContent)
+                : pickText(card, [
+                    ".entity-result__title-text a span[aria-hidden='true']"
+                  ]);
+
+              const subtitleRaw =
+                pickSiblingText(card, ".t-roman.t-sans", 0) ||
+                pickText(card, [".entity-result__primary-subtitle"]);
+              const subtitleParts = subtitleRaw.split("•").map((s) => s.trim());
+
               return {
-                name: pickText(card, [
-                  ".entity-result__title-text a span[aria-hidden='true']"
+                name,
+                industry: subtitleParts[0] ?? "",
+                follower_count:
+                  pickSiblingText(card, ".t-roman.t-sans", 1) ||
+                  pickText(card, [".entity-result__secondary-subtitle"]),
+                description: pickText(card, [
+                  "p[class*='entity-result__summary']",
+                  ".entity-result__summary"
                 ]),
-                industry: pickText(card, [".entity-result__primary-subtitle"]),
-                follower_count: pickText(card, [".entity-result__secondary-subtitle"]),
-                description: pickText(card, [".entity-result__summary"]),
                 company_url: toAbsoluteHref(
                   normalize(companyLinkElement?.getAttribute("href")) ||
                     normalize(companyLinkElement?.href)
@@ -512,11 +590,17 @@ export class LinkedInSearchService {
             };
 
             const pickEmploymentType = (root: ParentNode): string => {
-              const signal = pickText(root, [
-                ".job-card-container__metadata-item",
-                ".job-card-container__job-insight",
-                ".base-search-card__metadata"
-              ]);
+              const insightText = normalize(
+                (root.querySelector(".job-card-list__insight") as HTMLElement | null)
+                  ?.innerText
+              );
+              const signal =
+                insightText ||
+                pickText(root, [
+                  ".job-card-container__metadata-item",
+                  ".job-card-container__job-insight",
+                  ".base-search-card__metadata"
+                ]);
               if (!signal) {
                 return "";
               }
@@ -524,7 +608,7 @@ export class LinkedInSearchService {
               const match = /(Full-time|Part-time|Contract|Temporary|Internship)/i.exec(
                 signal
               );
-              return normalize(match?.[1] ?? signal);
+              return normalize(match?.[1] ?? "");
             };
 
             const cards = Array.from(
@@ -539,23 +623,36 @@ export class LinkedInSearchService {
               ) as HTMLAnchorElement | null;
               return {
                 title: pickText(card, [
+                  "a[href*='/jobs/view/'] span[aria-hidden='true']",
                   ".job-card-container__link",
+                  ".job-card-list__title",
                   ".base-search-card__title"
                 ]),
                 company: pickText(card, [
+                  ".artdeco-entity-lockup__subtitle span[dir='ltr']",
+                  ".job-card-container__primary-description",
                   ".job-card-container__company-name",
                   ".base-search-card__subtitle"
                 ]),
                 location: pickText(card, [
-                  ".job-card-container__metadata-wrapper",
+                  ".artdeco-entity-lockup__caption span[dir='ltr']",
+                  ".job-card-container__metadata-wrapper span[dir='ltr']",
+                  ".job-card-container__metadata-item",
                   ".job-search-card__location"
                 ]),
-                posted_at: pickText(card, ["time", ".job-card-container__footer"]),
+                posted_at: pickText(card, [
+                  "time",
+                  ".job-card-container__listed-status",
+                  ".job-card-container__footer"
+                ]),
                 job_url: toAbsoluteHref(
                   normalize(jobLinkElement?.getAttribute("href")) ||
                     normalize(jobLinkElement?.href)
                 ),
-                salary_range: pickText(card, [".job-card-container__salary-info"]),
+                salary_range: pickText(card, [
+                  ".job-card-container__salary-info",
+                  ".salary-main-rail__salary-range"
+                ]),
                 employment_type: pickEmploymentType(card)
               };
             });
@@ -619,20 +716,24 @@ export class LinkedInSearchService {
             waitUntil: "domcontentloaded"
           });
           await waitForNetworkIdleBestEffort(page);
-          await page.waitForTimeout(2_000);
+          await page
+            .locator(".fie-impression-container, .feed-shared-update-v2")
+            .first()
+            .waitFor({ state: "visible", timeout: 10_000 })
+            .catch(() => undefined);
 
           return page.evaluate((lim: number) => {
             const normalize = (value: string | null | undefined): string =>
               (value ?? "").replace(/\s+/g, " ").trim();
             const origin = globalThis.window.location.origin;
-            const toAbsoluteHref = (value: string): string => {
-              if (!value) {
-                return "";
+            const pickText = (root: ParentNode, selectors: string[]): string => {
+              for (const selector of selectors) {
+                const text = normalize(root.querySelector(selector)?.textContent);
+                if (text) {
+                  return text;
+                }
               }
-              if (/^https?:\/\//i.test(value)) {
-                return value;
-              }
-              return value.startsWith("/") ? `${origin}${value}` : `${origin}/${value}`;
+              return "";
             };
 
             if (
@@ -643,62 +744,74 @@ export class LinkedInSearchService {
               return [] as Array<Record<string, string>>;
             }
 
-            const anchors = Array.from(
+            const postContainers = Array.from(
               globalThis.document.querySelectorAll(
-                "a[href*='/feed/update/'], a[href*='/posts/']"
+                "div.feed-shared-update-v2[data-urn]"
               )
-            ) as HTMLAnchorElement[];
-            const seen = new Set<string>();
-            const results: Array<Record<string, string>> = [];
+            ).slice(0, lim);
 
-            for (const anchor of anchors) {
-              const href = toAbsoluteHref(
-                normalize(anchor.getAttribute("href")) || normalize(anchor.href)
-              );
-              if (!href || seen.has(href)) {
-                continue;
-              }
-              seen.add(href);
-
-              const container = anchor.closest("article, li, div") ?? anchor;
-              const lines = ((container as HTMLElement).innerText ?? container.textContent ?? "")
-                .split(/\n+/)
-                .map((value) => normalize(value))
-                .filter((value) => value.length > 0);
-              if (lines.length === 0) {
-                continue;
-              }
-
-              const postedAt =
-                lines.find((line) =>
-                  /\b(?:h|d|w|mo|yr|hour|day|week|month|year)s?\b/i.test(line)
-                ) ?? "";
-              const reactionCount =
-                lines.find((line) => /\breactions?\b/i.test(line)) ?? "";
-              const commentCount =
-                lines.find((line) => /\bcomments?\b/i.test(line)) ?? "";
-              const author =
-                container.querySelector("span[dir='ltr'], span[aria-hidden='true']")
-                  ?.textContent ??
-                lines[0] ??
-                "";
-
-              results.push({
-                author: normalize(author),
-                author_headline: "",
-                posted_at: postedAt,
-                text: lines.slice(0, 8).join(" "),
-                post_url: href,
-                reaction_count: reactionCount,
-                comment_count: commentCount
-              });
-
-              if (results.length >= lim) {
-                break;
-              }
+            if (postContainers.length === 0) {
+              return [] as Array<Record<string, string>>;
             }
 
-            return results;
+            return postContainers.map((post) => {
+              const dataUrn = post.getAttribute("data-urn") ?? "";
+              const postUrl = dataUrn
+                ? `${origin}/feed/update/${dataUrn}`
+                : "";
+
+              const author = pickText(post, [
+                ".update-components-actor__title span[dir='ltr'] > span[aria-hidden='true']",
+                ".update-components-actor__title span[aria-hidden='true']",
+                "span[dir='ltr'] > span[aria-hidden='true']"
+              ]);
+
+              const authorHeadline = pickText(post, [
+                ".update-components-actor__description span[aria-hidden='true']",
+                ".update-components-actor__description"
+              ]);
+
+              const subDescription = pickText(post, [
+                ".update-components-actor__sub-description span[aria-hidden='true']",
+                ".update-components-actor__sub-description"
+              ]);
+              const postedAtMatch = /(\d+[hmdwy]|\d+\s*(?:hour|day|week|month|year|min|sec)s?\s*ago)/i.exec(
+                subDescription
+              );
+              const postedAt = normalize(postedAtMatch?.[0] ?? subDescription);
+
+              const textElement = post.querySelector(
+                ".feed-shared-text span.break-words, .update-components-text span.break-words"
+              );
+              const text = normalize(
+                (textElement as HTMLElement | null)?.innerText ??
+                  textElement?.textContent ??
+                  ""
+              );
+
+              const reactionCount = pickText(post, [
+                ".social-details-social-counts__reactions-count",
+                ".social-details-social-counts__count-value"
+              ]);
+
+              const commentCount = normalize(
+                (
+                  post.querySelector(
+                    "button[aria-label*='comment'] span, .social-details-social-counts__comments"
+                  ) as HTMLElement | null
+                )?.innerText
+              );
+
+              return {
+                author,
+                author_headline: authorHeadline,
+                posted_at: postedAt,
+                text: text.slice(0, 500),
+                post_url: postUrl,
+                reaction_count: reactionCount,
+                comment_count: commentCount
+              };
+            });
           }, limit);
         }
       );
