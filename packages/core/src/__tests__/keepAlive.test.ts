@@ -760,7 +760,8 @@ describe("SessionKeepAliveService", () => {
     const service = new SessionKeepAliveService(pool, {
       cdpUrl: "http://127.0.0.1:18800",
       intervalMs: 1_000,
-      jitterMs: 0
+      jitterMs: 0,
+      nightHours: { startHour: 0, endHour: 0 }
     });
     const onHealthEvent = vi.fn();
 
@@ -1605,6 +1606,7 @@ describe("SessionKeepAliveService", () => {
       idleWarmupThresholdMs: 500,
       intervalMs: 1_000,
       jitterMs: 0,
+      nightHours: { startHour: 0, endHour: 0 },
       sessionRefreshEnabled: false
     });
     const onHealthEvent = vi.fn();
