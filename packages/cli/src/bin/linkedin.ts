@@ -6109,6 +6109,7 @@ async function runFeedList(
   input: {
     profileName: string;
     limit: number;
+    mine: boolean;
   },
   cdpUrl?: string,
 ): Promise<void> {
@@ -6118,22 +6119,26 @@ async function runFeedList(
     runtime.logger.log("info", "cli.feed.list.start", {
       profileName: input.profileName,
       limit: input.limit,
+      mine: input.mine,
     });
 
     const posts = await runtime.feed.viewFeed({
       profileName: input.profileName,
       limit: input.limit,
+      mine: input.mine,
     });
 
     runtime.logger.log("info", "cli.feed.list.done", {
       profileName: input.profileName,
       count: posts.length,
+      mine: input.mine,
     });
 
     printJson({
       run_id: runtime.runId,
       profile_name: input.profileName,
       count: posts.length,
+      mine: input.mine,
       posts,
     });
   } finally {
@@ -10835,15 +10840,22 @@ export function createCliProgram(): Command {
     .description("List posts from your LinkedIn feed")
     .option("-p, --profile <profile>", "Profile name", "default")
     .option("-l, --limit <limit>", "Max posts to return", "10")
-    .action(async (options: { profile: string; limit: string }) => {
-      await runFeedList(
-        {
-          profileName: options.profile,
-          limit: coercePositiveInt(options.limit, "limit"),
-        },
-        readCdpUrl(),
-      );
-    });
+    .option(
+      "-m, --mine",
+      "Show only your own posts (navigates to your activity page)",
+    )
+    .action(
+      async (options: { profile: string; limit: string; mine?: true }) => {
+        await runFeedList(
+          {
+            profileName: options.profile,
+            limit: coercePositiveInt(options.limit, "limit"),
+            mine: options.mine === true,
+          },
+          readCdpUrl(),
+        );
+      },
+    );
 
   feedCommand
     .command("view")

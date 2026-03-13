@@ -3124,26 +3124,31 @@ async function handleFeedList(args: ToolArgs): Promise<ToolResult> {
   try {
     const profileName = readString(args, "profileName", "default");
     const limit = readPositiveNumber(args, "limit", 10);
+    const mine = readBoolean(args, "mine", false);
 
     runtime.logger.log("info", "mcp.feed.list.start", {
       profileName,
       limit,
+      mine,
     });
 
     const posts = await runtime.feed.viewFeed({
       profileName,
       limit,
+      mine,
     });
 
     runtime.logger.log("info", "mcp.feed.list.done", {
       profileName,
       count: posts.length,
+      mine,
     });
 
     return toToolResult({
       run_id: runtime.runId,
       profile_name: profileName,
       count: posts.length,
+      mine,
       posts,
     });
   } finally {
@@ -5785,7 +5790,7 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
   {
     name: LINKEDIN_FEED_LIST_TOOL,
     description: withSelectorAuditHint(
-      "List posts from your LinkedIn feed with author, text, and engagement counts.",
+      "List posts from your LinkedIn feed with author, text, and engagement counts. Set mine=true to show only your own posts (navigates to your activity page instead of the algorithmic feed).",
     ),
     inputSchema: {
       type: "object",
@@ -5800,6 +5805,11 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
           type: "number",
           description:
             "Maximum number of feed posts to return. Defaults to 10.",
+        },
+        mine: {
+          type: "boolean",
+          description:
+            "When true, list only your own posts by navigating to your activity page instead of the algorithmic feed. Useful for post-publish verification. Defaults to false.",
         },
       }),
     },
