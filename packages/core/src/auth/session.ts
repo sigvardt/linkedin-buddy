@@ -26,6 +26,7 @@ import {
   recordRateLimit,
   type RateLimitState,
 } from "./rateLimitState.js";
+import type { LinkedInSessionStore } from "./sessionStore.js";
 
 /** Authentication snapshot for a LinkedIn browser profile. */
 export interface SessionStatus {
@@ -171,6 +172,7 @@ export class LinkedInAuthService {
     private readonly selectorLocale: LinkedInSelectorLocale = DEFAULT_LINKEDIN_SELECTOR_LOCALE,
     private readonly logger?: Pick<JsonEventLogger, "log">,
     private readonly evasion: EvasionConfig = resolveEvasionConfig(),
+    private readonly sessionStore?: LinkedInSessionStore,
   ) {}
 
   /** Checks whether the profile currently looks authenticated to LinkedIn. */
@@ -261,36 +263,109 @@ export class LinkedInAuthService {
   ): Promise<SessionStatus> {
     const status = await this.status(options);
 
-    if (!status.authenticated) {
-      const code = status.rateLimitActive
-        ? "RATE_LIMITED"
-        : status.checkpointDetected
-          ? "CAPTCHA_OR_CHALLENGE"
-          : "AUTH_REQUIRED";
-      const guidance = status.rateLimitActive
-        ? `Wait for cooldown expiry (${status.rateLimitUntil}) or clear it with "linkedin rate-limit --clear".`
-        : `Run "linkedin login --manual --session ${options.profileName ?? "default"}" to capture a fresh session, or "linkedin login --profile ${options.profileName ?? "default"}" for interactive login.`;
-      this.logger?.log("warn", "auth.session.ensure_authenticated.failed", {
-        code,
-        current_url: status.currentUrl,
-        evasion_level: status.evasion?.level,
-        profileName: options.profileName ?? "default",
-        rate_limit_active: status.rateLimitActive ?? false,
-        reason: status.reason,
-      });
-      throw new LinkedInBuddyError(code, `${status.reason} ${guidance}`, {
-        profile_name: options.profileName ?? "default",
-        current_url: status.currentUrl,
-        checked_at: status.checkedAt,
-        ...(status.evasion ? { evasion_level: status.evasion.level } : {}),
-        rate_limit_active: status.rateLimitActive ?? false,
-        ...(status.rateLimitUntil
-          ? { rate_limit_until: status.rateLimitUntil }
-          : {}),
-      });
+    if (status.authenticated) {
+      return status;
     }
 
-    return status;
+    // Attempt stored-session restore when the persistent profile is
+    // unauthenticated and the failure is not caused by rate limiting or a
+    // checkpoint challenge (restoring cookies would not help in those cases).
+    if (
+      this.sessionStore &&
+      !status.rateLimitActive &&
+      !status.checkpointDetected
+    ) {
+      const profileName = options.profileName ?? "default";
+      const cdpUrl = options.cdpUrl ?? this.cdpUrl;
+
+      this.logger?.log(
+        "info",
+        "auth.session.ensure_authenticated.restoring_stored_session",
+        {
+          profileName,
+          reason: status.reason,
+        },
+      );
+
+      try {
+        const restoredStatus = await this.profileManager.runWithContext(
+          { cdpUrl, profileName, headless: true },
+          async (context) => {
+            await this.sessionStore!.restoreToContext(
+              context,
+              profileName,
+            );
+
+            const page = await getPage(context);
+            await page.goto("https://www.linkedin.com/feed/", {
+              waitUntil: "domcontentloaded",
+            });
+            const restored = await inspectLinkedInSession(page, {
+              selectorLocale: this.selectorLocale,
+            });
+
+            if (restored.authenticated) {
+              await clearRateLimitState();
+            }
+
+            return enrichAuthenticatedSessionStatus(page, restored);
+          },
+        );
+
+        if (restoredStatus.authenticated) {
+          this.logger?.log(
+            "info",
+            "auth.session.ensure_authenticated.restored_stored_session",
+            {
+              current_url: restoredStatus.currentUrl,
+              profileName,
+            },
+          );
+          return { ...restoredStatus, evasion: this.evasion };
+        }
+      } catch (restoreError) {
+        // Stored-session restore is best-effort; log and fall through to the
+        // original AUTH_REQUIRED error.
+        this.logger?.log(
+          "debug",
+          "auth.session.ensure_authenticated.restore_failed",
+          {
+            profileName,
+            error:
+              restoreError instanceof Error
+                ? restoreError.message
+                : String(restoreError),
+          },
+        );
+      }
+    }
+
+    const code = status.rateLimitActive
+      ? "RATE_LIMITED"
+      : status.checkpointDetected
+        ? "CAPTCHA_OR_CHALLENGE"
+        : "AUTH_REQUIRED";
+    const guidance = status.rateLimitActive
+      ? `Wait for cooldown expiry (${status.rateLimitUntil}) or clear it with "linkedin rate-limit --clear".`
+      : `Run "linkedin login --manual --session ${options.profileName ?? "default"}" to capture a fresh session, or "linkedin login --profile ${options.profileName ?? "default"}" for interactive login.`;
+    this.logger?.log("warn", "auth.session.ensure_authenticated.failed", {
+      code,
+      current_url: status.currentUrl,
+      evasion_level: status.evasion?.level,
+      profileName: options.profileName ?? "default",
+      rate_limit_active: status.rateLimitActive ?? false,
+      reason: status.reason,
+    });
+    throw new LinkedInBuddyError(code, `${status.reason} ${guidance}`, {
+      profile_name: options.profileName ?? "default",
+      current_url: status.currentUrl,
+      checked_at: status.checkedAt,
+      ...(status.evasion ? { evasion_level: status.evasion.level } : {}),
+      rate_limit_active: status.rateLimitActive ?? false,
+      ...(status.rateLimitUntil
+        ? { rate_limit_until: status.rateLimitUntil }
+        : {}),
+    });
   }
 
   /** Runs the headless login flow and optionally retries rate-limit checkpoints. */

@@ -359,6 +359,164 @@ describe("LinkedInAuthService auth flow", () => {
     });
   });
 
+  it("ensureAuthenticated restores stored session when persistent profile is unauthenticated", async () => {
+    let callCount = 0;
+
+    const { page } = createMockPage({
+      initialUrl: "https://www.linkedin.com/login",
+      isVisible: (selector) => {
+        if (callCount === 0) {
+          return (
+            selector.includes("session_key") || selector.includes("/login")
+          );
+        }
+        return selector === "nav.global-nav";
+      },
+    });
+
+    const context = createContextWithPage(page);
+    const profileManager = {
+      runWithContext: vi.fn(async (_options, callback) => {
+        const result = await callback(context);
+        callCount += 1;
+        return result;
+      }),
+    } as const;
+
+    const sessionStore = {
+      restoreToContext: vi.fn(async () => ({
+        storageState: { cookies: [], origins: [] },
+        metadata: {},
+        restoredFromBackup: false,
+        restoredSessionName: "default",
+      })),
+    };
+
+    const auth = new LinkedInAuthService(
+      profileManager as unknown as ProfileManager,
+      undefined,
+      "en",
+      undefined,
+      undefined,
+      sessionStore as unknown as import("../auth/sessionStore.js").LinkedInSessionStore,
+    );
+
+    const result = await auth.ensureAuthenticated({ profileName: "default" });
+
+    expect(result.authenticated).toBe(true);
+    expect(sessionStore.restoreToContext).toHaveBeenCalledTimes(1);
+    expect(profileManager.runWithContext).toHaveBeenCalledTimes(2);
+  });
+
+  it("ensureAuthenticated throws AUTH_REQUIRED when stored session restore fails", async () => {
+    const { page } = createMockPage({
+      initialUrl: "https://www.linkedin.com/login",
+      isVisible: (selector, currentUrl) =>
+        selector.includes("session_key") && currentUrl.includes("/login"),
+    });
+
+    const context = createContextWithPage(page);
+    const profileManager = {
+      runWithContext: vi.fn(async (_options, callback) => callback(context)),
+    } as const;
+
+    const sessionStore = {
+      restoreToContext: vi.fn(async () => {
+        throw new Error("No stored session found");
+      }),
+    };
+
+    const auth = new LinkedInAuthService(
+      profileManager as unknown as ProfileManager,
+      undefined,
+      "en",
+      undefined,
+      undefined,
+      sessionStore as unknown as import("../auth/sessionStore.js").LinkedInSessionStore,
+    );
+
+    await expect(
+      auth.ensureAuthenticated({ profileName: "default" }),
+    ).rejects.toMatchObject({
+      code: "AUTH_REQUIRED",
+    });
+
+    expect(sessionStore.restoreToContext).toHaveBeenCalledTimes(1);
+  });
+
+  it("ensureAuthenticated skips stored session restore during rate-limit cooldown", async () => {
+    rateLimitStateMocks.isInRateLimitCooldown.mockResolvedValue({
+      active: true,
+      state: {
+        rateLimitedUntil: "2026-02-23T12:00:00.000Z",
+        detectedAt: "2026-02-23T10:00:00.000Z",
+        consecutiveRateLimits: 1,
+      },
+    });
+
+    const { page } = createMockPage({
+      initialUrl: "https://www.linkedin.com/login",
+      isVisible: (selector, currentUrl) =>
+        selector.includes("session_key") && currentUrl.includes("/login"),
+    });
+
+    const context = createContextWithPage(page);
+    const profileManager = {
+      runWithContext: vi.fn(async (_options, callback) => callback(context)),
+    } as const;
+
+    const sessionStore = {
+      restoreToContext: vi.fn(async () => ({
+        storageState: { cookies: [], origins: [] },
+        metadata: {},
+        restoredFromBackup: false,
+        restoredSessionName: "default",
+      })),
+    };
+
+    const auth = new LinkedInAuthService(
+      profileManager as unknown as ProfileManager,
+      undefined,
+      "en",
+      undefined,
+      undefined,
+      sessionStore as unknown as import("../auth/sessionStore.js").LinkedInSessionStore,
+    );
+
+    await expect(
+      auth.ensureAuthenticated({ profileName: "default" }),
+    ).rejects.toMatchObject({
+      code: "RATE_LIMITED",
+    });
+
+    expect(sessionStore.restoreToContext).not.toHaveBeenCalled();
+  });
+
+  it("ensureAuthenticated works without session store (backward compatible)", async () => {
+    const { page } = createMockPage({
+      initialUrl: "https://www.linkedin.com/login",
+      isVisible: (selector, currentUrl) =>
+        selector.includes("session_key") && currentUrl.includes("/login"),
+    });
+
+    const context = createContextWithPage(page);
+    const profileManager = {
+      runWithContext: vi.fn(async (_options, callback) => callback(context)),
+    } as const;
+
+    const auth = new LinkedInAuthService(
+      profileManager as unknown as ProfileManager,
+    );
+
+    await expect(
+      auth.ensureAuthenticated({ profileName: "default" }),
+    ).rejects.toMatchObject({
+      code: "AUTH_REQUIRED",
+    });
+
+    expect(profileManager.runWithContext).toHaveBeenCalledTimes(1);
+  });
+
   it("headlessLogin classifies CAPTCHA checkpoints with shared selectors", async () => {
     let waitCount = 0;
     const checkpointUrl =
