@@ -32,6 +32,16 @@
     },
     {
       "method": "GET",
+      "url": "https://www.linkedin.com/in/me/recent-activity/all/",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8"
+      },
+      "bodyPath": "pages/app.html",
+      "pageType": "feed"
+    },
+    {
+      "method": "GET",
       "url": "https://www.linkedin.com/feed/update/urn:li:activity:fixture-post-1/",
       "status": 200,
       "headers": {
