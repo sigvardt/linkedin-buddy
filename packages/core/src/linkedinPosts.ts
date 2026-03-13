@@ -4501,11 +4501,35 @@ class CreatePostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRu
           );
           await waitForNetworkIdleBestEffort(page, 10_000);
 
-          const verification = await verifyPublishedPost(
-            page,
-            text,
-            artifactPaths,
-          );
+          const warnings: string[] = [];
+          let verification: {
+            postUrl: string | null;
+            surface: string;
+          } = { postUrl: null, surface: "unknown" };
+          try {
+            verification = await verifyPublishedPost(
+              page,
+              text,
+              artifactPaths,
+            );
+          } catch (verifyError) {
+            const msg =
+              verifyError instanceof Error
+                ? verifyError.message
+                : String(verifyError);
+            warnings.push(
+              `Post verification failed after publish: ${msg}`,
+            );
+            runtime.logger.log(
+              "warn",
+              "linkedin.post.confirm.verification_failed",
+              {
+                action_id: action.id,
+                profile_name: profileName,
+                message: msg,
+              },
+            );
+          }
 
           let screenshotWarning: string | undefined;
           const postPublishScreenshot = `linkedin/screenshot-post-confirm-after-${Date.now()}.png`;
@@ -4539,6 +4563,12 @@ class CreatePostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRu
             );
           }
 
+          if (screenshotWarning) {
+            warnings.push(
+              `Post-publish screenshot failed: ${screenshotWarning}`,
+            );
+          }
+
           return {
             ok: true,
             result: {
@@ -4551,8 +4581,10 @@ class CreatePostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRu
               ...(screenshotWarning
                 ? { screenshot_warning: screenshotWarning }
                 : {}),
+              ...(warnings.length > 0 ? { warnings } : {}),
             },
             artifacts: artifactPaths,
+            ...(warnings.length > 0 ? { warnings } : {}),
           };
         } catch (error) {
           const failureScreenshot = `linkedin/screenshot-post-confirm-error-${Date.now()}.png`;
@@ -4752,11 +4784,35 @@ class CreateMediaPostActionExecutor implements ActionExecutor<LinkedInPostsExecu
           );
           await waitForNetworkIdleBestEffort(page, 10_000);
 
-          const verification = await verifyPublishedPost(
-            page,
-            text,
-            artifactPaths,
-          );
+          const warnings: string[] = [];
+          let verification: {
+            postUrl: string | null;
+            surface: string;
+          } = { postUrl: null, surface: "unknown" };
+          try {
+            verification = await verifyPublishedPost(
+              page,
+              text,
+              artifactPaths,
+            );
+          } catch (verifyError) {
+            const msg =
+              verifyError instanceof Error
+                ? verifyError.message
+                : String(verifyError);
+            warnings.push(
+              `Post verification failed after publish: ${msg}`,
+            );
+            runtime.logger.log(
+              "warn",
+              "linkedin.post.confirm_media.verification_failed",
+              {
+                action_id: action.id,
+                profile_name: profileName,
+                message: msg,
+              },
+            );
+          }
 
           let screenshotWarning: string | undefined;
           const postPublishScreenshot = `linkedin/screenshot-post-media-confirm-after-${Date.now()}.png`;
@@ -4792,6 +4848,12 @@ class CreateMediaPostActionExecutor implements ActionExecutor<LinkedInPostsExecu
             );
           }
 
+          if (screenshotWarning) {
+            warnings.push(
+              `Post-publish screenshot failed: ${screenshotWarning}`,
+            );
+          }
+
           return {
             ok: true,
             result: {
@@ -4807,8 +4869,10 @@ class CreateMediaPostActionExecutor implements ActionExecutor<LinkedInPostsExecu
               ...(screenshotWarning
                 ? { screenshot_warning: screenshotWarning }
                 : {}),
+              ...(warnings.length > 0 ? { warnings } : {}),
             },
             artifacts: artifactPaths,
+            ...(warnings.length > 0 ? { warnings } : {}),
           };
         } catch (error) {
           const failureScreenshot = `linkedin/screenshot-post-media-confirm-error-${Date.now()}.png`;
@@ -5028,11 +5092,35 @@ class CreatePollPostActionExecutor implements ActionExecutor<LinkedInPostsExecut
           );
           await waitForNetworkIdleBestEffort(page, 10_000);
 
-          const verification = await verifyPublishedPost(
-            page,
-            verificationText,
-            artifactPaths,
-          );
+          const warnings: string[] = [];
+          let verification: {
+            postUrl: string | null;
+            surface: string;
+          } = { postUrl: null, surface: "unknown" };
+          try {
+            verification = await verifyPublishedPost(
+              page,
+              verificationText,
+              artifactPaths,
+            );
+          } catch (verifyError) {
+            const msg =
+              verifyError instanceof Error
+                ? verifyError.message
+                : String(verifyError);
+            warnings.push(
+              `Post verification failed after publish: ${msg}`,
+            );
+            runtime.logger.log(
+              "warn",
+              "linkedin.post.confirm_poll.verification_failed",
+              {
+                action_id: action.id,
+                profile_name: profileName,
+                message: msg,
+              },
+            );
+          }
 
           let screenshotWarning: string | undefined;
           const postPublishScreenshot = `linkedin/screenshot-post-poll-confirm-after-${Date.now()}.png`;
@@ -5068,6 +5156,12 @@ class CreatePollPostActionExecutor implements ActionExecutor<LinkedInPostsExecut
             );
           }
 
+          if (screenshotWarning) {
+            warnings.push(
+              `Post-publish screenshot failed: ${screenshotWarning}`,
+            );
+          }
+
           return {
             ok: true,
             result: {
@@ -5084,8 +5178,10 @@ class CreatePollPostActionExecutor implements ActionExecutor<LinkedInPostsExecut
               ...(screenshotWarning
                 ? { screenshot_warning: screenshotWarning }
                 : {}),
+              ...(warnings.length > 0 ? { warnings } : {}),
             },
             artifacts: artifactPaths,
+            ...(warnings.length > 0 ? { warnings } : {}),
           };
         } catch (error) {
           const failureScreenshot = `linkedin/screenshot-post-poll-confirm-error-${Date.now()}.png`;
@@ -5274,12 +5370,36 @@ class EditPostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRunt
           );
           await waitForNetworkIdleBestEffort(page, 10_000);
 
-          const verification = await verifyUpdatedPostAtUrl(
-            page,
-            postUrl,
-            text,
-            artifactPaths,
-          );
+          const warnings: string[] = [];
+          let verification: {
+            postUrl: string;
+          } = { postUrl: postUrl };
+          try {
+            verification = await verifyUpdatedPostAtUrl(
+              page,
+              postUrl,
+              text,
+              artifactPaths,
+            );
+          } catch (verifyError) {
+            const msg =
+              verifyError instanceof Error
+                ? verifyError.message
+                : String(verifyError);
+            warnings.push(
+              `Post edit verification failed after save: ${msg}`,
+            );
+            runtime.logger.log(
+              "warn",
+              "linkedin.post.confirm_edit.verification_failed",
+              {
+                action_id: action.id,
+                profile_name: profileName,
+                post_url: postUrl,
+                message: msg,
+              },
+            );
+          }
 
           let screenshotWarning: string | undefined;
           const postSaveScreenshot = `linkedin/screenshot-post-edit-confirm-after-${Date.now()}.png`;
@@ -5308,6 +5428,12 @@ class EditPostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRunt
             );
           }
 
+          if (screenshotWarning) {
+            warnings.push(
+              `Post-save screenshot failed: ${screenshotWarning}`,
+            );
+          }
+
           return {
             ok: true,
             result: {
@@ -5318,8 +5444,10 @@ class EditPostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRunt
               ...(screenshotWarning
                 ? { screenshot_warning: screenshotWarning }
                 : {}),
+              ...(warnings.length > 0 ? { warnings } : {}),
             },
             artifacts: artifactPaths,
+            ...(warnings.length > 0 ? { warnings } : {}),
           };
         } catch (error) {
           const failureScreenshot = `linkedin/screenshot-post-edit-confirm-error-${Date.now()}.png`;
@@ -5478,12 +5606,36 @@ class DeletePostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRu
           }
           await waitForNetworkIdleBestEffort(page, 10_000);
 
-          const verification = await verifyDeletedPostAtUrl(
-            page,
-            postUrl,
-            currentSnippet,
-            artifactPaths,
-          );
+          const warnings: string[] = [];
+          let verification: {
+            postUrl: string;
+          } = { postUrl: postUrl };
+          try {
+            verification = await verifyDeletedPostAtUrl(
+              page,
+              postUrl,
+              currentSnippet,
+              artifactPaths,
+            );
+          } catch (verifyError) {
+            const msg =
+              verifyError instanceof Error
+                ? verifyError.message
+                : String(verifyError);
+            warnings.push(
+              `Post deletion verification failed after delete: ${msg}`,
+            );
+            runtime.logger.log(
+              "warn",
+              "linkedin.post.confirm_delete.verification_failed",
+              {
+                action_id: action.id,
+                profile_name: profileName,
+                post_url: postUrl,
+                message: msg,
+              },
+            );
+          }
 
           let screenshotWarning: string | undefined;
           const postDeleteScreenshot = `linkedin/screenshot-post-delete-confirm-after-${Date.now()}.png`;
@@ -5513,6 +5665,12 @@ class DeletePostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRu
             );
           }
 
+          if (screenshotWarning) {
+            warnings.push(
+              `Post-delete screenshot failed: ${screenshotWarning}`,
+            );
+          }
+
           return {
             ok: true,
             result: {
@@ -5523,8 +5681,10 @@ class DeletePostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRu
               ...(screenshotWarning
                 ? { screenshot_warning: screenshotWarning }
                 : {}),
+              ...(warnings.length > 0 ? { warnings } : {}),
             },
             artifacts: artifactPaths,
+            ...(warnings.length > 0 ? { warnings } : {}),
           };
         } catch (error) {
           const failureScreenshot = `linkedin/screenshot-post-delete-confirm-error-${Date.now()}.png`;

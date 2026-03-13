@@ -86,6 +86,12 @@ export interface ActionExecutorResult {
   ok: true;
   result: Record<string, unknown>;
   artifacts: string[];
+  /**
+   * Non-fatal warnings from post-execution steps (e.g. verification, screenshot).
+   * When present, the core action succeeded but ancillary steps failed.
+   * Callers should treat the action as successful and NOT retry.
+   */
+  warnings?: string[];
 }
 
 export interface ActionExecutorInput<TRuntime> {
@@ -129,6 +135,8 @@ export interface ConfirmByTokenResult {
   actionType: string;
   result: Record<string, unknown>;
   artifacts: string[];
+  /** Non-fatal warnings from post-execution steps. Action succeeded; do not retry. */
+  warnings?: string[];
 }
 
 export interface PreparedActionPreview {
@@ -519,7 +527,10 @@ export class TwoPhaseCommitService<TRuntime = unknown> {
       status: "executed",
       actionType: action.actionType,
       result: executionResult.result,
-      artifacts: executionResult.artifacts
+      artifacts: executionResult.artifacts,
+      ...(executionResult.warnings && executionResult.warnings.length > 0
+        ? { warnings: executionResult.warnings }
+        : {})
     };
   }
 }
