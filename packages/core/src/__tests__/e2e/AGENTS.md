@@ -41,6 +41,8 @@ npm run test:e2e:raw              # Direct Vitest without runner checks
 | `notifications.e2e.test.ts` | Read | Unrestricted |
 | `health.e2e.test.ts` | Read | Unrestricted |
 | `analytics.e2e.test.ts` | Read | Unrestricted |
+| `company-pages.e2e.test.ts` | Read | Unrestricted |
+| `company-pages-write.e2e.test.ts` | Write | Requires approval |
 | `inbox-write.e2e.test.ts` | Write | Simon Miller ONLY |
 | `connections-write.e2e.test.ts` | Write | Simon Miller ONLY |
 | `feed-like.e2e.test.ts` | Write | Requires approval |
@@ -58,6 +60,7 @@ LINKEDIN_E2E_ENABLE_CONNECTION_CONFIRM=true   # connections-write
 LINKEDIN_E2E_ENABLE_LIKE_CONFIRM=true         # feed-like
 LINKEDIN_E2E_ENABLE_COMMENT_CONFIRM=true      # feed-engagement
 LINKEDIN_ENABLE_POST_WRITE_E2E=true           # post-write
+LINKEDIN_E2E_ENABLE_COMPANY_FOLLOW_CONFIRM=true  # company-pages-write
 ```
 
 Without these flags, write tests only execute prepare (no confirm).
