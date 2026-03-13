@@ -859,9 +859,20 @@ async function extractJobSearchResults(
         globalThis.document.querySelectorAll(
           "li[data-occludable-job-id], .job-card-container, .base-search-card, .job-card-list__entity-lockup",
         ),
-      ).slice(0, maxJobs);
+      ).slice(0, maxJobs * 2);
+
+      const pickTimeText = (root: ParentNode): string => {
+        const timeEl = root.querySelector("time");
+        if (!timeEl) {
+          return "";
+        }
+        const datetime = normalize(timeEl.getAttribute("datetime"));
+        const text = normalize(timeEl.textContent);
+        return text || datetime;
+      };
 
       const results: LinkedInJobSearchResult[] = [];
+      const seen = new Set<string>();
       for (const card of cards) {
         const jobUrl = pickHref(card, [
           "a[href*='/jobs/view/']",
@@ -870,8 +881,16 @@ async function extractJobSearchResults(
           "a",
         ]);
 
+        const jobId = extractJobId(jobUrl, card);
+        if (jobId && seen.has(jobId)) {
+          continue;
+        }
+        if (jobId) {
+          seen.add(jobId);
+        }
+
         results.push({
-          job_id: extractJobId(jobUrl, card),
+          job_id: jobId,
           title: pickText(card, [
             "a[href*='/jobs/view/'] span[aria-hidden='true']",
             ".job-card-container__link",
@@ -880,6 +899,8 @@ async function extractJobSearchResults(
           ]),
           company: pickText(card, [
             ".artdeco-entity-lockup__subtitle span[dir='ltr']",
+            "a[href*='/company/'] span[dir='ltr']",
+            "a[href*='/company/']",
             ".job-card-container__primary-description",
             ".job-card-container__company-name",
             ".base-search-card__subtitle",
@@ -890,12 +911,13 @@ async function extractJobSearchResults(
             ".job-card-container__metadata-item",
             ".job-search-card__location",
           ]),
-          posted_at: pickText(card, [
-            "time",
-            ".job-card-container__listed-status",
-            ".job-card-container__footer",
-            ".job-card-container__listed-time",
-          ]),
+          posted_at:
+            pickTimeText(card) ||
+            pickText(card, [
+              ".job-card-container__listed-status",
+              ".job-card-container__footer",
+              ".job-card-container__listed-time",
+            ]),
           job_url: jobUrl,
           salary_range: pickText(card, [
             ".job-card-container__salary-info",
@@ -915,6 +937,7 @@ async function extractJobSearchResults(
     Math.max(1, limit),
   );
 
+  const seenIds = new Set<string>();
   return snapshots
     .map((snapshot) => ({
       job_id: normalizeText(snapshot.job_id),
@@ -926,7 +949,18 @@ async function extractJobSearchResults(
       salary_range: normalizeText(snapshot.salary_range),
       employment_type: normalizeText(snapshot.employment_type),
     }))
-    .filter((result) => result.title.length > 0 || result.job_url.length > 0)
+    .filter((result) => {
+      if (result.title.length === 0 && result.job_url.length === 0) {
+        return false;
+      }
+      if (result.job_id && seenIds.has(result.job_id)) {
+        return false;
+      }
+      if (result.job_id) {
+        seenIds.add(result.job_id);
+      }
+      return true;
+    })
     .slice(0, limit);
 }
 
@@ -1063,12 +1097,45 @@ async function extractJobDetail(
             return text;
           }
         }
+        /* Second pass: pick the first top-card text that is not the
+           title, company, or a pure time-ago string. */
+        for (const text of topCardTexts) {
+          if (text === companyText || text === title) {
+            continue;
+          }
+          if (
+            /^\d+\s*(?:second|minute|hour|day|week|month|year)s?\s*ago$/i.test(
+              text,
+            )
+          ) {
+            continue;
+          }
+          if (/\d+\s*applicants?/i.test(text)) {
+            continue;
+          }
+          if (text.length > 2) {
+            return text;
+          }
+        }
         return "";
       })();
 
     const postedAt =
+      (() => {
+        const timeEl = main.querySelector("time");
+        if (timeEl) {
+          const text = normalize(timeEl.textContent);
+          const datetime = normalize(timeEl.getAttribute("datetime"));
+          if (text) {
+            return text;
+          }
+          if (datetime) {
+            return datetime;
+          }
+        }
+        return "";
+      })() ||
       pickText(main, [
-        "time",
         ".job-details-jobs-unified-top-card__posted-date",
         ".jobs-unified-top-card__posted-date",
         ".posted-time-ago__text",
