@@ -252,9 +252,11 @@ function buildLocalizedRegex(
 function hashNotificationFingerprint(input: {
   link: string;
   message: string;
-  timestamp: string;
 }): string {
-  const fingerprint = [input.link, input.message, input.timestamp]
+  // Deliberately excludes timestamp — LinkedIn renders relative times ("8m",
+  // "4h") that shift between page loads, making hashes that include them
+  // unstable across CLI invocations.
+  const fingerprint = [input.link, input.message]
     .map((segment) => normalizeText(segment))
     .join("\u001f");
   return `notif_${createHash("sha256").update(fingerprint).digest("hex").slice(0, 16)}`;
@@ -277,7 +279,10 @@ function splitPreferenceSummaryText(text: string): {
   summary: string | null;
 } {
   const normalized = normalizeText(text);
-  const match = /^(.*?)(?:\s+(On|Off|In-app|Push|Email))$/iu.exec(normalized);
+  const match =
+    /^(.+?)\s+((?:On|Off|Push|In-app|Email)(?:[\s,]+(?:and\s+)?(?:On|Off|Push|In-app|Email))*)$/iu.exec(
+      normalized,
+    );
   if (!match?.[1]) {
     return {
       title: normalized,
@@ -755,7 +760,6 @@ async function extractNotificationSnapshots(
           hashNotificationFingerprint({
             link,
             message,
-            timestamp,
           }),
         type: normalizeText(candidate.type) || "notification",
         message,
@@ -1107,7 +1111,8 @@ async function readNotificationPreferencePageState(
           const anchor = element as HTMLAnchorElement;
           const href = normalize(anchor.href || anchor.getAttribute("href"));
           const text = normalize(anchor.textContent);
-          const match = /^(.*?)(?:\s+(On|Off|In-app|Push|Email))$/iu.exec(text);
+          const match =
+            /^(.+?)\s+((?:On|Off|Push|In-app|Email)(?:[\s,]+(?:and\s+)?(?:On|Off|Push|In-app|Email))*)$/iu.exec(text);
           return {
             title: normalize(match?.[1] ?? text),
             slug: href.replace(/\/+$/u, "").split("/").pop() ?? "",
