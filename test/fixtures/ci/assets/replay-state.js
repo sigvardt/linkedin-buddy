@@ -141,6 +141,8 @@
           >More</button>
           <div class="feed-post-actions-menu more-actions-menu" role="menu" data-post-id="${escapeHtml(post.id)}" hidden>
             <button role="menuitem" aria-label="${saved ? "Unsave" : "Save"}" class="feed-post-actions-menu__item" data-post-id="${escapeHtml(post.id)}" data-menu-action="${saved ? "unsave" : "save"}">${saved ? "Unsave" : "Save"}</button>
+            <button role="menuitem" aria-label="Edit post" class="feed-post-actions-menu__item" data-post-id="${escapeHtml(post.id)}" data-menu-action="edit">Edit post</button>
+            <button role="menuitem" aria-label="Delete post" class="feed-post-actions-menu__item" data-post-id="${escapeHtml(post.id)}" data-menu-action="delete">Delete post</button>
           </div>
         </div>
         <div>
@@ -217,6 +219,11 @@
         <button class="composer-close" aria-label="Close">Close</button>
         <button class="composer-visibility" aria-label="Anyone">Anyone</button>
         <div class="ql-editor" contenteditable="true" role="textbox" aria-label="What do you want to talk about?"></div>
+        <input type="file" accept="image/*,video/*" hidden>
+        <footer class="share-box-footer">
+          <button aria-label="Add media">Add media</button>
+          <button aria-label="Create a poll">Create a poll</button>
+        </footer>
         <button class="share-actions__primary-action" disabled>Post</button>
       </section>
       ${visiblePosts.map((post) => createPostHtml(post, state, singleView)).join("")}
