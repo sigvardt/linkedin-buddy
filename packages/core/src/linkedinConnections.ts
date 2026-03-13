@@ -1025,6 +1025,30 @@ async function executeSendInvitation(
       }
 
       if (!connectSelectorKey) {
+        // Detect follow-only profiles — some profiles only offer Follow
+        const followOnlyCandidates = buildProfileActionButtonCandidates({
+          topCardRoot,
+          selectorLocale: runtime.selectorLocale,
+          selectorKeys: "follow",
+          candidateKeyPrefix: "follow-detect"
+        });
+        const followButton = await findVisibleLocator(page, followOnlyCandidates);
+        if (followButton) {
+          throw new LinkedInBuddyError(
+            "ACTION_PRECONDITION_FAILED",
+            `Cannot send connection invitation — profile "${targetProfile}" only shows Follow. ` +
+            "This may be because they restrict invitations or are outside your direct network.",
+            {
+              target_profile: targetProfile,
+              url: page.url(),
+              follow_button_key: followButton.key,
+              attempted_connect_selectors: connectCandidates.map((c) => c.selectorHint),
+              attempted_more_selectors: moreCandidates.map((c) => c.selectorHint),
+              attempted_menu_selectors: menuConnectCandidates.map((c) => c.selectorHint)
+            }
+          );
+        }
+
         throw new LinkedInBuddyError(
           "UI_CHANGED_SELECTOR_FAILED",
           "Could not find Connect button on profile page.",
@@ -1038,9 +1062,107 @@ async function executeSendInvitation(
         );
       }
 
-      await page.waitForTimeout(900);
+      const pendingCandidates: VisibleLocatorCandidate[] = [
+        {
+          key: "pending-text",
+          selectorHint: `topCard.getByRole(button, ${pendingRegexHint})`,
+          locatorFactory: () =>
+            topCardRoot.getByRole("button", {
+              name: pendingRegex
+            })
+        },
+        {
+          key: "pending-aria",
+          selectorHint: `topCard ${withdrawAriaSelector}`,
+          locatorFactory: () => topCardRoot.locator(withdrawAriaSelector)
+        },
+        {
+          key: "pending-invitations-sent-text",
+          selectorHint: `page hasText ${invitationSentRegexHint}`,
+          locatorFactory: (targetPage) =>
+            targetPage.locator("body").filter({ hasText: invitationSentRegex })
+        }
+      ];
+
+      const dialogLocator = page
+        .locator("div[role='dialog'], aside[role='dialog']")
+        .first();
+      const dialogAppeared = await dialogLocator
+        .waitFor({ state: "visible", timeout: 5_000 })
+        .then(() => true)
+        .catch(() => false);
+
+      if (!dialogAppeared) {
+        const directSendConfirmed = await waitForCondition(async () => {
+          const pendingIndicator = await findVisibleLocator(page, pendingCandidates);
+          return pendingIndicator !== null;
+        }, 3_000);
+
+        if (directSendConfirmed) {
+          if (note) {
+            throw new LinkedInBuddyError(
+              "ACTION_PRECONDITION_FAILED",
+              "Connection invitation was sent directly without a dialog — the requested " +
+              "note could not be included. The invitation has already been sent without a note.",
+              {
+                target_profile: targetProfile,
+                url: page.url(),
+                connect_selector_key: connectSelectorKey,
+                note_requested: true
+              }
+            );
+          }
+
+          const trackedProfileUrl = normalizeLinkedInProfileUrl(page.url() || profileUrl);
+          trackSentInvitationState(
+            runtime.db,
+            profileName,
+            {
+              profile_url: trackedProfileUrl,
+              vanity_name: extractVanityName(trackedProfileUrl),
+              full_name: "",
+              headline: ""
+            },
+            Date.now()
+          );
+
+          return {
+            ok: true,
+            result: {
+              status: "invitation_sent",
+              target_profile: targetProfile,
+              note_included: false,
+              connect_selector_key: connectSelectorKey,
+              note_field_selector_key: null,
+              send_selector_key: "direct_send_no_dialog"
+            },
+            artifacts: []
+          };
+        }
+
+        throw new LinkedInBuddyError(
+          "UI_CHANGED_SELECTOR_FAILED",
+          "Connect dialog did not appear after clicking Connect button.",
+          {
+            target_profile: targetProfile,
+            url: page.url(),
+            connect_selector_key: connectSelectorKey
+          }
+        );
+      }
 
       const addNoteCandidates: VisibleLocatorCandidate[] = [
+        {
+          key: "add-note-dialog-text",
+          selectorHint: `dialog button hasText ${addNoteRegexHint}`,
+          locatorFactory: () =>
+            dialogLocator.locator("button").filter({ hasText: addNoteRegex })
+        },
+        {
+          key: "add-note-dialog-aria",
+          selectorHint: `dialog ${addNoteAriaSelector}`,
+          locatorFactory: () => dialogLocator.locator(addNoteAriaSelector)
+        },
         {
           key: "add-note-text",
           selectorHint: `button hasText ${addNoteRegexHint}`,
@@ -1055,6 +1177,26 @@ async function executeSendInvitation(
       ];
 
       const noteFieldCandidates: VisibleLocatorCandidate[] = [
+        {
+          key: "note-dialog-textarea-name",
+          selectorHint: "dialog textarea[name='message']",
+          locatorFactory: () => dialogLocator.locator("textarea[name='message']")
+        },
+        {
+          key: "note-dialog-textarea-custom-id",
+          selectorHint: "dialog textarea#custom-message",
+          locatorFactory: () => dialogLocator.locator("textarea#custom-message")
+        },
+        {
+          key: "note-dialog-textarea-aria",
+          selectorHint: `dialog ${invitationAriaSelector}`,
+          locatorFactory: () => dialogLocator.locator(invitationAriaSelector)
+        },
+        {
+          key: "note-dialog-textarea-generic",
+          selectorHint: "dialog textarea",
+          locatorFactory: () => dialogLocator.locator("textarea")
+        },
         {
           key: "note-textarea-message-name",
           selectorHint: "textarea[name='message']",
@@ -1105,6 +1247,37 @@ async function executeSendInvitation(
 
       const sendCandidates: VisibleLocatorCandidate[] = [
         {
+          key: "send-dialog-role",
+          selectorHint: `dialog.getByRole(button, ${sendExactRegexHint})`,
+          locatorFactory: () =>
+            dialogLocator.getByRole("button", {
+              name: sendExactRegex
+            })
+        },
+        {
+          key: "send-dialog-text",
+          selectorHint: `dialog button hasText ${sendTextRegexHint}`,
+          locatorFactory: () =>
+            dialogLocator.locator("button").filter({ hasText: sendTextRegex })
+        },
+        {
+          key: "send-dialog-aria",
+          selectorHint: `dialog ${sendAriaSelector}`,
+          locatorFactory: () => dialogLocator.locator(sendAriaSelector)
+        },
+        {
+          key: "send-dialog-primary",
+          selectorHint: "dialog button.artdeco-button--primary",
+          locatorFactory: () =>
+            dialogLocator.locator("button.artdeco-button--primary")
+        },
+        {
+          key: "send-dialog-without-note",
+          selectorHint: `dialog button hasText ${sendWithoutNoteRegexHint}`,
+          locatorFactory: () =>
+            dialogLocator.locator("button").filter({ hasText: sendWithoutNoteRegex })
+        },
+        {
           key: "send-text",
           selectorHint: `button hasText ${sendTextRegexHint}`,
           locatorFactory: (targetPage) =>
@@ -1144,28 +1317,6 @@ async function executeSendInvitation(
       }
 
       await sendButton.locator.click({ timeout: 5_000 });
-
-      const pendingCandidates: VisibleLocatorCandidate[] = [
-        {
-          key: "pending-text",
-          selectorHint: `topCard.getByRole(button, ${pendingRegexHint})`,
-          locatorFactory: () =>
-            topCardRoot.getByRole("button", {
-              name: pendingRegex
-            })
-        },
-        {
-          key: "pending-aria",
-          selectorHint: `topCard ${withdrawAriaSelector}`,
-          locatorFactory: () => topCardRoot.locator(withdrawAriaSelector)
-        },
-        {
-          key: "pending-invitations-sent-text",
-          selectorHint: `page hasText ${invitationSentRegexHint}`,
-          locatorFactory: (targetPage) =>
-            targetPage.locator("body").filter({ hasText: invitationSentRegex })
-        }
-      ];
 
       const invitationLanded = await waitForCondition(async () => {
         const pendingIndicator = await findVisibleLocator(page, pendingCandidates);
