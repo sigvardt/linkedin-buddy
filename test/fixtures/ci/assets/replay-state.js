@@ -678,29 +678,43 @@
   function renderSearchPeople() {
     const root = document.querySelector("#replay-root");
     root.innerHTML = `
-      <div class="reusable-search__result-container">
-        <div class="entity-result__title-text">
+      <ul>
+        <li class="reusable-search__result-container">
           <a href="${PROFILE_URL}"><span aria-hidden="true">Simon Miller</span></a>
-        </div>
-        <div class="entity-result__primary-subtitle">Product Lead at Replay Labs</div>
-        <div class="entity-result__secondary-subtitle">London, United Kingdom</div>
-        <div class="dist-value">2nd</div>
-      </div>
+          <p>Simon Miller</p>
+          <p>Product Lead at Replay Labs</p>
+          <p>London, United Kingdom</p>
+          <p>2nd</p>
+          <div class="entity-result__title-text">
+            <a href="${PROFILE_URL}"><span aria-hidden="true">Simon Miller</span></a>
+          </div>
+          <div class="entity-result__primary-subtitle">Product Lead at Replay Labs</div>
+          <div class="entity-result__secondary-subtitle">London, United Kingdom</div>
+          <div class="dist-value">2nd</div>
+        </li>
+      </ul>
     `;
   }
 
   function renderSearchCompanies() {
     const root = document.querySelector("#replay-root");
     root.innerHTML = `
-      <div class="reusable-search__result-container">
-        <img alt="Replay Labs logo" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" />
-        <div class="entity-result__title-text">
+      <ul>
+        <li class="reusable-search__result-container">
           <a href="https://www.linkedin.com/company/replay-labs/"><span aria-hidden="true">Power International</span></a>
-        </div>
-        <div class="entity-result__primary-subtitle">Software company</div>
-        <div class="entity-result__secondary-subtitle">Copenhagen, Denmark</div>
-        <div class="entity-result__summary">Building reliable product systems.</div>
-      </div>
+          <p>Power International</p>
+          <p>Software company</p>
+          <p>Copenhagen, Denmark</p>
+          <p>Building reliable product systems.</p>
+          <img alt="Replay Labs logo" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" />
+          <div class="entity-result__title-text">
+            <a href="https://www.linkedin.com/company/replay-labs/"><span aria-hidden="true">Power International</span></a>
+          </div>
+          <div class="entity-result__primary-subtitle">Software company</div>
+          <div class="entity-result__secondary-subtitle">Copenhagen, Denmark</div>
+          <div class="entity-result__summary">Building reliable product systems.</div>
+        </li>
+      </ul>
     `;
   }
 
