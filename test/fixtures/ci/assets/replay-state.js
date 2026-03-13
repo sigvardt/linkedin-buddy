@@ -33,6 +33,13 @@
         },
         sent: {}
       },
+      notifications: {
+        read: {}
+      },
+      preferences: {
+        "posting-and-commenting": { master: true },
+        "comments-and-reactions": { push: true, in_app: true, email: true }
+      },
       feed: {
         comments: {
           [POST_ID]: ["Love this direction."]
@@ -732,21 +739,158 @@
 
   function renderNotifications() {
     const root = document.querySelector("#replay-root");
+    const state = loadState();
+    const read1 = Boolean(state.notifications.read["notif-1"]);
+    const read2 = Boolean(state.notifications.read["notif-2"]);
     root.innerHTML = `
       <main>
         <h1>Notifications</h1>
-        <article class="notification-card" data-notification-id="notif-1" data-notification-type="comment" data-unread="true">
+        <article class="notification-card" data-notification-id="notif-1" data-notification-type="comment" data-unread="${read1 ? "false" : "true"}">
           <div class="notification-card__message">Simon Miller commented on your post about fixture replay.</div>
           <time class="notification-card__time">1h</time>
           <a href="${POST_URL}">Open notification</a>
         </article>
-        <article class="notification-card" data-notification-id="notif-2" data-notification-type="connection" data-unread="false">
+        <article class="notification-card" data-notification-id="notif-2" data-notification-type="connection" data-unread="${read2 ? "false" : "true"}">
           <div class="notification-card__message">You have a new connection invitation.</div>
           <time class="notification-card__time">2h</time>
           <a href="https://www.linkedin.com/notifications/">Open notification</a>
         </article>
       </main>
     `;
+
+    root.querySelectorAll(".notification-card a").forEach((link) => {
+      link.addEventListener("click", () => {
+        const card = link.closest(".notification-card");
+        const id = card ? card.getAttribute("data-notification-id") : null;
+        if (id) {
+          const freshState = loadState();
+          freshState.notifications.read[id] = true;
+          saveState(freshState);
+        }
+      });
+    });
+  }
+
+  function renderPreferencesOverview() {
+    const root = document.querySelector("#replay-root");
+    root.innerHTML = `
+      <main>
+        <h1>Notifications</h1>
+        <ul class="clean-list">
+          <li>
+            <a href="https://www.linkedin.com/mypreferences/d/notification-categories/posting-and-commenting">Posting and commenting</a>
+          </li>
+          <li>
+            <a href="https://www.linkedin.com/mypreferences/d/notification-categories/connecting-and-following">Connecting and following</a>
+          </li>
+          <li>
+            <a href="https://www.linkedin.com/mypreferences/d/notification-categories/job-search-activity">Job search activity</a>
+          </li>
+        </ul>
+      </main>
+    `;
+  }
+
+  function renderPreferencesCategory(slug) {
+    const root = document.querySelector("#replay-root");
+    const state = loadState();
+    const prefs = state.preferences[slug] || { master: true };
+    const title =
+      slug === "posting-and-commenting"
+        ? "Posting and commenting"
+        : slug === "connecting-and-following"
+          ? "Connecting and following"
+          : slug.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+    const masterChecked = prefs.master ? "checked" : "";
+
+    let subcategoriesHtml = "";
+    if (slug === "posting-and-commenting") {
+      subcategoriesHtml = `
+        <a href="https://www.linkedin.com/mypreferences/d/notification-subcategories/comments-and-reactions">Comments and reactions Push, In-app and Email</a>
+        <a href="https://www.linkedin.com/mypreferences/d/notification-subcategories/posts-and-stories">Posts and stories Push and In-app</a>
+      `;
+    }
+
+    root.innerHTML = `
+      <main>
+        <h1>${escapeHtml(title)}</h1>
+        <p>Choose how you want to be notified about ${escapeHtml(title.toLowerCase())}.</p>
+        <div class="setting-toggle">
+          <span id="toggle-master-label">${escapeHtml(title)}</span>
+          <div class="setting-toggle__toggle">
+            <input type="checkbox" role="switch" aria-labelledby="toggle-master-label" ${masterChecked}>
+          </div>
+        </div>
+        ${subcategoriesHtml}
+      </main>
+    `;
+
+    const masterSwitch = root.querySelector("input[role='switch']");
+    if (masterSwitch) {
+      masterSwitch.addEventListener("change", () => {
+        const freshState = loadState();
+        if (!freshState.preferences[slug]) {
+          freshState.preferences[slug] = { master: true };
+        }
+        freshState.preferences[slug].master = masterSwitch.checked;
+        saveState(freshState);
+      });
+    }
+  }
+
+  function renderPreferencesSubcategory(slug) {
+    const root = document.querySelector("#replay-root");
+    const state = loadState();
+    const prefs = state.preferences[slug] || { push: true, in_app: true, email: true };
+    const title =
+      slug === "comments-and-reactions"
+        ? "Comments and reactions"
+        : slug === "posts-and-stories"
+          ? "Posts and stories"
+          : slug.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+    root.innerHTML = `
+      <main>
+        <h1>${escapeHtml(title)}</h1>
+        <p>Choose how you want to be notified about ${escapeHtml(title.toLowerCase())}.</p>
+        <div class="setting-toggle">
+          <span id="toggle-push-label">ViaPush</span>
+          <div class="setting-toggle__toggle">
+            <input type="checkbox" role="switch" aria-labelledby="toggle-push-label" ${prefs.push ? "checked" : ""}>
+          </div>
+        </div>
+        <div class="setting-toggle">
+          <span id="toggle-inapp-label">ViaInApp</span>
+          <div class="setting-toggle__toggle">
+            <input type="checkbox" role="switch" aria-labelledby="toggle-inapp-label" ${prefs.in_app ? "checked" : ""}>
+          </div>
+        </div>
+        <div class="setting-toggle">
+          <span id="toggle-email-label">ViaEmail</span>
+          <div class="setting-toggle__toggle">
+            <input type="checkbox" role="switch" aria-labelledby="toggle-email-label" ${prefs.email ? "checked" : ""}>
+          </div>
+        </div>
+      </main>
+    `;
+
+    root.querySelectorAll("input[role='switch']").forEach((toggle) => {
+      toggle.addEventListener("change", () => {
+        const freshState = loadState();
+        if (!freshState.preferences[slug]) {
+          freshState.preferences[slug] = { push: true, in_app: true, email: true };
+        }
+        const labelId = toggle.getAttribute("aria-labelledby") || "";
+        if (labelId.includes("push")) {
+          freshState.preferences[slug].push = toggle.checked;
+        } else if (labelId.includes("inapp")) {
+          freshState.preferences[slug].in_app = toggle.checked;
+        } else if (labelId.includes("email")) {
+          freshState.preferences[slug].email = toggle.checked;
+        }
+        saveState(freshState);
+      });
+    });
   }
 
   function renderUnknown() {
@@ -835,6 +979,23 @@
 
     if (normalizedPath === "/notifications/") {
       renderNotifications();
+      return;
+    }
+
+    if (normalizedPath === "/mypreferences/d/categories/notifications/") {
+      renderPreferencesOverview();
+      return;
+    }
+
+    if (normalizedPath.startsWith("/mypreferences/d/notification-categories/")) {
+      const slug = normalizedPath.replace("/mypreferences/d/notification-categories/", "").replace(/\/+$/, "");
+      renderPreferencesCategory(slug);
+      return;
+    }
+
+    if (normalizedPath.startsWith("/mypreferences/d/notification-subcategories/")) {
+      const slug = normalizedPath.replace("/mypreferences/d/notification-subcategories/", "").replace(/\/+$/, "");
+      renderPreferencesSubcategory(slug);
       return;
     }
 
