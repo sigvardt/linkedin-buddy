@@ -232,7 +232,7 @@ export class LinkedInSearchService {
           await waitForNetworkIdleBestEffort(page);
           await page
             .locator(
-              "div[data-view-name='search-entity-result-universal-template'], .reusable-search__result-container"
+              "main a[href*='/in/'], div[data-view-name='search-entity-result-universal-template'], .reusable-search__result-container"
             )
             .first()
             .waitFor({ state: "visible", timeout: 10_000 })
@@ -305,13 +305,72 @@ export class LinkedInSearchService {
               return "";
             };
 
-            const cards = Array.from(
+            const extractModernCards = (): Array<Record<string, string>> => {
+              const links = Array.from(
+                globalThis.document.querySelectorAll("main a[href*='/in/']")
+              ).filter((link): link is HTMLAnchorElement => {
+                const href = normalize(link.getAttribute("href"));
+                return /\/in\/[A-Za-z0-9-]+/.test(href);
+              });
+
+              const seen = new Set<string>();
+              const uniqueLinks = links.filter((link) => {
+                const href = normalize(link.getAttribute("href")) || normalize(link.href);
+                const vanityMatch = /\/in\/([^/?#]+)/.exec(href);
+                const vanityKey = normalize(vanityMatch?.[1]);
+                if (!vanityKey || seen.has(vanityKey)) {
+                  return false;
+                }
+                seen.add(vanityKey);
+                return true;
+              });
+
+              return uniqueLinks.slice(0, lim).map((link) => {
+                const card = link.closest("li") ?? link.closest("div");
+                if (!card) {
+                  return {
+                    name: "",
+                    headline: "",
+                    location: "",
+                    profile_url: "",
+                    connection_degree: "",
+                    mutual_connections: ""
+                  };
+                }
+
+                const paragraphs = Array.from(card.querySelectorAll("p"));
+                const rawName = normalize(
+                  (paragraphs[0]?.innerText ?? "").split("\n")[0]
+                );
+                const allText = normalize((card as HTMLElement).innerText);
+                const degreeMatch = /(\d(?:st|nd|rd))/i.exec(allText);
+                const mutualMatch = /(\d+\s*mutual\s*connection(?:s)?)/i.exec(allText);
+
+                return {
+                  name: rawName,
+                  headline: normalize(paragraphs[1]?.innerText),
+                  location: normalize(paragraphs[2]?.innerText),
+                  profile_url: toAbsoluteHref(
+                    normalize(link.getAttribute("href")) || normalize(link.href)
+                  ),
+                  connection_degree: normalize(degreeMatch?.[1]),
+                  mutual_connections: normalize(mutualMatch?.[1])
+                };
+              });
+            };
+
+            const modernCards = extractModernCards();
+            if (modernCards.some((card) => card.name || card.profile_url)) {
+              return modernCards;
+            }
+
+            const legacyCards = Array.from(
               globalThis.document.querySelectorAll(
                 "div[data-view-name='search-entity-result-universal-template'], .reusable-search__result-container, li.reusable-search__result-container"
               )
             ).slice(0, lim);
 
-            return cards.map((card) => ({
+            return legacyCards.map((card) => ({
               name: pickText(card, [
                 "a[href*='/in/'] span[dir='ltr'] > span[aria-hidden='true']",
                 ".entity-result__title-text a span[aria-hidden='true']",
@@ -407,7 +466,7 @@ export class LinkedInSearchService {
           await waitForNetworkIdleBestEffort(page);
           await page
             .locator(
-              "div[data-view-name='search-entity-result-universal-template'], .reusable-search__result-container"
+              "main a[href*='/company/'], div[data-view-name='search-entity-result-universal-template'], .reusable-search__result-container"
             )
             .first()
             .waitFor({ state: "visible", timeout: 10_000 })
@@ -460,13 +519,73 @@ export class LinkedInSearchService {
               return "";
             };
 
-            const cards = Array.from(
+            const extractModernCards = (): Array<Record<string, string>> => {
+              const links = Array.from(
+                globalThis.document.querySelectorAll("main a[href*='/company/']")
+              ).filter((link): link is HTMLAnchorElement => {
+                const href = normalize(link.getAttribute("href"));
+                return /\/company\/[A-Za-z0-9-]+/.test(href);
+              });
+
+              const seen = new Set<string>();
+              const uniqueLinks = links.filter((link) => {
+                const href = normalize(link.getAttribute("href")) || normalize(link.href);
+                const slugMatch = /\/company\/([^/?#]+)/.exec(href);
+                const slug = normalize(slugMatch?.[1]);
+                if (!slug || seen.has(slug)) {
+                  return false;
+                }
+                seen.add(slug);
+                return true;
+              });
+
+              return uniqueLinks.slice(0, lim).map((link) => {
+                const card = link.closest("li") ?? link.closest("div");
+                if (!card) {
+                  return {
+                    name: "",
+                    industry: "",
+                    follower_count: "",
+                    description: "",
+                    company_url: "",
+                    logo_url: ""
+                  };
+                }
+
+                const paragraphs = Array.from(card.querySelectorAll("p"));
+                const summaryParagraph = paragraphs.find((paragraph) =>
+                  /follower|employee|industry/i.test(
+                    normalize((paragraph as HTMLElement).innerText)
+                  )
+                );
+
+                return {
+                  name: normalize((paragraphs[0]?.innerText ?? "").split("\n")[0]),
+                  industry: normalize(paragraphs[1]?.innerText),
+                  follower_count:
+                    normalize(paragraphs[2]?.innerText) ||
+                    normalize((summaryParagraph as HTMLElement | undefined)?.innerText),
+                  description: normalize(paragraphs[3]?.innerText),
+                  company_url: toAbsoluteHref(
+                    normalize(link.getAttribute("href")) || normalize(link.href)
+                  ),
+                  logo_url: normalize((card.querySelector("img") as HTMLImageElement | null)?.src)
+                };
+              });
+            };
+
+            const modernCards = extractModernCards();
+            if (modernCards.some((card) => card.name || card.company_url)) {
+              return modernCards;
+            }
+
+            const legacyCards = Array.from(
               globalThis.document.querySelectorAll(
                 "div[data-view-name='search-entity-result-universal-template'], .reusable-search__result-container, li.reusable-search__result-container"
               )
             ).slice(0, lim);
 
-            return cards.map((card) => {
+            return legacyCards.map((card) => {
               const companyLinkElement = card.querySelector(
                 "a[href*='/company/']"
               ) as HTMLAnchorElement | null;
@@ -719,7 +838,9 @@ export class LinkedInSearchService {
           });
           await waitForNetworkIdleBestEffort(page);
           await page
-            .locator(".fie-impression-container, .feed-shared-update-v2")
+            .locator(
+              "div[data-urn*='activity'], .occludable-update, .feed-shared-update-v2"
+            )
             .first()
             .waitFor({ state: "visible", timeout: 10_000 })
             .catch(() => undefined);
@@ -737,6 +858,15 @@ export class LinkedInSearchService {
               }
               return "";
             };
+            const toAbsoluteHref = (value: string): string => {
+              if (!value) {
+                return "";
+              }
+              if (/^https?:\/\//i.test(value)) {
+                return value;
+              }
+              return value.startsWith("/") ? `${origin}${value}` : `${origin}/${value}`;
+            };
 
             if (
               normalize(globalThis.document.body?.innerText).includes(
@@ -746,21 +876,9 @@ export class LinkedInSearchService {
               return [] as Array<Record<string, string>>;
             }
 
-            const postContainers = Array.from(
-              globalThis.document.querySelectorAll(
-                "div.feed-shared-update-v2[data-urn]"
-              )
-            ).slice(0, lim);
-
-            if (postContainers.length === 0) {
-              return [] as Array<Record<string, string>>;
-            }
-
-            return postContainers.map((post) => {
+            const mapPost = (post: Element): Record<string, string> => {
               const dataUrn = post.getAttribute("data-urn") ?? "";
-              const postUrl = dataUrn
-                ? `${origin}/feed/update/${dataUrn}`
-                : "";
+              const postUrl = dataUrn ? toAbsoluteHref(`/feed/update/${dataUrn}`) : "";
 
               const author = pickText(post, [
                 ".update-components-actor__title span[dir='ltr'] > span[aria-hidden='true']",
@@ -813,7 +931,37 @@ export class LinkedInSearchService {
                 reaction_count: reactionCount,
                 comment_count: commentCount
               };
-            });
+            };
+
+            const modernPostContainers = Array.from(
+              globalThis.document.querySelectorAll("div[data-urn*='activity']")
+            )
+              .filter((post) => normalize(post.getAttribute("data-urn")))
+              .filter(
+                (post, index, arr) =>
+                  arr.findIndex(
+                    (candidate) =>
+                      normalize(candidate.getAttribute("data-urn")) ===
+                      normalize(post.getAttribute("data-urn"))
+                  ) === index
+              )
+              .slice(0, lim);
+
+            if (modernPostContainers.length > 0) {
+              return modernPostContainers.map(mapPost);
+            }
+
+            const legacyPostContainers = Array.from(
+              globalThis.document.querySelectorAll(
+                "div.feed-shared-update-v2[data-urn], .occludable-update[data-urn]"
+              )
+            ).slice(0, lim);
+
+            if (legacyPostContainers.length === 0) {
+              return [] as Array<Record<string, string>>;
+            }
+
+            return legacyPostContainers.map(mapPost);
           }, limit);
         }
       );
@@ -875,9 +1023,7 @@ export class LinkedInSearchService {
           });
           await waitForNetworkIdleBestEffort(page);
           await page
-            .locator(
-              "div[data-view-name='search-entity-result-universal-template']"
-            )
+            .locator("main a[href*='/groups/'], div[data-view-name='search-entity-result-universal-template']")
             .first()
             .waitFor({ state: "visible", timeout: 10_000 })
             .catch(() => undefined);
@@ -944,13 +1090,67 @@ export class LinkedInSearchService {
               return "";
             };
 
-            const cards = Array.from(
+            const extractModernCards = (): Array<Record<string, string>> => {
+              const links = Array.from(
+                globalThis.document.querySelectorAll("main a[href*='/groups/']")
+              ).filter((link): link is HTMLAnchorElement => {
+                const href = normalize(link.getAttribute("href"));
+                return /\/groups\/[A-Za-z0-9-]+/.test(href);
+              });
+
+              const seen = new Set<string>();
+              const uniqueLinks = links.filter((link) => {
+                const href = normalize(link.getAttribute("href")) || normalize(link.href);
+                const idMatch = /\/groups\/([^/?#]+)/.exec(href);
+                const groupKey = normalize(idMatch?.[1]);
+                if (!groupKey || seen.has(groupKey)) {
+                  return false;
+                }
+                seen.add(groupKey);
+                return true;
+              });
+
+              return uniqueLinks.slice(0, lim).map((link) => {
+                const card = link.closest("li") ?? link.closest("div");
+                if (!card) {
+                  return {
+                    name: "",
+                    group_type: "",
+                    member_count: "",
+                    description: "",
+                    group_url: ""
+                  };
+                }
+
+                const paragraphs = Array.from(card.querySelectorAll("p"));
+                const memberParagraph = paragraphs.find((paragraph) =>
+                  /member/i.test(normalize((paragraph as HTMLElement).innerText))
+                );
+
+                return {
+                  name: normalize((paragraphs[0]?.innerText ?? "").split("\n")[0]),
+                  group_type: normalize(paragraphs[1]?.innerText),
+                  member_count: normalize((memberParagraph as HTMLElement | undefined)?.innerText),
+                  description: normalize(paragraphs[2]?.innerText || paragraphs[3]?.innerText),
+                  group_url: toAbsoluteHref(
+                    normalize(link.getAttribute("href")) || normalize(link.href)
+                  )
+                };
+              });
+            };
+
+            const modernCards = extractModernCards();
+            if (modernCards.some((card) => card.name || card.group_url)) {
+              return modernCards;
+            }
+
+            const legacyCards = Array.from(
               globalThis.document.querySelectorAll(
                 "div[data-view-name='search-entity-result-universal-template']"
               )
             ).slice(0, lim);
 
-            return cards.map((card) => {
+            return legacyCards.map((card) => {
               const nameLink = card.querySelector(
                 ".t-roman.t-sans a[data-test-app-aware-link]"
               );
@@ -1034,9 +1234,7 @@ export class LinkedInSearchService {
           });
           await waitForNetworkIdleBestEffort(page);
           await page
-            .locator(
-              "div[data-view-name='search-entity-result-universal-template']"
-            )
+            .locator("main a[href*='/events/'], div[data-view-name='search-entity-result-universal-template']")
             .first()
             .waitFor({ state: "visible", timeout: 10_000 })
             .catch(() => undefined);
@@ -1103,13 +1301,77 @@ export class LinkedInSearchService {
               return "";
             };
 
-            const cards = Array.from(
+            const extractModernCards = (): Array<Record<string, string>> => {
+              const links = Array.from(
+                globalThis.document.querySelectorAll("main a[href*='/events/']")
+              ).filter((link): link is HTMLAnchorElement => {
+                const href = normalize(link.getAttribute("href"));
+                return /\/events\/[A-Za-z0-9-]+/.test(href);
+              });
+
+              const seen = new Set<string>();
+              const uniqueLinks = links.filter((link) => {
+                const href = normalize(link.getAttribute("href")) || normalize(link.href);
+                const idMatch = /\/events\/([^/?#]+)/.exec(href);
+                const eventKey = normalize(idMatch?.[1]);
+                if (!eventKey || seen.has(eventKey)) {
+                  return false;
+                }
+                seen.add(eventKey);
+                return true;
+              });
+
+              return uniqueLinks.slice(0, lim).map((link) => {
+                const card = link.closest("li") ?? link.closest("div");
+                if (!card) {
+                  return {
+                    title: "",
+                    date: "",
+                    location: "",
+                    organizer: "",
+                    description: "",
+                    attendee_count: "",
+                    event_url: ""
+                  };
+                }
+
+                const paragraphs = Array.from(card.querySelectorAll("p"));
+                const venueLine = normalize(paragraphs[2]?.innerText || paragraphs[1]?.innerText);
+                const organizerMatch = /^(.*?)\s*[•·]\s*By\s+(.*)$/i.exec(venueLine);
+                const attendeeParagraph = paragraphs.find((paragraph) =>
+                  /attendee|going|interested/i.test(
+                    normalize((paragraph as HTMLElement).innerText)
+                  )
+                );
+
+                return {
+                  title: normalize((paragraphs[0]?.innerText ?? "").split("\n")[0]),
+                  date: normalize(paragraphs[1]?.innerText),
+                  location: normalize(organizerMatch?.[1] ?? venueLine),
+                  organizer: normalize(organizerMatch?.[2] ?? ""),
+                  description: normalize(paragraphs[3]?.innerText || paragraphs[4]?.innerText),
+                  attendee_count: normalize(
+                    (attendeeParagraph as HTMLElement | undefined)?.innerText
+                  ),
+                  event_url: toAbsoluteHref(
+                    normalize(link.getAttribute("href")) || normalize(link.href)
+                  )
+                };
+              });
+            };
+
+            const modernCards = extractModernCards();
+            if (modernCards.some((card) => card.title || card.event_url)) {
+              return modernCards;
+            }
+
+            const legacyCards = Array.from(
               globalThis.document.querySelectorAll(
                 "div[data-view-name='search-entity-result-universal-template']"
               )
             ).slice(0, lim);
 
-            return cards.map((card) => {
+            return legacyCards.map((card) => {
               const nameLink = card.querySelector(
                 ".t-roman.t-sans a[data-test-app-aware-link]"
               );
