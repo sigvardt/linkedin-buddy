@@ -12,6 +12,7 @@ import {
   getDefaultProfileName,
   getLastJsonObject,
   isOptInEnabled,
+  isReplayModeEnabled,
   MCP_TOOL_NAMES,
   runCliCommand
 } from "./helpers.js";
@@ -26,12 +27,12 @@ function getMemberTarget(): string {
     : DEFAULT_MEMBER_TARGET;
 }
 
-const blockConfirmEnabled = isOptInEnabled(
+const blockConfirmEnabled = !isReplayModeEnabled() && isOptInEnabled(
   "LINKEDIN_E2E_ENABLE_BLOCK_CONFIRM"
 );
 const blockConfirmTest = blockConfirmEnabled ? it : it.skip;
 
-const unblockConfirmEnabled = isOptInEnabled(
+const unblockConfirmEnabled = !isReplayModeEnabled() && isOptInEnabled(
   "LINKEDIN_E2E_ENABLE_UNBLOCK_CONFIRM"
 );
 const unblockConfirmTest = unblockConfirmEnabled ? it : it.skip;
