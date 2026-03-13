@@ -7232,7 +7232,7 @@ async function runProfileApplySpec(
       if (!stdin.isTTY || !stdout.isTTY) {
         throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
-          "Refusing to apply a profile seed spec without --yes in non-interactive mode.",
+          "Refusing to apply a profile seed spec in non-interactive mode. Add --yes to bypass interactive confirmation.",
         );
       }
 
@@ -7386,7 +7386,7 @@ async function runSeedActivity(
       if (!stdin.isTTY || !stdout.isTTY) {
         throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
-          "Refusing to apply an activity seed spec without --yes in non-interactive mode.",
+          "Refusing to apply an activity seed spec in non-interactive mode. Add --yes to bypass interactive confirmation.",
         );
       }
 
@@ -8739,7 +8739,7 @@ async function runConfirmAction(
       if (!stdin.isTTY || !stdout.isTTY) {
         throw new LinkedInBuddyError(
           "ACTION_PRECONDITION_FAILED",
-          "Refusing to confirm action without --yes in non-interactive mode.",
+          "Refusing to confirm action in non-interactive mode. Add --yes to bypass interactive confirmation.",
         );
       }
 

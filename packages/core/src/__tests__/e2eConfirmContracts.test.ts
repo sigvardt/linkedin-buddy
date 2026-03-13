@@ -144,7 +144,7 @@ describe("CLI confirm contract hardening", () => {
     expect(result.error).toBeDefined();
     expect(getLastJsonObject(result.stderr)).toMatchObject({
       code: "ACTION_PRECONDITION_FAILED",
-      message: expect.stringContaining("without --yes")
+      message: expect.stringContaining("Add --yes to bypass")
     });
     expect(readPreparedActionStatus(assistantHome, prepared.preparedActionId)).toBe(
       "prepared"
