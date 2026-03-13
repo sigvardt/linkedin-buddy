@@ -260,15 +260,6 @@ export class LinkedInSearchService {
               }
               return value.startsWith("/") ? `${origin}${value}` : `${origin}/${value}`;
             };
-            const pickText = (root: ParentNode, selectors: string[]): string => {
-              for (const selector of selectors) {
-                const text = normalize(root.querySelector(selector)?.textContent);
-                if (text) {
-                  return text;
-                }
-              }
-              return "";
-            };
             const pickHref = (root: ParentNode, selectors: string[]): string => {
               for (const selector of selectors) {
                 const linkElement = root.querySelector(
@@ -502,15 +493,6 @@ export class LinkedInSearchService {
                 return value;
               }
               return value.startsWith("/") ? `${origin}${value}` : `${origin}/${value}`;
-            };
-            const pickText = (root: ParentNode, selectors: string[]): string => {
-              for (const selector of selectors) {
-                const text = normalize(root.querySelector(selector)?.textContent);
-                if (text) {
-                  return text;
-                }
-              }
-              return "";
             };
 
             const pickSiblingText = (
