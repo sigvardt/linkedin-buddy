@@ -8256,6 +8256,192 @@ async function runNotificationsPreferencesPrepareUpdate(
   }
 }
 
+async function runGroupsSearch(
+  input: {
+    profileName: string;
+    query: string;
+    limit: number;
+  },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.groups.search.start", {
+      profileName: input.profileName,
+      query: input.query,
+      limit: input.limit,
+    });
+
+    const result = await runtime.groups.searchGroups({
+      profileName: input.profileName,
+      query: input.query,
+      limit: input.limit,
+    });
+
+    runtime.logger.log("info", "cli.groups.search.done", {
+      profileName: input.profileName,
+      count: result.count,
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...result,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runGroupsView(
+  input: {
+    profileName: string;
+    group: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.groups.view.start", {
+      profileName: input.profileName,
+      group: input.group,
+    });
+
+    const group = await runtime.groups.viewGroup({
+      profileName: input.profileName,
+      group: input.group,
+    });
+
+    runtime.logger.log("info", "cli.groups.view.done", {
+      profileName: input.profileName,
+      groupId: group.group_id,
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      group,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runGroupsPrepareJoin(
+  input: {
+    profileName: string;
+    group: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.groups.prepare_join.start", {
+      profileName: input.profileName,
+      group: input.group,
+    });
+
+    const prepared = runtime.groups.prepareJoinGroup({
+      profileName: input.profileName,
+      group: input.group,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
+    });
+
+    runtime.logger.log("info", "cli.groups.prepare_join.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId,
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runGroupsPrepareLeave(
+  input: {
+    profileName: string;
+    group: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.groups.prepare_leave.start", {
+      profileName: input.profileName,
+      group: input.group,
+    });
+
+    const prepared = runtime.groups.prepareLeaveGroup({
+      profileName: input.profileName,
+      group: input.group,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
+    });
+
+    runtime.logger.log("info", "cli.groups.prepare_leave.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId,
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runGroupsPreparePost(
+  input: {
+    profileName: string;
+    group: string;
+    text: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.groups.prepare_post.start", {
+      profileName: input.profileName,
+      group: input.group,
+    });
+
+    const prepared = runtime.groups.preparePostToGroup({
+      profileName: input.profileName,
+      group: input.group,
+      text: input.text,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
+    });
+
+    runtime.logger.log("info", "cli.groups.prepare_post.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId,
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 async function runJobsSearch(
   input: {
     profileName: string;
@@ -11366,6 +11552,122 @@ export function createCliProgram(): Command {
           {
             profileName: options.profile,
             postUrl: post,
+            ...(options.operatorNote
+              ? { operatorNote: options.operatorNote }
+              : {}),
+          },
+          readCdpUrl(),
+        );
+      },
+    );
+
+  const groupsCommand = program
+    .command("groups")
+    .description(
+      "Search, view, join, leave, and post in LinkedIn groups",
+    );
+
+  groupsCommand
+    .command("search")
+    .description("Search LinkedIn groups by keyword")
+    .requiredOption("-q, --query <query>", "Search keywords for LinkedIn groups")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-l, --limit <limit>", "Maximum number of results", "10")
+    .action(
+      async (options: { profile: string; query: string; limit: string }) => {
+        await runGroupsSearch(
+          {
+            profileName: options.profile,
+            query: options.query,
+            limit: parseInt(options.limit, 10) || 10,
+          },
+          readCdpUrl(),
+        );
+      },
+    );
+
+  groupsCommand
+    .command("view")
+    .description("View details of a LinkedIn group")
+    .argument("<group>", "LinkedIn group URL or numeric group ID")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(
+      async (group: string, options: { profile: string }) => {
+        await runGroupsView(
+          {
+            profileName: options.profile,
+            group,
+          },
+          readCdpUrl(),
+        );
+      },
+    );
+
+  groupsCommand
+    .command("join")
+    .description("Prepare to join a LinkedIn group (two-phase)")
+    .argument("<group>", "LinkedIn group URL or numeric group ID")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-o, --operator-note <note>", "Optional operator note")
+    .action(
+      async (
+        group: string,
+        options: { profile: string; operatorNote?: string },
+      ) => {
+        await runGroupsPrepareJoin(
+          {
+            profileName: options.profile,
+            group,
+            ...(options.operatorNote
+              ? { operatorNote: options.operatorNote }
+              : {}),
+          },
+          readCdpUrl(),
+        );
+      },
+    );
+
+  groupsCommand
+    .command("leave")
+    .description("Prepare to leave a LinkedIn group (two-phase)")
+    .argument("<group>", "LinkedIn group URL or numeric group ID")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-o, --operator-note <note>", "Optional operator note")
+    .action(
+      async (
+        group: string,
+        options: { profile: string; operatorNote?: string },
+      ) => {
+        await runGroupsPrepareLeave(
+          {
+            profileName: options.profile,
+            group,
+            ...(options.operatorNote
+              ? { operatorNote: options.operatorNote }
+              : {}),
+          },
+          readCdpUrl(),
+        );
+      },
+    );
+
+  groupsCommand
+    .command("post")
+    .description("Prepare to post in a LinkedIn group (two-phase)")
+    .argument("<group>", "LinkedIn group URL or numeric group ID")
+    .requiredOption("-t, --text <text>", "Post text")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-o, --operator-note <note>", "Optional operator note")
+    .action(
+      async (
+        group: string,
+        options: { profile: string; text: string; operatorNote?: string },
+      ) => {
+        await runGroupsPreparePost(
+          {
+            profileName: options.profile,
+            group,
+            text: options.text,
             ...(options.operatorNote
               ? { operatorNote: options.operatorNote }
               : {}),
