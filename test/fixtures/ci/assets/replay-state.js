@@ -6,6 +6,7 @@
     "https://www.linkedin.com/voyagerMessagingGraphQL/graphql?queryId=messengerConversations.fixture&variables=%7B%22start%22%3A0%7D";
   const MESSAGES_URL =
     "https://www.linkedin.com/voyagerMessagingGraphQL/graphql?queryId=messengerMessages.fixture&variables=%7B%22threadId%22%3A%22fixture-thread-1%22%7D";
+  const COMPANY_SLUG = "microsoft";
   const PROFILE_SLUG = "realsimonmiller";
   const PROFILE_URL = `https://www.linkedin.com/in/${PROFILE_SLUG}/`;
   const ME_URL = "https://www.linkedin.com/in/me/";
@@ -27,6 +28,9 @@
 
   function defaultState() {
     return {
+      companies: {
+        following: {}
+      },
       connections: {
         received: {
           [PROFILE_SLUG]: true
@@ -957,6 +961,91 @@
     });
   }
 
+  function companySummary(slug) {
+    if (slug === COMPANY_SLUG) {
+      return {
+        name: "Microsoft",
+        industry: "Software Development",
+        location: "Redmond, Washington",
+        followerCount: "36,000,000 followers",
+        employeeCount: "10,001+ employees",
+        website: "https://www.microsoft.com",
+        headquarters: "Redmond, Washington",
+        specialties: "Business Software, Developer Tools, Cloud Computing, and Gaming",
+        overview: "Every company has a mission. What's ours? To empower every person and every organization on the planet to achieve more.",
+        associatedMembers: "221,058 associated members"
+      };
+    }
+
+    return {
+      name: slug.charAt(0).toUpperCase() + slug.slice(1),
+      industry: "Technology",
+      location: "San Francisco, California",
+      followerCount: "10,000 followers",
+      employeeCount: "51-200 employees",
+      website: `https://www.${slug}.com`,
+      headquarters: "San Francisco, California",
+      specialties: "Technology",
+      overview: "A technology company.",
+      associatedMembers: "150 associated members"
+    };
+  }
+
+  function renderCompanyPage(slug) {
+    const root = document.querySelector("#replay-root");
+    const state = loadState();
+    const company = companySummary(slug);
+    const isFollowing = Boolean(state.companies.following[slug]);
+
+    root.innerHTML = `
+      <section>
+        <h1>${escapeHtml(company.name)}</h1>
+        <div>${escapeHtml(company.industry)}</div>
+        <div>${escapeHtml(company.location)} ${escapeHtml(company.followerCount)} ${escapeHtml(company.employeeCount)}</div>
+        <button class="company-follow-button" aria-label="${isFollowing ? "Following" : "Follow"}" data-company-slug="${escapeHtml(slug)}">${isFollowing ? "Following" : "Follow"}</button>
+      </section>
+      <section>
+        <h2>Overview</h2>
+        <p>${escapeHtml(company.overview)}</p>
+      </section>
+      <section>
+        <dl>
+          <dt>Website</dt>
+          <dd>${escapeHtml(company.website)}</dd>
+          <dt>Industry</dt>
+          <dd>${escapeHtml(company.industry)}</dd>
+          <dt>Company size</dt>
+          <dd>${escapeHtml(company.employeeCount)}</dd>
+          <dd>${escapeHtml(company.associatedMembers)}</dd>
+          <dt>Headquarters</dt>
+          <dd>${escapeHtml(company.headquarters)}</dd>
+          <dt>Specialties</dt>
+          <dd>${escapeHtml(company.specialties)}</dd>
+        </dl>
+      </section>
+    `;
+
+    const followButton = root.querySelector(".company-follow-button");
+    if (followButton) {
+      followButton.addEventListener("click", () => {
+        const freshState = loadState();
+        const companySlug = followButton.getAttribute("data-company-slug");
+        if (!companySlug) {
+          return;
+        }
+
+        if (freshState.companies.following[companySlug]) {
+          delete freshState.companies.following[companySlug];
+        } else {
+          freshState.companies.following[companySlug] = true;
+        }
+
+        saveState(freshState);
+        renderCompanyPage(companySlug);
+      });
+    }
+  }
+
   function renderUnknown() {
     const root = document.querySelector("#replay-root");
     root.innerHTML = `<main><h1>Unknown replay route</h1><p>${escapeHtml(window.location.href)}</p></main>`;
@@ -1071,6 +1160,15 @@
       const slug = normalizedPath.replace("/mypreferences/d/notification-subcategories/", "").replace(/\/+$/, "");
       renderPreferencesSubcategory(slug);
       return;
+    }
+
+    if (normalizedPath.startsWith("/company/")) {
+      const segments = normalizedPath.split("/").filter((s) => s.length > 0);
+      const slug = segments[1] ? decodeURIComponent(segments[1]) : "";
+      if (slug) {
+        renderCompanyPage(slug);
+        return;
+      }
     }
 
     renderUnknown();
