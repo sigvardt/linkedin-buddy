@@ -154,6 +154,58 @@ describe.sequential("MCP E2E", () => {
       message: "All requested recipients are already present in the thread."
     });
 
+    const prepareReact = await callMcpTool(MCP_TOOL_NAMES.inboxPrepareReact, {
+      profileName,
+      thread: fixtures.threadId,
+      reaction: "like"
+    });
+    expect(prepareReact.isError).toBe(false);
+    expect(prepareReact.payload).toMatchObject({
+      profile_name: profileName,
+      preparedActionId: expect.stringMatching(/^pa_/),
+      confirmToken: expect.stringMatching(/^ct_/)
+    });
+
+    const archiveThread = await callMcpTool(MCP_TOOL_NAMES.inboxArchiveThread, {
+      profileName,
+      thread: fixtures.threadId
+    });
+    expect(archiveThread.isError).toBe(false);
+    expect(archiveThread.payload).toMatchObject({
+      profile_name: profileName,
+      archived: true
+    });
+
+    const unarchiveThread = await callMcpTool(MCP_TOOL_NAMES.inboxUnarchiveThread, {
+      profileName,
+      thread: fixtures.threadId
+    });
+    expect(unarchiveThread.isError).toBe(false);
+    expect(unarchiveThread.payload).toMatchObject({
+      profile_name: profileName,
+      unarchived: true
+    });
+
+    const markUnread = await callMcpTool(MCP_TOOL_NAMES.inboxMarkUnread, {
+      profileName,
+      thread: fixtures.threadId
+    });
+    expect(markUnread.isError).toBe(false);
+    expect(markUnread.payload).toMatchObject({
+      profile_name: profileName,
+      marked_unread: true
+    });
+
+    const muteThread = await callMcpTool(MCP_TOOL_NAMES.inboxMuteThread, {
+      profileName,
+      thread: fixtures.threadId
+    });
+    expect(muteThread.isError).toBe(false);
+    expect(muteThread.payload).toMatchObject({
+      profile_name: profileName,
+      muted: true
+    });
+
     const connectionsList = await callMcpTool(MCP_TOOL_NAMES.connectionsList, {
       profileName,
       limit: 5

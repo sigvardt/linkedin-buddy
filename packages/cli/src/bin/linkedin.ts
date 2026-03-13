@@ -5678,6 +5678,175 @@ async function runPrepareAddRecipients(
   }
 }
 
+async function runInboxArchive(
+  input: { profileName: string; thread: string },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.inbox.archive.start", {
+      profileName: input.profileName,
+      thread: input.thread,
+    });
+
+    const result = await runtime.inbox.archiveThread({
+      profileName: input.profileName,
+      thread: input.thread,
+    });
+
+    runtime.logger.log("info", "cli.inbox.archive.done", {
+      profileName: input.profileName,
+      threadId: result.thread_id,
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...result,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runInboxUnarchive(
+  input: { profileName: string; thread: string },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.inbox.unarchive.start", {
+      profileName: input.profileName,
+      thread: input.thread,
+    });
+
+    const result = await runtime.inbox.unarchiveThread({
+      profileName: input.profileName,
+      thread: input.thread,
+    });
+
+    runtime.logger.log("info", "cli.inbox.unarchive.done", {
+      profileName: input.profileName,
+      threadId: result.thread_id,
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...result,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runInboxMarkUnread(
+  input: { profileName: string; thread: string },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.inbox.mark_unread.start", {
+      profileName: input.profileName,
+      thread: input.thread,
+    });
+
+    const result = await runtime.inbox.markUnread({
+      profileName: input.profileName,
+      thread: input.thread,
+    });
+
+    runtime.logger.log("info", "cli.inbox.mark_unread.done", {
+      profileName: input.profileName,
+      threadId: result.thread_id,
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...result,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runInboxMute(
+  input: { profileName: string; thread: string },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.inbox.mute.start", {
+      profileName: input.profileName,
+      thread: input.thread,
+    });
+
+    const result = await runtime.inbox.muteThread({
+      profileName: input.profileName,
+      thread: input.thread,
+    });
+
+    runtime.logger.log("info", "cli.inbox.mute.done", {
+      profileName: input.profileName,
+      threadId: result.thread_id,
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...result,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runPrepareReact(
+  input: {
+    profileName: string;
+    thread: string;
+    reaction?: string;
+    messageIndex?: number;
+  },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.inbox.prepare_react.start", {
+      profileName: input.profileName,
+      thread: input.thread,
+      reaction: input.reaction,
+      messageIndex: input.messageIndex,
+    });
+
+    const prepared = await runtime.inbox.prepareReact({
+      profileName: input.profileName,
+      thread: input.thread,
+      ...(input.reaction ? { reaction: input.reaction } : {}),
+      ...(input.messageIndex !== undefined ? { messageIndex: input.messageIndex } : {}),
+    });
+
+    runtime.logger.log("info", "cli.inbox.prepare_react.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId,
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 async function runConnectionsList(
   input: {
     profileName: string;
@@ -10632,6 +10801,101 @@ export function createCliProgram(): Command {
             profileName: options.profile,
             recipients: options.recipient,
             thread: options.thread,
+          },
+          readCdpUrl(),
+        );
+      },
+    );
+
+  inboxCommand
+    .command("archive")
+    .description("Archive an inbox thread")
+    .requiredOption("--thread <thread>", "Thread id or LinkedIn thread URL")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(
+      async (options: { profile: string; thread: string }) => {
+        await runInboxArchive(
+          { profileName: options.profile, thread: options.thread },
+          readCdpUrl(),
+        );
+      },
+    );
+
+  inboxCommand
+    .command("unarchive")
+    .description("Unarchive an inbox thread")
+    .requiredOption("--thread <thread>", "Thread id or LinkedIn thread URL")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(
+      async (options: { profile: string; thread: string }) => {
+        await runInboxUnarchive(
+          { profileName: options.profile, thread: options.thread },
+          readCdpUrl(),
+        );
+      },
+    );
+
+  inboxCommand
+    .command("mark-unread")
+    .description("Mark an inbox thread as unread")
+    .requiredOption("--thread <thread>", "Thread id or LinkedIn thread URL")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(
+      async (options: { profile: string; thread: string }) => {
+        await runInboxMarkUnread(
+          { profileName: options.profile, thread: options.thread },
+          readCdpUrl(),
+        );
+      },
+    );
+
+  inboxCommand
+    .command("mute")
+    .description("Mute an inbox thread")
+    .requiredOption("--thread <thread>", "Thread id or LinkedIn thread URL")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(
+      async (options: { profile: string; thread: string }) => {
+        await runInboxMute(
+          { profileName: options.profile, thread: options.thread },
+          readCdpUrl(),
+        );
+      },
+    );
+
+  inboxCommand
+    .command("prepare-react")
+    .description("Prepare a two-phase reaction on a message in a thread")
+    .requiredOption("--thread <thread>", "Thread id or LinkedIn thread URL")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option(
+      "--reaction <reaction>",
+      "Reaction type: like, celebrate, support, love, insightful, funny",
+    )
+    .option(
+      "--message-index <index>",
+      "Zero-based message index (default: latest message)",
+    )
+    .action(
+      async (options: {
+        profile: string;
+        thread: string;
+        reaction?: string;
+        messageIndex?: string;
+      }) => {
+        await runPrepareReact(
+          {
+            profileName: options.profile,
+            thread: options.thread,
+            ...(options.reaction ? { reaction: options.reaction } : {}),
+            ...(options.messageIndex !== undefined
+              ? {
+                  messageIndex: coerceNonNegativeInt(
+                    options.messageIndex,
+                    "message-index",
+                  ),
+                }
+              : {}),
           },
           readCdpUrl(),
         );
