@@ -154,6 +154,18 @@ describe.sequential("MCP E2E", () => {
       message: "All requested recipients are already present in the thread."
     });
 
+    const prepareReact = await callMcpTool(MCP_TOOL_NAMES.inboxPrepareReact, {
+      profileName,
+      thread: fixtures.threadId,
+      reaction: "like"
+    });
+    expect(prepareReact.isError).toBe(false);
+    expect(prepareReact.payload).toMatchObject({
+      profile_name: profileName,
+      preparedActionId: expect.stringMatching(/^pa_/),
+      confirmToken: expect.stringMatching(/^ct_/)
+    });
+
     const connectionsList = await callMcpTool(MCP_TOOL_NAMES.connectionsList, {
       profileName,
       limit: 5

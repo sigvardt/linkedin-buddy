@@ -185,6 +185,23 @@ describe.sequential("CLI E2E", () => {
       message: "All requested recipients are already present in the thread."
     });
 
+    const prepareReact = await runCliCommand([
+      "inbox",
+      "prepare-react",
+      "--profile",
+      profileName,
+      "--thread",
+      fixtures.threadId,
+      "--reaction",
+      "like"
+    ]);
+    expect(prepareReact.error).toBeUndefined();
+    expect(getLastJsonObject(prepareReact.stdout)).toMatchObject({
+      profile_name: profileName,
+      preparedActionId: expect.stringMatching(/^pa_/),
+      confirmToken: expect.stringMatching(/^ct_/)
+    });
+
     const runtime = e2e.runtime();
     const confirmAction = prepareEchoAction(runtime, {
       profileName,

@@ -3,6 +3,7 @@ import {
   expectPreparedAction,
   expectPreparedOutboundText,
   expectRateLimitPreview,
+  getDefaultConnectionTarget,
   getMessageThread,
   isOptInEnabled
 } from "./helpers.js";
@@ -53,7 +54,7 @@ describe("Inbox Write E2E (2PC send_message)", () => {
     expect(result.result).toHaveProperty("sent", true);
   }, 120_000);
 
-  it("prepare returns valid preview with rate limit info", async (context) => {
+  it("prepareReply returns valid preview with rate limit info", async (context) => {
     skipIfE2EUnavailable(e2e, context);
     const runtime = e2e.runtime();
     const simonThread = await getMessageThread(runtime);
@@ -64,5 +65,32 @@ describe("Inbox Write E2E (2PC send_message)", () => {
     });
 
     expectRateLimitPreview(prepared.preview, "linkedin.messaging.send_message");
+  }, 60_000);
+
+  it("prepareNewThread returns valid preview for Simon Miller", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
+    const runtime = e2e.runtime();
+
+    const prepared = await runtime.inbox.prepareNewThread({
+      recipients: [getDefaultConnectionTarget()],
+      text: `E2E new thread preview [${Date.now()}]`
+    });
+
+    expectPreparedAction(prepared);
+    expectRateLimitPreview(prepared.preview, "linkedin.messaging.send_message");
+  }, 60_000);
+
+  it("prepareReact returns valid preview with reaction info", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
+    const runtime = e2e.runtime();
+    const simonThread = await getMessageThread(runtime);
+
+    const prepared = await runtime.inbox.prepareReact({
+      thread: simonThread.thread_id,
+      reaction: "like"
+    });
+
+    expectPreparedAction(prepared);
+    expectRateLimitPreview(prepared.preview, "linkedin.messaging.react");
   }, 60_000);
 });
