@@ -72,16 +72,19 @@ jobs:
                 git rebase --abort 2>/dev/null || true
 
                 # Post context so the AI knows exactly what to fix
-                gh issue comment "$issue_num" --body "## ⚠️ Merge Conflicts — Fix Needed
-
-**Branch:** \`$branch\` (PR #$number still open — resolve conflicts on existing branch, don't start fresh)
-
-**Conflicts:**
-\`\`\`
-$conflict_files
-\`\`\`
-
-**Action:** Relabeled to \`ai-task\`. Orchestrator will pick this up — check out the existing branch, run \`git rebase origin/main\`, resolve the conflicts, force-push. Do NOT create a new branch or PR."
+                {
+                  echo "## ⚠️ Merge Conflicts — Fix Needed"
+                  echo ""
+                  echo "**Branch:** \`$branch\` (PR #$number still open — resolve conflicts on existing branch, don't start fresh)"
+                  echo ""
+                  echo "**Conflicts:**"
+                  echo '```'
+                  echo "$conflict_files"
+                  echo '```'
+                  echo ""
+                  echo "**Action:** Relabeled to \`ai-task\`. Orchestrator will pick this up — check out the existing branch, run \`git rebase origin/main\`, resolve the conflicts, force-push. Do NOT create a new branch or PR."
+                } > /tmp/rebase-comment-body.md
+                gh issue comment "$issue_num" --body-file /tmp/rebase-comment-body.md
 
                 gh pr comment "$number" --body "⚠️ Auto-rebase failed due to merge conflicts. Issue #$issue_num relabeled for the orchestrator to resolve conflicts on this branch."
 
