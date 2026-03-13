@@ -145,15 +145,15 @@ const PROFILE_VIEWING_MODE_VALUE_ORDER = [
   "private_mode"
 ] as const;
 
-const TOGGLE_ON_VALUE_MAP = {
-  connections_visibility: "visible",
-  last_name_visibility: "full_last_name"
+const BINARY_RADIO_SETTING_VALUE_ORDER: Record<
+  "connections_visibility" | "last_name_visibility",
+  readonly [string, string]
+> = {
+  connections_visibility: ["visible", "hidden"],
+  last_name_visibility: ["full_last_name", "last_initial"]
 } as const;
 
-const TOGGLE_OFF_VALUE_MAP = {
-  connections_visibility: "hidden",
-  last_name_visibility: "last_initial"
-} as const;
+
 
 function buildPhraseRegex(
   phrases: readonly string[],
@@ -538,41 +538,147 @@ async function applyProfileViewingMode(
   };
 }
 
-async function readToggleSettingState(
+
+
+async function readBinaryRadioSettingState(
   page: Page,
-  settingKey: keyof typeof TOGGLE_ON_VALUE_MAP
+  settingKey: keyof typeof BINARY_RADIO_SETTING_VALUE_ORDER
 ): Promise<LinkedInPrivacySettingReadResult> {
-  const toggle = await findVisibleToggleControl(page, createToggleControlCandidates());
-  if (!toggle || typeof toggle.state !== "boolean") {
-    throw new LinkedInBuddyError(
-      "UI_CHANGED_SELECTOR_FAILED",
-      `Could not find the ${settingKey} toggle on the LinkedIn settings page.`,
-      {
-        attempted_selectors: createToggleControlCandidates().map(
-          (candidate) => candidate.selectorHint
-        )
-      }
-    );
+  const valueOrder = BINARY_RADIO_SETTING_VALUE_ORDER[settingKey];
+
+  const radioInputs = page.locator(
+    "main input[type='radio'], [role='main'] input[type='radio'], form input[type='radio']"
+  );
+  const radioInputCount = await radioInputs.count();
+
+  for (
+    let index = 0;
+    index < Math.min(radioInputCount, valueOrder.length);
+    index += 1
+  ) {
+    if (await radioInputs.nth(index).isChecked().catch(() => false)) {
+      return {
+        currentValue: valueOrder[index]!,
+        selectorKey: `${settingKey}-radio-input-index-${index}`
+      };
+    }
   }
 
-  return {
-    currentValue: toggle.state
-      ? TOGGLE_ON_VALUE_MAP[settingKey]
-      : TOGGLE_OFF_VALUE_MAP[settingKey],
-    selectorKey: toggle.key
-  };
+  const roleRadios = page.locator(
+    "main [role='radio'], [role='main'] [role='radio'], form [role='radio']"
+  );
+  const roleRadioCount = await roleRadios.count();
+
+  for (
+    let index = 0;
+    index < Math.min(roleRadioCount, valueOrder.length);
+    index += 1
+  ) {
+    const radio = roleRadios.nth(index);
+    const ariaChecked = await radio.getAttribute("aria-checked");
+    if (ariaChecked === "true") {
+      return {
+        currentValue: valueOrder[index]!,
+        selectorKey: `${settingKey}-role-radio-index-${index}`
+      };
+    }
+  }
+
+  const toggle = await findVisibleToggleControl(
+    page,
+    createToggleControlCandidates()
+  );
+  if (toggle && typeof toggle.state === "boolean") {
+    return {
+      currentValue: toggle.state ? valueOrder[0]! : valueOrder[1]!,
+      selectorKey: `${settingKey}-toggle-fallback:${toggle.key}`
+    };
+  }
+
+  throw new LinkedInBuddyError(
+    "UI_CHANGED_SELECTOR_FAILED",
+    `Could not determine the current LinkedIn ${settingKey} setting.`,
+    {
+      attempted_selectors: [
+        "main input[type='radio']",
+        "[role='main'] input[type='radio']",
+        "form input[type='radio']",
+        "main [role='radio']",
+        "[role='main'] [role='radio']",
+        "form [role='radio']",
+        ...createToggleControlCandidates().map(
+          (candidate) => candidate.selectorHint
+        )
+      ]
+    }
+  );
 }
 
-async function applyToggleSetting(
+async function clickBinaryRadioOption(
   page: Page,
-  settingKey: keyof typeof TOGGLE_ON_VALUE_MAP,
+  settingKey: string,
+  targetIndex: number,
+  optionCount: number
+): Promise<string> {
+  const radioInputs = page.locator(
+    "main input[type='radio'], [role='main'] input[type='radio'], form input[type='radio']"
+  );
+  if ((await radioInputs.count()) >= optionCount) {
+    await radioInputs.nth(targetIndex).check({ timeout: 5_000 });
+    return `${settingKey}-radio-input-index-${targetIndex}`;
+  }
+
+  const roleRadios = page.locator(
+    "main [role='radio'], [role='main'] [role='radio'], form [role='radio']"
+  );
+  if ((await roleRadios.count()) >= optionCount) {
+    await roleRadios.nth(targetIndex).click({ timeout: 5_000 });
+    return `${settingKey}-role-radio-index-${targetIndex}`;
+  }
+
+  const fallbackLabels = page.locator(
+    "main label, [role='main'] label, form label"
+  );
+  if ((await fallbackLabels.count()) > targetIndex) {
+    await fallbackLabels.nth(targetIndex).click({ timeout: 5_000 });
+    return `${settingKey}-label-index-${targetIndex}`;
+  }
+
+  const toggle = await findVisibleToggleControl(
+    page,
+    createToggleControlCandidates()
+  );
+  if (toggle) {
+    await toggle.locator.click({ timeout: 5_000 });
+    return `${settingKey}-toggle-fallback:${toggle.key}`;
+  }
+
+  throw new LinkedInBuddyError(
+    "UI_CHANGED_SELECTOR_FAILED",
+    `Could not find a control to change the ${settingKey} setting.`,
+    {
+      attempted_selectors: [
+        "main input[type='radio']",
+        "main [role='radio']",
+        "main label",
+        ...createToggleControlCandidates().map(
+          (candidate) => candidate.selectorHint
+        )
+      ]
+    }
+  );
+}
+
+async function applyBinaryRadioSetting(
+  page: Page,
+  settingKey: keyof typeof BINARY_RADIO_SETTING_VALUE_ORDER,
   value: string
 ): Promise<Omit<LinkedInPrivacySettingApplyResult, "sourceUrl">> {
   const requestedValue = normalizeLinkedInPrivacySettingDescriptorValue(
     settingKey,
     value
   );
-  const before = await readToggleSettingState(page, settingKey);
+  const before = await readBinaryRadioSettingState(page, settingKey);
   if (before.currentValue === requestedValue) {
     return {
       previousValue: before.currentValue,
@@ -581,23 +687,27 @@ async function applyToggleSetting(
     };
   }
 
-  const toggle = await findVisibleToggleControl(page, createToggleControlCandidates());
-  if (!toggle) {
+  const valueOrder = BINARY_RADIO_SETTING_VALUE_ORDER[settingKey];
+  const targetIndex = valueOrder.indexOf(requestedValue);
+  if (targetIndex < 0) {
     throw new LinkedInBuddyError(
-      "UI_CHANGED_SELECTOR_FAILED",
-      `Could not find the ${settingKey} toggle on the LinkedIn settings page.`,
-      {
-        attempted_selectors: createToggleControlCandidates().map(
-          (candidate) => candidate.selectorHint
-        )
-      }
+      "ACTION_PRECONDITION_FAILED",
+      `${settingKey} value must be one of: ${valueOrder.join(", ")}.`
     );
   }
 
-  await toggle.locator.click({ timeout: 5_000 });
+  const selectorKey = await clickBinaryRadioOption(
+    page,
+    settingKey,
+    targetIndex,
+    valueOrder.length
+  );
+
   const saveSelectorKey = await maybeClickSettingsSaveButton(page);
   const updated = await waitForCondition(async () => {
-    const state = await readToggleSettingState(page, settingKey).catch(() => null);
+    const state = await readBinaryRadioSettingState(page, settingKey).catch(
+      () => null
+    );
     return state?.currentValue === requestedValue;
   }, 5_000);
 
@@ -607,17 +717,19 @@ async function applyToggleSetting(
       `LinkedIn ${settingKey} could not be updated to ${requestedValue}.`,
       {
         requested_value: requestedValue,
-        toggle_selector_key: toggle.key,
+        selector_key: selectorKey,
         save_selector_key: saveSelectorKey
       }
     );
   }
 
-  const after = await readToggleSettingState(page, settingKey);
+  const after = await readBinaryRadioSettingState(page, settingKey);
   return {
     previousValue: before.currentValue,
     currentValue: after.currentValue,
-    selectorKey: saveSelectorKey ? `${toggle.key}:${saveSelectorKey}` : toggle.key
+    selectorKey: saveSelectorKey
+      ? `${selectorKey}:${saveSelectorKey}`
+      : selectorKey
   };
 }
 
@@ -674,9 +786,10 @@ const LINKEDIN_PRIVACY_SETTING_DESCRIPTORS: Record<
       "https://www.linkedin.com/mypreferences/d/connections-visibility",
       "https://www.linkedin.com/mypreferences/d/visibility/connections-visibility"
     ],
-    read: async (page) => readToggleSettingState(page, "connections_visibility"),
+    read: async (page) =>
+      readBinaryRadioSettingState(page, "connections_visibility"),
     apply: async (page, _selectorLocale, value) =>
-      applyToggleSetting(page, "connections_visibility", value)
+      applyBinaryRadioSetting(page, "connections_visibility", value)
   },
   last_name_visibility: {
     key: "last_name_visibility",
@@ -690,11 +803,43 @@ const LINKEDIN_PRIVACY_SETTING_DESCRIPTORS: Record<
       "https://www.linkedin.com/mypreferences/d/visibility/last-name-visibility",
       "https://www.linkedin.com/mypreferences/d/visibility/name-visibility"
     ],
-    read: async (page) => readToggleSettingState(page, "last_name_visibility"),
+    read: async (page) =>
+      readBinaryRadioSettingState(page, "last_name_visibility"),
     apply: async (page, _selectorLocale, value) =>
-      applyToggleSetting(page, "last_name_visibility", value)
+      applyBinaryRadioSetting(page, "last_name_visibility", value)
   }
 };
+
+async function waitForSettingControlPresence(
+  page: Page,
+  timeoutMs: number = 10_000
+): Promise<boolean> {
+  return waitForCondition(async () => {
+    const radioCount = await page
+      .locator(
+        "main input[type='radio'], [role='main'] input[type='radio'], " +
+          "form input[type='radio'], main [role='radio'], " +
+          "[role='main'] [role='radio'], form [role='radio']"
+      )
+      .count()
+      .catch(() => 0);
+    if (radioCount > 0) {
+      return true;
+    }
+
+    for (const candidate of createToggleControlCandidates()) {
+      const count = await candidate
+        .locatorFactory(page)
+        .count()
+        .catch(() => 0);
+      if (count > 0) {
+        return true;
+      }
+    }
+
+    return false;
+  }, timeoutMs);
+}
 
 async function withPrivacySettingsPage<T>(
   page: Page,
@@ -707,6 +852,7 @@ async function withPrivacySettingsPage<T>(
     try {
       await page.goto(url, { waitUntil: "domcontentloaded" });
       await waitForNetworkIdleBestEffort(page);
+      await waitForSettingControlPresence(page);
       return await action(page, url);
     } catch (error) {
       errors.push({
