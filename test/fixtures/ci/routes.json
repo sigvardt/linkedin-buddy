@@ -299,6 +299,25 @@
       },
       "bodyPath": "pages/app.html",
       "pageType": "company"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.linkedin.com/search/results/events/?keywords=tech",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8"
+      },
+      "bodyPath": "pages/app.html",
+      "pageType": "search"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.linkedin.com/events/7654321098765432101/",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8"
+      },
+      "bodyPath": "pages/app.html"
     }
   ]
 }

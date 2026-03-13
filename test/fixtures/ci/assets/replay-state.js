@@ -1046,6 +1046,52 @@
     }
   }
 
+  function renderSearchEvents() {
+    const root = document.querySelector("#replay-root");
+    const EVENT_ID_1 = "7654321098765432101";
+    const EVENT_URL_1 = "https://www.linkedin.com/events/" + EVENT_ID_1 + "/";
+    const EVENT_ID_2 = "7654321098765432102";
+    const EVENT_URL_2 = "https://www.linkedin.com/events/" + EVENT_ID_2 + "/";
+    root.innerHTML = [
+      '<div class="reusable-search__result-container">',
+      '  <a href="' + EVENT_URL_1 + '">',
+      '    <div>Tech Innovation Summit 2026</div>',
+      '    <div>Wed, Apr 15, 2026 10:00 AM</div>',
+      '    <div>San Francisco, CA \u2022 By Tech Leaders Network</div>',
+      '    <div>1,250 attendees</div>',
+      '    <div>Join industry leaders for a day of innovation and networking.</div>',
+      '  </a>',
+      '</div>',
+      '<div class="reusable-search__result-container">',
+      '  <a href="' + EVENT_URL_2 + '">',
+      '    <div>AI and Machine Learning Conference</div>',
+      '    <div>Thu, May 20, 2026 9:00 AM</div>',
+      '    <div>Online \u2022 By AI Research Group</div>',
+      '    <div>3,500 attendees</div>',
+      '    <div>Explore the latest in AI and ML research.</div>',
+      '  </a>',
+      '</div>'
+    ].join("\n");
+  }
+
+  function renderEventView() {
+    const root = document.querySelector("#replay-root");
+    root.innerHTML = [
+      '<div class="events-top-card">',
+      '  <h1>Tech Innovation Summit 2026</h1>',
+      '  <div>Event by Tech Leaders Network</div>',
+      '  <div>Wed, Apr 15, 2026 10:00 AM - 5:00 PM</div>',
+      '  <div>Moscone Center, San Francisco, CA</div>',
+      '  <div>1,250 attendees</div>',
+      '  <button>Attend</button>',
+      '</div>',
+      '<section>',
+      '  <h2>About</h2>',
+      '  <div>Join industry leaders for a full day of talks, workshops, and networking focused on the latest technology innovations.</div>',
+      '</section>'
+    ].join("\n");
+  }
+
   function renderUnknown() {
     const root = document.querySelector("#replay-root");
     root.innerHTML = `<main><h1>Unknown replay route</h1><p>${escapeHtml(window.location.href)}</p></main>`;
@@ -1169,6 +1215,16 @@
         renderCompanyPage(slug);
         return;
       }
+    }
+
+    if (normalizedPath === "/search/results/events/") {
+      renderSearchEvents();
+      return;
+    }
+
+    if (normalizedPath.startsWith("/events/")) {
+      renderEventView();
+      return;
     }
 
     renderUnknown();
