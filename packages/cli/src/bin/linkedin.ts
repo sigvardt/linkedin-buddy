@@ -433,6 +433,7 @@ const FIXTURE_ROUTE_FILE_NAME = "routes.json";
 const FIXTURE_RESPONSE_DIR_NAME = "responses";
 const FIXTURE_PAGES_DIR_NAME = "pages";
 const FIXTURE_CAPTURE_URLS: Record<LinkedInReplayPageType, string> = {
+  company: "https://www.linkedin.com/company/microsoft/about/",
   composer: "https://www.linkedin.com/feed/",
   connections: "https://www.linkedin.com/mynetwork/invite-connect/connections/",
   feed: "https://www.linkedin.com/feed/",

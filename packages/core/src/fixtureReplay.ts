@@ -30,7 +30,8 @@ export const LINKEDIN_REPLAY_PAGE_TYPES = [
   "composer",
   "search",
   "connections",
-  "jobs"
+  "jobs",
+  "company"
 ] as const;
 
 const MAX_FIXTURE_JSON_FILE_BYTES = 8 * 1024 * 1024;

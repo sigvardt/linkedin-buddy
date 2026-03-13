@@ -279,6 +279,26 @@
       },
       "bodyPath": "pages/app.html",
       "pageType": "search"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.linkedin.com/company/microsoft/",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8"
+      },
+      "bodyPath": "pages/app.html",
+      "pageType": "company"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.linkedin.com/company/microsoft/about/",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8"
+      },
+      "bodyPath": "pages/app.html",
+      "pageType": "company"
     }
   ]
 }
