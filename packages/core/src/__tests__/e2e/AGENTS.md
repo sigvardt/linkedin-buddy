@@ -40,6 +40,7 @@ npm run test:e2e:raw              # Direct Vitest without runner checks
 | `connections.e2e.test.ts` | Read | Unrestricted |
 | `notifications.e2e.test.ts` | Read | Unrestricted |
 | `health.e2e.test.ts` | Read | Unrestricted |
+| `analytics.e2e.test.ts` | Read | Unrestricted |
 | `inbox-write.e2e.test.ts` | Write | Simon Miller ONLY |
 | `connections-write.e2e.test.ts` | Write | Simon Miller ONLY |
 | `feed-like.e2e.test.ts` | Write | Requires approval |
