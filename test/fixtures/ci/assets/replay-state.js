@@ -518,6 +518,25 @@
         ${slug === "me" ? "" : `<button class="profile-connect ${sent ? "pending" : ""}" aria-label="${sent ? "Withdraw" : "Connect"}">${sent ? "Pending" : "Connect"}</button>`}
         ${slug === "me" ? "" : `<div class="invitation-status">${sent ? "Invitation sent" : ""}</div>`}
       </section>
+      ${slug === "me" ? `
+        <section class="analytics-dashboard">
+          <a href="https://www.linkedin.com/analytics/profile-views/">
+            <h3>Profile views</h3>
+            <p>42</p>
+            <p>+12 past 7 days</p>
+          </a>
+          <a href="https://www.linkedin.com/analytics/search-appearances/">
+            <h3>Search appearances</h3>
+            <p>15</p>
+            <p>+3 past 7 days</p>
+          </a>
+          <a href="https://www.linkedin.com/analytics/creator/">
+            <h3>Post impressions</h3>
+            <p>237</p>
+            <p>+18 past 7 days</p>
+          </a>
+        </section>
+      ` : ""}
       ${slug === "me" ? "" : `
         <section class="connect-dialog" role="dialog" hidden>
           <button class="connect-add-note">Add a note</button>
