@@ -4507,20 +4507,37 @@ class CreatePostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRu
             artifactPaths,
           );
 
+          let screenshotWarning: string | undefined;
           const postPublishScreenshot = `linkedin/screenshot-post-confirm-after-${Date.now()}.png`;
-          await captureScreenshotArtifact(
-            runtime,
-            page,
-            postPublishScreenshot,
-            {
-              action: CREATE_POST_ACTION_TYPE,
-              profile_name: profileName,
-              visibility,
-              published_post_url: verification.postUrl,
-              verification_surface: verification.surface,
-            },
-          );
-          artifactPaths.push(postPublishScreenshot);
+          try {
+            await captureScreenshotArtifact(
+              runtime,
+              page,
+              postPublishScreenshot,
+              {
+                action: CREATE_POST_ACTION_TYPE,
+                profile_name: profileName,
+                visibility,
+                published_post_url: verification.postUrl,
+                verification_surface: verification.surface,
+              },
+            );
+            artifactPaths.push(postPublishScreenshot);
+          } catch (screenshotError) {
+            screenshotWarning =
+              screenshotError instanceof Error
+                ? screenshotError.message
+                : String(screenshotError);
+            runtime.logger.log(
+              "warn",
+              "linkedin.post.confirm.screenshot.post_publish_failed",
+              {
+                action_id: action.id,
+                profile_name: profileName,
+                message: screenshotWarning,
+              },
+            );
+          }
 
           return {
             ok: true,
@@ -4531,6 +4548,9 @@ class CreatePostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRu
               published_post_url: verification.postUrl,
               verification_surface: verification.surface,
               rate_limit: formatRateLimitState(rateLimitState),
+              ...(screenshotWarning
+                ? { screenshot_warning: screenshotWarning }
+                : {}),
             },
             artifacts: artifactPaths,
           };
@@ -4738,22 +4758,39 @@ class CreateMediaPostActionExecutor implements ActionExecutor<LinkedInPostsExecu
             artifactPaths,
           );
 
+          let screenshotWarning: string | undefined;
           const postPublishScreenshot = `linkedin/screenshot-post-media-confirm-after-${Date.now()}.png`;
-          await captureScreenshotArtifact(
-            runtime,
-            page,
-            postPublishScreenshot,
-            {
-              action: CREATE_MEDIA_POST_ACTION_TYPE,
-              profile_name: profileName,
-              visibility,
-              published_post_url: verification.postUrl,
-              verification_surface: verification.surface,
-              media_count: attachments.length,
-              media_kind: attachments[0]?.kind ?? null,
-            },
-          );
-          artifactPaths.push(postPublishScreenshot);
+          try {
+            await captureScreenshotArtifact(
+              runtime,
+              page,
+              postPublishScreenshot,
+              {
+                action: CREATE_MEDIA_POST_ACTION_TYPE,
+                profile_name: profileName,
+                visibility,
+                published_post_url: verification.postUrl,
+                verification_surface: verification.surface,
+                media_count: attachments.length,
+                media_kind: attachments[0]?.kind ?? null,
+              },
+            );
+            artifactPaths.push(postPublishScreenshot);
+          } catch (screenshotError) {
+            screenshotWarning =
+              screenshotError instanceof Error
+                ? screenshotError.message
+                : String(screenshotError);
+            runtime.logger.log(
+              "warn",
+              "linkedin.post.confirm_media.screenshot.post_publish_failed",
+              {
+                action_id: action.id,
+                profile_name: profileName,
+                message: screenshotWarning,
+              },
+            );
+          }
 
           return {
             ok: true,
@@ -4767,6 +4804,9 @@ class CreateMediaPostActionExecutor implements ActionExecutor<LinkedInPostsExecu
               published_post_url: verification.postUrl,
               verification_surface: verification.surface,
               rate_limit: formatRateLimitState(rateLimitState),
+              ...(screenshotWarning
+                ? { screenshot_warning: screenshotWarning }
+                : {}),
             },
             artifacts: artifactPaths,
           };
@@ -4994,22 +5034,39 @@ class CreatePollPostActionExecutor implements ActionExecutor<LinkedInPostsExecut
             artifactPaths,
           );
 
+          let screenshotWarning: string | undefined;
           const postPublishScreenshot = `linkedin/screenshot-post-poll-confirm-after-${Date.now()}.png`;
-          await captureScreenshotArtifact(
-            runtime,
-            page,
-            postPublishScreenshot,
-            {
-              action: CREATE_POLL_POST_ACTION_TYPE,
-              profile_name: profileName,
-              visibility,
-              published_post_url: verification.postUrl,
-              verification_surface: verification.surface,
-              poll_option_count: options.length,
-              poll_duration_days: durationDays,
-            },
-          );
-          artifactPaths.push(postPublishScreenshot);
+          try {
+            await captureScreenshotArtifact(
+              runtime,
+              page,
+              postPublishScreenshot,
+              {
+                action: CREATE_POLL_POST_ACTION_TYPE,
+                profile_name: profileName,
+                visibility,
+                published_post_url: verification.postUrl,
+                verification_surface: verification.surface,
+                poll_option_count: options.length,
+                poll_duration_days: durationDays,
+              },
+            );
+            artifactPaths.push(postPublishScreenshot);
+          } catch (screenshotError) {
+            screenshotWarning =
+              screenshotError instanceof Error
+                ? screenshotError.message
+                : String(screenshotError);
+            runtime.logger.log(
+              "warn",
+              "linkedin.post.confirm_poll.screenshot.post_publish_failed",
+              {
+                action_id: action.id,
+                profile_name: profileName,
+                message: screenshotWarning,
+              },
+            );
+          }
 
           return {
             ok: true,
@@ -5024,6 +5081,9 @@ class CreatePollPostActionExecutor implements ActionExecutor<LinkedInPostsExecut
               published_post_url: verification.postUrl,
               verification_surface: verification.surface,
               rate_limit: formatRateLimitState(rateLimitState),
+              ...(screenshotWarning
+                ? { screenshot_warning: screenshotWarning }
+                : {}),
             },
             artifacts: artifactPaths,
           };
@@ -5221,14 +5281,32 @@ class EditPostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRunt
             artifactPaths,
           );
 
+          let screenshotWarning: string | undefined;
           const postSaveScreenshot = `linkedin/screenshot-post-edit-confirm-after-${Date.now()}.png`;
-          await captureScreenshotArtifact(runtime, page, postSaveScreenshot, {
-            action: EDIT_POST_ACTION_TYPE,
-            profile_name: profileName,
-            post_url: postUrl,
-            published_post_url: verification.postUrl,
-          });
-          artifactPaths.push(postSaveScreenshot);
+          try {
+            await captureScreenshotArtifact(runtime, page, postSaveScreenshot, {
+              action: EDIT_POST_ACTION_TYPE,
+              profile_name: profileName,
+              post_url: postUrl,
+              published_post_url: verification.postUrl,
+            });
+            artifactPaths.push(postSaveScreenshot);
+          } catch (screenshotError) {
+            screenshotWarning =
+              screenshotError instanceof Error
+                ? screenshotError.message
+                : String(screenshotError);
+            runtime.logger.log(
+              "warn",
+              "linkedin.post.confirm_edit.screenshot.post_save_failed",
+              {
+                action_id: action.id,
+                profile_name: profileName,
+                post_url: postUrl,
+                message: screenshotWarning,
+              },
+            );
+          }
 
           return {
             ok: true,
@@ -5237,6 +5315,9 @@ class EditPostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRunt
               post_url: postUrl,
               verification_snippet: createVerificationSnippet(text),
               rate_limit: formatRateLimitState(rateLimitState),
+              ...(screenshotWarning
+                ? { screenshot_warning: screenshotWarning }
+                : {}),
             },
             artifacts: artifactPaths,
           };
@@ -5404,15 +5485,33 @@ class DeletePostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRu
             artifactPaths,
           );
 
+          let screenshotWarning: string | undefined;
           const postDeleteScreenshot = `linkedin/screenshot-post-delete-confirm-after-${Date.now()}.png`;
-          await captureScreenshotArtifact(runtime, page, postDeleteScreenshot, {
-            action: DELETE_POST_ACTION_TYPE,
-            profile_name: profileName,
-            post_url: postUrl,
-            confirm_selector_key: confirmButtonKey,
-            published_post_url: verification.postUrl,
-          });
-          artifactPaths.push(postDeleteScreenshot);
+          try {
+            await captureScreenshotArtifact(runtime, page, postDeleteScreenshot, {
+              action: DELETE_POST_ACTION_TYPE,
+              profile_name: profileName,
+              post_url: postUrl,
+              confirm_selector_key: confirmButtonKey,
+              published_post_url: verification.postUrl,
+            });
+            artifactPaths.push(postDeleteScreenshot);
+          } catch (screenshotError) {
+            screenshotWarning =
+              screenshotError instanceof Error
+                ? screenshotError.message
+                : String(screenshotError);
+            runtime.logger.log(
+              "warn",
+              "linkedin.post.confirm_delete.screenshot.post_delete_failed",
+              {
+                action_id: action.id,
+                profile_name: profileName,
+                post_url: postUrl,
+                message: screenshotWarning,
+              },
+            );
+          }
 
           return {
             ok: true,
@@ -5421,6 +5520,9 @@ class DeletePostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRu
               post_url: postUrl,
               verification_snippet: currentSnippet,
               rate_limit: formatRateLimitState(rateLimitState),
+              ...(screenshotWarning
+                ? { screenshot_warning: screenshotWarning }
+                : {}),
             },
             artifacts: artifactPaths,
           };
