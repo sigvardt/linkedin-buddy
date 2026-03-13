@@ -351,7 +351,9 @@ export class LinkedInSearchService {
             location: normalizeText(snapshot.location),
             profile_url: profileUrl,
             vanity_name: extractVanityName(profileUrl),
-            connection_degree: normalizeText(snapshot.connection_degree),
+            connection_degree: normalizeText(
+              snapshot.connection_degree.replace(/^[•·]\s*/, "")
+            ),
             mutual_connections: normalizeText(snapshot.mutual_connections)
           } satisfies LinkedInSearchResult;
         })
@@ -872,12 +874,27 @@ export class LinkedInSearchService {
             waitUntil: "domcontentloaded"
           });
           await waitForNetworkIdleBestEffort(page);
-          await page.waitForTimeout(2_000);
+          await page
+            .locator(
+              "div[data-view-name='search-entity-result-universal-template']"
+            )
+            .first()
+            .waitFor({ state: "visible", timeout: 10_000 })
+            .catch(() => undefined);
 
           return page.evaluate((lim: number) => {
             const normalize = (value: string | null | undefined): string =>
               (value ?? "").replace(/\s+/g, " ").trim();
             const origin = globalThis.window.location.origin;
+            const pickText = (root: ParentNode, selectors: string[]): string => {
+              for (const selector of selectors) {
+                const text = normalize(root.querySelector(selector)?.textContent);
+                if (text) {
+                  return text;
+                }
+              }
+              return "";
+            };
             const toAbsoluteHref = (value: string): string => {
               if (!value) {
                 return "";
@@ -887,48 +904,77 @@ export class LinkedInSearchService {
               }
               return value.startsWith("/") ? `${origin}${value}` : `${origin}/${value}`;
             };
+            const pickHref = (root: ParentNode, selectors: string[]): string => {
+              for (const selector of selectors) {
+                const linkElement = root.querySelector(
+                  selector
+                ) as HTMLAnchorElement | null;
+                const href = toAbsoluteHref(
+                  normalize(linkElement?.getAttribute("href")) ||
+                    normalize(linkElement?.href)
+                );
+                if (href) {
+                  return href;
+                }
+              }
+              return "";
+            };
 
-            const anchors = Array.from(
-              globalThis.document.querySelectorAll("a[href*='/groups/']")
-            ) as HTMLAnchorElement[];
-            const seen = new Set<string>();
-            const results: Array<Record<string, string>> = [];
+            const pickSiblingText = (
+              root: ParentNode,
+              anchorSelector: string,
+              index: number
+            ): string => {
+              const anchor = root.querySelector(anchorSelector);
+              if (!anchor) {
+                return "";
+              }
+              let el = anchor.nextElementSibling;
+              let found = 0;
+              while (el) {
+                const text = normalize(el.textContent);
+                if (text) {
+                  if (found === index) {
+                    return text;
+                  }
+                  found++;
+                }
+                el = el.nextElementSibling;
+              }
+              return "";
+            };
 
-            for (const anchor of anchors) {
-              const href = toAbsoluteHref(
-                normalize(anchor.getAttribute("href")) || normalize(anchor.href)
+            const cards = Array.from(
+              globalThis.document.querySelectorAll(
+                "div[data-view-name='search-entity-result-universal-template']"
+              )
+            ).slice(0, lim);
+
+            return cards.map((card) => {
+              const nameLink = card.querySelector(
+                ".t-roman.t-sans a[data-test-app-aware-link]"
               );
-              if (!href || seen.has(href)) {
-                continue;
-              }
-              seen.add(href);
+              const name = nameLink
+                ? normalize(nameLink.textContent)
+                : pickText(card, [
+                    "a[href*='/groups/'] span[aria-hidden='true']",
+                    "a[href*='/groups/']"
+                  ]);
 
-              const lines = (anchor.innerText ?? "")
-                .split(/\n+/)
-                .map((value) => normalize(value))
-                .filter((value) => value.length > 0);
-              if (lines.length < 2) {
-                continue;
-              }
-
-              const filteredLines = lines.filter(
-                (line) => !/^(Join|Requested|View)$/i.test(line)
-              );
-
-              results.push({
-                name: filteredLines[0] ?? "",
-                group_type: filteredLines[1] ?? "",
-                member_count: filteredLines[2] ?? "",
-                description: filteredLines.slice(3).join(" "),
-                group_url: href
-              });
-
-              if (results.length >= lim) {
-                break;
-              }
-            }
-
-            return results;
+              return {
+                name,
+                group_type: "",
+                member_count:
+                  pickSiblingText(card, ".t-roman.t-sans", 0) ||
+                  pickText(card, [".entity-result__primary-subtitle"]),
+                description: pickText(card, [
+                  "p[class*='entity-result__summary']",
+                  "[class*='entity-result__summary']",
+                  ".entity-result__summary"
+                ]),
+                group_url: pickHref(card, ["a[href*='/groups/']"])
+              };
+            });
           }, limit);
         }
       );
@@ -987,12 +1033,27 @@ export class LinkedInSearchService {
             waitUntil: "domcontentloaded"
           });
           await waitForNetworkIdleBestEffort(page);
-          await page.waitForTimeout(2_000);
+          await page
+            .locator(
+              "div[data-view-name='search-entity-result-universal-template']"
+            )
+            .first()
+            .waitFor({ state: "visible", timeout: 10_000 })
+            .catch(() => undefined);
 
           return page.evaluate((lim: number) => {
             const normalize = (value: string | null | undefined): string =>
               (value ?? "").replace(/\s+/g, " ").trim();
             const origin = globalThis.window.location.origin;
+            const pickText = (root: ParentNode, selectors: string[]): string => {
+              for (const selector of selectors) {
+                const text = normalize(root.querySelector(selector)?.textContent);
+                if (text) {
+                  return text;
+                }
+              }
+              return "";
+            };
             const toAbsoluteHref = (value: string): string => {
               if (!value) {
                 return "";
@@ -1002,57 +1063,91 @@ export class LinkedInSearchService {
               }
               return value.startsWith("/") ? `${origin}${value}` : `${origin}/${value}`;
             };
-
-            const anchors = Array.from(
-              globalThis.document.querySelectorAll("a[href*='/events/']")
-            ) as HTMLAnchorElement[];
-            const seen = new Set<string>();
-            const results: Array<Record<string, string>> = [];
-
-            for (const anchor of anchors) {
-              const href = toAbsoluteHref(
-                normalize(anchor.getAttribute("href")) || normalize(anchor.href)
-              );
-              if (!href || seen.has(href)) {
-                continue;
+            const pickHref = (root: ParentNode, selectors: string[]): string => {
+              for (const selector of selectors) {
+                const linkElement = root.querySelector(
+                  selector
+                ) as HTMLAnchorElement | null;
+                const href = toAbsoluteHref(
+                  normalize(linkElement?.getAttribute("href")) ||
+                    normalize(linkElement?.href)
+                );
+                if (href) {
+                  return href;
+                }
               }
-              seen.add(href);
+              return "";
+            };
 
-              const lines = (anchor.innerText ?? "")
-                .split(/\n+/)
-                .map((value) => normalize(value))
-                .filter((value) => value.length > 0);
-              if (lines.length < 2) {
-                continue;
+            const pickSiblingText = (
+              root: ParentNode,
+              anchorSelector: string,
+              index: number
+            ): string => {
+              const anchor = root.querySelector(anchorSelector);
+              if (!anchor) {
+                return "";
               }
+              let el = anchor.nextElementSibling;
+              let found = 0;
+              while (el) {
+                const text = normalize(el.textContent);
+                if (text) {
+                  if (found === index) {
+                    return text;
+                  }
+                  found++;
+                }
+                el = el.nextElementSibling;
+              }
+              return "";
+            };
 
-              const venueLine = lines[2] ?? "";
-              const organizerMatch = /^(.*)\s+.\s+By\s+(.*)$/.exec(venueLine);
-              const descriptionLines = lines.slice(3);
-              const attendeeIndex = descriptionLines.findIndex((line) =>
-                /\battendees?\b/i.test(line)
+            const cards = Array.from(
+              globalThis.document.querySelectorAll(
+                "div[data-view-name='search-entity-result-universal-template']"
+              )
+            ).slice(0, lim);
+
+            return cards.map((card) => {
+              const nameLink = card.querySelector(
+                ".t-roman.t-sans a[data-test-app-aware-link]"
               );
+              const title = nameLink
+                ? normalize(nameLink.textContent)
+                : pickText(card, [
+                    "a[href*='/events/'] span[aria-hidden='true']",
+                    "a[href*='/events/']"
+                  ]);
 
-              results.push({
-                title: lines[0] ?? "",
-                date: lines[1] ?? "",
+              const date =
+                pickSiblingText(card, ".t-roman.t-sans", 0) ||
+                pickText(card, [".entity-result__primary-subtitle"]);
+
+              const venueLine =
+                pickSiblingText(card, ".t-roman.t-sans", 1) ||
+                pickText(card, [".entity-result__secondary-subtitle"]);
+              const organizerMatch = /^(.*?)\s*[•·]\s*By\s+(.*)$/i.exec(venueLine);
+
+              const attendeeText = pickText(card, [
+                ".entity-result__insights",
+                ".entity-result__simple-insight"
+              ]);
+
+              return {
+                title,
+                date,
                 location: normalize(organizerMatch?.[1] ?? venueLine),
                 organizer: normalize(organizerMatch?.[2] ?? ""),
-                description:
-                  attendeeIndex >= 0
-                    ? descriptionLines.slice(0, attendeeIndex).join(" ")
-                    : descriptionLines.join(" "),
-                attendee_count:
-                  attendeeIndex >= 0 ? descriptionLines[attendeeIndex] ?? "" : "",
-                event_url: href
-              });
-
-              if (results.length >= lim) {
-                break;
-              }
-            }
-
-            return results;
+                description: pickText(card, [
+                  "p[class*='entity-result__summary']",
+                  "[class*='entity-result__summary']",
+                  ".entity-result__summary"
+                ]),
+                attendee_count: attendeeText,
+                event_url: pickHref(card, ["a[href*='/events/']"])
+              };
+            });
           }, limit);
         }
       );
