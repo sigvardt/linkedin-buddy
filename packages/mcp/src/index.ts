@@ -2,6 +2,7 @@ export const SUBMIT_FEEDBACK_TOOL = "submit_feedback";
 export const LINKEDIN_SESSION_STATUS_TOOL = "linkedin.session.status";
 export const LINKEDIN_SESSION_OPEN_LOGIN_TOOL = "linkedin.session.open_login";
 export const LINKEDIN_SESSION_HEALTH_TOOL = "linkedin.session.health";
+export const LINKEDIN_AUTH_WHOAMI_TOOL = "linkedin.auth.whoami";
 export const LINKEDIN_INBOX_LIST_THREADS_TOOL = "linkedin.inbox.list_threads";
 export const LINKEDIN_INBOX_GET_THREAD_TOOL = "linkedin.inbox.get_thread";
 export const LINKEDIN_INBOX_SEARCH_RECIPIENTS_TOOL =

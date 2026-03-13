@@ -6,10 +6,11 @@ import {
   ACTIVITY_EVENT_TYPES,
   ACTIVITY_WATCH_KINDS,
   ACTIVITY_WATCH_STATUSES,
-  DEFAULT_LINKEDIN_PERSONA_POST_IMAGE_COUNT,
-  DEFAULT_FOLLOWUP_SINCE,
-  createFeedbackTechnicalContext,
-  LINKEDIN_FEED_REACTION_TYPES,
+   DEFAULT_LINKEDIN_PERSONA_POST_IMAGE_COUNT,
+   DEFAULT_FOLLOWUP_SINCE,
+   createFeedbackTechnicalContext,
+   getAuthWhoami,
+   LINKEDIN_FEED_REACTION_TYPES,
   LINKEDIN_INBOX_REACTION_TYPES,
   LINKEDIN_MEMBER_REPORT_REASONS,
   LINKEDIN_NEWSLETTER_CADENCE_TYPES,
@@ -146,11 +147,12 @@ import {
   LINKEDIN_POST_PREPARE_CREATE_POLL_TOOL,
   LINKEDIN_POST_PREPARE_DELETE_TOOL,
   LINKEDIN_POST_PREPARE_EDIT_TOOL,
-  LINKEDIN_SEARCH_TOOL,
-  LINKEDIN_SESSION_HEALTH_TOOL,
-  LINKEDIN_SESSION_OPEN_LOGIN_TOOL,
-  LINKEDIN_SESSION_STATUS_TOOL,
-} from "../index.js";
+   LINKEDIN_SEARCH_TOOL,
+   LINKEDIN_AUTH_WHOAMI_TOOL,
+   LINKEDIN_SESSION_HEALTH_TOOL,
+   LINKEDIN_SESSION_OPEN_LOGIN_TOOL,
+   LINKEDIN_SESSION_STATUS_TOOL,
+ } from "../index.js";
 import {
   type ToolArgs,
   readString,
@@ -303,6 +305,24 @@ async function handleSessionHealth(args: ToolArgs): Promise<ToolResult> {
   } finally {
     runtime.close();
   }
+}
+
+async function handleAuthWhoami(args: ToolArgs): Promise<ToolResult> {
+  const profileName = readString(args, "profileName", "default");
+  const result = await getAuthWhoami(profileName);
+
+  return toToolResult({
+    profile_name: profileName,
+    authenticated: result.authenticated,
+    full_name: result.fullName,
+    vanity_name: result.vanityName,
+    session_age: result.sessionAge,
+    session_valid: result.sessionValid,
+    session_expires_at: result.sessionExpiresAt,
+    session_expires_in_ms: result.sessionExpiresInMs,
+    identity_cached_at: result.identityCachedAt,
+    guidance: result.guidance,
+  });
 }
 
 async function handleSubmitFeedback(args: ToolArgs): Promise<ToolResult> {
@@ -4306,6 +4326,21 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
     },
   },
   {
+    name: LINKEDIN_AUTH_WHOAMI_TOOL,
+    description:
+      "Fast sub-second authentication status check using stored session files. Returns identity, session age, and health without launching a browser. Use this before linkedin.session.status when you only need to verify authentication state.",
+    inputSchema: {
+      type: "object" as const,
+      additionalProperties: false,
+      properties: {
+        profileName: {
+          type: "string",
+          description: "Stored session name. Defaults to default.",
+        },
+      },
+    },
+  },
+  {
     name: LINKEDIN_INBOX_SEARCH_RECIPIENTS_TOOL,
     description: withSelectorAuditHint(
       "Search LinkedIn people to resolve recipient identities for messaging flows.",
@@ -7225,10 +7260,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
 const TOOL_HANDLERS: Record<string, ToolHandler> = {
   [SUBMIT_FEEDBACK_TOOL]: handleSubmitFeedback,
-  [LINKEDIN_SESSION_STATUS_TOOL]: handleSessionStatus,
-  [LINKEDIN_SESSION_OPEN_LOGIN_TOOL]: handleSessionOpenLogin,
-  [LINKEDIN_SESSION_HEALTH_TOOL]: handleSessionHealth,
-  [LINKEDIN_INBOX_SEARCH_RECIPIENTS_TOOL]: handleSearchRecipients,
+   [LINKEDIN_SESSION_STATUS_TOOL]: handleSessionStatus,
+   [LINKEDIN_SESSION_OPEN_LOGIN_TOOL]: handleSessionOpenLogin,
+   [LINKEDIN_SESSION_HEALTH_TOOL]: handleSessionHealth,
+   [LINKEDIN_AUTH_WHOAMI_TOOL]: handleAuthWhoami,
+   [LINKEDIN_INBOX_SEARCH_RECIPIENTS_TOOL]: handleSearchRecipients,
   [LINKEDIN_INBOX_LIST_THREADS_TOOL]: handleListThreads,
   [LINKEDIN_INBOX_GET_THREAD_TOOL]: handleGetThread,
   [LINKEDIN_INBOX_PREPARE_REPLY_TOOL]: handlePrepareReply,

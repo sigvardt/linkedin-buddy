@@ -8,6 +8,8 @@ export * from "./auth/rateLimitState.js";
 export * from "./auth/session.js";
 export * from "./auth/fingerprint.js";
 export * from "./auth/sessionHealthCheck.js";
+export * from "./auth/identityCache.js";
+export * from "./auth/whoami.js";
 export * from "./auth/sessionStore.js";
 export * from "./connectionPool.js";
 export * from "./config.js";
