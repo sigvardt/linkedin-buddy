@@ -520,7 +520,12 @@ async function extractNotificationSnapshots(
 
       const pickText = (root: ParentNode, selectors: string[]): string => {
         for (const selector of selectors) {
-          const text = normalize(root.querySelector(selector)?.textContent);
+          const el = root.querySelector(selector);
+          if (!el) {
+            continue;
+          }
+          const ariaHidden = el.querySelector("span[aria-hidden='true']");
+          const text = normalize((ariaHidden ?? el).textContent);
           if (text) {
             return text;
           }
