@@ -4610,41 +4610,99 @@ async function clickSaveInProfileEditorSurface(
   surface: ProfileEditorSurface,
   selectorLocale: LinkedInSelectorLocale
 ): Promise<void> {
-  const saveCandidates: LocatorCandidate[] = [
-    ...createActionCandidates(
-      surface.root,
-      getUiActionLabels("save", selectorLocale),
-      "profile-editor-save"
-    ),
-    {
-      key: "profile-editor-save-submit",
-      locator: surface.root.locator("button[type='submit']")
-    }
-  ];
+  const saveLabels = getUiActionLabels("save", selectorLocale);
+
+  // For page surfaces, prioritize form-specific save mechanisms.
+  // The intro editor opens as a full page (/in/me/edit/intro/) where the
+  // submit button is the most reliable save target. Generic text-matching
+  // candidates can match unrelated buttons when the surface root is broad
+  // (e.g. <main> or <body>).
+  const saveCandidates: LocatorCandidate[] =
+    surface.kind === "page"
+      ? [
+          {
+            key: "profile-editor-save-form-submit",
+            locator: surface.root.locator("form button[type='submit']"),
+            selectorHint: "form button[type='submit']"
+          },
+          {
+            key: "profile-editor-save-submit",
+            locator: surface.root.locator("button[type='submit']"),
+            selectorHint: "button[type='submit']"
+          },
+          ...createActionCandidates(
+            surface.root,
+            saveLabels,
+            "profile-editor-save"
+          )
+        ]
+      : [
+          ...createActionCandidates(
+            surface.root,
+            saveLabels,
+            "profile-editor-save"
+          ),
+          {
+            key: "profile-editor-save-submit",
+            locator: surface.root.locator("button[type='submit']"),
+            selectorHint: "button[type='submit']"
+          }
+        ];
+
   const resolved = await waitForFirstVisibleLocator(saveCandidates, 10_000);
   if (!resolved) {
+    const selectorDiagnostics = summarizeLocatorCandidates(saveCandidates);
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
-      "Could not find the save button in the profile editor."
+      "Could not find the save button in the profile editor.",
+      {
+        surface_kind: surface.kind,
+        selectors_tried: selectorDiagnostics.selectorsTried,
+        selector_hints: selectorDiagnostics.selectorHints,
+        page_url: page.url()
+      }
     );
   }
 
-  await resolved.locator.first().click();
-
   if (surface.kind === "dialog") {
+    await resolved.locator.first().click();
     await surface.root.waitFor({ state: "hidden", timeout: 10_000 }).catch(() => undefined);
     await waitForNetworkIdleBestEffort(page);
     return;
   }
 
-  const exitEditPage = page
+  // Page kind: start listening for navigation BEFORE clicking so we never
+  // miss a fast redirect. The edit page navigates to the profile on success.
+  const navigationPromise = page
     .waitForURL((url) => !isProfileIntroEditHref(url.toString()), {
-      timeout: 10_000
+      timeout: 15_000
     })
-    .catch(() => undefined);
+    .then(() => true as const)
+    .catch(() => false as const);
 
-  await waitForNetworkIdleBestEffort(page, 10_000);
-  await exitEditPage;
+  await resolved.locator.first().click();
+  await waitForNetworkIdleBestEffort(page, 15_000);
+  const navigated = await navigationPromise;
+
+  if (!navigated && isProfileIntroEditHref(page.url())) {
+    const selectorDiagnostics = summarizeLocatorCandidates(saveCandidates);
+    throw new LinkedInBuddyError(
+      "ACTION_PRECONDITION_FAILED",
+      "Profile editor save did not navigate away from the edit page. " +
+        "The save may not have persisted — the clicked button may not " +
+        "trigger form submission, or a validation error may be blocking the save.",
+      {
+        page_url: page.url(),
+        save_button_key: resolved.key,
+        save_button_hint: resolved.selectorHint ?? "no selector hint",
+        surface_kind: surface.kind,
+        selectors_tried: selectorDiagnostics.selectorsTried,
+        selector_hints: selectorDiagnostics.selectorHints
+      }
+    );
+  }
+
+  await waitForNetworkIdleBestEffort(page);
 }
 
 async function closeProfileEditorSurface(
