@@ -149,6 +149,45 @@ export interface PreparedActionPreview {
   operatorNote: string | null;
 }
 
+export type PreparedActionEffectiveStatus =
+  | "prepared"
+  | "confirmed"
+  | "expired"
+  | "failed";
+
+export const PREPARED_ACTION_EFFECTIVE_STATUSES: readonly PreparedActionEffectiveStatus[] = [
+  "prepared",
+  "confirmed",
+  "expired",
+  "failed"
+] as const;
+
+export function isPreparedActionEffectiveStatus(
+  value: string
+): value is PreparedActionEffectiveStatus {
+  return (PREPARED_ACTION_EFFECTIVE_STATUSES as readonly string[]).includes(value);
+}
+
+export interface ListPreparedActionsInput {
+  status?: PreparedActionEffectiveStatus;
+  limit?: number;
+  nowMs?: number;
+}
+
+export interface PreparedActionSummary {
+  id: string;
+  actionType: string;
+  effectiveStatus: PreparedActionEffectiveStatus;
+  createdAtMs: number;
+  expiresAtMs: number;
+  confirmedAtMs: number | null;
+  executedAtMs: number | null;
+  operatorNote: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  preview: Record<string, unknown>;
+}
+
 export interface TwoPhaseCommitServiceOptions<TRuntime> {
   executors?: ActionExecutorRegistry<TRuntime>;
   getRuntime?: () => TRuntime;
@@ -169,6 +208,23 @@ export function hashJsonPayload(json: string): string {
 
 export function isTokenExpired(expiresAtMs: number, nowMs: number = Date.now()): boolean {
   return nowMs > expiresAtMs;
+}
+
+export function computeEffectiveStatus(
+  dbStatus: string,
+  expiresAtMs: number,
+  nowMs: number = Date.now()
+): PreparedActionEffectiveStatus {
+  if (dbStatus === "executed") {
+    return "confirmed";
+  }
+  if (dbStatus === "failed") {
+    return "failed";
+  }
+  if (isTokenExpired(expiresAtMs, nowMs)) {
+    return "expired";
+  }
+  return "prepared";
 }
 
 function parseJsonObject(
@@ -423,6 +479,51 @@ export class TwoPhaseCommitService<TRuntime = unknown> {
       target: action.target,
       operatorNote: action.operatorNote
     };
+  }
+
+  listPreparedActions(input: ListPreparedActionsInput = {}): PreparedActionSummary[] {
+    const limit = input.limit ?? 20;
+    const nowMs = input.nowMs ?? Date.now();
+    const fetchLimit = input.status ? limit * 5 : limit;
+    const rows = this.db.listPreparedActions(fetchLimit);
+
+    const mapped: PreparedActionSummary[] = [];
+    for (const row of rows) {
+      const effectiveStatus = computeEffectiveStatus(row.status, row.expires_at, nowMs);
+      if (input.status && effectiveStatus !== input.status) {
+        continue;
+      }
+      mapped.push({
+        id: row.id,
+        actionType: row.action_type,
+        effectiveStatus,
+        createdAtMs: row.created_at,
+        expiresAtMs: row.expires_at,
+        confirmedAtMs: row.confirmed_at,
+        executedAtMs: row.executed_at,
+        operatorNote: row.operator_note,
+        errorCode: row.error_code,
+        errorMessage: row.error_message,
+        preview: parseJsonObject("preview_json", row.preview_json, row.id)
+      });
+      if (mapped.length >= limit) {
+        break;
+      }
+    }
+
+    return mapped;
+  }
+
+  getPreparedAction(id: string): PreparedAction {
+    const row = this.db.getPreparedActionById(id);
+    if (!row) {
+      throw new LinkedInBuddyError(
+        "TARGET_NOT_FOUND",
+        `Prepared action not found: ${id}`,
+        { action_id: id }
+      );
+    }
+    return mapPreparedActionRow(row);
   }
 
   async confirm(input: ConfirmByTokenInput): Promise<ConfirmByTokenResult> {

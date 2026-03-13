@@ -842,6 +842,20 @@ LIMIT 1
       .get(confirmTokenHash);
   }
 
+  listPreparedActions(limit: number): PreparedActionRow[] {
+    return this.db
+      .prepare<unknown[], PreparedActionRow>(
+        `
+SELECT
+${PREPARED_ACTION_SELECT_COLUMNS}
+FROM prepared_action
+ORDER BY created_at DESC
+LIMIT ?
+`
+      )
+      .all(limit);
+  }
+
   listRunLogs(runId: string): RunLogRow[] {
     return this.db
       .prepare<unknown[], RunLogRow>(
