@@ -3440,6 +3440,7 @@ export class LinkedInFeedService {
           const page = await getOrCreatePage(context);
           await page.goto(targetUrl, { waitUntil: "domcontentloaded" });
           await waitForFeedSurface(page);
+          await waitForNetworkIdleBestEffort(page, 8_000);
           const posts = await loadFeedPosts(page, limit);
           return posts.slice(0, limit);
         },
