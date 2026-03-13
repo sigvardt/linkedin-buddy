@@ -6,14 +6,24 @@ import {
   getDefaultProfileName,
   getLastJsonObject,
   isOptInEnabled,
+  isReplayModeEnabled,
   MCP_TOOL_NAMES,
   runCliCommand
 } from "./helpers.js";
 import { setupE2ESuite, skipIfE2EUnavailable } from "./setup.js";
 
-const writeTest = isOptInEnabled("LINKEDIN_ENABLE_PUBLISHING_WRITE_E2E")
-  ? it
-  : it.skip;
+// Publishing tests require the LinkedIn article/newsletter editor which
+// needs interactive UI elements not present in fixture-replay pages.
+// Only run these against a live CDP session.
+const liveTest = isReplayModeEnabled() ? it.skip : it;
+
+// Write confirms additionally need an opt-in env var.  In replay mode
+// the editor is unavailable so skip regardless of the flag.
+const writeTest =
+  !isReplayModeEnabled() &&
+  isOptInEnabled("LINKEDIN_ENABLE_PUBLISHING_WRITE_E2E")
+    ? it
+    : it.skip;
 
 /**
  * Publishing E2E — articles and newsletters acid test.
@@ -27,7 +37,7 @@ describe.sequential("Publishing E2E — Articles & Newsletters", () => {
   const e2e = setupE2ESuite({ timeoutMs: 180_000 });
   const profileName = getDefaultProfileName();
 
-  it("lists newsletters via TypeScript API", async (context) => {
+  liveTest("lists newsletters via TypeScript API", async (context) => {
     skipIfE2EUnavailable(e2e, context);
     const runtime = e2e.runtime();
 
@@ -41,7 +51,7 @@ describe.sequential("Publishing E2E — Articles & Newsletters", () => {
     }
   }, 120_000);
 
-  it("lists newsletters via CLI", async (context) => {
+  liveTest("lists newsletters via CLI", async (context) => {
     skipIfE2EUnavailable(e2e, context);
 
     const result = await runCliCommand([
@@ -59,7 +69,7 @@ describe.sequential("Publishing E2E — Articles & Newsletters", () => {
     expect(Array.isArray(payload.newsletters)).toBe(true);
   }, 120_000);
 
-  it("lists newsletters via MCP", async (context) => {
+  liveTest("lists newsletters via MCP", async (context) => {
     skipIfE2EUnavailable(e2e, context);
 
     const result = await callMcpTool(MCP_TOOL_NAMES.newsletterList, {
@@ -74,7 +84,7 @@ describe.sequential("Publishing E2E — Articles & Newsletters", () => {
     });
   }, 120_000);
 
-  it("prepares article creation with meaningful preview via TypeScript API", async (context) => {
+  liveTest("prepares article creation with meaningful preview via TypeScript API", async (context) => {
     skipIfE2EUnavailable(e2e, context);
     const runtime = e2e.runtime();
 
@@ -111,7 +121,7 @@ describe.sequential("Publishing E2E — Articles & Newsletters", () => {
     expect(Array.isArray(prepared.preview.artifacts)).toBe(true);
   }, 120_000);
 
-  it("prepares article creation via CLI", async (context) => {
+  liveTest("prepares article creation via CLI", async (context) => {
     skipIfE2EUnavailable(e2e, context);
 
     const result = await runCliCommand([
@@ -136,7 +146,7 @@ describe.sequential("Publishing E2E — Articles & Newsletters", () => {
     });
   }, 120_000);
 
-  it("prepares article creation via MCP", async (context) => {
+  liveTest("prepares article creation via MCP", async (context) => {
     skipIfE2EUnavailable(e2e, context);
 
     const result = await callMcpTool(MCP_TOOL_NAMES.articlePrepareCreate, {
@@ -160,7 +170,7 @@ describe.sequential("Publishing E2E — Articles & Newsletters", () => {
     expect(preview).toHaveProperty("outbound");
   }, 120_000);
 
-  it("prepares newsletter creation with meaningful preview via TypeScript API", async (context) => {
+  liveTest("prepares newsletter creation with meaningful preview via TypeScript API", async (context) => {
     skipIfE2EUnavailable(e2e, context);
     const runtime = e2e.runtime();
 
@@ -187,7 +197,7 @@ describe.sequential("Publishing E2E — Articles & Newsletters", () => {
     expect(validation.cadence_label).toBe("Weekly");
   }, 120_000);
 
-  it("prepares newsletter creation via CLI", async (context) => {
+  liveTest("prepares newsletter creation via CLI", async (context) => {
     skipIfE2EUnavailable(e2e, context);
 
     const result = await runCliCommand([
@@ -213,7 +223,7 @@ describe.sequential("Publishing E2E — Articles & Newsletters", () => {
     });
   }, 120_000);
 
-  it("prepares newsletter creation via MCP", async (context) => {
+  liveTest("prepares newsletter creation via MCP", async (context) => {
     skipIfE2EUnavailable(e2e, context);
 
     const result = await callMcpTool(MCP_TOOL_NAMES.newsletterPrepareCreate, {
@@ -233,7 +243,7 @@ describe.sequential("Publishing E2E — Articles & Newsletters", () => {
     });
   }, 120_000);
 
-  it("prepares newsletter issue publication via MCP", async (context) => {
+  liveTest("prepares newsletter issue publication via MCP", async (context) => {
     skipIfE2EUnavailable(e2e, context);
     const runtime = e2e.runtime();
     const newsletters = await runtime.newsletters.list({ profileName });
@@ -274,7 +284,7 @@ describe.sequential("Publishing E2E — Articles & Newsletters", () => {
     });
   }, 120_000);
 
-  it("prepares article publish via MCP with a synthetic draft URL", async (context) => {
+  liveTest("prepares article publish via MCP with a synthetic draft URL", async (context) => {
     skipIfE2EUnavailable(e2e, context);
 
     // Uses a syntactically valid but nonexistent draft URL so the tool
