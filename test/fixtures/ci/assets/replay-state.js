@@ -712,6 +712,51 @@
     `;
   }
 
+  function renderSearchGroups() {
+    const root = document.querySelector("#replay-root");
+    const GROUP_ID = "9806731";
+    const GROUP_URL = `https://www.linkedin.com/groups/${GROUP_ID}/`;
+    root.innerHTML = `
+      <div class="reusable-search__result-container">
+        <a href="${GROUP_URL}">
+          <span>Software Engineering Community</span>
+          <span>Public group</span>
+          <span>15,432 members</span>
+          <span>A community for software engineers to share knowledge and best practices.</span>
+        </a>
+      </div>
+      <div class="reusable-search__result-container">
+        <a href="https://www.linkedin.com/groups/1234567/">
+          <span>Tech Leaders Network</span>
+          <span>Private listed group</span>
+          <span>8,200 members</span>
+          <span>Join</span>
+          <span>Connect with technology leaders worldwide.</span>
+        </a>
+      </div>
+    `;
+  }
+
+  function renderGroupView() {
+    const root = document.querySelector("#replay-root");
+    const GROUP_ID = "9806731";
+    root.innerHTML = `
+      <main class="scaffold-layout__main">
+        <div class="groups-details-view" data-group-id="${GROUP_ID}">
+          <h1>Software Engineering Community</h1>
+          <span>Public group</span>
+          <span>15,432 members</span>
+          <div>
+            <button class="groups-action-dropdown__trigger">More</button>
+          </div>
+          <h2>About this group</h2>
+          <div>A community for software engineers to share knowledge, discuss best practices, and grow their careers together.</div>
+          <div>Start a post in this group</div>
+        </div>
+      </main>
+    `;
+  }
+
   function renderJobsSearch() {
     const root = document.querySelector("#replay-root");
     root.innerHTML = `
@@ -993,6 +1038,16 @@
 
     if (normalizedPath === "/jobs/job-alerts/") {
       renderJobAlerts();
+      return;
+    }
+
+    if (normalizedPath === "/search/results/groups/") {
+      renderSearchGroups();
+      return;
+    }
+
+    if (normalizedPath.startsWith("/groups/")) {
+      renderGroupView();
       return;
     }
 

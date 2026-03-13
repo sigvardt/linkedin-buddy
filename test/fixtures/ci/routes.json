@@ -259,6 +259,26 @@
       },
       "bodyPath": "pages/app.html",
       "pageType": "connections"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.linkedin.com/search/results/groups/?keywords=software%20engineering",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8"
+      },
+      "bodyPath": "pages/app.html",
+      "pageType": "search"
+    },
+    {
+      "method": "GET",
+      "url": "https://www.linkedin.com/groups/9806731/",
+      "status": 200,
+      "headers": {
+        "content-type": "text/html; charset=utf-8"
+      },
+      "bodyPath": "pages/app.html",
+      "pageType": "search"
     }
   ]
 }
