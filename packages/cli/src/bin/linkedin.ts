@@ -8443,6 +8443,116 @@ async function runGroupsPreparePost(
   }
 }
 
+async function runEventsSearch(
+  input: {
+    profileName: string;
+    query: string;
+    limit: number;
+  },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.events.search.start", {
+      profileName: input.profileName,
+      query: input.query,
+      limit: input.limit,
+    });
+
+    const result = await runtime.events.searchEvents({
+      profileName: input.profileName,
+      query: input.query,
+      limit: input.limit,
+    });
+
+    runtime.logger.log("info", "cli.events.search.done", {
+      profileName: input.profileName,
+      count: result.count,
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...result,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runEventsView(
+  input: {
+    profileName: string;
+    event: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.events.view.start", {
+      profileName: input.profileName,
+      event: input.event,
+    });
+
+    const eventDetails = await runtime.events.viewEvent({
+      profileName: input.profileName,
+      event: input.event,
+    });
+
+    runtime.logger.log("info", "cli.events.view.done", {
+      profileName: input.profileName,
+      eventId: eventDetails.event_id,
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      event: eventDetails,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runEventsPrepareRsvp(
+  input: {
+    profileName: string;
+    event: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.events.prepare_rsvp.start", {
+      profileName: input.profileName,
+      event: input.event,
+    });
+
+    const prepared = runtime.events.prepareRsvp({
+      profileName: input.profileName,
+      event: input.event,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
+    });
+
+    runtime.logger.log("info", "cli.events.prepare_rsvp.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId,
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 async function runJobsSearch(
   input: {
     profileName: string;
@@ -11669,6 +11779,72 @@ export function createCliProgram(): Command {
             profileName: options.profile,
             group,
             text: options.text,
+            ...(options.operatorNote
+              ? { operatorNote: options.operatorNote }
+              : {}),
+          },
+          readCdpUrl(),
+        );
+      },
+    );
+
+  const eventsCommand = program
+    .command("events")
+    .description(
+      "Search, view, and RSVP to LinkedIn events",
+    );
+
+  eventsCommand
+    .command("search")
+    .description("Search LinkedIn events by keyword")
+    .requiredOption("-q, --query <query>", "Search keywords for LinkedIn events")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-l, --limit <limit>", "Maximum number of results", "10")
+    .action(
+      async (options: { profile: string; query: string; limit: string }) => {
+        await runEventsSearch(
+          {
+            profileName: options.profile,
+            query: options.query,
+            limit: parseInt(options.limit, 10) || 10,
+          },
+          readCdpUrl(),
+        );
+      },
+    );
+
+  eventsCommand
+    .command("view")
+    .description("View details of a LinkedIn event")
+    .argument("<event>", "LinkedIn event URL or numeric event ID")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(
+      async (event: string, options: { profile: string }) => {
+        await runEventsView(
+          {
+            profileName: options.profile,
+            event,
+          },
+          readCdpUrl(),
+        );
+      },
+    );
+
+  eventsCommand
+    .command("rsvp")
+    .description("Prepare to RSVP attend for a LinkedIn event (two-phase)")
+    .argument("<event>", "LinkedIn event URL or numeric event ID")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-o, --operator-note <note>", "Optional operator note")
+    .action(
+      async (
+        event: string,
+        options: { profile: string; operatorNote?: string },
+      ) => {
+        await runEventsPrepareRsvp(
+          {
+            profileName: options.profile,
+            event,
             ...(options.operatorNote
               ? { operatorNote: options.operatorNote }
               : {}),
