@@ -2050,7 +2050,12 @@ async function extractProfileData(
       root: ParentNode = globalThis.document
     ): string => {
       for (const selector of selectors) {
-        const text = normalize(root.querySelector(selector)?.textContent);
+        const el = root.querySelector(selector);
+        if (!el) {
+          continue;
+        }
+        const ariaHidden = el.querySelector("span[aria-hidden='true']");
+        const text = normalize((ariaHidden ?? el).textContent);
         if (text) {
           return text;
         }

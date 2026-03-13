@@ -633,7 +633,14 @@ async function extractFeedPosts(
 
       const pickText = (selectors: string[], root: ParentNode): string => {
         for (const selector of selectors) {
-          const text = normalize(root.querySelector(selector)?.textContent);
+          const el = root.querySelector(selector);
+          if (!el) {
+            continue;
+          }
+          // Prefer aria-hidden span to avoid double-read from paired
+          // visible / screen-reader spans that LinkedIn renders.
+          const ariaHidden = el.querySelector("span[aria-hidden='true']");
+          const text = normalize((ariaHidden ?? el).textContent);
           if (text) {
             return text;
           }
