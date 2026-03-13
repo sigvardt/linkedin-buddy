@@ -4144,6 +4144,50 @@ async function openIntroEditSurface(
   );
 }
 
+// Threshold ≥ 2: the dialog shell always has at least a dismiss button, so
+// we need 2+ interactive elements to confirm section entries have loaded.
+const ADD_SECTION_DIALOG_MIN_INTERACTIVE_ELEMENTS = 2;
+
+// LinkedIn fetches section list asynchronously — shell (title + spinner)
+// appears well before buttons render, so we allow up to 15s for content.
+const ADD_SECTION_DIALOG_CONTENT_TIMEOUT_MS = 15_000;
+const ADD_SECTION_DIALOG_POLL_INTERVAL_MS = 250;
+
+async function waitForAddSectionDialogContent(
+  dialog: Locator,
+  timeoutMs: number = ADD_SECTION_DIALOG_CONTENT_TIMEOUT_MS
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  const interactiveSelector = "button, a, [role='button'], li";
+
+  while (Date.now() < deadline) {
+    const elements = dialog.locator(interactiveSelector);
+    let visibleCount = 0;
+
+    const total = await elements.count().catch(() => 0);
+    for (let i = 0; i < total && visibleCount < ADD_SECTION_DIALOG_MIN_INTERACTIVE_ELEMENTS; i += 1) {
+      if (await elements.nth(i).isVisible().catch(() => false)) {
+        visibleCount += 1;
+      }
+    }
+
+    if (visibleCount >= ADD_SECTION_DIALOG_MIN_INTERACTIVE_ELEMENTS) {
+      return;
+    }
+
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, ADD_SECTION_DIALOG_POLL_INTERVAL_MS);
+    });
+  }
+
+  throw new LinkedInBuddyError(
+    "TIMEOUT",
+    `The "Add to profile" dialog opened but its content never loaded ` +
+      `(waited ${timeoutMs}ms). This can happen when LinkedIn loads the ` +
+      `section list asynchronously and the request is slow or blocked.`
+  );
+}
+
 async function openGlobalAddSectionDialog(
   page: Page,
   selectorLocale: LinkedInSelectorLocale
@@ -4175,7 +4219,9 @@ async function openGlobalAddSectionDialog(
     );
   }
 
-  return clickLocatorAndWaitForDialog(page, resolved.locator);
+  const dialog = await clickLocatorAndWaitForDialog(page, resolved.locator);
+  await waitForAddSectionDialogContent(dialog);
+  return dialog;
 }
 
 async function openSectionCreateDialog(
