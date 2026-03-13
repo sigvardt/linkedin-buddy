@@ -30,6 +30,7 @@ import {
   AssistantDatabase,
   alignToBusinessHours,
   asLinkedInBuddyError,
+  computeEffectiveStatus,
   exportSessionState,
   hasLinkedInSessionToken,
   importSessionState,
@@ -44,6 +45,7 @@ import {
   FEEDBACK_TYPES,
   formatFeedbackDisplayPath,
   getLinkedInSelectorLocaleConfigWarning,
+  isPreparedActionEffectiveStatus,
   isSearchCategory,
   isInRateLimitCooldown,
   isLinkedInFixtureReplayUrl,
@@ -56,6 +58,7 @@ import {
   LINKEDIN_PRIVACY_SETTING_KEYS,
   LINKEDIN_SELECTOR_LOCALES,
   LINKEDIN_WRITE_VALIDATION_ACTIONS,
+  PREPARED_ACTION_EFFECTIVE_STATUSES,
   SEARCH_CATEGORIES,
   LinkedInBuddyError,
   LinkedInSchedulerService,
@@ -113,6 +116,7 @@ import {
   type LinkedInReadOnlyValidationOperation,
   type LinkedInReplayPageType,
   type LocalDataDeletionFailure,
+  type PreparedActionEffectiveStatus,
   type ReadOnlyValidationReport,
   type SchedulerConfig,
   type SchedulerJobRow,
@@ -346,6 +350,17 @@ function coerceProfileName(value: string, label: string = "profile"): string {
   }
 
   return normalized;
+}
+
+function coerceActionStatus(value: string): PreparedActionEffectiveStatus {
+  if (isPreparedActionEffectiveStatus(value)) {
+    return value;
+  }
+
+  throw new LinkedInBuddyError(
+    "ACTION_PRECONDITION_FAILED",
+    `status must be one of: ${PREPARED_ACTION_EFFECTIVE_STATUSES.join(", ")}.`,
+  );
 }
 
 function printJson(value: unknown): void {
@@ -8565,6 +8580,75 @@ async function runDraftQualityAudit(input: {
   }
 }
 
+async function runActionsList(
+  input: {
+    status?: PreparedActionEffectiveStatus;
+    limit: number;
+  },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.actions.list.start", {
+      ...(input.status ? { status: input.status } : {}),
+      limit: input.limit,
+    });
+
+    const actions = runtime.twoPhaseCommit.listPreparedActions({
+      ...(input.status ? { status: input.status } : {}),
+      limit: input.limit,
+    });
+
+    runtime.logger.log("info", "cli.actions.list.done", {
+      count: actions.length,
+      ...(input.status ? { status: input.status } : {}),
+      limit: input.limit,
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      count: actions.length,
+      actions,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runActionsShow(
+  input: {
+    id: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.actions.show.start", {
+      id: input.id,
+    });
+
+    const action = runtime.twoPhaseCommit.getPreparedAction(input.id);
+    const effectiveStatus = computeEffectiveStatus(action.status, action.expiresAtMs);
+
+    runtime.logger.log("info", "cli.actions.show.done", {
+      id: action.id,
+      effectiveStatus,
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      action: {
+        ...action,
+        effectiveStatus,
+      },
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 function readTargetProfileName(
   target: Record<string, unknown>,
 ): string | undefined {
@@ -12017,6 +12101,43 @@ export function createCliProgram(): Command {
             profileName: options.profile,
             token: options.token,
             yes: options.yes,
+          },
+          readCdpUrl(),
+        );
+      },
+    );
+
+  actionsCommand
+    .command("list")
+    .description("List prepared actions")
+    .option(
+      "--status <status>",
+      `Filter by effective status: ${PREPARED_ACTION_EFFECTIVE_STATUSES.join(", ")}`,
+    )
+    .option("-l, --limit <limit>", "Max actions to show", "20")
+    .action(
+      async (options: { status?: string; limit: string }) => {
+        await runActionsList(
+          {
+            limit: coercePositiveInt(options.limit, "limit"),
+            ...(options.status
+              ? { status: coerceActionStatus(options.status) }
+              : {}),
+          },
+          readCdpUrl(),
+        );
+      },
+    );
+
+  actionsCommand
+    .command("show")
+    .description("Show details of a prepared action")
+    .requiredOption("--id <id>", "Prepared action ID (pa_...)")
+    .action(
+      async (options: { id: string }) => {
+        await runActionsShow(
+          {
+            id: options.id,
           },
           readCdpUrl(),
         );
