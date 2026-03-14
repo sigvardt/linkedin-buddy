@@ -185,6 +185,14 @@ export function wrapLinkedInPage(
   return wrappedPage;
 }
 
+/**
+ * Return the raw Playwright page underlying a wrapped LinkedIn page.
+ * If the page was never wrapped, it is returned unchanged.
+ */
+export function unwrapLinkedInPage(page: Page): Page {
+  return (rawPageByWrapped.get(page as object) as Page | undefined) ?? page;
+}
+
 /** Scroll the current LinkedIn page by `pixels` using the evasion session when available. */
 export async function scrollLinkedInPageBy(page: Page, pixels: number): Promise<void> {
   const normalizedPixels = normalizeFiniteNumber(pixels);

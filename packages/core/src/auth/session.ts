@@ -3,7 +3,7 @@ import type { BrowserContext, Page } from "playwright-core";
 import { resolveEvasionConfig, type EvasionConfig } from "../config.js";
 import { detectCaptcha } from "../evasion/browser.js";
 import { LinkedInBuddyError } from "../errors.js";
-import { attachHumanizeLogger, detachHumanizeLogger } from "../humanize.js";
+import { unwrapLinkedInPage } from "../linkedinPage.js";
 import type { JsonEventLogger } from "../logging.js";
 import { ProfileManager } from "../profileManager.js";
 import {
@@ -592,21 +592,16 @@ export class LinkedInAuthService {
           }
         }
 
-        if (this.logger) {
-          attachHumanizeLogger(page, this.logger);
+        // Bypass the humanized typing wrapper for credentials - typo
+        // injection and missed-shift simulation corrupt passwords.
+        const rawPage = unwrapLinkedInPage(page);
+        if (emailInputVisible) {
+          await rawPage.type(LINKEDIN_LOGIN_EMAIL_INPUT_SELECTOR, options.email);
         }
-
-        try {
-          if (emailInputVisible) {
-            await page.type(LINKEDIN_LOGIN_EMAIL_INPUT_SELECTOR, options.email);
-          }
-          await page.type(
-            LINKEDIN_LOGIN_PASSWORD_INPUT_SELECTOR,
-            options.password,
-          );
-        } finally {
-          detachHumanizeLogger(page);
-        }
+        await rawPage.type(
+          LINKEDIN_LOGIN_PASSWORD_INPUT_SELECTOR,
+          options.password,
+        );
 
         const signInButton = page.locator(
           "button[type='submit'][data-litms-control-urn='login-submit'], button[type='submit']:has-text('Sign in')",
