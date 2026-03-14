@@ -902,6 +902,19 @@ async function executeSendInvitation(
         "send",
         runtime.selectorLocale
       );
+      const sendNowRegex = buildLinkedInSelectorPhraseRegex(
+        "send_now",
+        runtime.selectorLocale
+      );
+      const sendNowRegexHint = formatLinkedInSelectorRegexHint(
+        "send_now",
+        runtime.selectorLocale
+      );
+      const sendNowAriaSelector = buildLinkedInAriaLabelContainsSelector(
+        "button",
+        "send_now",
+        runtime.selectorLocale
+      );
       const pendingRegex = buildLinkedInSelectorPhraseRegex(
         ["pending", "withdraw"],
         runtime.selectorLocale
@@ -1085,7 +1098,12 @@ async function executeSendInvitation(
       ];
 
       const dialogLocator = page
-        .locator("[role='dialog']")
+        .locator(
+          ".artdeco-modal.send-invite, " +
+            ".artdeco-modal:has(button[aria-label*='note' i]), " +
+            ".artdeco-modal:has(button[aria-label*='Send' i]), " +
+            "[role='dialog']:not(.vjs-modal-dialog):not(.vjs-hidden)"
+        )
         .first();
       const dialogAppeared = await dialogLocator
         .waitFor({ state: "visible", timeout: 5_000 })
@@ -1153,6 +1171,22 @@ async function executeSendInvitation(
 
       const addNoteCandidates: VisibleLocatorCandidate[] = [
         {
+          key: "add-note-dialog-aria-label",
+          selectorHint: "dialog button[aria-label*='Add a note' i]",
+          locatorFactory: () =>
+            dialogLocator.locator("button[aria-label*='note' i]").filter({
+              hasText: addNoteRegex
+            })
+        },
+        {
+          key: "add-note-dialog-role",
+          selectorHint: `dialog.getByRole(button, ${addNoteRegexHint})`,
+          locatorFactory: () =>
+            dialogLocator.getByRole("button", {
+              name: addNoteRegex
+            })
+        },
+        {
           key: "add-note-dialog-text",
           selectorHint: `dialog button hasText ${addNoteRegexHint}`,
           locatorFactory: () =>
@@ -1177,6 +1211,11 @@ async function executeSendInvitation(
       ];
 
       const noteFieldCandidates: VisibleLocatorCandidate[] = [
+        {
+          key: "note-dialog-textarea-role",
+          selectorHint: "dialog.getByRole(textbox)",
+          locatorFactory: () => dialogLocator.getByRole("textbox")
+        },
         {
           key: "note-dialog-textarea-name",
           selectorHint: "dialog textarea[name='message']",
@@ -1247,6 +1286,23 @@ async function executeSendInvitation(
 
       const sendCandidates: VisibleLocatorCandidate[] = [
         {
+          key: "send-dialog-artdeco-primary",
+          selectorHint: "dialog button.artdeco-button--primary",
+          locatorFactory: () =>
+            dialogLocator.locator("button.artdeco-button--primary")
+        },
+        {
+          key: "send-dialog-send-now-text",
+          selectorHint: `dialog button hasText ${sendNowRegexHint}`,
+          locatorFactory: () =>
+            dialogLocator.locator("button").filter({ hasText: sendNowRegex })
+        },
+        {
+          key: "send-dialog-send-now-aria",
+          selectorHint: `dialog ${sendNowAriaSelector}`,
+          locatorFactory: () => dialogLocator.locator(sendNowAriaSelector)
+        },
+        {
           key: "send-dialog-role",
           selectorHint: `dialog.getByRole(button, ${sendExactRegexHint})`,
           locatorFactory: () =>
@@ -1301,6 +1357,23 @@ async function executeSendInvitation(
           selectorHint: `button hasText ${sendWithoutNoteRegexHint}`,
           locatorFactory: (targetPage) =>
             targetPage.locator("button").filter({ hasText: sendWithoutNoteRegex })
+        },
+        {
+          key: "send-now-text",
+          selectorHint: `button hasText ${sendNowRegexHint}`,
+          locatorFactory: (targetPage) =>
+            targetPage.locator("button").filter({ hasText: sendNowRegex })
+        },
+        {
+          key: "send-now-aria",
+          selectorHint: sendNowAriaSelector,
+          locatorFactory: (targetPage) => targetPage.locator(sendNowAriaSelector)
+        },
+        {
+          key: "send-artdeco-primary",
+          selectorHint: "div.send-invite button.artdeco-button--primary",
+          locatorFactory: (targetPage) =>
+            targetPage.locator("div.send-invite button.artdeco-button--primary")
         }
       ];
 

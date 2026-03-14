@@ -159,6 +159,7 @@ export type LinkedInSelectorPhraseKey =
   | "save"
   | "share"
   | "send"
+  | "send_now"
   | "send_without_note"
   | "start_post"
   | "support"
@@ -228,6 +229,7 @@ const ENGLISH_SELECTOR_PHRASES: SelectorPhraseDictionary = {
   save: ["Save"],
   share: ["Share"],
   send: ["Send"],
+  send_now: ["Send now"],
   send_without_note: ["Send without a note"],
   start_post: ["Start a post"],
   support: ["Support"],
@@ -288,6 +290,7 @@ const DANISH_SELECTOR_PHRASE_OVERRIDES: SelectorPhraseOverrides = {
   resources: ["Ressourcer"],
   respond: ["Svar"],
   save: ["Gem"],
+  send_now: ["Send nu"],
   send_without_note: ["Send uden note", "Send uden en note"],
   start_post: ["Start et opslag", "Start et indlæg"],
   support: ["Støt", "Støtter"],
