@@ -714,7 +714,8 @@ export class LinkedInAuthService {
 
             if (checkpointType === "verification_code") {
               if (options.mfaCode && !mfaCodeSubmitted) {
-                const codeInput = page.locator(
+                // Use raw page to bypass humanized typing for MFA codes.
+                const codeInput = rawPage.locator(
                   "input[name='pin'], input#input__phone_verification_pin, input[name*='verification'], input[name*='code']",
                 );
                 await codeInput.first().fill(options.mfaCode);
@@ -743,7 +744,8 @@ export class LinkedInAuthService {
               } else if (!mfaCodeSubmitted && options.mfaCallback) {
                 const interactiveCode = await options.mfaCallback();
                 if (interactiveCode) {
-                  const codeInput = page.locator(
+                  // Use raw page to bypass humanized typing for MFA codes.
+                  const codeInput = rawPage.locator(
                     "input[name='pin'], input#input__phone_verification_pin, input[name*='verification'], input[name*='code']",
                   );
                   await codeInput.first().fill(interactiveCode);
