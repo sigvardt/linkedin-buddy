@@ -3,7 +3,7 @@ import { LinkedInBuddyError, asLinkedInBuddyError } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
-import { normalizeText, getOrCreatePage } from "./shared.js";
+import { normalizeText, dedupeRepeatedText, cleanPostedAt, getOrCreatePage } from "./shared.js";
 
 export interface LinkedInSearchResult {
   name: string;
@@ -783,10 +783,10 @@ export class LinkedInSearchService {
 
       const results = snapshots
         .map((snapshot) => ({
-          title: normalizeText(snapshot.title),
+          title: dedupeRepeatedText(snapshot.title),
           company: normalizeText(snapshot.company),
           location: normalizeText(snapshot.location),
-          posted_at: normalizeText(snapshot.posted_at),
+          posted_at: cleanPostedAt(snapshot.posted_at),
           job_url: normalizeText(snapshot.job_url),
           salary_range: normalizeText(snapshot.salary_range),
           employment_type: normalizeText(snapshot.employment_type)
@@ -968,9 +968,9 @@ export class LinkedInSearchService {
 
       const results = snapshots
         .map((snapshot) => ({
-          author: normalizeText(snapshot.author),
-          author_headline: normalizeText(snapshot.author_headline),
-          posted_at: normalizeText(snapshot.posted_at),
+          author: dedupeRepeatedText(snapshot.author),
+          author_headline: dedupeRepeatedText(snapshot.author_headline),
+          posted_at: cleanPostedAt(snapshot.posted_at),
           text: normalizeText(snapshot.text),
           post_url: normalizeText(snapshot.post_url),
           reaction_count: normalizeText(snapshot.reaction_count),

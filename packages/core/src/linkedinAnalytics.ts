@@ -5,7 +5,7 @@ import type { LinkedInFeedService } from "./linkedinFeed.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
-import { normalizeText, getOrCreatePage, isAbsoluteUrl } from "./shared.js";
+import { normalizeText, dedupeRepeatedText, cleanPostedAt, getOrCreatePage, isAbsoluteUrl } from "./shared.js";
 
 export const LINKEDIN_ANALYTICS_SURFACES = [
   "profile_views",
@@ -777,9 +777,9 @@ export class LinkedInAnalyticsService {
         post: {
           post_id: normalizeText(post.post_id),
           post_url: normalizeText(post.post_url),
-          author_name: normalizeText(post.author_name),
-          author_headline: normalizeText(post.author_headline),
-          posted_at: normalizeText(post.posted_at),
+          author_name: dedupeRepeatedText(post.author_name),
+          author_headline: dedupeRepeatedText(post.author_headline),
+          posted_at: cleanPostedAt(post.posted_at),
           text: normalizeText(post.text),
         },
       };

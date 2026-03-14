@@ -34,6 +34,8 @@ import {
 } from "./selectorLocale.js";
 import {
   normalizeText,
+  dedupeRepeatedText,
+  cleanPostedAt,
   getOrCreatePage,
   escapeCssAttributeValue,
   isAbsoluteUrl,
@@ -449,10 +451,10 @@ function toFeedPost(snapshot: FeedPostSnapshot): LinkedInFeedPost {
 
   return {
     post_id: postId,
-    author_name: normalizeText(snapshot.author_name),
-    author_headline: normalizeText(snapshot.author_headline),
+    author_name: dedupeRepeatedText(snapshot.author_name),
+    author_headline: dedupeRepeatedText(snapshot.author_headline),
     author_profile_url: normalizeText(snapshot.author_profile_url),
-    posted_at: normalizeText(snapshot.posted_at),
+    posted_at: cleanPostedAt(snapshot.posted_at),
     text: normalizeText(snapshot.text),
     reactions_count: normalizeText(snapshot.reactions_count),
     comments_count: normalizeText(snapshot.comments_count),

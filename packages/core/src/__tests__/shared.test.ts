@@ -2,6 +2,7 @@ import type { BrowserContext, Locator, Page } from "playwright-core";
 import { describe, expect, it, vi } from "vitest";
 import {
   buildTextRegex,
+  cleanPostedAt,
   dedupeRepeatedText,
   dedupePhrases,
   escapeCssAttributeValue,
@@ -172,6 +173,65 @@ describe("shared", () => {
 
       expect(newPage).toHaveBeenCalledTimes(1);
       expect(result).toBe(createdPage);
+    });
+  });
+
+  describe("cleanPostedAt", () => {
+    it("returns empty string for falsy input", () => {
+      expect(cleanPostedAt(null)).toBe("");
+      expect(cleanPostedAt(undefined)).toBe("");
+      expect(cleanPostedAt("")).toBe("");
+    });
+
+    it("passes through clean time-ago strings", () => {
+      expect(cleanPostedAt("7 hours ago")).toBe("7 hours ago");
+      expect(cleanPostedAt("2 days ago")).toBe("2 days ago");
+      expect(cleanPostedAt("1 month ago")).toBe("1 month ago");
+    });
+
+    it("extracts specific time from concatenated time + category label", () => {
+      expect(cleanPostedAt("7 hours ago Within the past 24 hours"))
+        .toBe("7 hours ago");
+      expect(cleanPostedAt("2 days ago Past week"))
+        .toBe("2 days ago");
+    });
+
+    it("deduplicates doubled timestamps before extraction", () => {
+      expect(cleanPostedAt("3 days ago3 days ago")).toBe("3 days ago");
+      expect(cleanPostedAt("1 hour ago 1 hour ago")).toBe("1 hour ago");
+    });
+
+    it("handles short time tokens", () => {
+      expect(cleanPostedAt("2d")).toBe("2d");
+      expect(cleanPostedAt("3w")).toBe("3w");
+    });
+
+    it("extracts short time token from noisy text", () => {
+      expect(cleanPostedAt("2d some extra text")).toBe("2d");
+    });
+
+    it("preserves non-time text as-is", () => {
+      expect(cleanPostedAt("Reposted")).toBe("Reposted");
+      expect(cleanPostedAt("Just now")).toBe("Just now");
+    });
+  });
+
+  describe("dedupeRepeatedText — issue #480 regression cases", () => {
+    it("deduplicates author headline", () => {
+      expect(dedupeRepeatedText(
+        "Personal Assistant to Director at SignikantPersonal Assistant to Director at Signikant"
+      )).toBe("Personal Assistant to Director at Signikant");
+    });
+
+    it("deduplicates job title with prefix pattern", () => {
+      expect(dedupeRepeatedText("Developer Developer with verification"))
+        .toBe("Developer with verification");
+    });
+
+    it("deduplicates job title with exact halves", () => {
+      expect(dedupeRepeatedText(
+        "Software Engineer (C++) - RemoteSoftware Engineer (C++) - Remote"
+      )).toBe("Software Engineer (C++) - Remote");
     });
   });
 
