@@ -355,15 +355,23 @@ export function createCoreRuntime(
     import("./twoPhaseCommit.js").ActionExecutor<LinkedInMessagingRuntime>
   >;
   const testEchoExecutor = new TestEchoActionExecutor<LinkedInMessagingRuntime>();
-  const sessionGuard = options.sessionGuard !== false
-    ? createSessionGuard(
-        { logger },
-        {
-          ...(options.baseDir !== undefined ? { baseDir: options.baseDir } : {}),
-          ...(typeof options.sessionGuard === "object" ? options.sessionGuard : {})
-        }
-      )
-    : undefined;
+  // Auto-disable session guard in fixture replay mode: there is no real
+  // browser session so the stored-cookie health check cannot succeed.
+  const fixtureReplayActive =
+    process.env.LINKEDIN_E2E_REPLAY === "1" ||
+    process.env.LINKEDIN_E2E_REPLAY === "true";
+  const sessionGuard =
+    options.sessionGuard !== false && !fixtureReplayActive
+      ? createSessionGuard(
+          { logger },
+          {
+            ...(options.baseDir !== undefined ? { baseDir: options.baseDir } : {}),
+            ...(typeof options.sessionGuard === "object"
+              ? options.sessionGuard
+              : {})
+          }
+        )
+      : undefined;
   const twoPhaseCommit = new TwoPhaseCommitService<LinkedInMessagingRuntime>(db, {
     privacy,
     executors: {
