@@ -251,4 +251,97 @@ describe("privacy", () => {
       expect(transform).toHaveBeenCalledOnce();
     });
   });
+
+  describe("false-positive name detection (issue #477)", () => {
+    /**
+     * Helper: run text through the message-text redaction path by wrapping it
+     * in a structure whose key ("text") is in MESSAGE_KEYS.  Using
+     * redactionMode "off" avoids excerpt truncation so we can inspect the
+     * full sanitised string.
+     */
+    function redactMessageText(text: string): string {
+      const output = redactStructuredValue(
+        { messages: [{ text }] },
+        config("off"),
+        "cli",
+      );
+      return String(
+        (output.messages as Array<{ text: string }>)[0]?.text,
+      );
+    }
+
+    it("does not redact common words that look like capitalised pairs", () => {
+      const result = redactMessageText(
+        "Between AI startups and sustainable innovation",
+      );
+      expect(result).not.toContain("person#");
+      expect(result).toContain("Between AI");
+    });
+
+    it("does not redact greeting + city name", () => {
+      const result = redactMessageText(
+        "Fellow Copenhagen tech enthusiast here",
+      );
+      expect(result).not.toContain("person#");
+      expect(result).toContain("Fellow Copenhagen");
+    });
+
+    it("does not redact ALL-CAPS acronyms paired with other words", () => {
+      const result = redactMessageText(
+        "The CEO announced an AI Strategy today",
+      );
+      expect(result).not.toContain("person#");
+      expect(result).toContain("CEO");
+      expect(result).toContain("AI Strategy");
+    });
+
+    it("does not redact professional terms paired with capitalised words", () => {
+      const result = redactMessageText(
+        "Senior Engineer at Global Marketing",
+      );
+      expect(result).not.toContain("person#");
+    });
+
+    it("does not redact geographic names paired with other words", () => {
+      const result = redactMessageText(
+        "Based Stockholm with Looking Forward attitude",
+      );
+      expect(result).not.toContain("person#");
+    });
+
+    it("still redacts actual person names", () => {
+      const result = redactMessageText("Contact Jane Doe for details");
+      expect(result).toContain("person#");
+      expect(result).not.toContain("Jane Doe");
+    });
+
+    it("redacts real name after skipping a false-positive first word", () => {
+      const result = redactMessageText("Hello Jane Doe from Copenhagen");
+      expect(result).toContain("person#");
+      expect(result).not.toContain("Jane Doe");
+      // "Hello" should survive — it is NOT a name
+      expect(result).toContain("Hello");
+      // "Copenhagen" should survive — it is a city, not a name
+      expect(result).toContain("Copenhagen");
+    });
+
+    it("redacts multiple real names in the same text", () => {
+      const result = redactMessageText(
+        "Met Jane Doe and Simon Miller at the event",
+      );
+      expect(result).not.toContain("Jane Doe");
+      expect(result).not.toContain("Simon Miller");
+      // Two separate person# tokens
+      const personTokens = result.match(/person#/g);
+      expect(personTokens).toHaveLength(2);
+    });
+
+    it("does not redact when both words are false positives", () => {
+      const result = redactMessageText(
+        "Looking Forward to our next meeting",
+      );
+      expect(result).not.toContain("person#");
+    });
+  });
+
 });
