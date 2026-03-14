@@ -61,6 +61,7 @@
     "@vitest/coverage-v8": "^4.0.18",
     "eslint": "^10.0.3",
     "globals": "^17.4.0",
+    "playwright-core": "npm:patchright-core@^1.58.0",
     "typescript": "^5.8.2",
     "vitest": "^4.0.18"
   }
