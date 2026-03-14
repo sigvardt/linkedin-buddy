@@ -3528,9 +3528,22 @@ async function canRecoverOwnProfileNavigationTimeout(page: Page): Promise<boolea
 }
 
 async function waitForVisibleDialog(page: Page): Promise<Locator> {
-  const dialog = page.locator(PROFILE_DIALOG_ROOT_SELECTOR).last();
-  await dialog.waitFor({ state: "visible", timeout: 10_000 });
-  return dialog;
+  const deadline = Date.now() + 10_000;
+
+  while (Date.now() < deadline) {
+    const resolved = await resolveLatestVisibleDialog(page);
+    if (resolved) {
+      return resolved;
+    }
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 200);
+    });
+  }
+
+  // Final attempt — throw if nothing visible.
+  const fallback = page.locator(PROFILE_DIALOG_ROOT_SELECTOR).last();
+  await fallback.waitFor({ state: "visible", timeout: 1_000 });
+  return fallback;
 }
 
 async function resolveLatestVisibleDialog(page: Page): Promise<Locator | null> {
@@ -3633,9 +3646,26 @@ async function waitForVisibleProfileIntroEditorSurface(
 }
 
 async function waitForVisibleOverlay(page: Page): Promise<Locator> {
-  const overlay = page.locator("[role='dialog'], [role='menu']").last();
-  await overlay.waitFor({ state: "visible", timeout: 10_000 });
-  return overlay;
+  const selector = "[role='dialog'], [role='menu']";
+  const deadline = Date.now() + 10_000;
+
+  while (Date.now() < deadline) {
+    const overlays = page.locator(selector);
+    const count = await overlays.count().catch(() => 0);
+    for (let index = count - 1; index >= 0; index -= 1) {
+      const candidate = overlays.nth(index);
+      if (await candidate.isVisible().catch(() => false)) {
+        return candidate;
+      }
+    }
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 200);
+    });
+  }
+
+  const fallback = page.locator(selector).last();
+  await fallback.waitFor({ state: "visible", timeout: 1_000 });
+  return fallback;
 }
 
 async function clickLocatorAndWaitForDialog(
@@ -4252,6 +4282,13 @@ async function openSectionCreateDialog(
   }
 
   const addSectionDialog = await openGlobalAddSectionDialog(page, selectorLocale);
+
+  await addSectionDialog
+    .locator("button, a, li, [role='button'], [role='link']")
+    .first()
+    .waitFor({ state: "visible", timeout: 10_000 })
+    .catch(() => undefined);
+
   const sectionLabels = getSectionLabels(section, selectorLocale);
   const sectionTextRegex = buildTextRegex(sectionLabels);
   const sectionCandidates: LocatorCandidate[] = [
