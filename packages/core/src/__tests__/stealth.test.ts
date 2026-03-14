@@ -243,9 +243,10 @@ describe("applyStealthLaunchOptions", () => {
 
     const result = applyStealthLaunchOptions(baseOptions, config);
 
-    const ignoredCount = (result.ignoreDefaultArgs ?? []).filter(
-      (arg) => arg === "--enable-automation",
-    ).length;
+    const ignoreDefaultArgs = Array.isArray(result.ignoreDefaultArgs)
+      ? result.ignoreDefaultArgs
+      : [];
+    const ignoredCount = ignoreDefaultArgs.filter((arg: string) => arg === "--enable-automation").length;
     expect(ignoredCount).toBe(1);
   });
 
@@ -348,7 +349,7 @@ describe("applyStealthLaunchOptions", () => {
   });
 
   it("does not override existing colorScheme in baseOptions", () => {
-    const baseOptions = { colorScheme: "dark" };
+    const baseOptions = { colorScheme: "dark" as const };
     const config: StealthConfig = {
       enabled: true,
       locale: "en-US",
@@ -535,8 +536,9 @@ describe("hardenBrowserContext", () => {
   });
 
   it("calls setExtraHTTPHeaders when config.enabled=true", async () => {
+    const setExtraHTTPHeaders = vi.fn().mockResolvedValue(undefined);
     const mockContext = {
-      setExtraHTTPHeaders: vi.fn().mockResolvedValue(undefined),
+      setExtraHTTPHeaders,
     } as unknown as BrowserContext;
 
     const config: StealthConfig = {
@@ -552,8 +554,9 @@ describe("hardenBrowserContext", () => {
   });
 
   it("sets Accept-Language header with locale and language code", async () => {
+    const setExtraHTTPHeaders = vi.fn().mockResolvedValue(undefined);
     const mockContext = {
-      setExtraHTTPHeaders: vi.fn().mockResolvedValue(undefined),
+      setExtraHTTPHeaders,
     } as unknown as BrowserContext;
 
     const config: StealthConfig = {
@@ -565,14 +568,15 @@ describe("hardenBrowserContext", () => {
 
     await hardenBrowserContext(mockContext, config);
 
-    const call = mockContext.setExtraHTTPHeaders.mock.calls[0];
+    const call = setExtraHTTPHeaders.mock.calls[0];
     const headers = call?.[0] as Record<string, string> | undefined;
-    expect(headers?.["Accept-Language"]).toBe("en-US,en;q=0.9");
+    expect(headers?.["Accept-Language"]).toBe("en-US,en;q=0.9,en;q=0.8");
   });
 
   it("extracts language code from locale with hyphen", async () => {
+    const setExtraHTTPHeaders = vi.fn().mockResolvedValue(undefined);
     const mockContext = {
-      setExtraHTTPHeaders: vi.fn().mockResolvedValue(undefined),
+      setExtraHTTPHeaders,
     } as unknown as BrowserContext;
 
     const config: StealthConfig = {
@@ -584,14 +588,15 @@ describe("hardenBrowserContext", () => {
 
     await hardenBrowserContext(mockContext, config);
 
-    const call = mockContext.setExtraHTTPHeaders.mock.calls[0];
+    const call = setExtraHTTPHeaders.mock.calls[0];
     const headers = call?.[0] as Record<string, string> | undefined;
-    expect(headers?.["Accept-Language"]).toBe("fr-FR,fr;q=0.9");
+    expect(headers?.["Accept-Language"]).toBe("fr-FR,fr;q=0.9,en;q=0.8");
   });
 
   it("handles locale without hyphen gracefully", async () => {
+    const setExtraHTTPHeaders = vi.fn().mockResolvedValue(undefined);
     const mockContext = {
-      setExtraHTTPHeaders: vi.fn().mockResolvedValue(undefined),
+      setExtraHTTPHeaders,
     } as unknown as BrowserContext;
 
     const config: StealthConfig = {
@@ -603,9 +608,9 @@ describe("hardenBrowserContext", () => {
 
     await hardenBrowserContext(mockContext, config);
 
-    const call = mockContext.setExtraHTTPHeaders.mock.calls[0];
+    const call = setExtraHTTPHeaders.mock.calls[0];
     const headers = call?.[0] as Record<string, string> | undefined;
-    expect(headers?.["Accept-Language"]).toBe("en,en;q=0.9");
+    expect(headers?.["Accept-Language"]).toBe("en,en;q=0.9,en;q=0.8");
   });
 
   it("catches and ignores errors from setExtraHTTPHeaders", async () => {

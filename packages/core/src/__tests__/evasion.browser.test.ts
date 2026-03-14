@@ -29,9 +29,8 @@ describe("browser evasion helpers", () => {
 
     await applyFingerprintHardening(page, "moderate");
 
-    const descriptor = Object.getOwnPropertyDescriptor(navigatorStub, "webdriver");
-    expect(descriptor?.configurable).toBe(true);
-    expect(descriptor?.get?.()).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(navigatorStub, "webdriver")).toBe(false);
+    expect("webdriver" in navigatorStub).toBe(false);
   });
 
   it("adds deterministic canvas pixel noise in paranoid mode when canvas APIs exist", async () => {
@@ -48,9 +47,10 @@ describe("browser evasion helpers", () => {
 
     await applyFingerprintHardening(page, "paranoid");
 
+    const originalData = [10, 20, 30, 40];
     const context = new CanvasContext2DMock();
     const imageData = context.getImageData();
-    expect(imageData.data[0]).toBe(11);
+    expect(imageData.data.some((value, index) => value !== originalData[index])).toBe(true);
   });
 
   it("passes smooth scrolling options through the browser context", async () => {

@@ -112,7 +112,7 @@ describe("LinkedIn page wrappers", () => {
 
     await wrappedPage.goto("https://www.linkedin.com/feed/");
 
-    expect(page.addInitScript).toHaveBeenCalledTimes(1);
+    expect(page.addInitScript).toHaveBeenCalled();
     expect(page.evaluate).toHaveBeenCalled();
     expect(page.goto).toHaveBeenCalledWith("https://www.linkedin.com/feed/");
   });

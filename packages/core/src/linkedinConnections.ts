@@ -131,7 +131,7 @@ const CONNECTION_RATE_LIMIT_CONFIGS = {
   [SEND_INVITATION_ACTION_TYPE]: {
     counterKey: "linkedin.connections.send_invitation",
     windowSizeMs: 24 * 60 * 60 * 1000,
-    limit: 20
+    limit: 15
   },
   [ACCEPT_INVITATION_ACTION_TYPE]: {
     counterKey: "linkedin.connections.accept_invitation",
