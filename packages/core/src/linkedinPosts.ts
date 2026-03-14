@@ -68,6 +68,7 @@ export const LINKEDIN_POST_POLL_MIN_OPTIONS = 2;
 export const LINKEDIN_POST_POLL_MAX_OPTIONS = 4;
 export const LINKEDIN_POST_POLL_DURATION_DAYS = [1, 3, 7, 14] as const;
 export const LINKEDIN_POST_FEED_SURFACE_SELECTORS = [
+  "[data-testid='mainFeed']",
   "main[role='main']",
   "[data-urn]",
   ".feed-shared-update-v2",
