@@ -44,6 +44,7 @@ import {
   evaluateDraftQuality,
   FEEDBACK_TYPES,
   formatFeedbackDisplayPath,
+  formatRetryAfter,
   getAuthWhoami,
   getLinkedInSelectorLocaleConfigWarning,
   isPreparedActionEffectiveStatus,
@@ -123,6 +124,7 @@ import {
   type SchedulerJobRow,
   type SchedulerTickResult,
   type SearchCategory,
+  type SearchResult,
   type SelectorAuditReport,
   type WebhookDeliveryAttemptStatus,
   type WebhookSubscriptionStatus,
@@ -372,6 +374,93 @@ function printJson(value: unknown): void {
       2,
     ),
   );
+}
+
+function printPrepareResult(value: Record<string, unknown>): void {
+  const preview = isRecordValue(value.preview) ? value.preview : undefined;
+  const summary = typeof preview?.summary === "string" ? preview.summary : undefined;
+  const rateLimit = isRecordValue(preview?.rate_limit) ? preview.rate_limit : undefined;
+
+  if (summary) {
+    writeCliNotice(`Prepared: ${summary}`);
+  }
+
+  if (rateLimit) {
+    const remaining = typeof rateLimit.remaining === "number" ? rateLimit.remaining : undefined;
+    const limit = typeof rateLimit.limit === "number" ? rateLimit.limit : undefined;
+    const retryAfterMs = typeof rateLimit.retry_after_ms === "number" ? rateLimit.retry_after_ms : 0;
+    const allowed = typeof rateLimit.allowed === "boolean" ? rateLimit.allowed : true;
+
+    if (typeof remaining === "number" && typeof limit === "number") {
+      if (!allowed) {
+        writeCliWarning(`Rate limited — retry in ${formatRetryAfter(retryAfterMs)}.`);
+      } else if (remaining <= Math.ceil(limit * 0.2)) {
+        writeCliWarning(`Rate limit: ${remaining} of ${limit} remaining (resets in ${formatRetryAfter(retryAfterMs)}).`);
+      } else {
+        writeCliNotice(`Rate limit: ${remaining} of ${limit} remaining.`);
+      }
+    }
+  }
+
+  printJson(value);
+}
+
+function formatSearchResults(result: SearchResult): string {
+  const lines: string[] = [];
+  lines.push(`Search: "${result.query}" (${result.category}) — ${result.count} result(s)`);
+  lines.push("");
+
+  switch (result.category) {
+    case "people":
+      for (const r of result.results) {
+        lines.push(`  ${r.name} — ${r.headline}`);
+        if (r.location || r.connection_degree) {
+          lines.push(`    ${[r.location, r.connection_degree].filter(Boolean).join(" | ")} | ${r.profile_url}`);
+        }
+      }
+      break;
+    case "companies":
+      for (const r of result.results) {
+        lines.push(`  ${r.name} — ${r.industry}`);
+        lines.push(`    ${r.follower_count} followers | ${r.company_url}`);
+      }
+      break;
+    case "jobs":
+      for (const r of result.results) {
+        lines.push(`  ${r.title} at ${r.company}`);
+        lines.push(`    ${r.location} | ${r.posted_at} | ${r.job_url}`);
+      }
+      break;
+    case "posts":
+      for (const r of result.results) {
+        const preview = r.text.length > 120 ? r.text.slice(0, 120) + "..." : r.text;
+        lines.push(`  ${r.author}: ${preview}`);
+        lines.push(`    ${r.posted_at} | ${r.reaction_count} reactions | ${r.post_url}`);
+      }
+      break;
+    case "groups":
+      for (const r of result.results) {
+        lines.push(`  ${r.name} (${r.group_type})`);
+        lines.push(`    ${r.member_count} members | ${r.group_url}`);
+      }
+      break;
+    case "events":
+      for (const r of result.results) {
+        lines.push(`  ${r.title} — ${r.date}`);
+        lines.push(`    ${r.location} | ${r.organizer} | ${r.event_url}`);
+      }
+      break;
+    default: {
+      const _exhaustive: never = result;
+      void _exhaustive;
+    }
+  }
+
+  if (result.count === 0) {
+    lines.push("  (no results)");
+  }
+
+  return lines.join("\n");
 }
 
 function createRuntime(cdpUrl?: string) {
@@ -5552,7 +5641,7 @@ async function runPrepareReply(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -5629,7 +5718,7 @@ async function runPrepareNewThread(
       recipientCount: input.recipients.length,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -5669,7 +5758,7 @@ async function runPrepareAddRecipients(
       thread: input.thread,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -5838,7 +5927,7 @@ async function runPrepareReact(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -5948,7 +6037,7 @@ async function runConnectionsInvite(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -5983,7 +6072,7 @@ async function runConnectionsAccept(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -6018,7 +6107,7 @@ async function runConnectionsWithdraw(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -6053,7 +6142,7 @@ async function runMembersPrepareBlock(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -6088,7 +6177,7 @@ async function runMembersPrepareUnblock(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -6129,7 +6218,7 @@ async function runMembersPrepareReport(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -6201,7 +6290,7 @@ async function runPrivacyPrepareUpdateSetting(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -6280,7 +6369,7 @@ async function runFollowupsPrepare(
       preparedCount: result.preparedFollowups.length,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       since,
@@ -6404,7 +6493,7 @@ async function runFeedLike(
       reaction,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -6443,7 +6532,7 @@ async function runFeedComment(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -6480,7 +6569,7 @@ async function runFeedRepost(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -6519,7 +6608,7 @@ async function runFeedShare(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -6556,7 +6645,7 @@ async function runFeedSave(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -6593,7 +6682,7 @@ async function runFeedUnsave(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -6630,7 +6719,7 @@ async function runFeedRemoveReaction(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -6674,7 +6763,7 @@ async function runPostPrepare(
       visibility,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -6708,7 +6797,7 @@ async function runArticlePrepareCreate(
       profileName: input.profileName,
       preparedActionId: prepared.preparedActionId,
     });
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -6741,7 +6830,7 @@ async function runArticlePreparePublish(
       profileName: input.profileName,
       preparedActionId: prepared.preparedActionId,
     });
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -6777,7 +6866,7 @@ async function runNewsletterPrepareCreate(
       profileName: input.profileName,
       preparedActionId: prepared.preparedActionId,
     });
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -6814,7 +6903,7 @@ async function runNewsletterPreparePublishIssue(
       profileName: input.profileName,
       preparedActionId: prepared.preparedActionId,
     });
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -6949,7 +7038,7 @@ async function runCompanyPrepareFollow(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -6986,7 +7075,7 @@ async function runCompanyPrepareUnfollow(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -7054,7 +7143,7 @@ async function runProfilePrepareUpdateSettings(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -7098,7 +7187,7 @@ async function runProfilePrepareUpdatePublicProfile(
       },
     );
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -8022,6 +8111,7 @@ async function runSearch(
     query: string;
     category?: SearchCategory;
     limit?: number;
+    json?: boolean;
   },
   cdpUrl?: string,
 ): Promise<void> {
@@ -8051,11 +8141,15 @@ async function runSearch(
       count: result.count,
     });
 
-    printJson({
-      run_id: runtime.runId,
-      profile_name: input.profileName,
-      ...result,
-    });
+    if (input.json) {
+      printJson({
+        run_id: runtime.runId,
+        profile_name: input.profileName,
+        ...result,
+      });
+    } else {
+      writeCliNotice(formatSearchResults(result));
+    }
   } finally {
     runtime.close();
   }
@@ -8160,7 +8254,7 @@ async function runNotificationsDismiss(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -8247,7 +8341,7 @@ async function runNotificationsPreferencesPrepareUpdate(
       },
     );
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -8357,7 +8451,7 @@ async function runGroupsPrepareJoin(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -8394,7 +8488,7 @@ async function runGroupsPrepareLeave(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -8433,7 +8527,7 @@ async function runGroupsPreparePost(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -8543,7 +8637,7 @@ async function runEventsPrepareRsvp(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -8674,7 +8768,7 @@ async function runJobsSave(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -8711,7 +8805,7 @@ async function runJobsUnsave(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -8786,7 +8880,7 @@ async function runJobAlertsCreate(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -8831,7 +8925,7 @@ async function runJobAlertsRemove(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -8883,7 +8977,7 @@ async function runJobsEasyApplyPrepare(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printJson({
+    printPrepareResult({
       run_id: runtime.runId,
       profile_name: input.profileName,
       ...prepared,
@@ -9192,8 +9286,8 @@ async function runConfirmAction(
       "cli",
     );
 
-    console.log(`Preview summary: ${summaryPayload.summary}`);
-    printJson({
+    writeCliNotice(`Preview: ${summaryPayload.summary}`);
+    printPrepareResult({
       prepared_action_id: preview.preparedActionId,
       action_type: preview.actionType,
       status: preview.status,
@@ -9227,6 +9321,8 @@ async function runConfirmAction(
       preparedActionId: result.preparedActionId,
       status: result.status,
     });
+
+    writeCliNotice(`Confirmed: ${summary}`);
 
     printJson({
       run_id: runtime.runId,
@@ -10951,16 +11047,18 @@ export function createCliProgram(): Command {
       "people",
     )
     .option("-l, --limit <limit>", "Max results", "10")
+    .option("--json", "Output results as JSON instead of human-readable format", false)
     .action(
       async (
         query: string,
-        options: { profile: string; category: string; limit: string },
+        options: { profile: string; category: string; limit: string; json: boolean },
       ) => {
         await runSearch(
           {
             profileName: options.profile,
             query,
             category: coerceSearchCategory(options.category),
+            json: options.json,
             limit: coercePositiveInt(options.limit, "limit"),
           },
           readCdpUrl(),

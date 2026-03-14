@@ -19,6 +19,7 @@ import { executeConfirmActionWithArtifacts } from "./confirmArtifacts.js";
 import type { ConfirmFailureArtifactConfig } from "./config.js";
 import { LinkedInBuddyError, asLinkedInBuddyError } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
+import { scrollLinkedInPageToBottom } from "./linkedinPage.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
 import {
@@ -8121,6 +8122,7 @@ export class LinkedInProfileService {
           await page.goto(profileUrl, { waitUntil: "domcontentloaded" });
           await waitForNetworkIdleBestEffort(page);
           await waitForProfilePageReady(page);
+          await scrollLinkedInPageToBottom(page);
           return extractProfileData(page, this.runtime.selectorLocale);
         }
       );
@@ -8156,6 +8158,7 @@ export class LinkedInProfileService {
         async (context) => {
           const page = await getOrCreatePage(context);
           await navigateToOwnProfile(page);
+          await scrollLinkedInPageToBottom(page);
 
           const profile = await extractProfileData(page, this.runtime.selectorLocale);
           const settings = await extractEditableSettings(page, this.runtime.selectorLocale);
