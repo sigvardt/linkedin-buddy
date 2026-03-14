@@ -23,7 +23,8 @@ import {
 import {
   consumeRateLimitOrThrow,
   createConfirmRateLimitMessage,
-  peekRateLimitPreview,
+  createPrepareRateLimitMessage,
+  peekRateLimitPreviewOrThrow,
   type ConsumeRateLimitInput,
   type RateLimiter
 } from "./rateLimiter.js";
@@ -236,9 +237,10 @@ function preparePublishingAction(
     payload: input.payload,
     preview: {
       ...input.preview,
-      rate_limit: peekRateLimitPreview(
+      rate_limit: peekRateLimitPreviewOrThrow(
         runtime.rateLimiter,
-        getPublishingRateLimitConfig(input.actionType)
+        getPublishingRateLimitConfig(input.actionType),
+        createPrepareRateLimitMessage(input.actionType)
       )
     },
     ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})

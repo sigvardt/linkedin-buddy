@@ -5,9 +5,12 @@ import {
   RateLimiter,
   consumeRateLimitOrThrow,
   createConfirmRateLimitMessage,
+  createPrepareRateLimitMessage,
   formatRateLimitState,
   formatRetryAfter,
+  peekRateLimitOrThrow,
   peekRateLimitPreview,
+  peekRateLimitPreviewOrThrow,
   type ConsumeRateLimitInput,
   type RateLimiterState,
 } from "../src/index.js";
@@ -46,7 +49,7 @@ describe("rate limit counters", () => {
     expect(second.count).toBe(2);
     expect(third.count).toBe(3);
     expect(third.allowed).toBe(true);
-    expect(fourth.count).toBe(4);
+    expect(fourth.count).toBe(3);
     expect(fourth.allowed).toBe(false);
 
     db.close();
@@ -150,7 +153,7 @@ describe("rate limit counters", () => {
     expect(atLimit.count).toBe(1);
     expect(atLimit.allowed).toBe(true);
     expect(atLimit.remaining).toBe(0);
-    expect(overLimit.count).toBe(2);
+    expect(overLimit.count).toBe(1);
     expect(overLimit.allowed).toBe(false);
     expect(overLimit.remaining).toBe(0);
 
@@ -228,6 +231,55 @@ describe("rate limit counters", () => {
 
     expect(peek.windowEndsAtMs).toBe(10_000);
     expect(peek.retryAfterMs).toBe(2_000);
+
+    db.close();
+  });
+
+  it("does not increment counter when already at limit", () => {
+    const db = new AssistantDatabase(":memory:");
+    const limiter = new RateLimiter(db);
+
+    // Fill up the limit
+    limiter.consume({ counterKey: "tool.cap", windowSizeMs: 1_000, limit: 2, nowMs: 100 });
+    limiter.consume({ counterKey: "tool.cap", windowSizeMs: 1_000, limit: 2, nowMs: 100 });
+
+    // Attempt to consume beyond the limit multiple times
+    const blocked1 = limiter.consume({ counterKey: "tool.cap", windowSizeMs: 1_000, limit: 2, nowMs: 100 });
+    const blocked2 = limiter.consume({ counterKey: "tool.cap", windowSizeMs: 1_000, limit: 2, nowMs: 100 });
+    const blocked3 = limiter.consume({ counterKey: "tool.cap", windowSizeMs: 1_000, limit: 2, nowMs: 100 });
+
+    // Counter should stay at 2, not grow to 3, 4, 5
+    expect(blocked1.count).toBe(2);
+    expect(blocked1.allowed).toBe(false);
+    expect(blocked1.remaining).toBe(0);
+
+    expect(blocked2.count).toBe(2);
+    expect(blocked2.allowed).toBe(false);
+
+    expect(blocked3.count).toBe(2);
+    expect(blocked3.allowed).toBe(false);
+
+    // Peek should confirm the counter is still at 2
+    const peekResult = limiter.peek({ counterKey: "tool.cap", windowSizeMs: 1_000, limit: 2, nowMs: 100 });
+    expect(peekResult.count).toBe(2);
+
+    db.close();
+  });
+
+  it("resumes correctly after window reset following blocked attempts", () => {
+    const db = new AssistantDatabase(":memory:");
+    const limiter = new RateLimiter(db);
+
+    // Fill and block in first window
+    limiter.consume({ counterKey: "tool.reset", windowSizeMs: 1_000, limit: 1, nowMs: 100 });
+    const blocked = limiter.consume({ counterKey: "tool.reset", windowSizeMs: 1_000, limit: 1, nowMs: 100 });
+    expect(blocked.allowed).toBe(false);
+    expect(blocked.count).toBe(1);
+
+    // New window — should be allowed again
+    const fresh = limiter.consume({ counterKey: "tool.reset", windowSizeMs: 1_000, limit: 1, nowMs: 1_000 });
+    expect(fresh.count).toBe(1);
+    expect(fresh.allowed).toBe(true);
 
     db.close();
   });
@@ -385,6 +437,26 @@ describe("createConfirmRateLimitMessage", () => {
   });
 });
 
+describe("createPrepareRateLimitMessage", () => {
+  it("extracts last segment from dotted action type", () => {
+    expect(createPrepareRateLimitMessage("feed.like_post")).toBe(
+      "LinkedIn like_post is rate limited for the current window. Cannot prepare action.",
+    );
+  });
+
+  it("extracts last segment from deeply nested action type", () => {
+    expect(createPrepareRateLimitMessage("jobs.alerts.create")).toBe(
+      "LinkedIn create is rate limited for the current window. Cannot prepare action.",
+    );
+  });
+
+  it("returns full string for single-segment action type", () => {
+    expect(createPrepareRateLimitMessage("like")).toBe(
+      "LinkedIn like is rate limited for the current window. Cannot prepare action.",
+    );
+  });
+});
+
 describe("consumeRateLimitOrThrow", () => {
   it("returns state when allowed", () => {
     const allowedState: RateLimiterState = {
@@ -527,6 +599,160 @@ describe("consumeRateLimitOrThrow", () => {
       const buddyError = error as LinkedInBuddyError;
       expect(buddyError.message).toBe("Rate limited.");
       expect(buddyError.message).not.toContain("Try again");
+    }
+  });
+});
+
+describe("peekRateLimitOrThrow", () => {
+  it("returns state when allowed", () => {
+    const allowedState: RateLimiterState = {
+      counterKey: "test.action",
+      windowStartMs: 0,
+      windowSizeMs: 60_000,
+      count: 1,
+      limit: 10,
+      remaining: 9,
+      allowed: true,
+      windowEndsAtMs: 60_000,
+      retryAfterMs: 59_000,
+    };
+
+    const rateLimiter = {
+      peek: vi.fn().mockReturnValue(allowedState),
+    };
+
+    const result = peekRateLimitOrThrow(rateLimiter, {
+      config: { counterKey: "test.action", windowSizeMs: 60_000, limit: 10 },
+      message: "Test rate limited.",
+      details: { action_id: "pa_789" },
+    });
+
+    expect(result).toBe(allowedState);
+    expect(rateLimiter.peek).toHaveBeenCalled();
+  });
+
+  it("throws RATE_LIMITED when blocked", () => {
+    const blockedState: RateLimiterState = {
+      counterKey: "test.action",
+      windowStartMs: 0,
+      windowSizeMs: 60_000,
+      count: 10,
+      limit: 10,
+      remaining: 0,
+      allowed: false,
+      windowEndsAtMs: 60_000,
+      retryAfterMs: 45_000,
+    };
+
+    const rateLimiter = {
+      peek: vi.fn().mockReturnValue(blockedState),
+    };
+
+    try {
+      peekRateLimitOrThrow(rateLimiter, {
+        config: { counterKey: "test.action", windowSizeMs: 60_000, limit: 10 },
+        message: "Prepare rate limited.",
+        details: { action_id: "pa_abc" },
+      });
+      expect.fail("Expected error to be thrown");
+    } catch (error) {
+      expect(error).toBeInstanceOf(LinkedInBuddyError);
+      const buddyError = error as LinkedInBuddyError;
+      expect(buddyError.code).toBe("RATE_LIMITED");
+      expect(buddyError.message).toContain("Prepare rate limited.");
+      expect(buddyError.message).toContain("Try again in 45s");
+      expect(buddyError.details.action_id).toBe("pa_abc");
+      expect(buddyError.details.rate_limit).toBeDefined();
+    }
+  });
+
+  it("does not call consume (non-mutating)", () => {
+    const db = new AssistantDatabase(":memory:");
+    const limiter = new RateLimiter(db);
+
+    // Consume 1 of 2 tokens
+    limiter.consume({ counterKey: "tool.peek_or_throw", windowSizeMs: 60_000, limit: 2, nowMs: 1_000 });
+
+    // peekRateLimitOrThrow should not consume
+    peekRateLimitOrThrow(limiter, {
+      config: { counterKey: "tool.peek_or_throw", windowSizeMs: 60_000, limit: 2, nowMs: 1_000 },
+      message: "Test.",
+    });
+
+    const after = limiter.peek({ counterKey: "tool.peek_or_throw", windowSizeMs: 60_000, limit: 2, nowMs: 1_000 });
+    expect(after.count).toBe(1);
+    expect(after.remaining).toBe(1);
+
+    db.close();
+  });
+});
+
+describe("peekRateLimitPreviewOrThrow", () => {
+  it("returns formatted preview when allowed", () => {
+    const allowedState: RateLimiterState = {
+      counterKey: "test.action",
+      windowStartMs: 0,
+      windowSizeMs: 60_000,
+      count: 2,
+      limit: 10,
+      remaining: 8,
+      allowed: true,
+      windowEndsAtMs: 60_000,
+      retryAfterMs: 59_000,
+    };
+
+    const rateLimiter = {
+      peek: vi.fn().mockReturnValue(allowedState),
+    };
+
+    const preview = peekRateLimitPreviewOrThrow(
+      rateLimiter,
+      { counterKey: "test.action", windowSizeMs: 60_000, limit: 10 },
+      "Test rate limited.",
+    );
+
+    expect(preview).toEqual({
+      counter_key: "test.action",
+      window_start_ms: 0,
+      window_size_ms: 60_000,
+      window_ends_at_ms: 60_000,
+      retry_after_ms: 59_000,
+      count: 2,
+      limit: 10,
+      remaining: 8,
+      allowed: true,
+    });
+  });
+
+  it("throws RATE_LIMITED when blocked", () => {
+    const blockedState: RateLimiterState = {
+      counterKey: "test.action",
+      windowStartMs: 0,
+      windowSizeMs: 60_000,
+      count: 10,
+      limit: 10,
+      remaining: 0,
+      allowed: false,
+      windowEndsAtMs: 60_000,
+      retryAfterMs: 30_000,
+    };
+
+    const rateLimiter = {
+      peek: vi.fn().mockReturnValue(blockedState),
+    };
+
+    try {
+      peekRateLimitPreviewOrThrow(
+        rateLimiter,
+        { counterKey: "test.action", windowSizeMs: 60_000, limit: 10 },
+        "Prepare blocked.",
+      );
+      expect.fail("Expected error to be thrown");
+    } catch (error) {
+      expect(error).toBeInstanceOf(LinkedInBuddyError);
+      const buddyError = error as LinkedInBuddyError;
+      expect(buddyError.code).toBe("RATE_LIMITED");
+      expect(buddyError.message).toContain("Prepare blocked.");
     }
   });
 });

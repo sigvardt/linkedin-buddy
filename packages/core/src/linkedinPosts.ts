@@ -17,7 +17,9 @@ import type { ProfileManager } from "./profileManager.js";
 import {
   consumeRateLimitOrThrow,
   createConfirmRateLimitMessage,
+  createPrepareRateLimitMessage,
   formatRateLimitState,
+  peekRateLimitOrThrow,
 } from "./rateLimiter.js";
 import type { RateLimiter, RateLimiterState } from "./rateLimiter.js";
 import type {
@@ -3314,6 +3316,14 @@ export class LinkedInPostsService {
       cdpUrl: this.runtime.cdpUrl,
     });
 
+    const rateLimitState: RateLimiterState = peekRateLimitOrThrow(
+      this.runtime.rateLimiter,
+      {
+        config: CREATE_POST_RATE_LIMIT_CONFIG,
+        message: createPrepareRateLimitMessage(CREATE_POST_ACTION_TYPE),
+      },
+    );
+
     try {
       const prepared = await this.runtime.profileManager.runWithContext(
         {
@@ -3360,9 +3370,6 @@ export class LinkedInPostsService {
               composerRoot,
               this.runtime.selectorLocale,
             );
-
-            const rateLimitState: RateLimiterState =
-              this.runtime.rateLimiter.peek(CREATE_POST_RATE_LIMIT_CONFIG);
 
             const target = {
               profile_name: profileName,
@@ -3505,6 +3512,14 @@ export class LinkedInPostsService {
       cdpUrl: this.runtime.cdpUrl,
     });
 
+    const rateLimitState: RateLimiterState = peekRateLimitOrThrow(
+      this.runtime.rateLimiter,
+      {
+        config: CREATE_POST_RATE_LIMIT_CONFIG,
+        message: createPrepareRateLimitMessage(CREATE_POST_ACTION_TYPE),
+      },
+    );
+
     try {
       const prepared = await this.runtime.profileManager.runWithContext(
         {
@@ -3572,9 +3587,6 @@ export class LinkedInPostsService {
               composerRoot,
               this.runtime.selectorLocale,
             );
-
-            const rateLimitState: RateLimiterState =
-              this.runtime.rateLimiter.peek(CREATE_POST_RATE_LIMIT_CONFIG);
 
             const target = {
               profile_name: profileName,
@@ -3729,6 +3741,14 @@ export class LinkedInPostsService {
       cdpUrl: this.runtime.cdpUrl,
     });
 
+    const rateLimitState: RateLimiterState = peekRateLimitOrThrow(
+      this.runtime.rateLimiter,
+      {
+        config: CREATE_POST_RATE_LIMIT_CONFIG,
+        message: createPrepareRateLimitMessage(CREATE_POST_ACTION_TYPE),
+      },
+    );
+
     try {
       const prepared = await this.runtime.profileManager.runWithContext(
         {
@@ -3784,8 +3804,6 @@ export class LinkedInPostsService {
               this.runtime.selectorLocale,
             );
 
-            const rateLimitState: RateLimiterState =
-              this.runtime.rateLimiter.peek(CREATE_POST_RATE_LIMIT_CONFIG);
             const target = {
               profile_name: profileName,
               visibility,
@@ -3942,6 +3960,14 @@ export class LinkedInPostsService {
       cdpUrl: this.runtime.cdpUrl,
     });
 
+    const rateLimitState: RateLimiterState = peekRateLimitOrThrow(
+      this.runtime.rateLimiter,
+      {
+        config: EDIT_POST_RATE_LIMIT_CONFIG,
+        message: createPrepareRateLimitMessage(EDIT_POST_ACTION_TYPE),
+      },
+    );
+
     try {
       const prepared = await this.runtime.profileManager.runWithContext(
         {
@@ -4005,8 +4031,6 @@ export class LinkedInPostsService {
             artifactPaths.push(screenshotPath);
             await page.keyboard.press("Escape").catch(() => undefined);
 
-            const rateLimitState: RateLimiterState =
-              this.runtime.rateLimiter.peek(EDIT_POST_RATE_LIMIT_CONFIG);
             const target = {
               profile_name: profileName,
               post_url: postUrl,
@@ -4134,6 +4158,14 @@ export class LinkedInPostsService {
       cdpUrl: this.runtime.cdpUrl,
     });
 
+    const rateLimitState: RateLimiterState = peekRateLimitOrThrow(
+      this.runtime.rateLimiter,
+      {
+        config: DELETE_POST_RATE_LIMIT_CONFIG,
+        message: createPrepareRateLimitMessage(DELETE_POST_ACTION_TYPE),
+      },
+    );
+
     try {
       const prepared = await this.runtime.profileManager.runWithContext(
         {
@@ -4197,8 +4229,6 @@ export class LinkedInPostsService {
             artifactPaths.push(screenshotPath);
             await page.keyboard.press("Escape").catch(() => undefined);
 
-            const rateLimitState: RateLimiterState =
-              this.runtime.rateLimiter.peek(DELETE_POST_RATE_LIMIT_CONFIG);
             const target = {
               profile_name: profileName,
               post_url: postUrl,

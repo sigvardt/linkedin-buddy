@@ -39,6 +39,8 @@ import type { ProfileManager } from "./profileManager.js";
 import {
   consumeRateLimitOrThrow,
   createConfirmRateLimitMessage,
+  createPrepareRateLimitMessage,
+  peekRateLimitOrThrow,
   formatRateLimitState
 } from "./rateLimiter.js";
 import type {
@@ -3090,6 +3092,11 @@ export class LinkedInInboxService {
       cdpUrl: this.runtime.cdpUrl
     });
 
+    const rateLimitState = peekRateLimitOrThrow(this.runtime.rateLimiter, {
+      config: SEND_MESSAGE_RATE_LIMIT_CONFIG,
+      message: createPrepareRateLimitMessage(SEND_MESSAGE_ACTION_TYPE)
+    });
+
     try {
       const prepared = await this.runtime.profileManager.runWithContext(
         {
@@ -3110,10 +3117,6 @@ export class LinkedInInboxService {
             profile_name: profileName,
             thread_url: threadDetail.thread_url
           });
-
-          const rateLimitState = this.runtime.rateLimiter.peek(
-            SEND_MESSAGE_RATE_LIMIT_CONFIG
-          );
 
           const target = {
             profile_name: profileName,
@@ -3185,9 +3188,10 @@ export class LinkedInInboxService {
 
     try {
       const recipients = await this.resolveRecipients(profileName, input.recipients);
-      const rateLimitState = this.runtime.rateLimiter.peek(
-        SEND_MESSAGE_RATE_LIMIT_CONFIG
-      );
+      const rateLimitState = peekRateLimitOrThrow(this.runtime.rateLimiter, {
+        config: SEND_MESSAGE_RATE_LIMIT_CONFIG,
+        message: createPrepareRateLimitMessage(SEND_NEW_THREAD_ACTION_TYPE)
+      });
       const target = {
         message_mode: "new_thread",
         profile_name: profileName,
@@ -3279,6 +3283,10 @@ export class LinkedInInboxService {
       const previewRecipients = recipientsToAdd.map((recipient) =>
         toRecipientPreviewRecord(recipient)
       );
+      const rateLimitState = peekRateLimitOrThrow(this.runtime.rateLimiter, {
+        config: ADD_RECIPIENTS_RATE_LIMIT_CONFIG,
+        message: createPrepareRateLimitMessage(ADD_RECIPIENTS_ACTION_TYPE)
+      });
       const preview = {
         summary:
           recipientsToAdd.length === 1
@@ -3289,9 +3297,7 @@ export class LinkedInInboxService {
           recipient_count: recipientsToAdd.length,
           recipients: previewRecipients
         },
-        rate_limit: formatRateLimitState(
-          this.runtime.rateLimiter.peek(ADD_RECIPIENTS_RATE_LIMIT_CONFIG)
-        )
+        rate_limit: formatRateLimitState(rateLimitState)
       } satisfies Record<string, unknown>;
       const prepared = this.runtime.twoPhaseCommit.prepare({
         actionType: ADD_RECIPIENTS_ACTION_TYPE,
@@ -3345,6 +3351,10 @@ export class LinkedInInboxService {
         participant_name: inferParticipantName(threadDetail.title),
         message: toThreadMessageTargetRecord(messageTarget)
       };
+      const rateLimitState = peekRateLimitOrThrow(this.runtime.rateLimiter, {
+        config: REACT_MESSAGE_RATE_LIMIT_CONFIG,
+        message: createPrepareRateLimitMessage(REACT_MESSAGE_ACTION_TYPE)
+      });
       const preview = {
         summary: `React (${reaction}) to message ${messageTarget.index} in "${threadDetail.title}"`,
         target,
@@ -3353,9 +3363,7 @@ export class LinkedInInboxService {
           reaction
         },
         supported_reactions: LINKEDIN_INBOX_REACTION_TYPES,
-        rate_limit: formatRateLimitState(
-          this.runtime.rateLimiter.peek(REACT_MESSAGE_RATE_LIMIT_CONFIG)
-        )
+        rate_limit: formatRateLimitState(rateLimitState)
       } satisfies Record<string, unknown>;
 
       const prepared = this.runtime.twoPhaseCommit.prepare({
