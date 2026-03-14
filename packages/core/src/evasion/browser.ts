@@ -43,9 +43,9 @@ type ScrollInstruction = {
  *
  * Hardening levels:
  * - `minimal`: no-op.
- * - `moderate`: Removes the `navigator.webdriver` flag.
- * - `paranoid`: All `moderate` hardening plus per-session canvas pixel noise
- *   to reduce canvas fingerprint stability across sessions.
+ * - `moderate`: Applies core browser signal fixes and per-session fingerprint
+ *   noise across webdriver, window dimensions, WebRTC, canvas, and audio.
+ * - `paranoid`: Currently matches `moderate` behavior.
  *
  * The hardening is intentionally fail-open: if a browser blocks one technique,
  * the helper silently falls back to any remaining techniques or a no-op.
@@ -66,11 +66,15 @@ export async function applyFingerprintHardening(
     return;
   }
 
+  // Applied at moderate+: core browser signal fixes
   await applyWebdriverHardening(page);
+  await applyOuterDimensionsFix(page);
+  await applyWebRTCProtection(page);
 
-  if (level === "paranoid") {
-    await applyCanvasNoise(page, Math.floor(Math.random() * 256));
-  }
+  // Applied at moderate+: fingerprint noise to break tracking
+  const noiseSalt = Math.floor(Math.random() * 256);
+  await applyCanvasNoise(page, noiseSalt);
+  await applyAudioContextNoise(page, noiseSalt);
 }
 
 /**
@@ -266,10 +270,26 @@ async function applyWebdriverHardening(page: Page): Promise<void> {
   await safeEvaluate(page, installWebdriverHardening);
 }
 
+async function applyOuterDimensionsFix(page: Page): Promise<void> {
+  await safeAddInitScript(page, installOuterDimensionsFix);
+  await safeEvaluate(page, installOuterDimensionsFix);
+}
+
+async function applyWebRTCProtection(page: Page): Promise<void> {
+  await safeAddInitScript(page, installWebRTCProtection);
+  await safeEvaluate(page, installWebRTCProtection);
+}
+
 async function applyCanvasNoise(page: Page, salt: number): Promise<void> {
   const safeSalt = Math.round(clamp(salt, 0, 255));
   await safeAddInitScript(page, installCanvasNoise, safeSalt);
   await safeEvaluate(page, installCanvasNoise, safeSalt);
+}
+
+async function applyAudioContextNoise(page: Page, salt: number): Promise<void> {
+  const safeSalt = Math.round(clamp(salt, 0, 255));
+  await safeAddInitScript(page, installAudioContextNoise, safeSalt);
+  await safeEvaluate(page, installAudioContextNoise, safeSalt);
 }
 
 async function dispatchWindowEvents(page: Page, eventNames: readonly string[]): Promise<void> {
@@ -408,35 +428,104 @@ function clampPointToViewport(
   };
 }
 
+/**
+ * Remove a detectable own `navigator.webdriver` property only when it is
+ * explicitly `true`, allowing browser-level AutomationControlled behavior to
+ * expose a native prototype getter instead.
+ */
 function installWebdriverHardening(): void {
   try {
+    const nav = globalThis.navigator;
+    const navRecord = nav as unknown as Record<string, unknown>;
+    if (nav && typeof nav === "object" && navRecord["webdriver"] === true) {
+      delete navRecord["webdriver"];
+    }
+  } catch {
+    // Already handled by browser flags; skip.
+  }
+}
+
+/**
+ * Ensure `window.outerWidth` / `window.outerHeight` are plausible in headless
+ * contexts where they may otherwise report zero.
+ */
+function installOuterDimensionsFix(): void {
+  try {
+    if (
+      typeof globalThis.outerWidth === "number" &&
+      globalThis.outerWidth === 0 &&
+      typeof globalThis.innerWidth === "number" &&
+      globalThis.innerWidth > 0
+    ) {
+      Object.defineProperty(globalThis, "outerWidth", {
+        get: () => globalThis.innerWidth,
+        configurable: true
+      });
+      // Real Chrome typically includes browser chrome above viewport height.
+      Object.defineProperty(globalThis, "outerHeight", {
+        get: () => globalThis.innerHeight + 85,
+        configurable: true
+      });
+    }
+  } catch {
+    // Outer dimensions unavailable or non-configurable; skip.
+  }
+}
+
+/**
+ * Force relay-only ICE policy on WebRTC peer connections to reduce accidental
+ * local IP disclosure via candidate gathering.
+ */
+function installWebRTCProtection(): void {
+  try {
     const globalRecord = globalThis as Record<string, unknown>;
+    const RTCPeerConnectionCtor = globalRecord["RTCPeerConnection"] as
+      | (new (...args: unknown[]) => unknown)
+      | undefined;
+    if (typeof RTCPeerConnectionCtor !== "function") {
+      return;
+    }
+
     const stateKey = "__linkedinAssistantEvasionState__";
     const existingState = globalRecord[stateKey];
     const state =
       typeof existingState === "object" && existingState !== null
         ? (existingState as Record<string, unknown>)
         : {};
-
     if (globalRecord[stateKey] !== state) {
       globalRecord[stateKey] = state;
     }
-
-    const navigatorObject = globalRecord["navigator"];
-    if (!navigatorObject || typeof navigatorObject !== "object") {
+    if (state["webrtcPatched"] === true) {
       return;
     }
 
-    Object.defineProperty(navigatorObject, "webdriver", {
-      get: () => undefined,
-      configurable: true
-    });
-    state["webdriverApplied"] = true;
+    const OriginalRTC = RTCPeerConnectionCtor;
+    const PatchedRTC = function (this: unknown, ...args: unknown[]) {
+      const config =
+        typeof args[0] === "object" && args[0] !== null
+          ? { ...(args[0] as Record<string, unknown>) }
+          : {};
+      config["iceTransportPolicy"] = "relay";
+      return new OriginalRTC(config);
+    } as unknown as typeof RTCPeerConnectionCtor;
+
+    PatchedRTC.prototype = OriginalRTC.prototype;
+    globalRecord["RTCPeerConnection"] = PatchedRTC;
+
+    if (typeof globalRecord["webkitRTCPeerConnection"] === "function") {
+      globalRecord["webkitRTCPeerConnection"] = PatchedRTC;
+    }
+
+    state["webrtcPatched"] = true;
   } catch {
-    // Already defined non-configurably or unavailable; skip.
+    // WebRTC API unavailable; skip.
   }
 }
 
+/**
+ * Add stable per-session noise to canvas pixel reads to reduce deterministic
+ * canvas hash stability while preserving visual fidelity.
+ */
 function installCanvasNoise(noiseSalt: number): void {
   try {
     const globalRecord = globalThis as Record<string, unknown>;
@@ -504,7 +593,25 @@ function installCanvasNoise(noiseSalt: number): void {
           typeof rawActiveSalt === "number" && Number.isFinite(rawActiveSalt)
             ? Math.round(rawActiveSalt) & 255
             : 0;
-        data[0] = ((data[0] ?? 0) + (activeSalt & 1)) & 255;
+
+        // Apply noise to multiple pixels with a tiny deterministic drift.
+        let prngState = activeSalt | 1;
+        const pixelCount = Math.floor(data.length / 4);
+        const noisyPixels = Math.min(10, pixelCount);
+        const step = Math.max(1, Math.floor(pixelCount / Math.max(1, noisyPixels)));
+
+        for (let px = 0; px < pixelCount && px < noisyPixels * step; px += step) {
+          const baseIndex = px * 4;
+          const channel = prngState % 3;
+          const currentValue = data[baseIndex + channel];
+          if (typeof currentValue === "number" && currentValue > 0 && currentValue < 255) {
+            data[baseIndex + channel] =
+              (prngState & 2) !== 0
+                ? Math.min(currentValue + 1, 255)
+                : Math.max(currentValue - 1, 0);
+          }
+          prngState = ((prngState * 1664525 + 1013904223) >>> 0) & 0xffffffff;
+        }
       }
       return imageData;
     };
@@ -512,6 +619,84 @@ function installCanvasNoise(noiseSalt: number): void {
     canvasState["patched"] = true;
   } catch {
     // Canvas API unavailable or blocked; skip.
+  }
+}
+
+/**
+ * Add minimal per-session perturbation to offline audio sample buffers so
+ * audio fingerprint hashes are not perfectly stable across sessions.
+ */
+function installAudioContextNoise(noiseSalt: number): void {
+  try {
+    const globalRecord = globalThis as Record<string, unknown>;
+    const stateKey = "__linkedinAssistantEvasionState__";
+    const existingState = globalRecord[stateKey];
+    const state =
+      typeof existingState === "object" && existingState !== null
+        ? (existingState as Record<string, unknown>)
+        : {};
+    if (globalRecord[stateKey] !== state) {
+      globalRecord[stateKey] = state;
+    }
+
+    const existingAudioState = state["audio"];
+    const audioState =
+      typeof existingAudioState === "object" && existingAudioState !== null
+        ? (existingAudioState as Record<string, unknown>)
+        : {};
+    if (state["audio"] !== audioState) {
+      state["audio"] = audioState;
+    }
+
+    const safeSalt =
+      typeof noiseSalt === "number" && Number.isFinite(noiseSalt)
+        ? Math.round(noiseSalt) & 255
+        : 0;
+    audioState["salt"] = safeSalt;
+
+    const audioBufferConstructor = globalRecord["AudioBuffer"];
+    if (typeof audioBufferConstructor !== "function") {
+      return;
+    }
+
+    const prototype = (audioBufferConstructor as { prototype: Record<string, unknown> }).prototype;
+    const originalGetChannelData = prototype["getChannelData"];
+    if (typeof originalGetChannelData !== "function") {
+      return;
+    }
+
+    if (audioState["patched"] === true) {
+      return;
+    }
+
+    const typedGetChannelData = originalGetChannelData as (
+      this: unknown,
+      channel: number
+    ) => { length: number; [index: number]: number };
+
+    prototype["getChannelData"] = function (this: unknown, channel: number): unknown {
+      const data = typedGetChannelData.call(this, channel);
+      if (typeof data.length === "number" && data.length > 0) {
+        const activeRawSalt = audioState["salt"];
+        const activeSalt =
+          typeof activeRawSalt === "number" && Number.isFinite(activeRawSalt)
+            ? Math.round(activeRawSalt) & 255
+            : 0;
+        const delta = (activeSalt & 1) !== 0 ? 0.0000001 : -0.0000001;
+        const sampleCount = Math.min(10, data.length);
+        for (let index = 0; index < sampleCount; index++) {
+          const sample = data[index];
+          if (typeof sample === "number") {
+            data[index] = sample + delta;
+          }
+        }
+      }
+      return data;
+    };
+
+    audioState["patched"] = true;
+  } catch {
+    // AudioContext API unavailable; skip.
   }
 }
 

@@ -78,12 +78,12 @@ export const MUTE_THREAD_ACTION_TYPE = "inbox.mute_thread";
 export const SEND_MESSAGE_RATE_LIMIT_CONFIG = {
   counterKey: "linkedin.messaging.send_message",
   windowSizeMs: 60 * 60 * 1000,
-  limit: 20
+  limit: 10
 } as const;
 export const ADD_RECIPIENTS_RATE_LIMIT_CONFIG = {
   counterKey: "linkedin.messaging.add_recipients",
   windowSizeMs: 60 * 60 * 1000,
-  limit: 20
+  limit: 10
 } as const;
 export const REACT_MESSAGE_RATE_LIMIT_CONFIG = {
   counterKey: "linkedin.messaging.react",

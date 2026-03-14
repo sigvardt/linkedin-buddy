@@ -161,25 +161,25 @@ export type LinkedInFeedReaction =
 const LIKE_RATE_LIMIT_CONFIG = {
   counterKey: "linkedin.feed.like_post",
   windowSizeMs: 60 * 60 * 1000,
-  limit: 30,
+  limit: 20,
 } as const;
 
 const COMMENT_RATE_LIMIT_CONFIG = {
   counterKey: "linkedin.feed.comment_on_post",
   windowSizeMs: 60 * 60 * 1000,
-  limit: 15,
+  limit: 8,
 } as const;
 
 const REPOST_RATE_LIMIT_CONFIG = {
   counterKey: "linkedin.feed.repost_post",
   windowSizeMs: 60 * 60 * 1000,
-  limit: 10,
+  limit: 5,
 } as const;
 
 const SHARE_RATE_LIMIT_CONFIG = {
   counterKey: "linkedin.feed.share_post",
   windowSizeMs: 60 * 60 * 1000,
-  limit: 10,
+  limit: 5,
 } as const;
 
 const SAVE_RATE_LIMIT_CONFIG = {

@@ -22,7 +22,7 @@ vi.mock("../humanize.js", async () => {
 import { resolveEvasionConfig } from "../config.js";
 import * as linkedinPageModule from "../linkedinPage.js";
 
-const { wrapLinkedInBrowserContext } = linkedinPageModule;
+const { unwrapLinkedInPage, wrapLinkedInBrowserContext } = linkedinPageModule;
 const wrapPageWithEvasion = linkedinPageModule["wrapLinkedIn" + "Page"];
 
 function createLocatorHarness(page: Page) {
@@ -112,7 +112,7 @@ describe("LinkedIn page wrappers", () => {
 
     await wrappedPage.goto("https://www.linkedin.com/feed/");
 
-    expect(page.addInitScript).toHaveBeenCalledTimes(1);
+    expect(page.addInitScript).toHaveBeenCalled();
     expect(page.evaluate).toHaveBeenCalled();
     expect(page.goto).toHaveBeenCalledWith("https://www.linkedin.com/feed/");
   });
@@ -146,5 +146,20 @@ describe("LinkedIn page wrappers", () => {
     });
     expect(locator.fill).not.toHaveBeenCalled();
     expect(locator.type).not.toHaveBeenCalled();
+  });
+
+  it("unwraps wrapped pages back to their raw Playwright page", () => {
+    const { page } = createPageHarness();
+    const wrappedPage = wrapPageWithEvasion(page, {
+      evasion: resolveEvasionConfig({ level: "moderate" })
+    });
+
+    expect(unwrapLinkedInPage(wrappedPage)).toBe(page);
+  });
+
+  it("returns unknown pages unchanged when unwrapping", () => {
+    const { page } = createPageHarness();
+
+    expect(unwrapLinkedInPage(page)).toBe(page);
   });
 });
