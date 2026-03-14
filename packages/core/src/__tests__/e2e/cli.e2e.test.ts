@@ -549,7 +549,8 @@ describe.sequential("CLI E2E", () => {
       "--category",
       "people",
       "--limit",
-      "5"
+      "5",
+      "--json"
     ]);
     expect(search.error).toBeUndefined();
     expect(getLastJsonObject(search.stdout)).toMatchObject({
