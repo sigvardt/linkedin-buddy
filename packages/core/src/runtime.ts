@@ -111,6 +111,7 @@ import {
   createDefaultTestAutoConfirmConfig,
   type TestAutoConfirmConfig
 } from "./twoPhaseCommit.js";
+import { createSessionGuard, type SessionGuardOptions } from "./sessionGuard.js";
 import { resolvePrivacyConfig, type PrivacyConfig } from "./privacy.js";
 import { LinkedInSelectorAuditService } from "./selectorAudit.js";
 import {
@@ -157,6 +158,12 @@ export interface CreateCoreRuntimeOptions {
   /** Overrides the default anti-bot evasion level for this runtime. */
   evasionLevel?: string | EvasionLevel;
   selectorLocale?: string | LinkedInSelectorLocale;
+  /**
+   * Configure the pre-confirm session guard. Pass `false` to disable,
+   * or an options object to customize behavior.
+   * Default: enabled with standard pacing and frequency thresholds.
+   */
+  sessionGuard?: Partial<SessionGuardOptions> | false;
 }
 
 /**
@@ -348,6 +355,23 @@ export function createCoreRuntime(
     import("./twoPhaseCommit.js").ActionExecutor<LinkedInMessagingRuntime>
   >;
   const testEchoExecutor = new TestEchoActionExecutor<LinkedInMessagingRuntime>();
+  // Auto-disable session guard in fixture replay mode: there is no real
+  // browser session so the stored-cookie health check cannot succeed.
+  const fixtureReplayActive =
+    process.env.LINKEDIN_E2E_REPLAY === "1" ||
+    process.env.LINKEDIN_E2E_REPLAY === "true";
+  const sessionGuard =
+    options.sessionGuard !== false && !fixtureReplayActive
+      ? createSessionGuard(
+          { logger },
+          {
+            ...(options.baseDir !== undefined ? { baseDir: options.baseDir } : {}),
+            ...(typeof options.sessionGuard === "object"
+              ? options.sessionGuard
+              : {})
+          }
+        )
+      : undefined;
   const twoPhaseCommit = new TwoPhaseCommitService<LinkedInMessagingRuntime>(db, {
     privacy,
     executors: {
@@ -367,7 +391,8 @@ export function createCoreRuntime(
       ...eventExecutors,
       [TEST_ECHO_ACTION_TYPE]: testEchoExecutor
     },
-    getRuntime: () => runtime
+    getRuntime: () => runtime,
+    ...(sessionGuard !== undefined ? { sessionGuard } : {})
   });
 
   runtime = {
