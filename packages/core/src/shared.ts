@@ -97,6 +97,36 @@ export function dedupeRepeatedText(value: string | null | undefined): string {
   return text;
 }
 
+/**
+ * Cleans a posted_at / timestamp string by deduplicating repeated text and
+ * extracting the most specific time reference when multiple fragments were
+ * concatenated (e.g. "7 hours ago Within the past 24 hours" -> "7 hours ago").
+ */
+export function cleanPostedAt(value: string | null | undefined): string {
+  const text = dedupeRepeatedText(value);
+  if (!text) {
+    return "";
+  }
+
+  // If the text looks like it contains a specific relative-time fragment
+  // followed by a broader category label, extract just the specific part.
+  const specificTimeMatch =
+    /(\d+\s*(?:second|minute|hour|day|week|month|year|min|sec)s?\s*ago)/i.exec(
+      text,
+    );
+  if (specificTimeMatch && specificTimeMatch[0].length < text.length) {
+    return normalizeText(specificTimeMatch[0]);
+  }
+
+  // Short relative-time tokens like "2d", "3w", "1h"
+  const shortTokenMatch = /^(\d+[hmdwys])\b/i.exec(text);
+  if (shortTokenMatch && shortTokenMatch[0].length < text.length) {
+    return normalizeText(shortTokenMatch[0]);
+  }
+
+  return text;
+}
+
 /** Returns the first open page in a browser context, or creates a new one. */
 export async function getOrCreatePage(context: BrowserContext): Promise<Page> {
   const existing = context.pages()[0];

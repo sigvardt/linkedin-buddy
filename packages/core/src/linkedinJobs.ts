@@ -24,7 +24,7 @@ import type {
   ActionExecutorResult,
   TwoPhaseCommitService,
 } from "./twoPhaseCommit.js";
-import { dedupeRepeatedText, normalizeText, getOrCreatePage } from "./shared.js";
+import { dedupeRepeatedText, cleanPostedAt, normalizeText, getOrCreatePage } from "./shared.js";
 
 export interface LinkedInJobSearchResult {
   job_id: string;
@@ -1007,7 +1007,7 @@ async function extractJobSearchResults(
       title: dedupeRepeatedText(snapshot.title),
       company: normalizeText(snapshot.company),
       location: normalizeText(snapshot.location),
-      posted_at: normalizeText(snapshot.posted_at),
+      posted_at: cleanPostedAt(snapshot.posted_at),
       job_url: normalizeText(snapshot.job_url),
       salary_range: normalizeText(snapshot.salary_range),
       employment_type: normalizeText(snapshot.employment_type),
@@ -1303,11 +1303,11 @@ async function extractJobDetail(
 
   return {
     job_id: normalizeText(snapshot.job_id) || jobId,
-    title: normalizeText(snapshot.title),
+    title: dedupeRepeatedText(snapshot.title),
     company: normalizeText(snapshot.company),
     company_url: normalizeText(snapshot.company_url),
     location: normalizeText(snapshot.location),
-    posted_at: normalizeText(snapshot.posted_at),
+    posted_at: cleanPostedAt(snapshot.posted_at),
     description: normalizeText(snapshot.description),
     salary_range: normalizeText(snapshot.salary_range),
     employment_type: normalizeText(snapshot.employment_type),
