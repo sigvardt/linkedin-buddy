@@ -39,6 +39,7 @@ import type {
 } from "./twoPhaseCommit.js";
 
 const LINKEDIN_FEED_URL = "https://www.linkedin.com/feed/";
+const LINKEDIN_ARTICLE_NEW_URL = "https://www.linkedin.com/article/new/";
 const LINKEDIN_HOST_PATTERN = /(^|\.)linkedin\.com$/iu;
 export const CREATE_ARTICLE_ACTION_TYPE = "article.create";
 export const PUBLISH_ARTICLE_ACTION_TYPE = "article.publish";
@@ -885,11 +886,30 @@ function createWriteArticleTriggerCandidates(
 ): SelectorCandidate[] {
   const regex = buildLocalizedRegex(
     selectorLocale,
-    ["Write article", "Write an article"],
-    ["Skriv artikel", "Skriv en artikel"]
+    [
+      "Write article",
+      "Write an article",
+      "Create article",
+      "Create an article",
+      "Start writing"
+    ],
+    [
+      "Skriv artikel",
+      "Skriv en artikel",
+      "Opret artikel",
+      "Opret en artikel"
+    ]
   );
 
-  return createTextControlCandidates("write-article", regex);
+  return [
+    ...createTextControlCandidates("write-article", regex),
+    {
+      key: "write-article-sharebox-link",
+      selectorHint: "a[href*='/article/new'], a[href*='/pulse/']",
+      locatorFactory: (page) =>
+        page.locator("a[href*='/article/new'], a[href*='/article/new/']")
+    }
+  ];
 }
 
 function createManageCandidates(
@@ -1036,7 +1056,34 @@ async function waitForPublishingEditor(
   };
 }
 
-async function openPublishingEditor(
+async function openPublishingEditorViaDirectUrl(
+  basePage: Page,
+  selectorLocale: LinkedInSelectorLocale,
+  artifactPaths: string[]
+): Promise<EditorSurface | null> {
+  try {
+    await basePage.goto(LINKEDIN_ARTICLE_NEW_URL, {
+      waitUntil: "domcontentloaded"
+    });
+    await waitForNetworkIdleBestEffort(basePage, 10_000);
+
+    const currentUrl = basePage.url();
+    if (!LINKEDIN_HOST_PATTERN.test(new URL(currentUrl).hostname)) {
+      return null;
+    }
+
+    return await waitForPublishingEditor(
+      basePage,
+      selectorLocale,
+      artifactPaths,
+      "direct-url-navigation"
+    );
+  } catch {
+    return null;
+  }
+}
+
+async function openPublishingEditorViaFeedTrigger(
   context: BrowserContext,
   basePage: Page,
   selectorLocale: LinkedInSelectorLocale,
@@ -1067,6 +1114,30 @@ async function openPublishingEditor(
     selectorLocale,
     artifactPaths,
     trigger.key
+  );
+}
+
+async function openPublishingEditor(
+  context: BrowserContext,
+  basePage: Page,
+  selectorLocale: LinkedInSelectorLocale,
+  artifactPaths: string[]
+): Promise<EditorSurface> {
+  const directResult = await openPublishingEditorViaDirectUrl(
+    basePage,
+    selectorLocale,
+    artifactPaths
+  );
+
+  if (directResult) {
+    return directResult;
+  }
+
+  return openPublishingEditorViaFeedTrigger(
+    context,
+    basePage,
+    selectorLocale,
+    artifactPaths
   );
 }
 
