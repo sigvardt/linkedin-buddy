@@ -505,6 +505,9 @@ async function captureScreenshotArtifact(
 
 async function waitForFeedSurface(page: Page): Promise<void> {
   const selectors = [
+    "[data-testid='mainFeed']",
+    "[data-testid='mainFeed'] [role='listitem']",
+    "[data-component-type='LazyColumn']",
     "[data-urn]",
     ".feed-shared-update-v2",
     ".occludable-update",
@@ -534,7 +537,13 @@ async function waitForFeedSurface(page: Page): Promise<void> {
 }
 
 async function waitForPostSurface(page: Page): Promise<void> {
-  const selectors = ["[data-urn]", ".feed-shared-update-v2", "article", "main"];
+  const selectors = [
+    "[data-testid='mainFeed']",
+    "[data-urn]",
+    ".feed-shared-update-v2",
+    "article",
+    "main",
+  ];
 
   for (const selector of selectors) {
     try {
@@ -661,142 +670,333 @@ async function extractFeedPosts(
         return "";
       };
 
-      const cardCandidates = [
-        ...Array.from(globalThis.document.querySelectorAll("[data-urn]")),
-        ...Array.from(
-          globalThis.document.querySelectorAll("div.feed-shared-update-v2"),
-        ),
-        ...Array.from(
-          globalThis.document.querySelectorAll("div.occludable-update"),
-        ),
-        ...Array.from(
-          globalThis.document.querySelectorAll("article.feed-shared-update-v2"),
-        ),
-      ];
-
-      const uniqueCards: Element[] = [];
-      const seenCards = new Set<Element>();
-      for (const candidate of cardCandidates) {
-        const root =
-          candidate.closest(
-            "div[data-urn], div.feed-shared-update-v2, div.occludable-update, article.feed-shared-update-v2, li",
-          ) ?? candidate;
-        if (seenCards.has(root)) {
-          continue;
-        }
-        seenCards.add(root);
-        uniqueCards.push(root);
-        if (uniqueCards.length >= maxPosts * 4) {
-          break;
-        }
-      }
-
-      const results: FeedPostSnapshot[] = [];
-      for (const card of uniqueCards) {
-        const actorRoot =
-          card.querySelector(
-            ".update-components-actor, .feed-shared-actor, .feed-shared-actor__container",
-          ) ?? card;
-
-        const urn =
-          normalize(card.getAttribute("data-urn")) ||
-          normalize(card.querySelector("[data-urn]")?.getAttribute("data-urn"));
-
-        const postUrl = pickHref(
-          [
-            "a[href*='/feed/update/']",
-            "a[href*='/posts/']",
-            "a[href*='activity-']",
-          ],
-          card,
+      const pickMetricLabel = (value: string, kind: string): string => {
+        const escapedKind = kind.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const metricPattern = new RegExp(
+          `^\\d[\\d,\\.]*\\s+${escapedKind}s?$`,
+          "i",
         );
-        const postId = extractPostId(urn || postUrl);
-        if (!postId && !postUrl) {
-          continue;
+        const normalized = normalize(value);
+        return metricPattern.test(normalized) ? normalized : "";
+      };
+
+      const extractSduiPostId = (componentKey: string): string => {
+        const normalized = normalize(componentKey);
+        if (!normalized) {
+          return "";
         }
 
-        const postedAtText = pickText(
-          [
-            ".update-components-actor__sub-description span[aria-hidden='true']",
-            ".update-components-actor__sub-description",
-            ".feed-shared-actor__sub-description",
-            ".feed-shared-actor__sub-description-link",
-            ".update-components-actor__meta-link",
-          ],
-          actorRoot,
-        );
+        const expandedMatch = /expanded(.+?)FeedType_/i.exec(normalized);
+        if (expandedMatch?.[1]) {
+          return normalize(expandedMatch[1]);
+        }
 
-        const timeElement = card.querySelector("time");
-        const postedAt =
-          normalize(timeElement?.textContent) ||
-          normalize(timeElement?.getAttribute("datetime")) ||
-          postedAtText;
+        return extractPostId(normalized);
+      };
 
-        const text = pickText(
-          [
-            ".feed-shared-update-v2__description-wrapper .break-words",
-            ".feed-shared-update-v2__description",
-            ".update-components-text span[dir='ltr']",
-            ".update-components-text",
-            ".break-words",
-          ],
-          card,
-        );
+      const extractSduiPosts = (): FeedPostSnapshot[] => {
+        const feedRoot =
+          globalThis.document.querySelector("[data-testid='mainFeed']") ??
+          globalThis.document.querySelector("[data-component-type='LazyColumn']");
+        if (!feedRoot) {
+          return [];
+        }
 
-        const reactions = pickText(
-          [
-            ".social-details-social-counts__reactions-count",
-            ".social-details-social-counts__social-proof-text",
-          ],
-          card,
-        );
-        const comments = pickText(
-          [".social-details-social-counts__comments"],
-          card,
-        );
-        const reposts = pickText(
-          [".social-details-social-counts__reposts"],
-          card,
-        );
-
-        const authorName = pickText(
-          [
-            ".update-components-actor__name",
-            ".feed-shared-actor__name",
-            ".update-components-actor__title span[aria-hidden='true']",
-          ],
-          actorRoot,
-        );
-
-        const authorHeadline = pickText(
-          [
-            ".update-components-actor__description",
-            ".feed-shared-actor__description",
-          ],
-          actorRoot,
-        );
-
-        const authorProfileUrl = pickHref(["a[href*='/in/']"], actorRoot);
-
-        results.push({
-          post_id: postId,
-          author_name: authorName,
-          author_headline: authorHeadline,
-          author_profile_url: authorProfileUrl,
-          posted_at: postedAt,
-          text,
-          reactions_count: reactions,
-          comments_count: comments,
-          reposts_count: reposts,
-          post_url: postUrl || buildPostUrl(postId),
+        const listItems = Array.from(feedRoot.querySelectorAll("[role='listitem']"));
+        const postCards = listItems.filter((item) => {
+          const componentKey = normalize(item.getAttribute("componentkey"));
+          return /FeedType/i.test(componentKey);
         });
 
-        if (results.length >= maxPosts) {
-          break;
+        const sduiResults: FeedPostSnapshot[] = [];
+        for (const card of postCards) {
+          const componentKey = normalize(card.getAttribute("componentkey"));
+          const postId = extractSduiPostId(componentKey);
+          if (!postId) {
+            continue;
+          }
+
+          const profileLinks = Array.from(
+            card.querySelectorAll("a[href*='/in/']"),
+          ) as HTMLAnchorElement[];
+
+          let authorName = "";
+          let authorHeadline = "";
+          let postedAt = "";
+          let authorProfileUrl = "";
+
+          for (const link of profileLinks) {
+            if (!authorProfileUrl) {
+              authorProfileUrl = toAbsoluteUrl(link.getAttribute("href"));
+            }
+
+            if (!authorName) {
+              const potentialName = normalize(link.textContent);
+              if (potentialName) {
+                authorName = potentialName;
+              }
+            }
+
+            const parent = link.parentElement;
+            if (!parent) {
+              continue;
+            }
+
+            const siblingDivs = Array.from(parent.querySelectorAll("div"));
+            for (const div of siblingDivs) {
+              const text = normalize(div.textContent);
+              if (!text || text === authorName) {
+                continue;
+              }
+              if (!postedAt && /(^|\s)\d+\s*[hdwmy]\s*[•.]?/i.test(text)) {
+                postedAt = text;
+                continue;
+              }
+              if (!postedAt && text.includes("•")) {
+                postedAt = text;
+                continue;
+              }
+              if (!authorHeadline) {
+                authorHeadline = text;
+              }
+            }
+          }
+
+          if (!authorName) {
+            authorName = pickText(["a[href*='/in/'] div", "a[href*='/in/']"], card);
+          }
+
+          if (!authorProfileUrl) {
+            authorProfileUrl = pickHref(["a[href*='/in/']"], card);
+          }
+
+          if (!authorHeadline || !postedAt) {
+            const allDivText = Array.from(card.querySelectorAll("div")).map((div) =>
+              normalize(div.textContent),
+            );
+            for (const text of allDivText) {
+              if (!text || text === authorName || text === authorHeadline) {
+                continue;
+              }
+              if (!postedAt && /(^|\s)\d+\s*[hdwmy]\s*[•.]?/i.test(text)) {
+                postedAt = text;
+                continue;
+              }
+              if (!postedAt && text.includes("•")) {
+                postedAt = text;
+                continue;
+              }
+              if (!authorHeadline) {
+                authorHeadline = text;
+              }
+            }
+          }
+
+          const text = normalize(
+            card.querySelector("span[data-testid='expandable-text-box']")?.textContent,
+          );
+
+          let reactions = "";
+          let comments = "";
+          let reposts = "";
+
+          const spanText = Array.from(card.querySelectorAll("span")).map((span) =>
+            normalize(span.textContent),
+          );
+          for (const value of spanText) {
+            if (!reactions) {
+              reactions = pickMetricLabel(value, "reaction");
+            }
+            if (!comments) {
+              comments = pickMetricLabel(value, "comment");
+            }
+            if (!reposts) {
+              reposts = pickMetricLabel(value, "repost");
+            }
+          }
+
+          sduiResults.push({
+            post_id: postId,
+            author_name: authorName,
+            author_headline: authorHeadline,
+            author_profile_url: authorProfileUrl,
+            posted_at: postedAt,
+            text,
+            reactions_count: reactions,
+            comments_count: comments,
+            reposts_count: reposts,
+            post_url: "",
+          });
+
+          if (sduiResults.length >= maxPosts) {
+            break;
+          }
         }
+
+        return sduiResults;
+      };
+
+      const extractLegacyPosts = (): FeedPostSnapshot[] => {
+        const cardCandidates = [
+          ...Array.from(globalThis.document.querySelectorAll("[data-urn]")),
+          ...Array.from(
+            globalThis.document.querySelectorAll("div.feed-shared-update-v2"),
+          ),
+          ...Array.from(
+            globalThis.document.querySelectorAll("div.occludable-update"),
+          ),
+          ...Array.from(
+            globalThis.document.querySelectorAll("article.feed-shared-update-v2"),
+          ),
+        ];
+
+        const uniqueCards: Element[] = [];
+        const seenCards = new Set<Element>();
+        for (const candidate of cardCandidates) {
+          const root =
+            candidate.closest(
+              "div[data-urn], div.feed-shared-update-v2, div.occludable-update, article.feed-shared-update-v2, li",
+            ) ?? candidate;
+          if (seenCards.has(root)) {
+            continue;
+          }
+          seenCards.add(root);
+          uniqueCards.push(root);
+          if (uniqueCards.length >= maxPosts * 4) {
+            break;
+          }
+        }
+
+        const results: FeedPostSnapshot[] = [];
+        for (const card of uniqueCards) {
+          const actorRoot =
+            card.querySelector(
+              ".update-components-actor, .feed-shared-actor, .feed-shared-actor__container",
+            ) ?? card;
+
+          const urn =
+            normalize(card.getAttribute("data-urn")) ||
+            normalize(card.querySelector("[data-urn]")?.getAttribute("data-urn"));
+
+          const postUrl = pickHref(
+            [
+              "a[href*='/feed/update/']",
+              "a[href*='/posts/']",
+              "a[href*='activity-']",
+            ],
+            card,
+          );
+          const postId = extractPostId(urn || postUrl);
+          if (!postId && !postUrl) {
+            continue;
+          }
+
+          const postedAtText = pickText(
+            [
+              ".update-components-actor__sub-description span[aria-hidden='true']",
+              ".update-components-actor__sub-description",
+              ".feed-shared-actor__sub-description",
+              ".feed-shared-actor__sub-description-link",
+              ".update-components-actor__meta-link",
+            ],
+            actorRoot,
+          );
+
+          const timeElement = card.querySelector("time");
+          const postedAt =
+            normalize(timeElement?.textContent) ||
+            normalize(timeElement?.getAttribute("datetime")) ||
+            postedAtText;
+
+          const text = pickText(
+            [
+              ".feed-shared-update-v2__description-wrapper .break-words",
+              ".feed-shared-update-v2__description",
+              ".update-components-text span[dir='ltr']",
+              ".update-components-text",
+              ".break-words",
+            ],
+            card,
+          );
+
+          const reactions = pickText(
+            [
+              ".social-details-social-counts__reactions-count",
+              ".social-details-social-counts__social-proof-text",
+            ],
+            card,
+          );
+          const comments = pickText(
+            [".social-details-social-counts__comments"],
+            card,
+          );
+          const reposts = pickText(
+            [".social-details-social-counts__reposts"],
+            card,
+          );
+
+          const authorName = pickText(
+            [
+              ".update-components-actor__name",
+              ".feed-shared-actor__name",
+              ".update-components-actor__title span[aria-hidden='true']",
+            ],
+            actorRoot,
+          );
+
+          const authorHeadline = pickText(
+            [
+              ".update-components-actor__description",
+              ".feed-shared-actor__description",
+            ],
+            actorRoot,
+          );
+
+          const authorProfileUrl = pickHref(["a[href*='/in/']"], actorRoot);
+
+          results.push({
+            post_id: postId,
+            author_name: authorName,
+            author_headline: authorHeadline,
+            author_profile_url: authorProfileUrl,
+            posted_at: postedAt,
+            text,
+            reactions_count: reactions,
+            comments_count: comments,
+            reposts_count: reposts,
+            post_url: postUrl || buildPostUrl(postId),
+          });
+
+          if (results.length >= maxPosts) {
+            break;
+          }
+        }
+
+        return results;
+      };
+
+      const results: FeedPostSnapshot[] = [];
+      const seenPostIds = new Set<string>();
+      const appendUniquePosts = (posts: FeedPostSnapshot[]): void => {
+        for (const post of posts) {
+          const dedupeKey = normalize(post.post_id) || normalize(post.post_url);
+          if (!dedupeKey || seenPostIds.has(dedupeKey)) {
+            continue;
+          }
+          seenPostIds.add(dedupeKey);
+          results.push(post);
+          if (results.length >= maxPosts) {
+            return;
+          }
+        }
+      };
+
+      appendUniquePosts(extractSduiPosts());
+      if (results.length < maxPosts) {
+        appendUniquePosts(extractLegacyPosts());
       }
 
-      return results;
+      return results.slice(0, maxPosts);
     },
     Math.max(1, limit),
   );
