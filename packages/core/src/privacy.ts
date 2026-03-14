@@ -34,7 +34,75 @@ interface RedactionContext {
 const DEFAULT_HASH_NAMESPACE = "linkedin-buddy-privacy-v1";
 const DEFAULT_MESSAGE_EXCERPT_LENGTH = 80;
 const EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
-const LIKELY_FULL_NAME_PATTERN = /\b[A-Z][A-Za-z'’-]+ [A-Z][A-Za-z'’-]+\b/g;
+/**
+ * Matches a single title-cased word (same character class as the former
+ * two-word LIKELY_FULL_NAME_PATTERN).  Used by {@link redactLikelyFullNames}
+ * to locate individual capitalised tokens before pairing them.
+ */
+const CAPITALIZED_WORD_PATTERN = /\b[A-Z][A-Za-z'\u2019-]+\b/g;
+
+/**
+ * Words that commonly appear title-cased in LinkedIn content but are NOT
+ * person names.  Used to filter false positives from two-word name detection.
+ *
+ * Selection criteria \u2014 each word is included because it:
+ *  1. Frequently appears capitalised (sentence starts, headings, titles)
+ *  2. Is virtually never used as a given name or surname
+ *
+ * Words that double as real names (e.g. May, Grace, Will, Rose, Paris,
+ * London, Sydney) are intentionally EXCLUDED to avoid masking genuine
+ * name matches.
+ */
+const LIKELY_NAME_FALSE_POSITIVES: ReadonlySet<string> = new Set([
+  // Function words (prepositions, conjunctions, determiners)
+  "About", "Above", "Across", "After", "Against", "Along", "Among",
+  "And", "Around", "Before", "Behind", "Below", "Beneath", "Beside",
+  "Between", "Beyond", "Both", "But", "Despite", "Down", "During",
+  "Each", "Either", "Else", "Every", "Except", "For", "From",
+  "How", "Into", "Its", "Nor", "Not", "Off", "Onto", "Our",
+  "Out", "Over", "Per", "Since", "Than", "That", "The",
+  "Their", "Them", "Then", "There", "These", "This", "Those",
+  "Through", "Throughout", "Too", "Toward", "Towards", "Under",
+  "Until", "Upon", "Very", "What", "When", "Where", "Which",
+  "While", "With", "Within", "Without", "Yet", "Your",
+
+  // Pronouns and verb forms (excluding common given names like Will / May)
+  "Are", "Been", "Being", "Could", "Did", "Does", "Got",
+  "Had", "Has", "Have", "Having", "Her", "His", "Might",
+  "Must", "Neither", "She", "Should", "Such", "They", "Was",
+  "Were", "Who", "Whom", "Why", "Would", "You",
+
+  // Adverbs and adjectives (never person names)
+  "Also", "Already", "Always", "Any", "Ever", "Few", "Here",
+  "However", "Indeed", "Just", "Like", "Many", "Meanwhile",
+  "Moreover", "More", "Most", "Much", "Nevertheless", "Never",
+  "New", "Next", "Now", "Often", "Old", "Only", "Other", "Own",
+  "Perhaps", "Quite", "Rather", "Really", "Several", "Some",
+  "Still", "Therefore", "Thus", "Today", "Tomorrow", "Truly",
+
+  // Greetings and salutations
+  "Dear", "Fellow", "Good", "Great", "Hello", "Hey", "Hi",
+
+  // Professional and LinkedIn-specific terms
+  "Based", "Building", "Certified", "Connecting", "Digital",
+  "Driven", "Engineering", "Excited", "Global", "Growth",
+  "Hiring", "Hybrid", "Industry", "Innovation", "Junior",
+  "Leading", "Looking", "Management", "Marketing", "Open",
+  "Passionate", "Product", "Professional", "Remote", "Seeking",
+  "Senior", "Sustainable", "Thrilled", "Working",
+
+  // Geographic names (extremely rarely used as person names)
+  "Amsterdam", "Bangalore", "Bangkok", "Barcelona", "Beijing",
+  "Berlin", "Brussels", "Budapest", "Copenhagen", "Delhi",
+  "Dubai", "Dublin", "Edinburgh", "Frankfurt", "Hamburg",
+  "Helsinki", "Istanbul", "Jakarta", "Johannesburg", "Lagos",
+  "Lisbon", "Madrid", "Manchester", "Melbourne", "Montreal",
+  "Moscow", "Mumbai", "Munich", "Nairobi", "Oslo", "Prague",
+  "Riyadh", "Seoul", "Shanghai", "Singapore", "Stockholm",
+  "Taipei", "Tokyo", "Toronto", "Vancouver", "Vienna",
+  "Warsaw", "Zurich",
+]);
+
 const LINKEDIN_PROFILE_URL_PATTERN =
   /((?:https?:\/\/)?(?:www\.)?linkedin\.com\/in\/|\/in\/)([^/?#\s]+)/gi;
 
@@ -218,8 +286,82 @@ function redactEmails(value: string, config: PrivacyConfig): string {
   return value.replace(EMAIL_PATTERN, (email) => redactEmail(email, config));
 }
 
+/**
+ * Returns true when every letter character in {@link word} is upper-case,
+ * indicating an acronym (AI, CEO, ML\u2026) rather than a person name.
+ */
+function isAllUpperCase(word: string): boolean {
+  return word.length >= 2 && word === word.toUpperCase();
+}
+
+/**
+ * Returns true when a two-word candidate is very unlikely to be a real
+ * person name.  A candidate is rejected when either word is:
+ *
+ *  - An all-caps token (likely an acronym: AI, CEO, ML\u2026)
+ *  - A member of the {@link LIKELY_NAME_FALSE_POSITIVES} set
+ */
+function isLikelyFalsePositiveName(first: string, second: string): boolean {
+  if (isAllUpperCase(first) || isAllUpperCase(second)) {
+    return true;
+  }
+
+  return LIKELY_NAME_FALSE_POSITIVES.has(first) || LIKELY_NAME_FALSE_POSITIVES.has(second);
+}
+
+/**
+ * Redact sequences of two consecutive capitalised words that look like
+ * person names while skipping known false positives (acronyms, common
+ * English words, city names, professional terms).
+ *
+ * When the first word of a candidate pair is a false positive it is skipped
+ * and the algorithm tries to pair the second word with the *next*
+ * capitalised word \u2014 so \u201cHello Jane Doe\u201d correctly redacts \u201cJane Doe\u201d.
+ */
 function redactLikelyFullNames(value: string, config: PrivacyConfig): string {
-  return value.replace(LIKELY_FULL_NAME_PATTERN, (match) => redactName(match, config));
+  // Collect every capitalised word with its position.
+  const words: Array<{ word: string; start: number; end: number }> = [];
+  const re = new RegExp(CAPITALIZED_WORD_PATTERN.source, "g");
+  let m: RegExpExecArray | null;
+
+  while ((m = re.exec(value)) !== null) {
+    words.push({ word: m[0], start: m.index, end: m.index + m[0].length });
+  }
+
+  // Greedily pair consecutive capitalised words separated by exactly one
+  // space.  When the leading word is a known false-positive we skip it and
+  // try pairing the trailing word with the next capitalised word instead.
+  const pairs: Array<{ start: number; end: number; text: string }> = [];
+  let i = 0;
+
+  while (i < words.length - 1) {
+    const a = words[i]!;
+    const b = words[i + 1]!;
+
+    // Only consider words separated by exactly one space.
+    if (b.start - a.end !== 1 || value[a.end] !== " ") {
+      i++;
+      continue;
+    }
+
+    if (isLikelyFalsePositiveName(a.word, b.word)) {
+      i++;
+      continue;
+    }
+
+    pairs.push({ start: a.start, end: b.end, text: `${a.word} ${b.word}` });
+    i += 2;
+  }
+
+  // Replace backwards so earlier indices remain stable.
+  let result = value;
+
+  for (let j = pairs.length - 1; j >= 0; j--) {
+    const p = pairs[j]!;
+    result = result.slice(0, p.start) + redactName(p.text, config) + result.slice(p.end);
+  }
+
+  return result;
 }
 
 function redactActionSummary(value: string, config: PrivacyConfig): string {
