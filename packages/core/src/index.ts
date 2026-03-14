@@ -52,6 +52,7 @@ export * from "./run.js";
 export * from "./runtime.js";
 export * from "./scheduler.js";
 export * from "./selectorAudit.js";
+export * from "./sessionGuard.js";
 export * from "./selectorLocale.js";
 export * from "./shared.js";
 export * from "./stealth.js";

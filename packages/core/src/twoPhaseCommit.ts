@@ -1,3 +1,4 @@
+import type { SessionGuardFn } from "./sessionGuard.js";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { AssistantDatabase, PreparedActionRow } from "./db/database.js";
 import {
@@ -192,6 +193,8 @@ export interface TwoPhaseCommitServiceOptions<TRuntime> {
   executors?: ActionExecutorRegistry<TRuntime>;
   getRuntime?: () => TRuntime;
   privacy?: Partial<PrivacyConfig>;
+  /** Pre-confirm session guard called before executor dispatch. */
+  sessionGuard?: SessionGuardFn | undefined;
 }
 
 export function generateConfirmToken(entropyBytes: number = 24): string {
@@ -388,6 +391,7 @@ export class TwoPhaseCommitService<TRuntime = unknown> {
   private readonly executors: ActionExecutorRegistry<TRuntime>;
   private readonly getRuntime: (() => TRuntime) | undefined;
   private readonly privacy: PrivacyConfig;
+  private readonly sessionGuard: SessionGuardFn | undefined;
 
   constructor(
     private readonly db: AssistantDatabase,
@@ -396,6 +400,7 @@ export class TwoPhaseCommitService<TRuntime = unknown> {
     this.executors = options.executors ?? {};
     this.getRuntime = options.getRuntime;
     this.privacy = resolvePrivacyConfig(options.privacy);
+    this.sessionGuard = options.sessionGuard;
   }
 
   prepare(input: PrepareActionInput): PreparedActionResult {
@@ -544,6 +549,32 @@ export class TwoPhaseCommitService<TRuntime = unknown> {
     const nowMs = input.nowMs ?? Date.now();
 
     assertPreparedActionIsReady(action, nowMs);
+
+    // Pre-confirm session guard: validate stored session health and apply
+    // inter-operation pacing before dispatching to the action executor.
+    if (this.sessionGuard) {
+      try {
+        await this.sessionGuard({
+          actionType: action.actionType,
+          actionId: action.id,
+          nowMs
+        });
+      } catch (guardError) {
+        const assistantError = asLinkedInBuddyError(guardError);
+        const errorPayload = toLinkedInBuddyErrorPayload(
+          assistantError,
+          this.privacy
+        );
+        this.db.markPreparedActionFailed({
+          id: action.id,
+          confirmedAtMs: nowMs,
+          executedAtMs: nowMs,
+          errorCode: assistantError.code,
+          errorMessage: errorPayload.message
+        });
+        throw assistantError;
+      }
+    }
 
     const executor = this.executors[action.actionType];
     if (!executor) {
