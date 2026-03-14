@@ -22,7 +22,9 @@ import type { ProfileManager } from "./profileManager.js";
 import {
   consumeRateLimitOrThrow,
   createConfirmRateLimitMessage,
+  createPrepareRateLimitMessage,
   formatRateLimitState,
+  peekRateLimitOrThrow,
   type RateLimiter,
   type RateLimiterState,
 } from "./rateLimiter.js";
@@ -1391,6 +1393,16 @@ export class LinkedInFollowupsService {
       cdpUrl: this.runtime.cdpUrl,
     });
 
+    const rateLimitState: RateLimiterState = peekRateLimitOrThrow(
+      this.runtime.rateLimiter,
+      {
+        config: SEND_MESSAGE_RATE_LIMIT_CONFIG,
+        message: createPrepareRateLimitMessage(
+          FOLLOWUP_AFTER_ACCEPT_ACTION_TYPE,
+        ),
+      },
+    );
+
     return this.runtime.profileManager.runWithContext(
       {
         cdpUrl: this.runtime.cdpUrl,
@@ -1443,9 +1455,6 @@ export class LinkedInFollowupsService {
                 profile_url: relativeProfileUrl,
               },
             );
-
-            const rateLimitState: RateLimiterState =
-              this.runtime.rateLimiter.peek(SEND_MESSAGE_RATE_LIMIT_CONFIG);
 
             const target = {
               profile_name: profileName,

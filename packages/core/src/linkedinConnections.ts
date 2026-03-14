@@ -15,7 +15,8 @@ import {
 import {
   consumeRateLimitOrThrow,
   createConfirmRateLimitMessage,
-  peekRateLimitPreview,
+  createPrepareRateLimitMessage,
+  peekRateLimitPreviewOrThrow,
   type ConsumeRateLimitInput,
   type RateLimiter
 } from "./rateLimiter.js";
@@ -2354,9 +2355,10 @@ export class LinkedInConnectionsService {
       preview: {
         summary: input.summary,
         target,
-        rate_limit: peekRateLimitPreview(
+        rate_limit: peekRateLimitPreviewOrThrow(
           this.runtime.rateLimiter,
-          getConnectionRateLimitConfig(input.actionType)
+          getConnectionRateLimitConfig(input.actionType),
+          createPrepareRateLimitMessage(input.actionType)
         )
       },
       ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
@@ -2512,9 +2514,10 @@ export class LinkedInConnectionsService {
       outbound: {
         note: input.note ?? ""
       },
-      rate_limit: peekRateLimitPreview(
+      rate_limit: peekRateLimitPreviewOrThrow(
         this.runtime.rateLimiter,
-        getConnectionRateLimitConfig(SEND_INVITATION_ACTION_TYPE)
+        getConnectionRateLimitConfig(SEND_INVITATION_ACTION_TYPE),
+        createPrepareRateLimitMessage(SEND_INVITATION_ACTION_TYPE)
       )
     };
 

@@ -92,6 +92,36 @@ export function createConfirmRateLimitMessage(actionType: string): string {
   return `LinkedIn ${actionName} confirm is rate limited for the current window.`;
 }
 
+export function createPrepareRateLimitMessage(actionType: string): string {
+  const actionName =
+    actionType
+      .split(".")
+      .filter((segment) => segment.length > 0)
+      .at(-1) ?? actionType;
+
+  return `LinkedIn ${actionName} is rate limited for the current window. Cannot prepare action.`;
+}
+
+function throwRateLimited(
+  state: RateLimiterState,
+  message: string,
+  details?: Record<string, unknown>,
+): never {
+  const retryHint =
+    state.retryAfterMs > 0
+      ? ` Try again in ${formatRetryAfter(state.retryAfterMs)}.`
+      : "";
+
+  throw new LinkedInBuddyError(
+    "RATE_LIMITED",
+    `${message}${retryHint}`,
+    {
+      ...(details ?? {}),
+      rate_limit: formatRateLimitState(state),
+    },
+  );
+}
+
 export function consumeRateLimitOrThrow(
   rateLimiter: Pick<RateLimiter, "consume">,
   input: ConsumeRateLimitOrThrowInput,
@@ -99,22 +129,45 @@ export function consumeRateLimitOrThrow(
   const rateLimitState = rateLimiter.consume(input.config);
 
   if (!rateLimitState.allowed) {
-    const retryHint =
-      rateLimitState.retryAfterMs > 0
-        ? ` Try again in ${formatRetryAfter(rateLimitState.retryAfterMs)}.`
-        : "";
-
-    throw new LinkedInBuddyError(
-      "RATE_LIMITED",
-      `${input.message}${retryHint}`,
-      {
-        ...(input.details ?? {}),
-        rate_limit: formatRateLimitState(rateLimitState),
-      },
-    );
+    throwRateLimited(rateLimitState, input.message, input.details);
   }
 
   return rateLimitState;
+}
+
+/**
+ * Peeks at the current rate-limit state and throws `RATE_LIMITED` if the
+ * limit is already reached.  Unlike {@link consumeRateLimitOrThrow} this
+ * does **not** increment the counter — use it in `prepare*` methods to
+ * reject early without consuming quota.
+ */
+export function peekRateLimitOrThrow(
+  rateLimiter: Pick<RateLimiter, "peek">,
+  input: ConsumeRateLimitOrThrowInput,
+): RateLimiterState {
+  const rateLimitState = rateLimiter.peek(input.config);
+
+  if (!rateLimitState.allowed) {
+    throwRateLimited(rateLimitState, input.message, input.details);
+  }
+
+  return rateLimitState;
+}
+
+/**
+ * Peeks at the current rate-limit state, throws `RATE_LIMITED` if the
+ * limit is already reached, and returns the formatted preview record.
+ * Drop-in replacement for {@link peekRateLimitPreview} in `prepare*`
+ * helpers that need early rejection.
+ */
+export function peekRateLimitPreviewOrThrow(
+  rateLimiter: Pick<RateLimiter, "peek">,
+  config: ConsumeRateLimitInput,
+  message: string,
+  details?: Record<string, unknown>,
+): Record<string, number | boolean | string> {
+  const state = peekRateLimitOrThrow(rateLimiter, { config, message, ...(details ? { details } : {}) });
+  return formatRateLimitState(state);
 }
 
 function buildRateLimiterState(
@@ -191,7 +244,13 @@ export class RateLimiter {
       existing.windowStartMs === windowStartMs &&
       existing.windowSizeMs === input.windowSizeMs;
 
-    const count = inSameWindow ? existing.count + 1 : 1;
+    const currentCount = inSameWindow ? existing.count : 0;
+
+    if (currentCount >= input.limit) {
+      return buildRateLimiterState(input, windowStartMs, currentCount, nowMs);
+    }
+
+    const count = currentCount + 1;
 
     this.db.upsertRateLimitCounter({
       counterKey: input.counterKey,

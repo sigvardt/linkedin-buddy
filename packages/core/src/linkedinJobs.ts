@@ -13,7 +13,9 @@ import type { ProfileManager } from "./profileManager.js";
 import {
   consumeRateLimitOrThrow,
   createConfirmRateLimitMessage,
+  createPrepareRateLimitMessage,
   formatRateLimitState,
+  peekRateLimitOrThrow,
 } from "./rateLimiter.js";
 import type { RateLimiter } from "./rateLimiter.js";
 import type {
@@ -3029,7 +3031,10 @@ export class LinkedInJobsService {
     }
 
     const jobUrl = buildJobViewUrl(jobId);
-    const rateLimitState = this.runtime.rateLimiter.peek(input.rateLimitConfig);
+    const rateLimitState = peekRateLimitOrThrow(this.runtime.rateLimiter, {
+      config: input.rateLimitConfig,
+      message: createPrepareRateLimitMessage(input.actionType),
+    });
     const target = {
       profile_name: profileName,
       job_id: jobId,
@@ -3265,9 +3270,10 @@ export class LinkedInJobsService {
     }
 
     const searchUrl = buildJobSearchUrl(query, location || undefined);
-    const rateLimitState = this.runtime.rateLimiter.peek(
-      CREATE_JOB_ALERT_RATE_LIMIT_CONFIG,
-    );
+    const rateLimitState = peekRateLimitOrThrow(this.runtime.rateLimiter, {
+      config: CREATE_JOB_ALERT_RATE_LIMIT_CONFIG,
+      message: createPrepareRateLimitMessage(CREATE_JOB_ALERT_ACTION_TYPE),
+    });
     const target = {
       profile_name: profileName,
       query,
@@ -3352,9 +3358,10 @@ export class LinkedInJobsService {
     const resolvedAlertId =
       alertId ||
       buildJobAlertIdentifier(searchUrl, resolvedQuery, resolvedLocation);
-    const rateLimitState = this.runtime.rateLimiter.peek(
-      REMOVE_JOB_ALERT_RATE_LIMIT_CONFIG,
-    );
+    const rateLimitState = peekRateLimitOrThrow(this.runtime.rateLimiter, {
+      config: REMOVE_JOB_ALERT_RATE_LIMIT_CONFIG,
+      message: createPrepareRateLimitMessage(REMOVE_JOB_ALERT_ACTION_TYPE),
+    });
     const target = {
       profile_name: profileName,
       alert_id: resolvedAlertId,
@@ -3387,9 +3394,10 @@ export class LinkedInJobsService {
     preview: Record<string, unknown>;
   } {
     const validatedInput = validateEasyApplyInput(input);
-    const rateLimitState = this.runtime.rateLimiter.peek(
-      EASY_APPLY_RATE_LIMIT_CONFIG,
-    );
+    const rateLimitState = peekRateLimitOrThrow(this.runtime.rateLimiter, {
+      config: EASY_APPLY_RATE_LIMIT_CONFIG,
+      message: createPrepareRateLimitMessage(EASY_APPLY_JOB_ACTION_TYPE),
+    });
 
     const target = {
       profile_name: validatedInput.profileName,

@@ -54,7 +54,7 @@ export function createBlockedRateLimiterStub() {
     ),
     consume: vi.fn((input: ConsumeRateLimitInput) =>
       createRateLimitState(input, {
-        count: input.limit + 1,
+        count: input.limit,
         remaining: 0,
         allowed: false,
       }),

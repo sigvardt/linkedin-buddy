@@ -13,7 +13,8 @@ import type { ProfileManager } from "./profileManager.js";
 import {
   consumeRateLimitOrThrow,
   createConfirmRateLimitMessage,
-  peekRateLimitPreview,
+  createPrepareRateLimitMessage,
+  peekRateLimitPreviewOrThrow,
   type ConsumeRateLimitInput,
   type RateLimiter
 } from "./rateLimiter.js";
@@ -753,9 +754,10 @@ export class LinkedInEventsService {
         payload: {
           response: "attend"
         },
-        rate_limit: peekRateLimitPreview(
+        rate_limit: peekRateLimitPreviewOrThrow(
           this.runtime.rateLimiter,
-          EVENT_RSVP_RATE_LIMIT_CONFIG
+          EVENT_RSVP_RATE_LIMIT_CONFIG,
+          createPrepareRateLimitMessage(EVENT_RSVP_ACTION_TYPE)
         )
       },
       ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})

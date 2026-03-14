@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   expectPreparedAction,
   expectPreparedOutboundText,
-  expectRateLimitPreview,
   isOptInEnabled
 } from "./helpers.js";
 import { setupE2ESuite, skipIfE2EUnavailable } from "./setup.js";
+import { LinkedInBuddyError } from "../../errors.js";
 
 const writeTest = isOptInEnabled("LINKEDIN_ENABLE_POST_WRITE_E2E") ? it : it.skip;
 
@@ -47,14 +47,26 @@ describe("Post Write E2E (2PC post.create)", () => {
     expect(result.result).toHaveProperty("verification_snippet");
   }, 180_000);
 
-  it("prepare returns valid preview with rate limit info", async (context) => {
+  it("prepare rejects with RATE_LIMITED when post limit is exceeded", async (context) => {
     skipIfE2EUnavailable(e2e, context);
     const runtime = e2e.runtime();
-    const prepared = await runtime.posts.prepareCreate({
-      text: `E2E preview-only post [${new Date().toISOString()}]`,
-      visibility: "public"
-    });
 
-    expectRateLimitPreview(prepared.preview, "linkedin.post.create");
+    try {
+      await runtime.posts.prepareCreate({
+        text: `E2E preview-only post [${new Date().toISOString()}]`,
+        visibility: "public"
+      });
+      expect.fail("Expected prepareCreate to throw RATE_LIMITED when limit is exceeded");
+    } catch (error) {
+      expect(error).toBeInstanceOf(LinkedInBuddyError);
+      const buddyError = error as LinkedInBuddyError;
+      expect(buddyError.code).toBe("RATE_LIMITED");
+      expect(buddyError.details).toHaveProperty("rate_limit");
+
+      const rateLimit = buddyError.details.rate_limit as Record<string, unknown>;
+      expect(rateLimit).toHaveProperty("counter_key", "linkedin.post.create");
+      expect(rateLimit.allowed).toBe(false);
+      expect(rateLimit.remaining).toBe(0);
+    }
   }, 60_000);
 });

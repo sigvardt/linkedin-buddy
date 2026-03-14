@@ -16,7 +16,9 @@ import type { ProfileManager } from "./profileManager.js";
 import {
   consumeRateLimitOrThrow,
   createConfirmRateLimitMessage,
+  createPrepareRateLimitMessage,
   formatRateLimitState,
+  peekRateLimitOrThrow,
   type RateLimiter,
   type RateLimiterState,
 } from "./rateLimiter.js";
@@ -3716,8 +3718,12 @@ export class LinkedInFeedService {
     const profileName = input.profileName ?? "default";
     const postUrl = resolvePostUrl(input.postUrl);
     const reaction = normalizeLinkedInFeedReaction(input.reaction, "like");
-    const rateLimitState: RateLimiterState = this.runtime.rateLimiter.peek(
-      LIKE_RATE_LIMIT_CONFIG,
+    const rateLimitState: RateLimiterState = peekRateLimitOrThrow(
+      this.runtime.rateLimiter,
+      {
+        config: LIKE_RATE_LIMIT_CONFIG,
+        message: createPrepareRateLimitMessage(LIKE_POST_ACTION_TYPE),
+      },
     );
 
     const target = {
@@ -3765,8 +3771,12 @@ export class LinkedInFeedService {
       );
     }
 
-    const rateLimitState = this.runtime.rateLimiter.peek(
-      COMMENT_RATE_LIMIT_CONFIG,
+    const rateLimitState: RateLimiterState = peekRateLimitOrThrow(
+      this.runtime.rateLimiter,
+      {
+        config: COMMENT_RATE_LIMIT_CONFIG,
+        message: createPrepareRateLimitMessage(COMMENT_ON_POST_ACTION_TYPE),
+      },
     );
 
     const target = {
@@ -3802,8 +3812,12 @@ export class LinkedInFeedService {
   } {
     const profileName = input.profileName ?? "default";
     const postUrl = resolvePostUrl(input.postUrl);
-    const rateLimitState = this.runtime.rateLimiter.peek(
-      REPOST_RATE_LIMIT_CONFIG,
+    const rateLimitState: RateLimiterState = peekRateLimitOrThrow(
+      this.runtime.rateLimiter,
+      {
+        config: REPOST_RATE_LIMIT_CONFIG,
+        message: createPrepareRateLimitMessage(REPOST_POST_ACTION_TYPE),
+      },
     );
 
     const target = {
@@ -3838,8 +3852,12 @@ export class LinkedInFeedService {
     const profileName = input.profileName ?? "default";
     const postUrl = resolvePostUrl(input.postUrl);
     const text = validateLinkedInPostText(input.text).normalizedText;
-    const rateLimitState = this.runtime.rateLimiter.peek(
-      SHARE_RATE_LIMIT_CONFIG,
+    const rateLimitState: RateLimiterState = peekRateLimitOrThrow(
+      this.runtime.rateLimiter,
+      {
+        config: SHARE_RATE_LIMIT_CONFIG,
+        message: createPrepareRateLimitMessage(SHARE_POST_ACTION_TYPE),
+      },
     );
 
     const target = {
@@ -3876,8 +3894,12 @@ export class LinkedInFeedService {
   } {
     const profileName = input.profileName ?? "default";
     const postUrl = resolvePostUrl(input.postUrl);
-    const rateLimitState = this.runtime.rateLimiter.peek(
-      SAVE_RATE_LIMIT_CONFIG,
+    const rateLimitState: RateLimiterState = peekRateLimitOrThrow(
+      this.runtime.rateLimiter,
+      {
+        config: SAVE_RATE_LIMIT_CONFIG,
+        message: createPrepareRateLimitMessage(SAVE_POST_ACTION_TYPE),
+      },
     );
 
     const target = {
@@ -3911,8 +3933,12 @@ export class LinkedInFeedService {
   } {
     const profileName = input.profileName ?? "default";
     const postUrl = resolvePostUrl(input.postUrl);
-    const rateLimitState = this.runtime.rateLimiter.peek(
-      UNSAVE_RATE_LIMIT_CONFIG,
+    const rateLimitState: RateLimiterState = peekRateLimitOrThrow(
+      this.runtime.rateLimiter,
+      {
+        config: UNSAVE_RATE_LIMIT_CONFIG,
+        message: createPrepareRateLimitMessage(UNSAVE_POST_ACTION_TYPE),
+      },
     );
 
     const target = {
@@ -3946,8 +3972,12 @@ export class LinkedInFeedService {
   } {
     const profileName = input.profileName ?? "default";
     const postUrl = resolvePostUrl(input.postUrl);
-    const rateLimitState = this.runtime.rateLimiter.peek(
-      REMOVE_REACTION_RATE_LIMIT_CONFIG,
+    const rateLimitState: RateLimiterState = peekRateLimitOrThrow(
+      this.runtime.rateLimiter,
+      {
+        config: REMOVE_REACTION_RATE_LIMIT_CONFIG,
+        message: createPrepareRateLimitMessage(REMOVE_REACTION_ACTION_TYPE),
+      },
     );
 
     const target = {
