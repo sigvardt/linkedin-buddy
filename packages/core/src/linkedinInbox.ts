@@ -2182,6 +2182,21 @@ function createMessageComposerSelectors(
       selectorHint: ".msg-form [contenteditable='true']",
       locatorFactory: (targetPage) =>
         targetPage.locator(".msg-form [contenteditable='true']")
+    },
+    {
+      key: "msg-form-texteditor-contenteditable",
+      selectorHint:
+        ".msg-form__message-texteditor [contenteditable='true'], .msg-form__message-texteditor p[role='textbox']",
+      locatorFactory: (targetPage) =>
+        targetPage.locator(
+          ".msg-form__message-texteditor [contenteditable='true'], .msg-form__message-texteditor p[role='textbox']"
+        )
+    },
+    {
+      key: "dialog-contenteditable",
+      selectorHint: "[role='dialog'] [contenteditable='true']",
+      locatorFactory: (targetPage) =>
+        targetPage.locator("[role='dialog'] [contenteditable='true']")
     }
   ];
 }
@@ -2198,6 +2213,11 @@ function createSendButtonSelectors(
     "send",
     runtime.selectorLocale,
     { exact: true }
+  );
+  const sendAriaSelector = buildLinkedInAriaLabelContainsSelector(
+    "button",
+    "send",
+    runtime.selectorLocale
   );
 
   return [
@@ -2216,6 +2236,17 @@ function createSendButtonSelectors(
       key: "msg-form-send-button-fallback",
       selectorHint: ".msg-form__send-button",
       locatorFactory: (targetPage) => targetPage.locator(".msg-form__send-button")
+    },
+    {
+      key: "msg-form-submit",
+      selectorHint: ".msg-form button[type='submit']",
+      locatorFactory: (targetPage) =>
+        targetPage.locator(".msg-form button[type='submit']")
+    },
+    {
+      key: "msg-send-aria-label",
+      selectorHint: sendAriaSelector,
+      locatorFactory: (targetPage) => targetPage.locator(sendAriaSelector)
     }
   ];
 }
@@ -2593,6 +2624,20 @@ async function openProfileMessageComposer(input: {
         selectorHint: `page.getByRole(button, ${messageRegexHint})`,
         locatorFactory: (targetPage) =>
           targetPage.getByRole("button", { name: messageRegex })
+      },
+      {
+        key: "profile-message-data-control",
+        selectorHint: "button[data-control-name*='message']",
+        locatorFactory: (targetPage) =>
+          targetPage.locator("button[data-control-name*='message']")
+      },
+      {
+        key: "profile-message-main-button-text",
+        selectorHint: "main button hasText message",
+        locatorFactory: (targetPage) =>
+          targetPage
+            .locator("main button, .pv-top-card button")
+            .filter({ hasText: messageRegex })
       }
     ],
     "profile_message_button",
@@ -3608,6 +3653,10 @@ class SendMessageActionExecutor
           profileName,
           targetUrl: threadUrl,
           persistTraceOnSuccess: true,
+          dismissOverlays: {
+            selectorLocale: runtime.selectorLocale,
+            logger: runtime.logger
+          },
           metadata: {
             thread_url: threadUrl,
             selector_context: SEND_MESSAGE_ACTION_TYPE
@@ -3709,6 +3758,10 @@ class SendNewThreadActionExecutor
           profileName,
           targetUrl: primaryRecipientUrl,
           persistTraceOnSuccess: true,
+          dismissOverlays: {
+            selectorLocale: runtime.selectorLocale,
+            logger: runtime.logger
+          },
           metadata: {
             primary_recipient_profile_url: primaryRecipientUrl,
             recipient_count: recipients.length,
@@ -3838,6 +3891,10 @@ class AddRecipientsActionExecutor
           profileName,
           targetUrl: threadUrl,
           persistTraceOnSuccess: true,
+          dismissOverlays: {
+            selectorLocale: runtime.selectorLocale,
+            logger: runtime.logger
+          },
           metadata: {
             recipient_count: recipients.length,
             selector_context: ADD_RECIPIENTS_ACTION_TYPE,
@@ -3962,6 +4019,10 @@ class ReactMessageActionExecutor
           profileName,
           targetUrl: threadUrl,
           persistTraceOnSuccess: true,
+          dismissOverlays: {
+            selectorLocale: runtime.selectorLocale,
+            logger: runtime.logger
+          },
           metadata: {
             thread_url: threadUrl,
             requested_reaction: reaction,

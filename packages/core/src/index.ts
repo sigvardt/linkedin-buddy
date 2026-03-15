@@ -14,6 +14,7 @@ export * from "./auth/sessionStore.js";
 export * from "./connectionPool.js";
 export * from "./config.js";
 export * from "./confirmArtifacts.js";
+export * from "./overlayDismissal.js";
 export * from "./db/database.js";
 export * from "./draftQualityEval.js";
 export * from "./draftQualityTypes.js";

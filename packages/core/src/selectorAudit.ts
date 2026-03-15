@@ -420,6 +420,26 @@ function createDefaultSelectorAuditRegistry(
                 hasText: profileSurfaceRegex
               })
           }
+        }),
+        createSelectorAuditSelectorDefinition("profile_edit_trigger", "Profile edit pencil/button", {
+          primary: {
+            key: "edit-intro-pencil-aria",
+            selectorHint: "button[aria-label*='Edit intro' i], button[aria-label*='Edit' i]",
+            locatorFactory: (page) =>
+              page.locator("button[aria-label*='Edit intro' i], button[aria-label*='Edit' i]").first()
+          },
+          secondary: {
+            key: "edit-intro-link",
+            selectorHint: "a[href*='/edit/intro'], a[href*='/overlay/edit/']",
+            locatorFactory: (page) =>
+              page.locator("a[href*='/edit/intro'], a[href*='/overlay/edit/']")
+          },
+          tertiary: {
+            key: "edit-intro-svg-button",
+            selectorHint: "button:has(svg[data-test-icon='pencil'])",
+            locatorFactory: (page) =>
+              page.locator("button:has(svg[data-test-icon='pencil']), button:has(li-icon[type='pencil'])")
+          }
         })
       ]
     },
@@ -427,6 +447,30 @@ function createDefaultSelectorAuditRegistry(
       page: "connections",
       url: LINKEDIN_CONNECTIONS_URL,
       selectors: [
+        createSelectorAuditSelectorDefinition(
+          "connections_action_buttons",
+          "Connection action buttons (Message, Remove)",
+          {
+            primary: {
+              key: "connection-message-button",
+              selectorHint: "button[aria-label*='Message' i], button[aria-label*='message' i]",
+              locatorFactory: (page) =>
+                page.locator("button[aria-label*='Message' i], button[aria-label*='message' i]").first()
+            },
+            secondary: {
+              key: "connection-action-link",
+              selectorHint: "a[href*='/messaging/thread/']",
+              locatorFactory: (page) =>
+                page.locator("a[href*='/messaging/thread/']").first()
+            },
+            tertiary: {
+              key: "connection-card-with-actions",
+              selectorHint: "li:has(button)",
+              locatorFactory: (page) =>
+                page.locator("li.mn-connection-card:has(button), li:has(button[aria-label])").first()
+            }
+          }
+        ),
         createSelectorAuditSelectorDefinition(
           "connections_surface",
           "Connections page surface",

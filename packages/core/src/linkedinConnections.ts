@@ -794,6 +794,10 @@ async function executeSendInvitation(
           profile_url: profileUrl,
           note_included: note.length > 0
         },
+        dismissOverlays: {
+          selectorLocale: runtime.selectorLocale,
+          logger: runtime.logger
+        },
         beforeExecute: () =>
           consumeRateLimitOrThrow(runtime.rateLimiter, {
             config: getConnectionRateLimitConfig(SEND_INVITATION_ACTION_TYPE),
@@ -966,6 +970,18 @@ async function executeSendInvitation(
           key: "page-connect-aria",
           selectorHint: connectAriaSelector,
           locatorFactory: (targetPage) => targetPage.locator(connectAriaSelector)
+        },
+        {
+          key: "topcard-connect-text-filter",
+          selectorHint: "main button hasText connect",
+          locatorFactory: (targetPage) =>
+            targetPage.locator("main button").filter({ hasText: connectTextRegex })
+        },
+        {
+          key: "page-connect-data-control",
+          selectorHint: "button[data-control-name*='connect']",
+          locatorFactory: (targetPage) =>
+            targetPage.locator("button[data-control-name*='connect']")
         }
       ];
 
@@ -1103,6 +1119,8 @@ async function executeSendInvitation(
           ".artdeco-modal.send-invite, " +
             ".artdeco-modal:has(button[aria-label*='note' i]), " +
             ".artdeco-modal:has(button[aria-label*='Send' i]), " +
+            "[role='dialog']:has(button[aria-label*='Send' i]), " +
+            "[role='dialog']:has(textarea), " +
             "[role='dialog']:not(.vjs-modal-dialog):not(.vjs-hidden)"
         )
         .first();
@@ -1375,6 +1393,12 @@ async function executeSendInvitation(
           selectorHint: "div.send-invite button.artdeco-button--primary",
           locatorFactory: (targetPage) =>
             targetPage.locator("div.send-invite button.artdeco-button--primary")
+        },
+        {
+          key: "send-dialog-primary-button",
+          selectorHint: "dialog button.artdeco-button--primary",
+          locatorFactory: () =>
+            dialogLocator.locator("button.artdeco-button--primary")
         }
       ];
 
@@ -1470,6 +1494,10 @@ async function executeAcceptInvitation(
         },
         errorDetails: {
           target_profile: targetProfile
+        },
+        dismissOverlays: {
+          selectorLocale: runtime.selectorLocale,
+          logger: runtime.logger
         },
         beforeExecute: () =>
           consumeRateLimitOrThrow(runtime.rateLimiter, {
@@ -1579,6 +1607,10 @@ async function executeWithdrawInvitation(
         },
         errorDetails: {
           target_profile: targetProfile
+        },
+        dismissOverlays: {
+          selectorLocale: runtime.selectorLocale,
+          logger: runtime.logger
         },
         beforeExecute: () =>
           consumeRateLimitOrThrow(runtime.rateLimiter, {
@@ -1709,6 +1741,10 @@ async function executeIgnoreInvitation(
         errorDetails: {
           target_profile: targetProfile
         },
+        dismissOverlays: {
+          selectorLocale: runtime.selectorLocale,
+          logger: runtime.logger
+        },
         beforeExecute: () =>
           consumeRateLimitOrThrow(runtime.rateLimiter, {
             config: getConnectionRateLimitConfig(IGNORE_INVITATION_ACTION_TYPE),
@@ -1821,6 +1857,10 @@ async function executeRemoveConnection(
         errorDetails: {
           target_profile: targetProfile,
           profile_url: profileUrl
+        },
+        dismissOverlays: {
+          selectorLocale: runtime.selectorLocale,
+          logger: runtime.logger
         },
         beforeExecute: () =>
           consumeRateLimitOrThrow(runtime.rateLimiter, {
@@ -1962,6 +2002,10 @@ async function executeFollowMember(
           target_profile: targetProfile,
           profile_url: profileUrl
         },
+        dismissOverlays: {
+          selectorLocale: runtime.selectorLocale,
+          logger: runtime.logger
+        },
         beforeExecute: () =>
           consumeRateLimitOrThrow(runtime.rateLimiter, {
             config: getConnectionRateLimitConfig(FOLLOW_MEMBER_ACTION_TYPE),
@@ -2085,6 +2129,10 @@ async function executeUnfollowMember(
         errorDetails: {
           target_profile: targetProfile,
           profile_url: profileUrl
+        },
+        dismissOverlays: {
+          selectorLocale: runtime.selectorLocale,
+          logger: runtime.logger
         },
         beforeExecute: () =>
           consumeRateLimitOrThrow(runtime.rateLimiter, {

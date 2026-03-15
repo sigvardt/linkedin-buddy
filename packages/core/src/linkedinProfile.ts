@@ -4860,6 +4860,16 @@ async function findSaveButtonInBroaderScope(
       key: "save-fallback-first-dialog",
       locator: page.locator(PROFILE_DIALOG_ROOT_SELECTOR).first(),
       selectorHint: "first (outermost) dialog root on page"
+    },
+    {
+      key: "save-fallback-form-container",
+      locator: page.locator("form:has(button[type='submit'])").last(),
+      selectorHint: "form:has(button[type='submit']) (last)"
+    },
+    {
+      key: "save-fallback-last-dialog",
+      locator: page.locator("[role='dialog']").last(),
+      selectorHint: "[role='dialog'] (last)"
     }
   ];
 
@@ -4923,7 +4933,15 @@ async function clickSaveInProfileEditorSurface(
             surface.root,
             saveLabels,
             "profile-editor-save"
-          )
+          ),
+          {
+            key: "profile-editor-save-footer-primary",
+            locator: surface.root.locator(
+              ".artdeco-modal__actionbar button.artdeco-button--primary, " +
+              "footer button.artdeco-button--primary"
+            ),
+            selectorHint: ".artdeco-modal__actionbar or footer primary button"
+          }
         ]
       : [
           ...createActionCandidates(
@@ -4935,6 +4953,14 @@ async function clickSaveInProfileEditorSurface(
             key: "profile-editor-save-submit",
             locator: surface.root.locator("button[type='submit']"),
             selectorHint: "button[type='submit']"
+          },
+          {
+            key: "profile-editor-save-dialog-primary",
+            locator: surface.root.locator(
+              "[role='dialog'] button.artdeco-button--primary, " +
+              ".artdeco-modal button.artdeco-button--primary"
+            ).last(),
+            selectorHint: "dialog/modal primary button (last)"
           }
         ];
 
@@ -6820,6 +6846,10 @@ async function executeAddProfileSkill(
         context,
         page,
         actionId,
+        dismissOverlays: {
+          selectorLocale: runtime.selectorLocale,
+          logger: runtime.logger
+        },
         actionType: ADD_PROFILE_SKILL_ACTION_TYPE,
         profileName,
         targetUrl: resolveProfileUrl("me"),
@@ -6892,6 +6922,10 @@ async function executeReorderProfileSkills(
         context,
         page,
         actionId,
+        dismissOverlays: {
+          selectorLocale: runtime.selectorLocale,
+          logger: runtime.logger
+        },
         actionType: REORDER_PROFILE_SKILLS_ACTION_TYPE,
         profileName,
         targetUrl: resolveProfileUrl("me"),
@@ -6969,6 +7003,10 @@ async function executeEndorseProfileSkill(
         context,
         page,
         actionId,
+        dismissOverlays: {
+          selectorLocale: runtime.selectorLocale,
+          logger: runtime.logger
+        },
         actionType: ENDORSE_PROFILE_SKILL_ACTION_TYPE,
         profileName,
         targetUrl: targetProfileUrl,
@@ -7057,6 +7095,10 @@ async function executeRequestProfileRecommendation(
         context,
         page,
         actionId,
+        dismissOverlays: {
+          selectorLocale: runtime.selectorLocale,
+          logger: runtime.logger
+        },
         actionType: REQUEST_PROFILE_RECOMMENDATION_ACTION_TYPE,
         profileName,
         targetUrl: targetProfileUrl,
@@ -7154,6 +7196,10 @@ async function executeWriteProfileRecommendation(
         context,
         page,
         actionId,
+        dismissOverlays: {
+          selectorLocale: runtime.selectorLocale,
+          logger: runtime.logger
+        },
         actionType: WRITE_PROFILE_RECOMMENDATION_ACTION_TYPE,
         profileName,
         targetUrl: targetProfileUrl,
@@ -7236,6 +7282,10 @@ async function executeUploadProfileMedia(
         context,
         page,
         actionId,
+        dismissOverlays: {
+          selectorLocale: runtime.selectorLocale,
+          logger: runtime.logger
+        },
         actionType:
           kind === "photo"
             ? UPLOAD_PROFILE_PHOTO_ACTION_TYPE
@@ -7342,6 +7392,10 @@ async function executeAddFeaturedItem(
         context,
         page,
         actionId,
+        dismissOverlays: {
+          selectorLocale: runtime.selectorLocale,
+          logger: runtime.logger
+        },
         actionType: ADD_PROFILE_FEATURED_ACTION_TYPE,
         profileName,
         targetUrl: resolveProfileUrl("me"),
@@ -7447,6 +7501,10 @@ async function executeRemoveFeaturedItem(
         context,
         page,
         actionId,
+        dismissOverlays: {
+          selectorLocale: runtime.selectorLocale,
+          logger: runtime.logger
+        },
         actionType: REMOVE_PROFILE_FEATURED_ACTION_TYPE,
         profileName,
         targetUrl: resolveProfileUrl("me"),
@@ -7534,6 +7592,10 @@ async function executeReorderFeaturedItems(
         context,
         page,
         actionId,
+        dismissOverlays: {
+          selectorLocale: runtime.selectorLocale,
+          logger: runtime.logger
+        },
         actionType: REORDER_PROFILE_FEATURED_ACTION_TYPE,
         profileName,
         targetUrl: resolveProfileUrl("me"),
@@ -7605,6 +7667,10 @@ async function executeUpdateProfileIntro(
         context,
         page,
         actionId,
+        dismissOverlays: {
+          selectorLocale: runtime.selectorLocale,
+          logger: runtime.logger
+        },
         actionType: UPDATE_PROFILE_INTRO_ACTION_TYPE,
         profileName,
         targetUrl: resolveProfileUrl("me"),
@@ -7684,6 +7750,10 @@ async function executeUpdateProfileSettings(
         context,
         page,
         actionId,
+        dismissOverlays: {
+          selectorLocale: runtime.selectorLocale,
+          logger: runtime.logger
+        },
         actionType: UPDATE_PROFILE_SETTINGS_ACTION_TYPE,
         profileName,
         targetUrl: resolveProfileUrl("me"),
@@ -7769,6 +7839,10 @@ async function executeUpdateProfilePublicProfile(
         context,
         page,
         actionId,
+        dismissOverlays: {
+          selectorLocale: runtime.selectorLocale,
+          logger: runtime.logger
+        },
         actionType: UPDATE_PROFILE_PUBLIC_PROFILE_ACTION_TYPE,
         profileName,
         targetUrl: LINKEDIN_PUBLIC_PROFILE_SETTINGS_URL,
@@ -7869,6 +7943,10 @@ async function executeUpsertProfileSectionItem(
         context,
         page,
         actionId,
+        dismissOverlays: {
+          selectorLocale: runtime.selectorLocale,
+          logger: runtime.logger
+        },
         actionType: UPSERT_PROFILE_SECTION_ITEM_ACTION_TYPE,
         profileName,
         targetUrl: resolveProfileUrl("me"),
@@ -7980,6 +8058,10 @@ async function executeRemoveProfileSectionItem(
         context,
         page,
         actionId,
+        dismissOverlays: {
+          selectorLocale: runtime.selectorLocale,
+          logger: runtime.logger
+        },
         actionType: REMOVE_PROFILE_SECTION_ITEM_ACTION_TYPE,
         profileName,
         targetUrl: resolveProfileUrl("me"),
