@@ -24,7 +24,7 @@ import type {
   ActionExecutorResult,
   TwoPhaseCommitService,
 } from "./twoPhaseCommit.js";
-import { dedupeRepeatedText, cleanPostedAt, normalizeText, getOrCreatePage } from "./shared.js";
+import { dedupeRepeatedText, stripTitleBadgeText, cleanPostedAt, normalizeText, getOrCreatePage } from "./shared.js";
 
 export interface LinkedInJobSearchResult {
   job_id: string;
@@ -788,11 +788,26 @@ async function extractJobSearchResults(
           const prefix = words.slice(0, i).join(" ");
           const nextSegment = words.slice(i, i * 2).join(" ");
           if (prefix === nextSegment) {
-            return normalize(words.slice(i).join(" "));
+            return normalize(prefix);
           }
         }
 
         return normalized;
+      };
+
+      const stripBadgeSuffixes = (text: string): string => {
+        let result = normalize(text);
+        const patterns = [
+          /\s+with verification$/i,
+          /\s*·\s*Promoted$/i,
+          /\s+Promoted$/i,
+          /\s+Actively recruiting$/i,
+          /\s+Easy Apply$/i,
+        ];
+        for (const pattern of patterns) {
+          result = result.replace(pattern, "");
+        }
+        return normalize(result);
       };
 
       const pickText = (root: ParentNode, selectors: string[]): string => {
@@ -802,12 +817,12 @@ async function extractJobSearchResults(
             continue;
           }
           const ariaHidden = el.querySelector("span[aria-hidden='true']");
-          const ariaText = normalize(ariaHidden?.textContent);
+          const ariaText = dedupeRepeatedText(normalize(ariaHidden?.textContent));
           if (ariaText) {
             return ariaText;
           }
           const ltrSpan = el.querySelector("span[dir='ltr']");
-          const ltrText = normalize(ltrSpan?.textContent);
+          const ltrText = dedupeRepeatedText(normalize(ltrSpan?.textContent));
           if (ltrText) {
             return ltrText;
           }
@@ -894,8 +909,16 @@ async function extractJobSearchResults(
         return normalize(match?.[1] ?? "");
       };
 
+      /* Scope card selection to the search results list to avoid matching
+         elements in the job-detail side panel which causes duplicates. */
+      const resultsContainer =
+        globalThis.document.querySelector(".jobs-search-results-list") ??
+        globalThis.document.querySelector("[role='list']") ??
+        globalThis.document.querySelector("main") ??
+        globalThis.document;
+
       const rawCards = Array.from(
-        globalThis.document.querySelectorAll(
+        resultsContainer.querySelectorAll(
           "li[data-occludable-job-id], .job-card-container, .base-search-card, .job-card-list__entity-lockup",
         ),
       );
@@ -953,12 +976,12 @@ async function extractJobSearchResults(
 
         results.push({
           job_id: jobId,
-          title: pickText(card, [
+          title: stripBadgeSuffixes(pickText(card, [
             "a[href*='/jobs/view/'] span[aria-hidden='true']",
             ".job-card-container__link",
             ".job-card-list__title",
             ".base-search-card__title",
-          ]),
+          ])),
           company: pickText(card, [
             ".artdeco-entity-lockup__subtitle span[dir='ltr']",
             "a[href*='/company/'] span[dir='ltr']",
@@ -1005,7 +1028,7 @@ async function extractJobSearchResults(
   return snapshots
     .map((snapshot) => ({
       job_id: normalizeText(snapshot.job_id),
-      title: dedupeRepeatedText(snapshot.title),
+      title: stripTitleBadgeText(dedupeRepeatedText(snapshot.title)),
       company: normalizeText(snapshot.company),
       location: normalizeText(snapshot.location),
       posted_at: cleanPostedAt(snapshot.posted_at),
@@ -1023,6 +1046,12 @@ async function extractJobSearchResults(
       if (result.job_id) {
         seenIds.add(result.job_id);
       }
+      /* Fallback dedup by title+location for entries missing a job_id. */
+      const titleKey = `${result.title.toLowerCase()}|${result.location.toLowerCase()}`;
+      if (seenIds.has(titleKey)) {
+        return false;
+      }
+      seenIds.add(titleKey);
       return true;
     })
     .slice(0, limit);

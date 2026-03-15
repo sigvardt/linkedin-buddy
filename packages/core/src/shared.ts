@@ -63,9 +63,13 @@ export function buildTextRegex(labels: readonly string[], exact = false): RegExp
  * Detects text that has been doubled due to concatenated visible /
  * screen-reader spans and returns the clean single copy.
  *
+ * When a repeated word-prefix is detected the prefix itself is returned,
+ * which strips any trailing badge / decoration text (e.g. "with verification")
+ * that was concatenated after the second copy.
+ *
  * Examples:
  *   "TitleTitle"                                      -> "Title"
- *   "Developer Developer with verification"           -> "Developer with verification"
+ *   "Developer Developer with verification"           -> "Developer"
  *   "Software Engineer (C++) - RemoteSoftware ..."    -> "Software Engineer (C++) - Remote"
  */
 export function dedupeRepeatedText(value: string | null | undefined): string {
@@ -84,17 +88,48 @@ export function dedupeRepeatedText(value: string | null | undefined): string {
     }
   }
 
-  // Case 2: repeated word prefix - "Developer Developer with verification"
+  // Case 2: repeated word prefix — return the prefix (the actual title),
+  // discarding the duplicated second copy and any trailing badge text.
+  // "Developer Developer with verification" → "Developer"
   const words = text.split(" ");
   for (let i = 1; i * 2 <= words.length; i += 1) {
     const prefix = words.slice(0, i).join(" ");
     const next = words.slice(i, i * 2).join(" ");
     if (prefix.toLowerCase() === next.toLowerCase()) {
-      return normalizeText(words.slice(i).join(" "));
+      return normalizeText(prefix);
     }
   }
 
   return text;
+}
+
+/**
+ * Known LinkedIn badge / decoration suffixes that appear adjacent to titles
+ * in the DOM and get accidentally captured by text extraction.
+ */
+const TITLE_BADGE_PATTERNS: RegExp[] = [
+  /\s+with verification$/i,
+  /\s*·\s*Promoted$/i,
+  /\s+Promoted$/i,
+  /\s+Actively recruiting$/i,
+  /\s+Easy Apply$/i,
+];
+
+/**
+ * Strips known LinkedIn badge / decoration text from a title string.
+ *
+ * Examples:
+ *   "Developer with verification"   -> "Developer"
+ *   "Data Scientist Promoted"       -> "Data Scientist"
+ *   "Engineer Actively recruiting"  -> "Engineer"
+ *   "Software Engineer"             -> "Software Engineer"
+ */
+export function stripTitleBadgeText(value: string | null | undefined): string {
+  let text = normalizeText(value);
+  for (const pattern of TITLE_BADGE_PATTERNS) {
+    text = text.replace(pattern, "");
+  }
+  return normalizeText(text);
 }
 
 /**
