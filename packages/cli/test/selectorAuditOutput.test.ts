@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type {
   JsonLogEntry,
-  LinkedInBuddyErrorPayload,
-  SelectorAuditReport
+  LinkedInBuddyErrorPayload
 } from "@linkedin-buddy/core";
 import {
   formatSelectorAuditError,
@@ -24,11 +23,12 @@ function createLogEntry(entry: {
   };
 }
 
-function createSelectorAuditReportFixture(): SelectorAuditReport {
+function createSelectorAuditReportFixture() {
   return {
     run_id: "run_test",
     profile_name: "default",
     checked_at: "2026-03-08T12:00:00.000Z",
+    scope: "all",
     outcome: "fail",
     summary:
       "Checked 3 selector groups across 2 pages. 2 passed. 1 failed. 1 used fallback selectors.",
@@ -36,6 +36,12 @@ function createSelectorAuditReportFixture(): SelectorAuditReport {
     pass_count: 2,
     fail_count: 1,
     fallback_count: 1,
+    read_total_count: 3,
+    read_pass_count: 2,
+    read_fail_count: 1,
+    write_total_count: 0,
+    write_pass_count: 0,
+    write_fail_count: 0,
     artifact_dir: "/tmp/run_test/selector-audit",
     report_path: "/tmp/run_test/selector-audit/report.json",
     page_summaries: [
@@ -44,14 +50,26 @@ function createSelectorAuditReportFixture(): SelectorAuditReport {
         total_count: 2,
         pass_count: 1,
         fail_count: 1,
-        fallback_count: 1
+        fallback_count: 1,
+        read_total_count: 2,
+        read_pass_count: 1,
+        read_fail_count: 1,
+        write_total_count: 0,
+        write_pass_count: 0,
+        write_fail_count: 0
       },
       {
         page: "inbox",
         total_count: 1,
         pass_count: 1,
         fail_count: 0,
-        fallback_count: 0
+        fallback_count: 0,
+        read_total_count: 1,
+        read_pass_count: 1,
+        read_fail_count: 0,
+        write_total_count: 0,
+        write_pass_count: 0,
+        write_fail_count: 0
       }
     ],
     page_warnings: [
@@ -110,6 +128,7 @@ function createSelectorAuditReportFixture(): SelectorAuditReport {
         page_url: "https://www.linkedin.com/feed/",
         selector_key: "post_composer_trigger",
         description: "Feed post composer trigger",
+        category: "read",
         status: "fail",
         matched_strategy: null,
         matched_selector_key: null,
@@ -159,6 +178,7 @@ function createSelectorAuditReportFixture(): SelectorAuditReport {
         page_url: "https://www.linkedin.com/feed/",
         selector_key: "feed_sort_menu",
         description: "Feed sort menu",
+        category: "read",
         status: "pass",
         matched_strategy: "secondary",
         matched_selector_key: "css-feed-sort-menu",
@@ -193,6 +213,7 @@ function createSelectorAuditReportFixture(): SelectorAuditReport {
         page_url: "https://www.linkedin.com/messaging/",
         selector_key: "thread_list",
         description: "Inbox thread list",
+        category: "read",
         status: "pass",
         matched_strategy: "primary",
         matched_selector_key: "role-thread-list",
@@ -234,7 +255,9 @@ describe("selector audit output helpers", () => {
   });
 
   it("renders a scannable human-readable report", () => {
-    const output = formatSelectorAuditReport(createSelectorAuditReportFixture());
+    const output = formatSelectorAuditReport(
+      createSelectorAuditReportFixture() as unknown as Parameters<typeof formatSelectorAuditReport>[0]
+    );
 
     expect(output).toContain("Selector Audit: FAIL");
     expect(output).toContain(
@@ -247,17 +270,21 @@ describe("selector audit output helpers", () => {
     expect(output).toContain("Next Steps");
     expect(output).toContain("Artifacts: /tmp/run_test/selector-audit");
     expect(output).toContain("screenshot=/tmp/run_test/selector-audit/feed/post_composer_trigger.png");
+    expect(output).not.toContain("Scope:");
   });
 
   it("adds selector-by-selector detail in verbose mode", () => {
-    const output = formatSelectorAuditReport(createSelectorAuditReportFixture(), {
-      verbose: true
-    });
+    const output = formatSelectorAuditReport(
+      createSelectorAuditReportFixture() as unknown as Parameters<typeof formatSelectorAuditReport>[0],
+      {
+        verbose: true
+      }
+    );
 
     expect(output).toContain("Selector Details");
-    expect(output).toContain("FAIL feed/post_composer_trigger — Feed post composer trigger");
+    expect(output).toContain("FAIL [read] feed/post_composer_trigger — Feed post composer trigger");
     expect(output).toContain("Strategies: primary=FAIL, secondary=FAIL, tertiary=FAIL");
-    expect(output).toContain("WARN feed/feed_sort_menu — Feed sort menu");
+    expect(output).toContain("WARN [read] feed/feed_sort_menu — Feed sort menu");
     expect(output).toContain("Matched via secondary: css-feed-sort-menu");
   });
 
@@ -291,7 +318,8 @@ describe("selector audit output helpers", () => {
         event: "selector.audit.start",
         payload: {
           profileName: "default",
-          pageCount: 2
+          pageCount: 2,
+          scope: "all"
         }
       })
     );
@@ -331,4 +359,32 @@ describe("selector audit output helpers", () => {
       "Selector audit finished. Report: /tmp/run_test/selector-audit/report.json"
     ]);
   });
+  it("shows category breakdown when both read and write selectors exist", () => {
+    const fixture = createSelectorAuditReportFixture();
+    fixture.write_total_count = 5;
+    fixture.write_pass_count = 4;
+    fixture.write_fail_count = 1;
+    fixture.page_summaries[0]!.write_total_count = 3;
+    fixture.page_summaries[0]!.write_pass_count = 2;
+    fixture.page_summaries[0]!.write_fail_count = 1;
+
+    const output = formatSelectorAuditReport(
+      fixture as unknown as Parameters<typeof formatSelectorAuditReport>[0]
+    );
+
+    expect(output).toContain("Categories: Read: 2/3 passed, 1 failed | Write: 4/5 passed, 1 failed");
+    expect(output).toContain("(read: 1/2 pass | write: 2/3 pass)");
+  });
+
+  it("shows scope line when scope is not all", () => {
+    const fixture = createSelectorAuditReportFixture();
+    fixture.scope = "write";
+
+    const output = formatSelectorAuditReport(
+      fixture as unknown as Parameters<typeof formatSelectorAuditReport>[0]
+    );
+
+    expect(output).toContain("Scope: write");
+  });
+
 });

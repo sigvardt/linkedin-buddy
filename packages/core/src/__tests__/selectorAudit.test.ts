@@ -27,6 +27,7 @@ function summarizeRegistryShape(
   page: string;
   selectors: Array<{
     key: string;
+    category: string;
     candidates: Array<{ key: string; strategy: string }>;
   }>;
 }> {
@@ -34,6 +35,7 @@ function summarizeRegistryShape(
     page: pageDefinition.page,
     selectors: pageDefinition.selectors.map((selectorDefinition) => ({
       key: selectorDefinition.key,
+      category: selectorDefinition.category,
       candidates: selectorDefinition.candidates.map((candidate) => ({
         key: candidate.key,
         strategy: candidate.strategy
@@ -70,9 +72,23 @@ function createRoleMatchingPage(
 describe("createLinkedInSelectorAuditRegistry", () => {
   it("covers the audit-scope pages with normalized strategies", () => {
     const registry = createLinkedInSelectorAuditRegistry();
+    const allSelectors = registry.flatMap((pageDefinition) => pageDefinition.selectors);
+    const readSelectors = allSelectors.filter(
+      (selectorDefinition) => selectorDefinition.category === "read"
+    );
+    const writeSelectors = allSelectors.filter(
+      (selectorDefinition) => selectorDefinition.category === "write"
+    );
 
     expect(registry.map((pageDefinition) => pageDefinition.page)).toEqual([
       ...LINKEDIN_SELECTOR_AUDIT_PAGES
+    ]);
+    expect(allSelectors.length).toBe(16);
+    expect(readSelectors.length).toBe(6);
+    expect(writeSelectors.length).toBe(10);
+
+    expect(registry.map((pageDefinition) => pageDefinition.selectors.length)).toEqual([
+      4, 4, 2, 2, 1, 3
     ]);
 
     for (const pageDefinition of registry) {
@@ -89,6 +105,42 @@ describe("createLinkedInSelectorAuditRegistry", () => {
           expect(candidate.selectorHint.length).toBeGreaterThan(0);
         }
       }
+    }
+  });
+
+  it("includes write category selectors in registry", () => {
+    const registry = createLinkedInSelectorAuditRegistry();
+    const writeSelectors = registry.flatMap((p) =>
+      p.selectors.filter((s) => s.category === "write")
+    );
+    expect(writeSelectors.length).toBe(10);
+    expect(writeSelectors.map((s) => s.key)).toEqual([
+      "feed_like_button",
+      "feed_comment_button",
+      "feed_repost_button",
+      "inbox_compose_button",
+      "inbox_message_input",
+      "inbox_send_button",
+      "profile_edit_intro_button",
+      "connections_message_button",
+      "company_follow_button",
+      "company_overlay_modal"
+    ]);
+  });
+
+  it("builds locale-aware write selector hints for Danish", () => {
+    const registry = createLinkedInSelectorAuditRegistry("da");
+    const feedWriteSelectors =
+      registry.find((p) => p.page === "feed")?.selectors.filter((s) => s.category === "write") ??
+      [];
+    expect(feedWriteSelectors.length).toBe(3);
+
+    for (const selector of feedWriteSelectors) {
+      expect(selector.candidates.map((c) => c.strategy)).toEqual([
+        "primary",
+        "secondary",
+        "tertiary"
+      ]);
     }
   });
 
@@ -156,6 +208,13 @@ describe("LinkedInSelectorAuditService", () => {
     expect(report.pass_count).toBe(1);
     expect(report.fail_count).toBe(0);
     expect(report.fallback_count).toBe(1);
+    expect(report.scope).toBe("all");
+    expect(report.read_total_count).toBe(1);
+    expect(report.read_pass_count).toBe(1);
+    expect(report.read_fail_count).toBe(0);
+    expect(report.write_total_count).toBe(0);
+    expect(report.write_pass_count).toBe(0);
+    expect(report.write_fail_count).toBe(0);
     expect(report.outcome).toBe("pass_with_fallbacks");
     expect(report.summary).toBe(
       "Checked 1 selector group across 1 page. 1 passed. 0 failed. 1 used fallback selectors."
@@ -166,12 +225,19 @@ describe("LinkedInSelectorAuditService", () => {
         total_count: 1,
         pass_count: 1,
         fail_count: 0,
-        fallback_count: 1
+        fallback_count: 1,
+        read_total_count: 1,
+        read_pass_count: 1,
+        read_fail_count: 0,
+        write_total_count: 0,
+        write_pass_count: 0,
+        write_fail_count: 0
       }
     ]);
     expect(report.results[0]).toMatchObject({
       page: "feed",
       selector_key: "selector_group",
+      category: "read",
       status: "pass",
       matched_strategy: "secondary",
       matched_selector_key: "secondary-key",
@@ -214,6 +280,7 @@ describe("LinkedInSelectorAuditService", () => {
     expect(result).toMatchObject({
       page: "feed",
       selector_key: "selector_group",
+      category: "read",
       status: "fail",
       matched_strategy: null,
       matched_selector_key: null,
@@ -261,6 +328,154 @@ describe("LinkedInSelectorAuditService", () => {
       "Some pages were not fully stable during the audit. Refresh the LinkedIn session or attached browser and rerun before treating warnings as definitive UI drift."
     );
     await expect(stat(report.report_path)).resolves.toBeTruthy();
+  });
+
+  describe("scope filtering", () => {
+    it("scope 'read' filters out write selectors", async () => {
+      const harness = await createSelectorAuditTestHarness({
+        visibleSelectors: ["primary"],
+        registry: [
+          createSelectorAuditPageDefinition({
+            page: "feed",
+            selectors: [
+              createSelectorAuditSelectorDefinition({
+                key: "read_group",
+                category: "read",
+                candidates: [
+                  createSelectorAuditCandidate({ strategy: "primary", selector: "primary" }),
+                  createSelectorAuditCandidate({ strategy: "secondary", selector: "secondary" }),
+                  createSelectorAuditCandidate({ strategy: "tertiary", selector: "tertiary" })
+                ]
+              }),
+              createSelectorAuditSelectorDefinition({
+                key: "write_group",
+                category: "write",
+                candidates: [
+                  createSelectorAuditCandidate({ strategy: "primary", selector: "primary" }),
+                  createSelectorAuditCandidate({ strategy: "secondary", selector: "secondary" }),
+                  createSelectorAuditCandidate({ strategy: "tertiary", selector: "tertiary" })
+                ]
+              })
+            ]
+          })
+        ]
+      });
+
+      const report = await harness.service.auditSelectors({ scope: "read" });
+      expect(report.results).toHaveLength(1);
+      expect(report.results[0]?.category).toBe("read");
+      expect(report.total_count).toBe(1);
+      expect(report.scope).toBe("read");
+    });
+
+    it("scope 'write' filters out read selectors", async () => {
+      const harness = await createSelectorAuditTestHarness({
+        visibleSelectors: ["primary"],
+        registry: [
+          createSelectorAuditPageDefinition({
+            page: "feed",
+            selectors: [
+              createSelectorAuditSelectorDefinition({
+                key: "read_group",
+                category: "read",
+                candidates: [
+                  createSelectorAuditCandidate({ strategy: "primary", selector: "primary" }),
+                  createSelectorAuditCandidate({ strategy: "secondary", selector: "secondary" }),
+                  createSelectorAuditCandidate({ strategy: "tertiary", selector: "tertiary" })
+                ]
+              }),
+              createSelectorAuditSelectorDefinition({
+                key: "write_group",
+                category: "write",
+                candidates: [
+                  createSelectorAuditCandidate({ strategy: "primary", selector: "primary" }),
+                  createSelectorAuditCandidate({ strategy: "secondary", selector: "secondary" }),
+                  createSelectorAuditCandidate({ strategy: "tertiary", selector: "tertiary" })
+                ]
+              })
+            ]
+          })
+        ]
+      });
+
+      const report = await harness.service.auditSelectors({ scope: "write" });
+      expect(report.results).toHaveLength(1);
+      expect(report.results[0]?.category).toBe("write");
+      expect(report.total_count).toBe(1);
+      expect(report.scope).toBe("write");
+    });
+
+    it("scope 'all' returns both categories", async () => {
+      const harness = await createSelectorAuditTestHarness({
+        visibleSelectors: ["primary"],
+        registry: [
+          createSelectorAuditPageDefinition({
+            page: "feed",
+            selectors: [
+              createSelectorAuditSelectorDefinition({
+                key: "read_group",
+                category: "read",
+                candidates: [
+                  createSelectorAuditCandidate({ strategy: "primary", selector: "primary" }),
+                  createSelectorAuditCandidate({ strategy: "secondary", selector: "secondary" }),
+                  createSelectorAuditCandidate({ strategy: "tertiary", selector: "tertiary" })
+                ]
+              }),
+              createSelectorAuditSelectorDefinition({
+                key: "write_group",
+                category: "write",
+                candidates: [
+                  createSelectorAuditCandidate({ strategy: "primary", selector: "primary" }),
+                  createSelectorAuditCandidate({ strategy: "secondary", selector: "secondary" }),
+                  createSelectorAuditCandidate({ strategy: "tertiary", selector: "tertiary" })
+                ]
+              })
+            ]
+          })
+        ]
+      });
+
+      const report = await harness.service.auditSelectors({ scope: "all" });
+      expect(report.results).toHaveLength(2);
+      expect(report.total_count).toBe(2);
+      expect(report.scope).toBe("all");
+    });
+
+    it("defaults scope to all when omitted", async () => {
+      const harness = await createSelectorAuditTestHarness({
+        visibleSelectors: ["primary"]
+      });
+
+      const report = await harness.service.auditSelectors({});
+      expect(report.scope).toBe("all");
+    });
+
+    it("skips pages with no selectors after scope filtering", async () => {
+      const harness = await createSelectorAuditTestHarness({
+        visibleSelectors: ["primary"],
+        registry: [
+          createSelectorAuditPageDefinition({
+            page: "feed",
+            selectors: [
+              createSelectorAuditSelectorDefinition({
+                key: "read_only",
+                category: "read",
+                candidates: [
+                  createSelectorAuditCandidate({ strategy: "primary", selector: "primary" }),
+                  createSelectorAuditCandidate({ strategy: "secondary", selector: "secondary" }),
+                  createSelectorAuditCandidate({ strategy: "tertiary", selector: "tertiary" })
+                ]
+              })
+            ]
+          })
+        ]
+      });
+
+      const report = await harness.service.auditSelectors({ scope: "write" });
+      expect(report.results).toHaveLength(0);
+      expect(report.total_count).toBe(0);
+      expect(report.page_summaries).toHaveLength(0);
+    });
   });
 
   it("aggregates page summaries across passes, failures, and fallback usage", async () => {
@@ -361,20 +576,38 @@ describe("LinkedInSelectorAuditService", () => {
     expect(report.pass_count).toBe(2);
     expect(report.fail_count).toBe(1);
     expect(report.fallback_count).toBe(1);
+    expect(report.read_total_count).toBe(3);
+    expect(report.read_pass_count).toBe(2);
+    expect(report.read_fail_count).toBe(1);
+    expect(report.write_total_count).toBe(0);
+    expect(report.write_pass_count).toBe(0);
+    expect(report.write_fail_count).toBe(0);
     expect(report.page_summaries).toEqual([
       {
         page: "feed",
         total_count: 2,
         pass_count: 1,
         fail_count: 1,
-        fallback_count: 0
+        fallback_count: 0,
+        read_total_count: 2,
+        read_pass_count: 1,
+        read_fail_count: 1,
+        write_total_count: 0,
+        write_pass_count: 0,
+        write_fail_count: 0
       },
       {
         page: "inbox",
         total_count: 1,
         pass_count: 1,
         fail_count: 0,
-        fallback_count: 1
+        fallback_count: 1,
+        read_total_count: 1,
+        read_pass_count: 1,
+        read_fail_count: 0,
+        write_total_count: 0,
+        write_pass_count: 0,
+        write_fail_count: 0
       }
     ]);
     expect(runtime.auth.ensureAuthenticated).toHaveBeenCalledWith({
@@ -388,6 +621,73 @@ describe("LinkedInSelectorAuditService", () => {
       },
       expect.any(Function)
     );
+  });
+
+  it("includes read/write category counts in report and page summaries", async () => {
+    const registry = [
+      createSelectorAuditPageDefinition({
+        page: "feed",
+        selectors: [
+          createSelectorAuditSelectorDefinition({
+            key: "read_selector",
+            description: "Read selector",
+            category: "read",
+            candidates: [
+              createSelectorAuditCandidate({
+                strategy: "primary",
+                key: "read-primary",
+                selectorHint: "read-primary",
+                selector: "read-primary"
+              })
+            ]
+          }),
+          createSelectorAuditSelectorDefinition({
+            key: "write_selector",
+            description: "Write selector",
+            category: "write",
+            candidates: [
+              createSelectorAuditCandidate({
+                strategy: "primary",
+                key: "write-primary",
+                selectorHint: "write-primary",
+                selector: "write-primary"
+              })
+            ]
+          })
+        ]
+      })
+    ];
+
+    const { service } = await createSelectorAuditTestHarness({
+      registry,
+      visibleSelectors: ["read-primary"]
+    });
+
+    const report = await service.auditSelectors({ profileName: "default" });
+
+    expect(report.total_count).toBe(2);
+    expect(report.read_total_count).toBe(1);
+    expect(report.read_pass_count).toBe(1);
+    expect(report.read_fail_count).toBe(0);
+    expect(report.write_total_count).toBe(1);
+    expect(report.write_pass_count).toBe(0);
+    expect(report.write_fail_count).toBe(1);
+    expect(report.summary).toContain("Read: 1/1 passed. Write: 0/1 passed.");
+    expect(report.page_summaries).toEqual([
+      {
+        page: "feed",
+        total_count: 2,
+        pass_count: 1,
+        fail_count: 1,
+        fallback_count: 0,
+        read_total_count: 1,
+        read_pass_count: 1,
+        read_fail_count: 0,
+        write_total_count: 1,
+        write_pass_count: 0,
+        write_fail_count: 1
+      }
+    ]);
   });
 
   it("defaults to the default profile and opens a page when the context is empty", async () => {
@@ -448,6 +748,7 @@ describe("LinkedInSelectorAuditService", () => {
     expect(report.results[0]).toMatchObject({
       page: "feed",
       selector_key: "selector_group",
+      category: "read",
       status: "fail",
       error:
         "Could not load the feed page: Renderer crashed. Refresh the LinkedIn session or attached browser and rerun the selector audit."
@@ -466,6 +767,7 @@ describe("LinkedInSelectorAuditService", () => {
     expect(report.results[0]).toMatchObject({
       page: "feed",
       selector_key: "selector_group",
+      category: "read",
       status: "fail",
       error:
         "Could not load the feed page: Navigation failed. Refresh the LinkedIn session or attached browser and rerun the selector audit."
@@ -517,6 +819,7 @@ describe("LinkedInSelectorAuditService", () => {
     const [result] = report.results;
 
     expect(result).toMatchObject({
+      category: "read",
       status: "pass",
       matched_strategy: "secondary",
       matched_selector_key: "secondary-key",
@@ -638,6 +941,7 @@ describe("LinkedInSelectorAuditService", () => {
     expect(report.fail_count).toBe(1);
     expect(report.results[0]).toMatchObject({
       selector_key: "broken_selector",
+      category: "read",
       status: "fail"
     });
     expect(report.results[0]?.strategies.primary.error).toContain(
@@ -645,6 +949,7 @@ describe("LinkedInSelectorAuditService", () => {
     );
     expect(report.results[1]).toMatchObject({
       selector_key: "healthy_selector",
+      category: "read",
       status: "pass",
       matched_strategy: "primary"
     });

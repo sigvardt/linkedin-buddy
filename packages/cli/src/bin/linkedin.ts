@@ -8993,6 +8993,7 @@ async function runSelectorAudit(
     json: boolean;
     progress: boolean;
     verbose: boolean;
+    scope: string;
   },
   cdpUrl?: string,
 ): Promise<void> {
@@ -9032,11 +9033,17 @@ async function runSelectorAudit(
       outputMode,
       verbose: input.verbose,
       progress: outputMode === "human" && input.progress,
+      scope: input.scope,
     });
 
-    const report = await selectorAuditRuntime.selectorAudit.auditSelectors({
+    const auditInput = {
       profileName,
-    });
+      scope:
+        input.scope === "read" || input.scope === "write" || input.scope === "all"
+          ? input.scope
+          : undefined,
+    };
+    const report = await selectorAuditRuntime.selectorAudit.auditSelectors(auditInput);
 
     selectorAuditRuntime.logger.log("info", "cli.audit.selectors.done", {
       profileName,
@@ -12898,6 +12905,11 @@ export function createCliProgram(): Command {
       false,
     )
     .option(
+      "--scope <scope>",
+      "Filter selectors by category: read, write, or all (default: all)",
+      "all",
+    )
+    .option(
       "--no-progress",
       "Hide per-page progress updates in human-readable output",
     )
@@ -12916,6 +12928,7 @@ export function createCliProgram(): Command {
         json: boolean;
         progress: boolean;
         verbose: boolean;
+        scope: string;
       }) => {
         await runSelectorAudit(
           {
@@ -12923,6 +12936,7 @@ export function createCliProgram(): Command {
             json: options.json,
             progress: options.progress,
             verbose: options.verbose,
+            scope: options.scope,
           },
           readCdpUrl(),
         );
