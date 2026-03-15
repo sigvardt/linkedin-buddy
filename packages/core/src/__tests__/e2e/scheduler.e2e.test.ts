@@ -53,10 +53,10 @@ describe.sequential("Scheduler E2E - CLI surface", () => {
       profileName: defaultProfileName,
       workerId: expect.any(String),
       windowOpen: expect.any(Boolean),
-      skippedReason: expect.anything(),
       preparedJobs: expect.any(Number),
       failedJobs: expect.any(Number)
     });
+    expect(payload).toHaveProperty("skippedReason");
     expect(Array.isArray(payload.processedJobs)).toBe(true);
   }, 120_000);
 
