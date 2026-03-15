@@ -3721,19 +3721,33 @@ async function waitForVisibleProfileIntroEditorSurface(
   let fallbackSurface: ProfileEditorSurface | null = null;
 
   while (Date.now() < deadline) {
+    // Redirect detection: if the URL navigated away from the intro edit
+    // page (e.g. LinkedIn redirected after a failed form data fetch), stop
+    // polling immediately — the editing surface will never appear.
+    if (
+      fallbackSurface !== null &&
+      !isProfileIntroEditHref(page.url())
+    ) {
+      return null;
+    }
+
     const pageRoot = await resolveVisibleProfileIntroEditPage(page);
     if (pageRoot) {
       const pageSurface = {
         kind: "page" as const,
         root: pageRoot
       };
-      fallbackSurface = pageSurface;
 
       if (
         await hasVisibleEditableField(pageSurface.root, PROFILE_INTRO_EDITOR_FIELD_DEFINITIONS)
       ) {
         return pageSurface;
       }
+
+      // Only keep the page surface as fallback when it already contains
+      // editable fields.  Broad page roots (e.g. <main>, <body>) that
+      // merely contain a search box pollute later field lookups.
+      fallbackSurface ??= pageSurface;
     }
 
     const dialogRoot = await resolveLatestVisibleDialog(page);
@@ -3742,13 +3756,16 @@ async function waitForVisibleProfileIntroEditorSurface(
         kind: "dialog" as const,
         root: dialogRoot
       };
-      fallbackSurface ??= dialogSurface;
 
       if (
         await hasVisibleEditableField(dialogSurface.root, PROFILE_INTRO_EDITOR_FIELD_DEFINITIONS)
       ) {
         return dialogSurface;
       }
+
+      // Prefer dialog over page surface: the dialog is the natural scope
+      // for the intro editor form when it loads.
+      fallbackSurface = dialogSurface;
     }
 
     await new Promise<void>((resolve) => {
@@ -4398,16 +4415,21 @@ async function openIntroEditSurface(
 
   await resolved.locator.first().click();
 
-  const surface = await waitForVisibleProfileIntroEditorSurface(page, 10_000);
+  const surface = await waitForVisibleProfileIntroEditorSurface(page, 25_000);
   if (surface) {
     return surface;
   }
 
   const selectorDiagnostics = summarizeLocatorCandidates(editCandidates);
   const dialogSnapshot = await getDialogStateSnapshot(page);
+  const redirectedAway = !isProfileIntroEditHref(page.url());
   throw new LinkedInBuddyError(
     "TARGET_NOT_FOUND",
-    "Could not open the intro editor after clicking the edit control.",
+    redirectedAway
+      ? "The intro editor page redirected away before the form could load. " +
+        "LinkedIn may have changed the edit route or the form data request failed."
+      : "Could not open the intro editor after clicking the edit control. " +
+        "The edit page loaded but the form fields did not appear within the timeout.",
     {
       selectors_tried: selectorDiagnostics.selectorsTried,
       selector_hints: selectorDiagnostics.selectorHints,
@@ -4417,8 +4439,11 @@ async function openIntroEditSurface(
       dialog_detected: dialogSnapshot.dialogCount > 0,
       dialog_state: dialogSnapshot.state,
       visible_dialog_count: dialogSnapshot.visibleDialogCount,
-      recovery_hint:
-        "Check if the intro editor now opens in a different container or route."
+      redirected_away: redirectedAway,
+      recovery_hint: redirectedAway
+        ? "The page navigated away from the intro edit URL. Check if LinkedIn changed the editing route."
+        : "The intro editor dialog may still be loading asynchronously. " +
+          "Check if the form fields now use different selectors or if the loading spinner persists."
     }
   );
 }
@@ -4880,7 +4905,7 @@ async function fillDialogField(
   definition: EditableFieldDefinition,
   value: NormalizedEditableValue
 ): Promise<void> {
-  const locator = await waitForDialogFieldLocator(dialog, definition, 10_000);
+  const locator = await waitForDialogFieldLocator(dialog, definition, 15_000);
   if (!locator) {
     const selectorDiagnostics = getEditableFieldSelectorDiagnostics(definition);
     const dialogSnapshot = await getDialogStateSnapshot(page);
