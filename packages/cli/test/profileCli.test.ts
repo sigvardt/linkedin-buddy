@@ -360,3 +360,246 @@ describe("CLI profile commands", () => {
     expect(profileCliMocks.confirmByToken).not.toHaveBeenCalled();
   });
 });
+
+describe("CLI profile apply-spec --continue-on-error", () => {
+  let tempDir = "";
+  let consoleLogSpy: ReturnType<typeof vi.spyOn>;
+  let stdoutChunks: string[] = [];
+  let stderrChunks: string[] = [];
+  let stderrWriteSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(path.join(os.tmpdir(), "linkedin-cli-profile-coe-"));
+    process.env.LINKEDIN_BUDDY_HOME = path.join(tempDir, "buddy-home");
+    process.exitCode = undefined;
+    stdoutChunks = [];
+    stderrChunks = [];
+    vi.resetAllMocks();
+
+    profileCliMocks.createCoreRuntime.mockImplementation(() => ({
+      close: profileCliMocks.close,
+      logger: { log: profileCliMocks.loggerLog },
+      profile: {
+        viewEditableProfile: profileCliMocks.viewEditableProfile,
+        viewProfile: profileCliMocks.viewProfile,
+        prepareUpdatePublicProfile: profileCliMocks.prepareUpdatePublicProfile,
+        prepareUpdateSettings: profileCliMocks.prepareUpdateSettings,
+        prepareUpdateIntro: profileCliMocks.prepareUpdateIntro,
+        prepareUpsertSectionItem: profileCliMocks.prepareUpsertSectionItem,
+        prepareRemoveSectionItem: profileCliMocks.prepareRemoveSectionItem
+      },
+      runId: "run-profile-coe",
+      twoPhaseCommit: {
+        confirmByToken: profileCliMocks.confirmByToken
+      }
+    }));
+
+    profileCliMocks.viewEditableProfile.mockResolvedValue({
+      profile_url: "https://www.linkedin.com/in/me/",
+      intro: {
+        full_name: "Avery Cole",
+        headline: "Software Engineer",
+        location: "Copenhagen, Denmark",
+        supported_fields: ["firstName", "lastName", "headline", "location"]
+      },
+      settings: {
+        industry: "Technology, Information and Internet",
+        supported_fields: ["industry"]
+      },
+      public_profile: {
+        vanity_name: "avery-cole-example",
+        public_profile_url: "https://www.linkedin.com/in/avery-cole-example/",
+        supported_fields: ["vanityName", "publicProfileUrl"]
+      },
+      sections: []
+    });
+
+    profileCliMocks.viewProfile.mockResolvedValue({
+      profile_url: "https://www.linkedin.com/in/avery-cole-example/",
+      vanity_name: "avery-cole-example",
+      full_name: "Avery Cole",
+      headline: "Automation Engineer at Example Labs",
+      location: "Copenhagen, Capital Region of Denmark, Denmark",
+      about: "Building production LLM systems.",
+      connection_degree: "",
+      experience: [],
+      education: []
+    });
+
+    profileCliMocks.prepareUpdateIntro.mockReturnValue({
+      preparedActionId: "pa_intro",
+      confirmToken: "ct_intro",
+      expiresAtMs: 1,
+      preview: { summary: "Update intro" }
+    });
+    profileCliMocks.prepareUpdateSettings.mockReturnValue({
+      preparedActionId: "pa_settings",
+      confirmToken: "ct_settings",
+      expiresAtMs: 1,
+      preview: { summary: "Update settings" }
+    });
+    profileCliMocks.prepareUpdatePublicProfile.mockReturnValue({
+      preparedActionId: "pa_public_profile",
+      confirmToken: "ct_public_profile",
+      expiresAtMs: 1,
+      preview: { summary: "Update public profile" }
+    });
+    profileCliMocks.prepareUpsertSectionItem.mockReturnValue({
+      preparedActionId: "pa_about",
+      confirmToken: "ct_about",
+      expiresAtMs: 1,
+      preview: { summary: "Update about" }
+    });
+
+    consoleLogSpy = vi.spyOn(console, "log").mockImplementation((value?: unknown) => {
+      stdoutChunks.push(String(value ?? ""));
+    });
+    stderrWriteSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((...args: Parameters<typeof process.stderr.write>) => {
+        const [chunk] = args;
+        stderrChunks.push(String(chunk));
+        return true;
+      });
+  });
+
+  afterEach(async () => {
+    consoleLogSpy.mockRestore();
+    stderrWriteSpy.mockRestore();
+    delete process.env.LINKEDIN_BUDDY_HOME;
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("continues past a failing action and reports summary", async () => {
+    const { LinkedInBuddyError: LBE } = await import("@linkedin-buddy/core");
+
+    profileCliMocks.confirmByToken
+      .mockResolvedValueOnce({
+        preparedActionId: "pa_intro",
+        status: "executed",
+        actionType: "profile.update_intro",
+        result: { status: "profile_intro_updated" },
+        artifacts: []
+      })
+      .mockRejectedValueOnce(
+        new LBE("UI_CHANGED_SELECTOR_FAILED", "Settings selector not found")
+      )
+      .mockResolvedValueOnce({
+        preparedActionId: "pa_public_profile",
+        status: "executed",
+        actionType: "profile.update_public_profile",
+        result: { status: "profile_public_profile_updated" },
+        artifacts: []
+      })
+      .mockResolvedValueOnce({
+        preparedActionId: "pa_about",
+        status: "executed",
+        actionType: "profile.upsert_section_item",
+        result: { status: "profile_section_item_upserted" },
+        artifacts: []
+      });
+
+    const specPath = path.join(tempDir, "profile-spec-coe.json");
+    await writeFile(
+      specPath,
+      JSON.stringify(
+        {
+          intro: {
+            headline: "Automation Engineer at Example Labs",
+            location: "Copenhagen, Capital Region of Denmark, Denmark"
+          },
+          industry: "Software Development",
+          customProfileUrl: "avery-automation",
+          about: "Building production LLM systems."
+        },
+        null,
+        2
+      )
+    );
+
+    await runCli([
+      "node",
+      "linkedin",
+      "profile",
+      "apply-spec",
+      "--profile",
+      "smoke",
+      "--spec",
+      specPath,
+      "--continue-on-error",
+      "--yes",
+      "--delay-ms",
+      "0"
+    ]);
+
+    const output = JSON.parse(stdoutChunks.join("\n")) as {
+      continue_on_error: boolean;
+      planned_action_count: number;
+      executed_action_count: number;
+      succeeded_action_count: number;
+      failed_action_count: number;
+      actions: Array<{ status: string; error_code?: string; summary?: string }>;
+    };
+
+    expect(output.continue_on_error).toBe(true);
+    expect(output.planned_action_count).toBe(4);
+    expect(output.executed_action_count).toBe(4);
+    expect(output.succeeded_action_count).toBe(3);
+    expect(output.failed_action_count).toBe(1);
+    expect(output.actions[1]!.status).toBe("failed");
+    expect(output.actions[1]!.error_code).toBe("UI_CHANGED_SELECTOR_FAILED");
+    expect(output.actions[0]!.status).toBe("executed");
+    expect(output.actions[2]!.status).toBe("executed");
+    expect(output.actions[3]!.status).toBe("executed");
+    expect(stderrChunks.join("")).toContain("3/4 edits succeeded, 1 failed");
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("stops on fatal AUTH_REQUIRED despite --continue-on-error", async () => {
+    const { LinkedInBuddyError: LBE } = await import("@linkedin-buddy/core");
+
+    profileCliMocks.confirmByToken
+      .mockResolvedValueOnce({
+        preparedActionId: "pa_intro",
+        status: "executed",
+        actionType: "profile.update_intro",
+        result: { status: "profile_intro_updated" },
+        artifacts: []
+      })
+      .mockRejectedValueOnce(
+        new LBE("AUTH_REQUIRED", "Session expired")
+      );
+
+    const specPath = path.join(tempDir, "profile-spec-fatal.json");
+    await writeFile(
+      specPath,
+      JSON.stringify(
+        {
+          intro: {
+            headline: "Automation Engineer at Example Labs"
+          },
+          industry: "Software Development"
+        },
+        null,
+        2
+      )
+    );
+
+    await expect(
+      runCli([
+        "node",
+        "linkedin",
+        "profile",
+        "apply-spec",
+        "--profile",
+        "smoke",
+        "--spec",
+        specPath,
+        "--continue-on-error",
+        "--yes",
+        "--delay-ms",
+        "0"
+      ])
+    ).rejects.toThrow("Session expired");
+  });
+});
