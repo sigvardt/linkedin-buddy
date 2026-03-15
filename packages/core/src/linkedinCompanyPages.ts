@@ -201,9 +201,17 @@ async function dismissCompanyPageOverlayIfPresent(
   selectorLocale: LinkedInSelectorLocale
 ): Promise<void> {
   const overlay = page.locator(COMPANY_PAGE_OVERLAY_MODAL_SELECTOR).first();
-  const isOverlayVisible = await overlay.isVisible().catch(() => false);
 
-  if (!isOverlayVisible) {
+  // LinkedIn renders this overlay asynchronously — it may not be in the DOM
+  // yet when the main content (h1) is already visible.  A brief proactive
+  // wait avoids the race where the overlay appears *after* the instant
+  // isVisible() check but *before* the follow-button click.
+  const overlayAppeared = await overlay
+    .waitFor({ state: "visible", timeout: 1_500 })
+    .then(() => true)
+    .catch(() => false);
+
+  if (!overlayAppeared) {
     return;
   }
 
@@ -411,7 +419,14 @@ async function clickCompanyAction(input: {
     );
   }
 
-  await found.locator.click({ timeout: 5_000 });
+  try {
+    await found.locator.click({ timeout: 5_000 });
+  } catch {
+    // The click may have been blocked by a late-appearing overlay (e.g. the
+    // org-page-viewing-setting-modal).  Dismiss it and retry once.
+    await dismissCompanyPageOverlayIfPresent(input.page, input.selectorLocale);
+    await found.locator.click({ timeout: 5_000 });
+  }
   return found.key;
 }
 
