@@ -940,6 +940,49 @@ async function executeSendInvitation(
 
       const topCardRoot = page.locator("main .pv-top-card, main").first();
 
+      // Pre-flight: detect if invitation is already pending
+      const alreadyPendingCandidates = buildProfileActionButtonCandidates({
+        topCardRoot,
+        selectorLocale: runtime.selectorLocale,
+        selectorKeys: ["pending", "withdraw"],
+        candidateKeyPrefix: "already-pending"
+      });
+      const alreadyPending = await findVisibleLocator(page, alreadyPendingCandidates);
+      if (alreadyPending) {
+        throw new LinkedInBuddyError(
+          "ACTION_PRECONDITION_FAILED",
+          `Connection invitation is already pending for "${targetProfile}". ` +
+            "Withdraw the existing invitation before sending a new one.",
+          {
+            target_profile: targetProfile,
+            url: page.url(),
+            detected_state: "pending",
+            detected_selector_key: alreadyPending.key
+          }
+        );
+      }
+
+      // Pre-flight: detect if already connected (Message button = connected)
+      const alreadyConnectedCandidates = buildProfileActionButtonCandidates({
+        topCardRoot,
+        selectorLocale: runtime.selectorLocale,
+        selectorKeys: "message",
+        candidateKeyPrefix: "already-connected"
+      });
+      const alreadyConnected = await findVisibleLocator(page, alreadyConnectedCandidates);
+      if (alreadyConnected) {
+        throw new LinkedInBuddyError(
+          "ACTION_PRECONDITION_FAILED",
+          `Already connected with "${targetProfile}".`,
+          {
+            target_profile: targetProfile,
+            url: page.url(),
+            detected_state: "connected",
+            detected_selector_key: alreadyConnected.key
+          }
+        );
+      }
+
       const connectCandidates: VisibleLocatorCandidate[] = [
         {
           key: "topcard-connect-role",
@@ -1065,7 +1108,8 @@ async function executeSendInvitation(
 
         throw new LinkedInBuddyError(
           "UI_CHANGED_SELECTOR_FAILED",
-          "Could not find Connect button on profile page.",
+          `Could not find Connect button on profile page for "${targetProfile}". ` +
+            "The profile may have an unexpected layout or the Connect option may be unavailable.",
           {
             target_profile: targetProfile,
             url: page.url(),

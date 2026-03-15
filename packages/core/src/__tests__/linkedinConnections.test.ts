@@ -210,3 +210,143 @@ describe("LinkedInPendingInvitation interface shape", () => {
     expect(invitation.sent_or_received).toBe("sent");
   });
 });
+
+describe("prepareSendInvitation validation", () => {
+  it("rejects empty targetProfile with ACTION_PRECONDITION_FAILED", () => {
+    const rateLimiter = createAllowedRateLimiterStub();
+    const prepare = vi.fn();
+    const service = new LinkedInConnectionsService({
+      rateLimiter,
+      twoPhaseCommit: { prepare }
+    } as unknown as ConstructorParameters<typeof LinkedInConnectionsService>[0]);
+
+    expect(() =>
+      service.prepareSendInvitation({
+        targetProfile: "",
+        note: "Hello"
+      })
+    ).toThrow("targetProfile is required");
+    expect(prepare).not.toHaveBeenCalled();
+  });
+
+  it("rejects whitespace-only targetProfile", () => {
+    const rateLimiter = createAllowedRateLimiterStub();
+    const prepare = vi.fn();
+    const service = new LinkedInConnectionsService({
+      rateLimiter,
+      twoPhaseCommit: { prepare }
+    } as unknown as ConstructorParameters<typeof LinkedInConnectionsService>[0]);
+
+    expect(() =>
+      service.prepareSendInvitation({
+        targetProfile: "   ",
+        note: "Hello"
+      })
+    ).toThrow("targetProfile is required");
+    expect(prepare).not.toHaveBeenCalled();
+  });
+
+  it("includes note in preview outbound", () => {
+    const prepare = vi.fn(
+      (input: { preview: Record<string, unknown> }) => ({
+        preparedActionId: "pa_test",
+        confirmToken: "ct_test",
+        expiresAtMs: 123,
+        preview: input.preview
+      })
+    );
+    const rateLimiter = createAllowedRateLimiterStub();
+    const service = new LinkedInConnectionsService({
+      rateLimiter,
+      twoPhaseCommit: { prepare }
+    } as unknown as ConstructorParameters<typeof LinkedInConnectionsService>[0]);
+
+    const result = service.prepareSendInvitation({
+      targetProfile: "test-user",
+      note: "Let's connect!"
+    });
+
+    expect(result.preview).toMatchObject({
+      outbound: { note: "Let's connect!" }
+    });
+  });
+
+  it("defaults note to empty string when omitted", () => {
+    const prepare = vi.fn(
+      (input: { preview: Record<string, unknown> }) => ({
+        preparedActionId: "pa_test",
+        confirmToken: "ct_test",
+        expiresAtMs: 123,
+        preview: input.preview
+      })
+    );
+    const rateLimiter = createAllowedRateLimiterStub();
+    const service = new LinkedInConnectionsService({
+      rateLimiter,
+      twoPhaseCommit: { prepare }
+    } as unknown as ConstructorParameters<typeof LinkedInConnectionsService>[0]);
+
+    const result = service.prepareSendInvitation({
+      targetProfile: "test-user"
+    });
+
+    expect(result.preview).toMatchObject({
+      outbound: { note: "" }
+    });
+  });
+
+  it("includes correct rate limit counter key in preview", () => {
+    const prepare = vi.fn(
+      (input: { preview: Record<string, unknown> }) => ({
+        preparedActionId: "pa_test",
+        confirmToken: "ct_test",
+        expiresAtMs: 123,
+        preview: input.preview
+      })
+    );
+    const rateLimiter = createAllowedRateLimiterStub();
+    const service = new LinkedInConnectionsService({
+      rateLimiter,
+      twoPhaseCommit: { prepare }
+    } as unknown as ConstructorParameters<typeof LinkedInConnectionsService>[0]);
+
+    const result = service.prepareSendInvitation({
+      targetProfile: "test-user",
+      note: "Hi!"
+    });
+
+    expect(result.preview).toMatchObject({
+      rate_limit: {
+        counter_key: "linkedin.connections.send_invitation"
+      }
+    });
+  });
+
+  it("passes operator note to two-phase commit when provided", () => {
+    const prepare = vi.fn(
+      (input: { preview: Record<string, unknown> }) => ({
+        preparedActionId: "pa_test",
+        confirmToken: "ct_test",
+        expiresAtMs: 123,
+        preview: input.preview
+      })
+    );
+    const rateLimiter = createAllowedRateLimiterStub();
+    const service = new LinkedInConnectionsService({
+      rateLimiter,
+      twoPhaseCommit: { prepare }
+    } as unknown as ConstructorParameters<typeof LinkedInConnectionsService>[0]);
+
+    service.prepareSendInvitation({
+      targetProfile: "test-user",
+      note: "Hi!",
+      operatorNote: "Testing invite flow"
+    });
+
+    expect(prepare).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operatorNote: "Testing invite flow"
+      })
+    );
+  });
+});
