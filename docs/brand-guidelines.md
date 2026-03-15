@@ -1,55 +1,56 @@
 # Brand Guidelines
 
-![LinkedIn Buddy wordmark](../assets/brand/logo-wordmark.svg)
+<p align="center">
+  <img src="../assets/brand/mascot-clean.png" alt="LinkedIn Buddy chameleon mascot" width="200" />
+</p>
 
-LinkedIn Buddy should feel like a capable teammate: calm, warm, sharp, and a
-little playful. The brand direction in this repository is intentionally more
-approachable than corporate automation tooling and intentionally distinct from
-LinkedIn's own branding.
+LinkedIn Buddy should feel like a capable teammate: calm, sharp, confident, and
+a little playful. The chameleon mascot — a green chameleon in a business suit
+with headphones — is the visual embodiment of the product: it blends in, gets
+the job done, and looks good doing it.
 
 ## Brand essence
 
-- Tone: friendly, capable, developer-native
-- Personality: cute without becoming childish
-- Visual anchor: rounded speech-bubble mascot with a signal spark
+- Tone: confident, developer-native, slightly irreverent
+- Personality: sharp edge, friendly face — the mascot is approachable, the copy
+  is direct
+- Visual anchor: green chameleon mascot in a business suit
 - Design rule: always prefer clarity at small sizes over extra detail
 
-## Logo system
+## Mascot identity
 
-### Primary mark
+The LinkedIn Buddy chameleon is a professional who blends in. Six poses cover
+the full product surface:
 
-- File: `assets/brand/logo-mark.svg`
-- Use for: README headers, product cards, docs landing pages, and square app
-  icons
-- Keep clear space equal to at least the width of one eye dot on all sides
+| Pose | Description | Usage |
+|------|-------------|-------|
+| Laptop (typing) | Chameleon at a laptop | Hero section, Quick Start |
+| Writing (notepad) | Chameleon writing notes | Feed & Posts, Publishing |
+| Phone (showing LinkedIn) | Chameleon holding a phone | Search, Notifications |
+| Coffee + phone | Chameleon relaxing with coffee | Activity Polling, casual sections |
+| Briefcase + filing | Chameleon in business mode | Jobs section |
+| Thumbs up at desk | Chameleon celebrating | MCP Server, footer, success states |
 
-### Wordmark lockup
+### Mascot files
 
-- File: `assets/brand/logo-wordmark.svg`
-- Use for: npm listing art, README hero areas, profile banners, and slides
-- Prefer the full lockup when horizontal space is available
-
-### Badge mark
-
-- File: `assets/brand/logo-badge.svg`
-- Use for: `20px`-tall shields.io custom badge logos and monochrome surfaces
-- This version is simplified to preserve the silhouette at tiny sizes
-
-### Favicon
-
-- File: `assets/brand/favicon.svg`
-- Use for: docs sites, dashboards, browser tabs, and app manifests
-- The favicon intentionally removes the smile and spark so the eye-and-bubble
-  silhouette stays crisp at `16px`
+| File | Purpose |
+|------|---------|
+| `assets/brand/chameleon-poses.png` | All 6 poses on one sheet — reference for section illustrations |
+| `assets/brand/mascot-clean.png` | Clean mascot on white/transparent background — inline README use, docs headers |
+| `assets/brand/app-icon.png` | Chameleon on blue rounded-square — favicon source, repo avatar |
+| `assets/brand/banner.png` | Chameleon on blue gradient + "linkedin-buddy" text — README hero image |
+| `assets/brand/social-preview-v2.png` | Full marketing card with MCP/CLI/TS badges — GitHub social preview |
 
 ## Color palette
 
 | Role | Hex | Usage |
-| --- | --- | --- |
+|------|-----|-------|
+| Primary Blue | `#0077B5` | Banner gradient, app icon background, LinkedIn-adjacent accent |
+| Chameleon Green | `#2ECC71` | Mascot fill, active accents, highlights |
 | Primary Ink | `#0F172A` | Headlines, icon strokes, terminal surfaces |
-| Primary Mint | `#14B8A6` | Logo fill, highlights, active accents |
-| Secondary Coral | `#FF7A59` | Spark, callouts, warm emphasis |
-| Soft Cream | `#FFF7ED` | Light backplates, logo containers, soft backgrounds |
+| Primary Mint | `#14B8A6` | Secondary highlights, code accents |
+| Secondary Coral | `#FF7A59` | Callouts, warm emphasis |
+| Soft Cream | `#FFF7ED` | Light backplates, soft backgrounds |
 | Night Slate | `#111827` | Dark surfaces and preview cards |
 | Fog | `#E5E7EB` | Borders and muted text on dark surfaces |
 
@@ -83,64 +84,79 @@ for long text because it is better suited to accents than dense reading.
 
 ## Social preview
 
-- Source: `assets/brand/social-preview.svg`
-- Export: `assets/brand/social-preview.png`
+- Source: `assets/brand/social-preview-v2.png`
 - Canvas: `1280x640`
 - Safe margin: `64px` minimum on all sides
+- Upload to: GitHub → Settings → Social preview
 
 Composition rules:
 
-- keep one dominant focal mark on the left
-- keep the product name and value prop on the right
-- use no more than one short supporting block, such as a terminal card or chip
-  row
-- keep background texture soft so link-preview compression does not muddy the
-  text
+- feature the chameleon mascot prominently
+- include product name and one-line tagline
+- include surface badges (MCP, CLI, TypeScript)
+- use the blue gradient background consistent with the banner
+- keep background texture soft so link-preview compression does not muddy the text
+
+## App icon and favicons
+
+The app icon (`assets/brand/app-icon.png`) is the chameleon on a blue
+rounded-square background. Generate favicons from this source:
+
+| File | Size | Purpose |
+|------|------|---------|
+| `assets/brand/favicon.ico` | 16, 32, 48 multi-size | Browser favicon |
+| `assets/brand/favicon-32.png` | 32×32 | PNG favicon fallback |
+| `assets/brand/favicon.svg` | scalable | SVG favicon (keep as fallback if not regenerated) |
+| `assets/brand/png/app-icon-64.png` | 64×64 | Small raster icon |
+| `assets/brand/png/app-icon-128.png` | 128×128 | Medium raster icon |
+| `assets/brand/png/app-icon-256.png` | 256×256 | Large raster icon |
+| `assets/brand/png/app-icon-512.png` | 512×512 | XL raster icon |
 
 ## Usage rules
 
 Do:
 
-- use the mark on a warm cream or transparent field
-- preserve the mint fill and coral spark when space allows
-- switch to the badge or favicon variants below `32px`
-- use the wordmark lockup for README and npm-facing surfaces
+- use the chameleon mascot on brand-colored or transparent fields
+- preserve the green chameleon fill when space allows
+- use the app icon for small square contexts (favicons, avatars)
+- use the banner for README and marketing hero areas
+- use `mascot-clean.png` for inline documentation illustrations
+- use the social preview card for GitHub social preview settings
 
 Do not:
 
-- recolor the mark to LinkedIn blue
+- recolor the chameleon to LinkedIn blue (it's intentionally green — it blends in)
 - add gradients inside the mascot itself
-- squeeze the wordmark vertically
-- place the full detailed mark at `16px`
+- stretch or distort the mascot proportions
+- use the full detailed mascot below `32px` — switch to the app icon or favicon
 
 ## Asset inventory
 
-### Vector files
+### Chameleon mascot files
 
-- `assets/brand/logo-mark.svg`
-- `assets/brand/logo-wordmark.svg`
-- `assets/brand/logo-badge.svg`
-- `assets/brand/favicon.svg`
-- `assets/brand/social-preview.svg`
+- `assets/brand/chameleon-poses.png` — all 6 poses reference sheet
+- `assets/brand/mascot-clean.png` — clean mascot, white/transparent background
+- `assets/brand/app-icon.png` — app icon, blue rounded-square
+- `assets/brand/banner.png` — README hero banner
+- `assets/brand/social-preview-v2.png` — GitHub social preview card
 
-### Raster files
+### Favicons and raster icons
 
-- `assets/brand/favicon-32.png`
-- `assets/brand/png/logo-mark-16.png`
-- `assets/brand/png/logo-mark-32.png`
-- `assets/brand/png/logo-mark-64.png`
-- `assets/brand/png/logo-mark-128.png`
-- `assets/brand/png/logo-mark-256.png`
-- `assets/brand/png/logo-mark-512.png`
-- `assets/brand/social-preview.png`
+- `assets/brand/favicon.ico` — multi-size ICO
+- `assets/brand/favicon-32.png` — 32px PNG
+- `assets/brand/favicon.svg` — SVG fallback
+- `assets/brand/png/app-icon-64.png`
+- `assets/brand/png/app-icon-128.png`
+- `assets/brand/png/app-icon-256.png`
+- `assets/brand/png/app-icon-512.png`
 
 ## Regenerating assets
 
-Run:
+Once the app icon source is available, generate favicon variants:
 
 ```bash
 npm run brand:generate
 ```
 
-That script rasterizes the committed SVG sources into the PNG outputs tracked in
-this repository.
+That script rasterizes the committed sources into the PNG and ICO outputs
+tracked in this repository.

@@ -53,7 +53,7 @@ Issue: [#245](https://github.com/sigvardt/linkedin-buddy/issues/245)
 
 ### Social preview asset
 
-Use `assets/brand/social-preview.png` for the GitHub social preview image.
+Use `assets/brand/social-preview-v2.png` for the GitHub social preview image.
 
 GitHub CLI and the public `updateRepository` GraphQL mutation support description and homepage updates, but not social preview uploads, so this image currently has to be set in the GitHub repository settings UI.
 

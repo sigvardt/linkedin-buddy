@@ -9,6 +9,7 @@ This directory holds the README-ready visuals for LinkedIn Buddy.
 - Use the repository brand palette from [`docs/brand-guidelines.md`](../../docs/brand-guidelines.md).
 - Favor self-contained cards and high-contrast labels that read well in both GitHub themes.
 - Use safe mock data only — no live LinkedIn content should be embedded in README media.
+- Chameleon mascot artwork lives in `assets/brand/`, not here. This directory is for diagrams and demos.
 
 ## Layout
 
@@ -33,6 +34,12 @@ This directory holds the README-ready visuals for LinkedIn Buddy.
 | `assets/media/terminals/install-and-build.svg`     | SVG    |   `5.6 KB` | Install and build terminal card           |
 | `assets/media/terminals/mcp-quick-connect.svg`     | SVG    |   `7.9 KB` | MCP configuration terminal card           |
 | `assets/media/terminals/confirm-before-write.svg`  | SVG    |   `6.7 KB` | Prepare + confirm terminal card           |
+
+## Brand assets (separate directory)
+
+Chameleon mascot artwork, banner, app icon, favicons, and social preview cards
+live in `assets/brand/`. See [`docs/brand-guidelines.md`](../../docs/brand-guidelines.md)
+for the full inventory and usage rules.
 
 ## Notes
 
