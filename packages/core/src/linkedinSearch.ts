@@ -232,7 +232,7 @@ export class LinkedInSearchService {
           await waitForNetworkIdleBestEffort(page);
           await page
             .locator(
-              "main a[href*='/in/'], div[data-view-name='search-entity-result-universal-template'], .reusable-search__result-container, li.reusable-search__result-container, [data-view-name='search-entity-result-universal-template'], ul.reusable-search__entity-result-list > li, .search-results-container li"
+              "[data-chameleon-result-urn]:not([data-chameleon-result-urn*='headless']), main a[href*='/in/'], div[data-view-name='search-entity-result-universal-template'], .reusable-search__result-container, li.reusable-search__result-container, [data-view-name='search-entity-result-universal-template'], ul.reusable-search__entity-result-list > li, .search-results-container li"
             )
             .first()
             .waitFor({ state: "visible", timeout: 10_000 })
@@ -339,17 +339,43 @@ export class LinkedInSearchService {
                 }
 
                 const paragraphs = Array.from(card.querySelectorAll("p"));
-                const rawName = normalize(
-                  (paragraphs[0]?.innerText ?? "").split("\n")[0]
+                const pickTextFromCard = (selectors: string[]): string => {
+                  for (const selector of selectors) {
+                    const text = normalize(
+                      (card.querySelector(selector) as HTMLElement | null)?.innerText ||
+                        card.querySelector(selector)?.textContent
+                    );
+                    if (text) {
+                      return text;
+                    }
+                  }
+                  return "";
+                };
+                const nameFromSpan = normalize(
+                  (
+                    link.querySelector("span[dir='ltr'] span[aria-hidden='true']") ??
+                    link.querySelector("span[aria-hidden='true']")
+                  )?.textContent
                 );
+                const rawName =
+                  nameFromSpan ||
+                  normalize((paragraphs[0]?.innerText ?? "").split("\n")[0]);
                 const allText = normalize((card as HTMLElement).innerText);
                 const degreeMatch = /(\d(?:st|nd|rd))/i.exec(allText);
                 const mutualMatch = /(\d+\s*mutual\s*connection(?:s)?)/i.exec(allText);
 
                 return {
                   name: rawName,
-                  headline: normalize(paragraphs[1]?.innerText),
-                  location: normalize(paragraphs[2]?.innerText),
+                  headline:
+                    pickTextFromCard([
+                      "div.t-14.t-black.t-normal",
+                      ".entity-result__primary-subtitle"
+                    ]) || normalize(paragraphs[1]?.innerText),
+                  location:
+                    pickTextFromCard([
+                      "div.t-14.t-normal:not(.t-black)",
+                      ".entity-result__secondary-subtitle"
+                    ]) || normalize(paragraphs[2]?.innerText),
                   profile_url: toAbsoluteHref(
                     normalize(link.getAttribute("href")) || normalize(link.href)
                   ),
@@ -366,12 +392,15 @@ export class LinkedInSearchService {
 
             const legacyCards = Array.from(
               globalThis.document.querySelectorAll(
-                "div[data-view-name='search-entity-result-universal-template'], .reusable-search__result-container, li.reusable-search__result-container, [data-view-name='search-entity-result-universal-template'], ul.reusable-search__entity-result-list > li, .search-results-container li"
+                "li[data-chameleon-result-urn]:not([data-chameleon-result-urn*='headless']), div[data-view-name='search-entity-result-universal-template'], .reusable-search__result-container, li.reusable-search__result-container, [data-view-name='search-entity-result-universal-template'], ul.reusable-search__entity-result-list > li, .search-results-container li"
               )
             ).slice(0, lim);
 
             return legacyCards.map((card) => ({
               name: pickText(card, [
+                "a[href*='/in/'] span[dir='ltr'] span[aria-hidden='true']",
+                "a[data-test-app-aware-link] span[dir='ltr'] span[aria-hidden='true']",
+                "a[data-test-app-aware-link] span[aria-hidden='true']",
                 "a[href*='/in/'] span[dir='ltr'] > span[aria-hidden='true']",
                 ".entity-result__title-text a span[aria-hidden='true']",
                 ".entity-result__title-text a span[dir='ltr']",
@@ -379,14 +408,18 @@ export class LinkedInSearchService {
                 ".app-aware-link span[dir='ltr']"
               ]),
               headline:
-                pickSiblingText(card, ".t-roman.t-sans", 0) ||
+                pickSiblingText(card, "a[data-test-app-aware-link], .entity-result__title-text a", 0) ||
                 pickText(card, [
+                  "div.t-14.t-black.t-normal",
                   ".entity-result__primary-subtitle",
                   ".entity-result__summary"
                 ]),
               location:
-                pickSiblingText(card, ".t-roman.t-sans", 1) ||
-                pickText(card, [".entity-result__secondary-subtitle"]),
+                pickSiblingText(card, "a[data-test-app-aware-link], .entity-result__title-text a", 1) ||
+                pickText(card, [
+                  "div.t-14.t-normal:not(.t-black)",
+                  ".entity-result__secondary-subtitle"
+                ]),
               profile_url: pickHref(card, ["a[href*='/in/']"]),
               connection_degree: pickText(card, [
                 ".entity-result__badge-text span[aria-hidden='true']",
@@ -468,7 +501,7 @@ export class LinkedInSearchService {
           await waitForNetworkIdleBestEffort(page);
           await page
             .locator(
-              "main a[href*='/company/'], div[data-view-name='search-entity-result-universal-template'], .reusable-search__result-container, li.reusable-search__result-container, [data-view-name='search-entity-result-universal-template'], ul.reusable-search__entity-result-list > li, .search-results-container li"
+              "[data-chameleon-result-urn]:not([data-chameleon-result-urn*='headless']), main a[href*='/company/'], div[data-view-name='search-entity-result-universal-template'], .reusable-search__result-container, li.reusable-search__result-container, [data-view-name='search-entity-result-universal-template'], ul.reusable-search__entity-result-list > li, .search-results-container li"
             )
             .first()
             .waitFor({ state: "visible", timeout: 10_000 })
@@ -555,16 +588,46 @@ export class LinkedInSearchService {
                 }
 
                 const paragraphs = Array.from(card.querySelectorAll("p"));
+                const pickTextFromCard = (selectors: string[]): string => {
+                  for (const selector of selectors) {
+                    const text = normalize(
+                      (card.querySelector(selector) as HTMLElement | null)?.innerText ||
+                        card.querySelector(selector)?.textContent
+                    );
+                    if (text) {
+                      return text;
+                    }
+                  }
+                  return "";
+                };
                 const summaryParagraph = paragraphs.find((paragraph) =>
                   /follower|employee|industry/i.test(
                     normalize((paragraph as HTMLElement).innerText)
                   )
                 );
+                const nameFromSpan = normalize(
+                  (
+                    link.querySelector("span[dir='ltr'] span[aria-hidden='true']") ??
+                    link.querySelector("span[aria-hidden='true']")
+                  )?.textContent
+                );
+                const subtitleRaw =
+                  pickTextFromCard([
+                    "div.t-14.t-black.t-normal",
+                    ".entity-result__primary-subtitle"
+                  ]) || normalize(paragraphs[1]?.innerText);
+                const subtitleParts = subtitleRaw.split("•").map((s) => s.trim());
 
                 return {
-                  name: normalize((paragraphs[0]?.innerText ?? "").split("\n")[0]),
-                  industry: normalize(paragraphs[1]?.innerText),
+                  name:
+                    nameFromSpan ||
+                    normalize((paragraphs[0]?.innerText ?? "").split("\n")[0]),
+                  industry: subtitleParts[0] ?? "",
                   follower_count:
+                    pickTextFromCard([
+                      "div.t-14.t-normal:not(.t-black)",
+                      ".entity-result__secondary-subtitle"
+                    ]) ||
                     normalize(paragraphs[2]?.innerText) ||
                     normalize((summaryParagraph as HTMLElement | undefined)?.innerText),
                   description: normalize(paragraphs[3]?.innerText),
@@ -583,7 +646,7 @@ export class LinkedInSearchService {
 
             const legacyCards = Array.from(
               globalThis.document.querySelectorAll(
-                "div[data-view-name='search-entity-result-universal-template'], .reusable-search__result-container, li.reusable-search__result-container, [data-view-name='search-entity-result-universal-template'], ul.reusable-search__entity-result-list > li, .search-results-container li"
+                "li[data-chameleon-result-urn]:not([data-chameleon-result-urn*='headless']), div[data-view-name='search-entity-result-universal-template'], .reusable-search__result-container, li.reusable-search__result-container, [data-view-name='search-entity-result-universal-template'], ul.reusable-search__entity-result-list > li, .search-results-container li"
               )
             ).slice(0, lim);
 
@@ -594,25 +657,34 @@ export class LinkedInSearchService {
               const logoElement = card.querySelector("img") as HTMLImageElement | null;
 
               const nameLink = card.querySelector(
-                ".t-roman.t-sans a[data-test-app-aware-link]"
+                "a[data-test-app-aware-link]"
               );
               const name = nameLink
                 ? normalize(nameLink.textContent)
                 : pickText(card, [
+                    "a[href*='/company/'] span[dir='ltr'] span[aria-hidden='true']",
+                    "a[data-test-app-aware-link] span[dir='ltr'] span[aria-hidden='true']",
+                    "a[data-test-app-aware-link] span[aria-hidden='true']",
                     ".entity-result__title-text a span[aria-hidden='true']"
                   ]);
 
               const subtitleRaw =
-                pickSiblingText(card, ".t-roman.t-sans", 0) ||
-                pickText(card, [".entity-result__primary-subtitle"]);
+                pickSiblingText(card, "a[data-test-app-aware-link], .entity-result__title-text a", 0) ||
+                pickText(card, [
+                  "div.t-14.t-black.t-normal",
+                  ".entity-result__primary-subtitle"
+                ]);
               const subtitleParts = subtitleRaw.split("•").map((s) => s.trim());
 
               return {
                 name,
                 industry: subtitleParts[0] ?? "",
                 follower_count:
-                  pickSiblingText(card, ".t-roman.t-sans", 1) ||
-                  pickText(card, [".entity-result__secondary-subtitle"]),
+                  pickSiblingText(card, "a[data-test-app-aware-link], .entity-result__title-text a", 1) ||
+                  pickText(card, [
+                    "div.t-14.t-normal:not(.t-black)",
+                    ".entity-result__secondary-subtitle"
+                  ]),
                 description: pickText(card, [
                   "p[class*='entity-result__summary']",
                   ".entity-result__summary"
@@ -685,7 +757,7 @@ export class LinkedInSearchService {
           await waitForNetworkIdleBestEffort(page);
           await page
             .locator(
-              ".job-card-container, .base-search-card, .job-card-list__entity-lockup, .jobs-search-results-list__list-item"
+              "[data-chameleon-result-urn]:not([data-chameleon-result-urn*='headless']), [data-entity-urn^='urn:li:jobPosting'], .job-card-container, .base-search-card, .job-card-list__entity-lockup, .jobs-search-results-list__list-item"
             )
             .first()
             .waitFor({ state: "visible", timeout: 10_000 })
@@ -738,7 +810,7 @@ export class LinkedInSearchService {
 
             const cards = Array.from(
               globalThis.document.querySelectorAll(
-                ".job-card-container, .base-search-card, .job-card-list__entity-lockup, .jobs-search-results-list__list-item"
+                "[data-entity-urn^='urn:li:jobPosting'], li[data-chameleon-result-urn]:not([data-chameleon-result-urn*='headless']), .job-card-container, .base-search-card, .job-card-list__entity-lockup, .jobs-search-results-list__list-item"
               )
             ).slice(0, lim);
 
@@ -748,18 +820,21 @@ export class LinkedInSearchService {
               ) as HTMLAnchorElement | null;
               return {
                 title: pickText(card, [
+                  "h3.base-search-card__title",
                   "a[href*='/jobs/view/'] span[aria-hidden='true']",
                   ".job-card-container__link",
                   ".job-card-list__title",
                   ".base-search-card__title"
                 ]),
                 company: pickText(card, [
+                  "h4.base-search-card__subtitle a",
                   ".artdeco-entity-lockup__subtitle span[dir='ltr']",
                   ".job-card-container__primary-description",
                   ".job-card-container__company-name",
                   ".base-search-card__subtitle"
                 ]),
                 location: pickText(card, [
+                  ".job-search-card__location",
                   ".artdeco-entity-lockup__caption span[dir='ltr']",
                   ".job-card-container__metadata-wrapper span[dir='ltr']",
                   ".job-card-container__metadata-item",
@@ -843,7 +918,7 @@ export class LinkedInSearchService {
           await waitForNetworkIdleBestEffort(page);
           await page
             .locator(
-              "div[data-urn*='activity'], article, .occludable-update, .feed-shared-update-v2"
+              "[data-chameleon-result-urn]:not([data-chameleon-result-urn*='headless']), div[data-urn*='activity'], article, .occludable-update, .feed-shared-update-v2"
             )
             .first()
             .waitFor({ state: "visible", timeout: 10_000 })
@@ -957,7 +1032,7 @@ export class LinkedInSearchService {
 
             const legacyPostContainers = Array.from(
               globalThis.document.querySelectorAll(
-                "div.feed-shared-update-v2[data-urn], .occludable-update[data-urn], article[data-urn]"
+                "div[data-chameleon-result-urn]:not([data-chameleon-result-urn*='headless']), li[data-chameleon-result-urn]:not([data-chameleon-result-urn*='headless']), div.feed-shared-update-v2[data-urn], .occludable-update[data-urn], article[data-urn]"
               )
             ).slice(0, lim);
 
@@ -1027,7 +1102,7 @@ export class LinkedInSearchService {
           });
           await waitForNetworkIdleBestEffort(page);
           await page
-            .locator("main a[href*='/groups/'], div[data-view-name='search-entity-result-universal-template']")
+            .locator("[data-chameleon-result-urn]:not([data-chameleon-result-urn*='headless']), main a[href*='/groups/'], div[data-view-name='search-entity-result-universal-template']")
             .first()
             .waitFor({ state: "visible", timeout: 10_000 })
             .catch(() => undefined);
@@ -1127,12 +1202,20 @@ export class LinkedInSearchService {
                 }
 
                 const paragraphs = Array.from(card.querySelectorAll("p"));
+                const nameFromSpan = normalize(
+                  (
+                    link.querySelector("span[dir='ltr'] span[aria-hidden='true']") ??
+                    link.querySelector("span[aria-hidden='true']")
+                  )?.textContent
+                );
                 const memberParagraph = paragraphs.find((paragraph) =>
                   /member/i.test(normalize((paragraph as HTMLElement).innerText))
                 );
 
                 return {
-                  name: normalize((paragraphs[0]?.innerText ?? "").split("\n")[0]),
+                  name:
+                    nameFromSpan ||
+                    normalize((paragraphs[0]?.innerText ?? "").split("\n")[0]),
                   group_type: normalize(paragraphs[1]?.innerText),
                   member_count: normalize((memberParagraph as HTMLElement | undefined)?.innerText),
                   description: normalize(paragraphs[2]?.innerText || paragraphs[3]?.innerText),
@@ -1150,17 +1233,20 @@ export class LinkedInSearchService {
 
             const legacyCards = Array.from(
               globalThis.document.querySelectorAll(
-                "div[data-view-name='search-entity-result-universal-template']"
+                "li[data-chameleon-result-urn]:not([data-chameleon-result-urn*='headless']), div[data-view-name='search-entity-result-universal-template']"
               )
             ).slice(0, lim);
 
             return legacyCards.map((card) => {
               const nameLink = card.querySelector(
-                ".t-roman.t-sans a[data-test-app-aware-link]"
+                "a[data-test-app-aware-link]"
               );
               const name = nameLink
                 ? normalize(nameLink.textContent)
                 : pickText(card, [
+                    "a[href*='/groups/'] span[dir='ltr'] span[aria-hidden='true']",
+                    "a[data-test-app-aware-link] span[dir='ltr'] span[aria-hidden='true']",
+                    "a[data-test-app-aware-link] span[aria-hidden='true']",
                     "a[href*='/groups/'] span[aria-hidden='true']",
                     "a[href*='/groups/']"
                   ]);
@@ -1169,8 +1255,11 @@ export class LinkedInSearchService {
                 name,
                 group_type: "",
                 member_count:
-                  pickSiblingText(card, ".t-roman.t-sans", 0) ||
-                  pickText(card, [".entity-result__primary-subtitle"]),
+                  pickSiblingText(card, "a[data-test-app-aware-link], a[href*='/groups/']", 0) ||
+                  pickText(card, [
+                    "div.t-14.t-black.t-normal",
+                    ".entity-result__primary-subtitle"
+                  ]),
                 description: pickText(card, [
                   "p[class*='entity-result__summary']",
                   "[class*='entity-result__summary']",
@@ -1238,7 +1327,7 @@ export class LinkedInSearchService {
           });
           await waitForNetworkIdleBestEffort(page);
           await page
-            .locator("main a[href*='/events/'], div[data-view-name='search-entity-result-universal-template']")
+            .locator("[data-chameleon-result-urn]:not([data-chameleon-result-urn*='headless']), main a[href*='/events/'], div[data-view-name='search-entity-result-universal-template']")
             .first()
             .waitFor({ state: "visible", timeout: 10_000 })
             .catch(() => undefined);
@@ -1340,6 +1429,12 @@ export class LinkedInSearchService {
                 }
 
                 const paragraphs = Array.from(card.querySelectorAll("p"));
+                const titleFromSpan = normalize(
+                  (
+                    link.querySelector("span[dir='ltr'] span[aria-hidden='true']") ??
+                    link.querySelector("span[aria-hidden='true']")
+                  )?.textContent
+                );
                 const venueLine = normalize(paragraphs[2]?.innerText || paragraphs[1]?.innerText);
                 const organizerMatch = /^(.*?)\s*[•·]\s*By\s+(.*)$/i.exec(venueLine);
                 const attendeeParagraph = paragraphs.find((paragraph) =>
@@ -1349,7 +1444,9 @@ export class LinkedInSearchService {
                 );
 
                 return {
-                  title: normalize((paragraphs[0]?.innerText ?? "").split("\n")[0]),
+                  title:
+                    titleFromSpan ||
+                    normalize((paragraphs[0]?.innerText ?? "").split("\n")[0]),
                   date: normalize(paragraphs[1]?.innerText),
                   location: normalize(organizerMatch?.[1] ?? venueLine),
                   organizer: normalize(organizerMatch?.[2] ?? ""),
@@ -1371,28 +1468,37 @@ export class LinkedInSearchService {
 
             const legacyCards = Array.from(
               globalThis.document.querySelectorAll(
-                "div[data-view-name='search-entity-result-universal-template']"
+                "li[data-chameleon-result-urn]:not([data-chameleon-result-urn*='headless']), div[data-view-name='search-entity-result-universal-template']"
               )
             ).slice(0, lim);
 
             return legacyCards.map((card) => {
               const nameLink = card.querySelector(
-                ".t-roman.t-sans a[data-test-app-aware-link]"
+                "a[data-test-app-aware-link]"
               );
               const title = nameLink
                 ? normalize(nameLink.textContent)
                 : pickText(card, [
+                    "a[href*='/events/'] span[dir='ltr'] span[aria-hidden='true']",
+                    "a[data-test-app-aware-link] span[dir='ltr'] span[aria-hidden='true']",
+                    "a[data-test-app-aware-link] span[aria-hidden='true']",
                     "a[href*='/events/'] span[aria-hidden='true']",
                     "a[href*='/events/']"
                   ]);
 
               const date =
-                pickSiblingText(card, ".t-roman.t-sans", 0) ||
-                pickText(card, [".entity-result__primary-subtitle"]);
+                pickSiblingText(card, "a[data-test-app-aware-link], a[href*='/events/']", 0) ||
+                pickText(card, [
+                  "div.t-14.t-black.t-normal",
+                  ".entity-result__primary-subtitle"
+                ]);
 
               const venueLine =
-                pickSiblingText(card, ".t-roman.t-sans", 1) ||
-                pickText(card, [".entity-result__secondary-subtitle"]);
+                pickSiblingText(card, "a[data-test-app-aware-link], a[href*='/events/']", 1) ||
+                pickText(card, [
+                  "div.t-14.t-normal:not(.t-black)",
+                  ".entity-result__secondary-subtitle"
+                ]);
               const organizerMatch = /^(.*?)\s*[•·]\s*By\s+(.*)$/i.exec(venueLine);
 
               const attendeeText = pickText(card, [
