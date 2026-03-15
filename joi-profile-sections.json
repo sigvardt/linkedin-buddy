@@ -1,0 +1,101 @@
+{
+  "about": "I'm an executive assistant who fell in love with AI tools — and never looked back.\n\nAt Signikant, I support the Director while leading our internal push to integrate intelligent automation into daily operations. What started as curiosity about ChatGPT turned into a full-blown mission: making every team member's workflow a little smoother, a little smarter.\n\nMy days are a mix of stakeholder coordination, calendar tetris, and evaluating the latest AI tools for real business use (not just demos that look cool on Twitter). I've helped our team cut meeting prep time in half and built documentation systems that actually get used.\n\nBefore Signikant, I spent four years at agencies and studios where I learned that the best processes are invisible — they just work. Now I bring that philosophy to AI integration.\n\nWhat I care about:\n• Making AI practical, not theoretical\n• Building processes that scale without breaking\n• Helping people work smarter, not longer\n• The Copenhagen tech scene and its quiet innovation\n\nAlways happy to connect with fellow operations-minded people, AI enthusiasts, or anyone navigating the intersection of admin work and technology.",
+  "experience": [
+    {
+      "values": {
+        "title": "Executive Assistant & AI Operations Coordinator",
+        "company": "Signikant",
+        "location": "Copenhagen, Denmark",
+        "description": "Supporting the Director with strategic planning, stakeholder communications, and day-to-day operations. Leading the adoption of AI-powered tools across the organization to improve team productivity and decision-making.\n\nKey initiatives:\n• Evaluated and deployed 12+ AI tools across content, scheduling, and research workflows\n• Built an internal AI guidelines handbook adopted by the entire team\n• Reduced weekly meeting prep time by 50% through automated briefing generation\n• Coordinated cross-functional projects between engineering, design, and operations",
+        "employmentType": "Full-time",
+        "currentlyWorkingHere": true,
+        "startMonth": "9",
+        "startYear": "2024"
+      }
+    },
+    {
+      "values": {
+        "title": "Administrative Coordinator",
+        "company": "Nordic Digital Partners",
+        "location": "Copenhagen, Denmark",
+        "description": "Coordinated office operations for a 40-person digital agency. Managed vendor relationships, organized quarterly client events, and maintained internal knowledge bases.\n\n• Introduced structured project tracking that reduced missed deadlines by 35%\n• Managed a 200K DKK annual procurement budget\n• Organized 8 client events with 50-150 attendees each",
+        "employmentType": "Full-time",
+        "currentlyWorkingHere": false,
+        "startMonth": "3",
+        "startYear": "2022",
+        "endMonth": "8",
+        "endYear": "2024"
+      }
+    },
+    {
+      "values": {
+        "title": "Office Manager",
+        "company": "Bright Studio",
+        "location": "Aarhus, Denmark",
+        "description": "Managed all administrative functions for a creative design studio. Handled budgeting, procurement, team scheduling, and vendor relations.\n\n• Organized the annual company retreat (3 years running)\n• Managed relationships with 20+ freelance contractors\n• Digitized paper-based filing system, saving ~5 hours/week",
+        "employmentType": "Full-time",
+        "currentlyWorkingHere": false,
+        "startMonth": "6",
+        "startYear": "2020",
+        "endMonth": "2",
+        "endYear": "2022"
+      }
+    }
+  ],
+  "education": [
+    {
+      "values": {
+        "school": "Copenhagen Business School",
+        "degree": "Bachelor of Science (BSc)",
+        "fieldOfStudy": "Business Administration and Management",
+        "description": "Focused on organizational management and digital transformation. Thesis on AI-Assisted Decision Making in SMEs.\n\nActivities: Student Council, CBS Entrepreneurship Club, Business Case Competition (3rd place, 2019).",
+        "startYear": "2017",
+        "endYear": "2020"
+      }
+    }
+  ],
+  "certifications": [
+    {
+      "values": {
+        "name": "Google Project Management Professional Certificate",
+        "issuingOrganization": "Google",
+        "issueMonth": "4",
+        "issueYear": "2023"
+      }
+    },
+    {
+      "values": {
+        "name": "AI for Business Specialization",
+        "issuingOrganization": "University of Pennsylvania (Coursera)",
+        "issueMonth": "11",
+        "issueYear": "2024"
+      }
+    }
+  ],
+  "languages": [
+    {
+      "values": {
+        "name": "Danish",
+        "proficiency": "Native or bilingual proficiency"
+      }
+    },
+    {
+      "values": {
+        "name": "English",
+        "proficiency": "Full professional proficiency"
+      }
+    }
+  ],
+  "volunteer_experience": [
+    {
+      "values": {
+        "role": "Workshop Facilitator",
+        "organization": "Copenhagen AI Meetup",
+        "cause": "Science and Technology",
+        "description": "Facilitate monthly workshops introducing non-technical professionals to practical AI tools for productivity and workflow automation.",
+        "startMonth": "1",
+        "startYear": "2025"
+      }
+    }
+  ]
+}

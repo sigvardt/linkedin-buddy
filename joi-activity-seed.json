@@ -1,0 +1,65 @@
+{
+  "connections": {
+    "acceptPending": {
+      "limit": 5
+    },
+    "invites": [
+      {
+        "targetProfile": "https://www.linkedin.com/in/realsimonmiller",
+        "note": "Hi Simon! Noticed we share an interest in AI and tech innovation in the Nordics. Would love to connect.",
+        "operatorNote": "Approved test contact per AGENTS.md safety rules"
+      }
+    ]
+  },
+  "posts": [
+    {
+      "text": "Something I've been thinking about lately: the gap between AI demos and actual daily use.\n\nEvery week there's a new tool that promises to revolutionize your workflow. But in my experience helping our team at Signikant adopt AI tools, the ones that stick aren't the flashiest — they're the ones that solve a real, specific annoyance.\n\nOur best AI win so far? Automated meeting briefings. Not glamorous. Not going viral on Twitter. But it saves our Director 10+ minutes per meeting, every single day.\n\nThe lesson: start with the pain point, not the technology.\n\nWhat's the most surprisingly mundane AI use case that's actually transformed your work? Would love to hear examples.\n\n#AIinBusiness #ProductivityTools #FutureOfWork",
+      "visibility": "public",
+      "operatorNote": "First post — AI tools in practice, engagement-driving question"
+    },
+    {
+      "text": "Copenhagen's tech scene doesn't get enough credit.\n\nWe don't have the loudest voices or the biggest launches. But what we do have is a culture of building things that actually work. Practical, privacy-conscious, human-centered.\n\nIn the past month alone, I've met founders working on everything from AI-powered logistics optimization to sustainable supply chain transparency. And they're not just pitching — they're shipping.\n\nProud to be part of this ecosystem. If you're building something interesting in the Nordics, I'd love to hear about it.\n\n#CopenhagenTech #NordicInnovation #TechCommunity",
+      "visibility": "public",
+      "operatorNote": "Second post — Copenhagen tech scene, community building"
+    },
+    {
+      "text": "Unpopular opinion: the most important skill for an executive assistant in 2026 isn't AI fluency — it's knowing when NOT to use AI.\n\nSome things still need a human touch. A carefully worded email to a frustrated client. Reading the room in a tense meeting. Knowing that your boss needs coffee, not another dashboard.\n\nAI handles the repetitive stuff brilliantly. But the job is ultimately about judgment, empathy, and anticipation. No prompt can replace that.\n\nWhat's one part of your job that you'll never hand off to AI?\n\n#ExecutiveAssistant #FutureOfWork #HumanSkills",
+      "visibility": "public",
+      "operatorNote": "Third post — human skills vs AI, thought leadership angle"
+    }
+  ],
+  "feed": {
+    "discoveryLimit": 15,
+    "likes": [],
+    "comments": []
+  },
+  "jobs": {
+    "searches": [
+      {
+        "query": "AI operations coordinator",
+        "location": "Copenhagen, Denmark",
+        "limit": 5,
+        "viewTop": 2
+      },
+      {
+        "query": "executive assistant technology",
+        "location": "Denmark",
+        "limit": 5,
+        "viewTop": 1
+      }
+    ]
+  },
+  "messaging": {
+    "newThreads": [
+      {
+        "recipients": ["realsimonmiller"],
+        "text": "Hey Simon! Just wanted to reach out and say hello. I see you're working in AI and innovation in the Nordics too — always great to connect with people in the space. How's the work at POWER International going?",
+        "operatorNote": "Approved test contact per AGENTS.md"
+      }
+    ],
+    "replies": []
+  },
+  "notifications": {
+    "limit": 20
+  }
+}
