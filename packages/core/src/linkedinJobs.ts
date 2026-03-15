@@ -691,6 +691,7 @@ async function waitForJobSearchSurface(page: Page): Promise<void> {
 
 async function waitForJobDetailSurface(page: Page): Promise<void> {
   const selectors = [
+    "[data-testid='lazy-column']",
     "#job-details",
     "h1",
     "a[href*='/company/']",
@@ -1064,37 +1065,81 @@ async function extractJobDetail(
 
     const doc = globalThis.document;
     const main = doc.querySelector("main") ?? doc.body;
+    const lazyColumn = doc.querySelector("[data-testid='lazy-column']");
+    const detailRoot = lazyColumn ?? main;
 
-    const companyLinkElement = main.querySelector(
+    const companyLinkElement = (detailRoot.querySelector(
       "a[href*='/company/']",
-    ) as HTMLAnchorElement | null;
+    ) ??
+      main.querySelector("a[href*='/company/']")) as HTMLAnchorElement | null;
+
+    const topCardContainer = (() => {
+      let node = companyLinkElement?.parentElement ?? null;
+      while (node && node !== main && node.tagName !== "MAIN") {
+        const companyLink = node.querySelector("a[href*='/company/']");
+        if (companyLink) {
+          /* The container must include at least one <p> outside
+             the company link — that indicates we have reached the
+             card that also contains the title and metadata rows. */
+          const pElements = Array.from(node.querySelectorAll("p"));
+          const hasNonLinkP = pElements.some(
+            (p) => !p.closest("a[href*='/company/']"),
+          );
+          if (hasNonLinkP && pElements.length >= 2) {
+            return node;
+          }
+        }
+        node = node.parentElement;
+      }
+      return detailRoot;
+    })();
+
+
+    const hasNonEmptySpan = (el: Element): boolean =>
+      Array.from(el.querySelectorAll("span")).some(
+        (s) => normalize(s.textContent).length > 0,
+      );
+
+    const metadataRow = (() => {
+      const rows = Array.from(topCardContainer.querySelectorAll("p"));
+      for (const row of rows) {
+        if (row.closest("a")) {
+          continue;
+        }
+        if (hasNonEmptySpan(row)) {
+          return row;
+        }
+      }
+      return null;
+    })();
+
+    const metadataSpans = metadataRow
+      ? Array.from(metadataRow.querySelectorAll("span"))
+          .map((span) => normalize(span.textContent))
+          .filter(Boolean)
+      : [];
+
+    const isTimeLike = (value: string): boolean =>
+      /\b(?:\d+\s*(?:second|minute|hour|day|week|month|year)s?\s*ago|reposted)\b/i.test(
+        value,
+      );
+
+    const isApplicantLike = (value: string): boolean =>
+      /\b\d+\s*(?:people\s+clicked\s+apply|applicants?)\b/i.test(value);
 
     /* Collect non-title text blocks from the job detail top card via
        structural DOM traversal (resilient to class name obfuscation). */
     const collectTopCardTexts = (): string[] => {
-      const titleEl = main.querySelector("h1");
-      if (!titleEl) {
-        return [];
-      }
-
-      let topCard = titleEl.parentElement;
-      while (topCard && topCard !== main && topCard.tagName !== "MAIN") {
-        const hasCompanyLink = topCard.querySelector("a[href*='/company/']");
-        if (hasCompanyLink && topCard.children.length >= 2) {
-          break;
-        }
-        topCard = topCard.parentElement;
-      }
-      if (!topCard || topCard === main) {
-        return [];
-      }
-
-      const titleText = normalize(titleEl.textContent);
+      const titleText = normalize(
+        topCardContainer
+          .querySelector("h1, p")
+          ?.textContent,
+      );
 
       const candidates: string[] = [];
 
       const dirSpans = Array.from(
-        topCard.querySelectorAll("span[dir='ltr']"),
+        topCardContainer.querySelectorAll("span[dir='ltr']"),
       );
       for (const span of dirSpans) {
         if (span.closest("h1") || span.closest("#job-details")) {
@@ -1107,7 +1152,7 @@ async function extractJobDetail(
         }
       }
 
-      const liItems = Array.from(topCard.querySelectorAll("li"));
+      const liItems = Array.from(topCardContainer.querySelectorAll("li"));
       for (const li of liItems) {
         const text = normalize(li.textContent);
         if (text && !candidates.includes(text)) {
@@ -1121,19 +1166,42 @@ async function extractJobDetail(
     const topCardTexts = collectTopCardTexts();
     const topCardBlob = topCardTexts.join(" ");
 
-    const title = pickText(main, [
-      "h1",
-      ".job-details-jobs-unified-top-card__job-title",
-      ".jobs-unified-top-card__job-title",
-      ".top-card-layout__title",
-    ]);
+    const structuralTitle = (() => {
+      const rows = Array.from(topCardContainer.querySelectorAll("p"));
+      for (const row of rows) {
+        if (row.closest("a")) {
+          continue;
+        }
+        /* Skip the metadata row (the <p> with meaningful span children
+           that holds location, time-ago, and applicant count). */
+        if (hasNonEmptySpan(row)) {
+          continue;
+        }
+        const text = normalize(row.textContent);
+        if (text) {
+          return text;
+        }
+      }
+      return "";
+    })();
 
-    const company = pickText(main, [
-      "a[href*='/company/']",
-      ".job-details-jobs-unified-top-card__company-name",
-      ".jobs-unified-top-card__company-name",
-      ".top-card-layout__card-link",
-    ]);
+    const title =
+      structuralTitle ||
+      pickText(main, [
+        "h1",
+        ".job-details-jobs-unified-top-card__job-title",
+        ".jobs-unified-top-card__job-title",
+        ".top-card-layout__title",
+      ]);
+
+    const company =
+      normalize(companyLinkElement?.textContent) ||
+      pickText(main, [
+        "a[href*='/company/']",
+        ".job-details-jobs-unified-top-card__company-name",
+        ".jobs-unified-top-card__company-name",
+        ".top-card-layout__card-link",
+      ]);
 
     const companyUrl = toAbsoluteHref(
       normalize(companyLinkElement?.getAttribute("href")) ||
@@ -1141,6 +1209,34 @@ async function extractJobDetail(
     );
 
     const location =
+      (() => {
+        /* First pass: pick the span that looks like a geographic location. */
+        for (const spanText of metadataSpans) {
+          if (isTimeLike(spanText) || isApplicantLike(spanText)) {
+            continue;
+          }
+          if (
+            /,/.test(spanText) ||
+            /\b(?:remote|hybrid|on-site|on site)\b/i.test(spanText)
+          ) {
+            return spanText;
+          }
+        }
+        /* Second pass: pick the first metadata span that is not a
+           recognised time-ago, applicant count, or boilerplate string. */
+        for (const spanText of metadataSpans) {
+          if (isTimeLike(spanText) || isApplicantLike(spanText)) {
+            continue;
+          }
+          if (/\b(?:response|managed|linkedin|apply|application)\b/i.test(spanText)) {
+            continue;
+          }
+          if (spanText.length > 2) {
+            return spanText;
+          }
+        }
+        return "";
+      })() ||
       pickText(main, [
         ".job-details-jobs-unified-top-card__bullet",
         ".jobs-unified-top-card__subtitle-primary-grouping .jobs-unified-top-card__bullet",
@@ -1185,7 +1281,12 @@ async function extractJobDetail(
 
     const postedAt =
       (() => {
-        const timeEl = main.querySelector("time");
+        for (const spanText of metadataSpans) {
+          if (isTimeLike(spanText)) {
+            return spanText;
+          }
+        }
+        const timeEl = detailRoot.querySelector("time") ?? main.querySelector("time");
         if (timeEl) {
           const text = normalize(timeEl.textContent);
           const datetime = normalize(timeEl.getAttribute("datetime"));
@@ -1216,13 +1317,85 @@ async function extractJobDetail(
         return "";
       })();
 
-    const description = pickText(main, [
-      "#job-details",
-      ".jobs-description__content",
-      ".jobs-description-content__text",
-      ".jobs-box__html-content",
-      ".description__text",
-    ]);
+    const aboutHeading = Array.from(detailRoot.querySelectorAll("h2")).find((el) =>
+      /about\s+the\s+job/i.test(normalize(el.textContent)),
+    );
+
+    const structuralDescription = (() => {
+      if (!aboutHeading) {
+        return "";
+      }
+      const directTarget = aboutHeading.parentElement?.querySelector(
+        "[data-testid='expandable-text-box']",
+      );
+      if (directTarget) {
+        return normalize(directTarget.textContent);
+      }
+      let sibling: Element | null = aboutHeading.parentElement?.nextElementSibling ?? null;
+      while (sibling) {
+        const box = sibling.matches("[data-testid='expandable-text-box']")
+          ? sibling
+          : sibling.querySelector("[data-testid='expandable-text-box']");
+        if (box) {
+          return normalize(box.textContent);
+        }
+        if (sibling.tagName === "H2") {
+          break;
+        }
+        sibling = sibling.nextElementSibling;
+      }
+      const withinRoot = aboutHeading.closest("section, div")?.querySelector(
+        "[data-testid='expandable-text-box']",
+      );
+      return normalize(withinRoot?.textContent);
+    })();
+
+    const description =
+      structuralDescription ||
+      pickText(main, [
+        "#job-details",
+        ".jobs-description__content",
+        ".jobs-description-content__text",
+        ".jobs-box__html-content",
+        ".description__text",
+      ]);
+
+    const betweenTopCardAndAboutTexts = (() => {
+      const texts: string[] = [];
+      const candidateRoot = detailRoot;
+      const candidates = Array.from(candidateRoot.querySelectorAll("span, li, p"));
+      for (const node of candidates) {
+        if (metadataRow) {
+          const isAfterMetadata =
+            (metadataRow.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING) !==
+            0;
+          if (!isAfterMetadata) {
+            continue;
+          }
+        }
+        if (aboutHeading) {
+          const isBeforeAbout =
+            (node.compareDocumentPosition(aboutHeading) & Node.DOCUMENT_POSITION_FOLLOWING) !==
+            0;
+          if (!isBeforeAbout) {
+            continue;
+          }
+        }
+        if (
+          node.closest("[data-testid='expandable-text-box']") ||
+          node.closest("h2") ||
+          node.closest("a[href*='/company/']")
+        ) {
+          continue;
+        }
+        const text = normalize(node.textContent);
+        if (text && !texts.includes(text)) {
+          texts.push(text);
+        }
+      }
+      return texts;
+    })();
+    const betweenBlob = betweenTopCardAndAboutTexts.join(" ");
 
     const insightTexts = Array.from(
       main.querySelectorAll(
@@ -1230,11 +1403,18 @@ async function extractJobDetail(
       ),
     ).map((el) => normalize(el.textContent));
 
-    const allInsights = [...insightTexts, topCardBlob]
+    const allInsights = [...insightTexts, topCardBlob, betweenBlob]
       .filter(Boolean)
       .join(" ");
 
     const salaryRange =
+      (() => {
+        const salaryMatch =
+          /((?:\$|€|£)?[\d,.]+\s*(?:[-–]|to)\s*(?:\$|€|£)?[\d,.]+\s*(?:kr|DKK|USD|EUR|GBP)?|[\d,.]+\s*(?:kr|DKK|USD|EUR|GBP))/i.exec(
+            betweenBlob,
+          );
+        return normalize(salaryMatch?.[1] ?? "");
+      })() ||
       pickText(main, [
         ".salary-main-rail__compensation-text",
         ".job-details-jobs-unified-top-card__salary-info",
@@ -1250,16 +1430,26 @@ async function extractJobDetail(
       })();
 
     const employmentTypeMatch =
-      /(Full-time|Part-time|Contract|Temporary|Internship)/i.exec(allInsights);
+      /(Full-time|Part-time|Contract|Temporary|Internship)/i.exec(
+        betweenBlob || allInsights,
+      );
     const employmentType = normalize(employmentTypeMatch?.[1] ?? "");
 
     const seniorityMatch =
       /(Entry level|Associate|Mid-Senior level|Director|Executive|Internship|Not Applicable)/i.exec(
-        allInsights,
+        betweenBlob || allInsights,
       );
     const seniorityLevel = normalize(seniorityMatch?.[1] ?? "");
 
     const applicantCount =
+      (() => {
+        for (const spanText of metadataSpans) {
+          if (isApplicantLike(spanText)) {
+            return spanText;
+          }
+        }
+        return "";
+      })() ||
       pickText(main, [
         ".jobs-unified-top-card__applicant-count",
         ".job-details-jobs-unified-top-card__applicant-count",
@@ -1278,7 +1468,8 @@ async function extractJobDetail(
     const isRemote =
       /\bremote\b/i.test(location) ||
       /\bremote\b/i.test(allInsights) ||
-      /\bremote\b/i.test(topCardBlob);
+      /\bremote\b/i.test(topCardBlob) ||
+      /\bremote\b/i.test(betweenBlob);
 
     const jobUrl = globalThis.window.location.href;
 
