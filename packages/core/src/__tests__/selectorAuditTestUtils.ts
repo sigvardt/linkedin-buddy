@@ -7,6 +7,7 @@ import { ArtifactHelpers } from "../artifacts.js";
 import { ensureConfigPaths, resolveConfigPaths } from "../config.js";
 import {
   LinkedInSelectorAuditService,
+  type LinkedInSelectorAuditCategory,
   type LinkedInSelectorAuditPage,
   type LinkedInSelectorAuditRuntime,
   type LinkedInSelectorAuditStrategy,
@@ -110,11 +111,13 @@ export function createSelectorAuditCandidate(options: {
 export function createSelectorAuditSelectorDefinition(options: {
   key: string;
   description?: string;
+  category?: LinkedInSelectorAuditCategory;
   candidates: SelectorAuditCandidate[];
 }): SelectorAuditSelectorDefinition {
   return {
     key: options.key,
     description: options.description ?? options.key,
+    category: options.category ?? "read",
     candidates: options.candidates
   };
 }
@@ -204,7 +207,7 @@ export function createMockSelectorAuditPage(
 
       return options.contentHtml ?? "<html><body>selector audit</body></html>";
     }),
-    screenshot: vi.fn(async (screenshotOptions?: { path?: string; fullPage?: boolean }) => {
+    screenshot: vi.fn(async (screenshotOptions?: { path?: string; fullPage?: boolean }): Promise<Buffer> => {
       if (options.screenshotError !== undefined) {
         throw options.screenshotError;
       }
@@ -212,6 +215,8 @@ export function createMockSelectorAuditPage(
       if (typeof screenshotOptions?.path === "string") {
         await writeFile(screenshotOptions.path, "png");
       }
+
+      return Buffer.from("png");
     })
   };
 

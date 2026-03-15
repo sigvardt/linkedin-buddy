@@ -28,7 +28,8 @@ export const LINKEDIN_SELECTOR_AUDIT_PAGES = [
   "inbox",
   "profile",
   "connections",
-  "notifications"
+  "notifications",
+  "company"
 ] as const;
 
 /**
@@ -56,6 +57,13 @@ export const LINKEDIN_SELECTOR_AUDIT_STRATEGIES = [
 export type LinkedInSelectorAuditStrategy =
   (typeof LINKEDIN_SELECTOR_AUDIT_STRATEGIES)[number];
 
+export const LINKEDIN_SELECTOR_AUDIT_CATEGORIES = ["read", "write"] as const;
+export type LinkedInSelectorAuditCategory =
+  (typeof LINKEDIN_SELECTOR_AUDIT_CATEGORIES)[number];
+
+export const LINKEDIN_SELECTOR_AUDIT_SCOPES = ["read", "write", "all"] as const;
+export type LinkedInSelectorAuditScope = (typeof LINKEDIN_SELECTOR_AUDIT_SCOPES)[number];
+
 /**
  * One concrete Playwright locator candidate inside a selector group.
  */
@@ -72,6 +80,7 @@ export interface SelectorAuditCandidate {
 export interface SelectorAuditSelectorDefinition {
   key: string;
   description: string;
+  category: LinkedInSelectorAuditCategory;
   candidates: SelectorAuditCandidate[];
 }
 
@@ -90,6 +99,7 @@ export interface SelectorAuditPageDefinition {
  */
 export interface SelectorAuditInput {
   profileName?: string;
+  scope?: LinkedInSelectorAuditScope;
 }
 
 /**
@@ -121,6 +131,7 @@ export interface SelectorAuditResult {
   page_url: string;
   selector_key: string;
   description: string;
+  category: LinkedInSelectorAuditCategory;
   status: "pass" | "fail";
   matched_strategy: LinkedInSelectorAuditStrategy | null;
   matched_selector_key: string | null;
@@ -141,6 +152,12 @@ export interface SelectorAuditPageSummary {
   pass_count: number;
   fail_count: number;
   fallback_count: number;
+  read_total_count: number;
+  read_pass_count: number;
+  read_fail_count: number;
+  write_total_count: number;
+  write_pass_count: number;
+  write_fail_count: number;
 }
 
 /**
@@ -192,12 +209,19 @@ export interface SelectorAuditReport {
   run_id: string;
   profile_name: string;
   checked_at: string;
+  scope: LinkedInSelectorAuditScope;
   outcome: SelectorAuditOutcome;
   summary: string;
   total_count: number;
   pass_count: number;
   fail_count: number;
   fallback_count: number;
+  read_total_count: number;
+  read_pass_count: number;
+  read_fail_count: number;
+  write_total_count: number;
+  write_pass_count: number;
+  write_fail_count: number;
   artifact_dir: string;
   report_path: string;
   page_summaries: SelectorAuditPageSummary[];
@@ -250,6 +274,12 @@ interface SelectorAuditSummaryCounts {
   passCount: number;
   failCount: number;
   fallbackCount: number;
+  readTotalCount: number;
+  readPassCount: number;
+  readFailCount: number;
+  writeTotalCount: number;
+  writePassCount: number;
+  writeFailCount: number;
 }
 
 const LINKEDIN_FEED_URL = "https://www.linkedin.com/feed/";
@@ -258,6 +288,7 @@ const LINKEDIN_PROFILE_URL = "https://www.linkedin.com/in/me/";
 const LINKEDIN_CONNECTIONS_URL =
   "https://www.linkedin.com/mynetwork/invite-connect/connections/";
 const LINKEDIN_NOTIFICATIONS_URL = "https://www.linkedin.com/notifications/";
+const LINKEDIN_COMPANY_URL = "https://www.linkedin.com/company/linkedin/";
 
 const DEFAULT_SELECTOR_AUDIT_CANDIDATE_TIMEOUT_MS = 2_000;
 const DEFAULT_SELECTOR_AUDIT_PAGE_READY_TIMEOUT_MS = 8_000;
@@ -278,11 +309,13 @@ function createSelectorAuditCandidates(
 function createSelectorAuditSelectorDefinition(
   key: string,
   description: string,
+  category: LinkedInSelectorAuditCategory,
   candidates: SelectorAuditCandidateDefinitions
 ): SelectorAuditSelectorDefinition {
   return {
     key,
     description,
+    category,
     candidates: createSelectorAuditCandidates(candidates)
   };
 }
@@ -342,6 +375,26 @@ function createDefaultSelectorAuditRegistry(
     ["notifications", "time_ago"],
     selectorLocale
   );
+  const likeRegex = buildLinkedInSelectorPhraseRegex("like", selectorLocale);
+  const likeRegexHint = formatLinkedInSelectorRegexHint("like", selectorLocale);
+  const commentRegex = buildLinkedInSelectorPhraseRegex("comment", selectorLocale);
+  const commentRegexHint = formatLinkedInSelectorRegexHint("comment", selectorLocale);
+  const repostRegex = buildLinkedInSelectorPhraseRegex("repost", selectorLocale);
+  const repostRegexHint = formatLinkedInSelectorRegexHint("repost", selectorLocale);
+  const writeMessageRegex = buildLinkedInSelectorPhraseRegex(
+    ["message", "write_message"],
+    selectorLocale
+  );
+  const writeMessageRegexHint = formatLinkedInSelectorRegexHint(
+    ["message", "write_message"],
+    selectorLocale
+  );
+  const sendRegex = buildLinkedInSelectorPhraseRegex("send", selectorLocale);
+  const sendRegexHint = formatLinkedInSelectorRegexHint("send", selectorLocale);
+  const messageRegex = buildLinkedInSelectorPhraseRegex("message", selectorLocale);
+  const messageRegexHint = formatLinkedInSelectorRegexHint("message", selectorLocale);
+  const followRegex = buildLinkedInSelectorPhraseRegex("follow", selectorLocale);
+  const followRegexHint = formatLinkedInSelectorRegexHint("follow", selectorLocale);
 
   return [
     {
@@ -351,10 +404,87 @@ function createDefaultSelectorAuditRegistry(
         createSelectorAuditSelectorDefinition(
           "post_composer_trigger",
           "Feed post composer trigger",
+          "read",
           {
             primary: postComposerTriggerPrimary,
             secondary: postComposerTriggerSecondary,
             tertiary: postComposerTriggerTertiary
+          }
+        ),
+        createSelectorAuditSelectorDefinition(
+          "feed_like_button",
+          "Feed post like/react button",
+          "write",
+          {
+            primary: {
+              key: "social-action-react-trigger",
+              selectorHint: "button.react-button__trigger",
+              locatorFactory: (page) =>
+                page.locator(
+                  "button.react-button__trigger, button.social-actions-button.react-button__trigger"
+                )
+            },
+            secondary: {
+              key: "role-button-like",
+              selectorHint: `getByRole(button, ${likeRegexHint})`,
+              locatorFactory: (page) => page.getByRole("button", { name: likeRegex })
+            },
+            tertiary: {
+              key: "button-text-like",
+              selectorHint: `button hasText ${likeRegexHint}`,
+              locatorFactory: (page) =>
+                page.locator("button, [role='button']").filter({ hasText: likeRegex })
+            }
+          }
+        ),
+        createSelectorAuditSelectorDefinition(
+          "feed_comment_button",
+          "Feed post comment button",
+          "write",
+          {
+            primary: {
+              key: "social-action-comment",
+              selectorHint: "button.comment-button, button.social-actions-button.comment-button",
+              locatorFactory: (page) =>
+                page.locator(
+                  "button.comment-button, button.social-actions-button.comment-button"
+                )
+            },
+            secondary: {
+              key: "role-button-comment",
+              selectorHint: `getByRole(button, ${commentRegexHint})`,
+              locatorFactory: (page) => page.getByRole("button", { name: commentRegex })
+            },
+            tertiary: {
+              key: "button-text-comment",
+              selectorHint: `button hasText ${commentRegexHint}`,
+              locatorFactory: (page) =>
+                page.locator("button, [role='button']").filter({ hasText: commentRegex })
+            }
+          }
+        ),
+        createSelectorAuditSelectorDefinition(
+          "feed_repost_button",
+          "Feed post repost button",
+          "write",
+          {
+            primary: {
+              key: "social-action-repost",
+              selectorHint: "button.repost-button, button.social-actions-button.repost-button",
+              locatorFactory: (page) =>
+                page.locator("button.repost-button, button.social-actions-button.repost-button")
+            },
+            secondary: {
+              key: "role-button-repost",
+              selectorHint: `getByRole(button, ${repostRegexHint})`,
+              locatorFactory: (page) => page.getByRole("button", { name: repostRegex })
+            },
+            tertiary: {
+              key: "button-text-repost",
+              selectorHint: `button hasText ${repostRegexHint}`,
+              locatorFactory: (page) =>
+                page.locator("button, [role='button']").filter({ hasText: repostRegex })
+            }
           }
         )
       ]
@@ -366,6 +496,7 @@ function createDefaultSelectorAuditRegistry(
         createSelectorAuditSelectorDefinition(
           "conversation_list_surface",
           "Inbox conversation list surface",
+          "read",
           {
             primary: {
               key: "role-main-with-thread-link",
@@ -393,6 +524,83 @@ function createDefaultSelectorAuditRegistry(
                 })
             }
           }
+        ),
+        createSelectorAuditSelectorDefinition(
+          "inbox_compose_button",
+          "Inbox new message compose button",
+          "write",
+          {
+            primary: {
+              key: "role-button-compose",
+              selectorHint: `getByRole(button, ${writeMessageRegexHint})`,
+              locatorFactory: (page) => page.getByRole("button", { name: writeMessageRegex })
+            },
+            secondary: {
+              key: "compose-link-or-button",
+              selectorHint:
+                "a[href*='/messaging/new'], button[data-control-name*='compose'], .msg-overlay-bubble-header__button",
+              locatorFactory: (page) =>
+                page.locator(
+                  "a[href*='/messaging/new'], button[data-control-name*='compose'], .msg-overlay-bubble-header__button"
+                )
+            },
+            tertiary: {
+              key: "button-text-compose",
+              selectorHint: `button, a hasText ${writeMessageRegexHint}`,
+              locatorFactory: (page) =>
+                page.locator("button, a").filter({ hasText: writeMessageRegex })
+            }
+          }
+        ),
+        createSelectorAuditSelectorDefinition(
+          "inbox_message_input",
+          "Inbox message compose input",
+          "write",
+          {
+            primary: {
+              key: "msg-form-contenteditable",
+              selectorHint:
+                ".msg-form__contenteditable[contenteditable='true'], .msg-form [contenteditable='true']",
+              locatorFactory: (page) =>
+                page.locator(
+                  ".msg-form__contenteditable[contenteditable='true'], .msg-form [contenteditable='true']"
+                )
+            },
+            secondary: {
+              key: "role-textbox-message",
+              selectorHint: "getByRole(textbox) scoped to messaging",
+              locatorFactory: (page) => page.locator(".msg-form").getByRole("textbox")
+            },
+            tertiary: {
+              key: "contenteditable-fallback",
+              selectorHint: "div[contenteditable='true'][role='textbox'], [role='textbox']",
+              locatorFactory: (page) =>
+                page.locator("div[contenteditable='true'][role='textbox'], .msg-form [role='textbox']")
+            }
+          }
+        ),
+        createSelectorAuditSelectorDefinition(
+          "inbox_send_button",
+          "Inbox message send button",
+          "write",
+          {
+            primary: {
+              key: "msg-form-send-button",
+              selectorHint: "button.msg-form__send-button",
+              locatorFactory: (page) =>
+                page.locator("button.msg-form__send-button, button[type='submit'].msg-form__send-button")
+            },
+            secondary: {
+              key: "role-button-send",
+              selectorHint: `getByRole(button, ${sendRegexHint})`,
+              locatorFactory: (page) => page.getByRole("button", { name: sendRegex })
+            },
+            tertiary: {
+              key: "button-text-send",
+              selectorHint: `button hasText ${sendRegexHint}`,
+              locatorFactory: (page) => page.locator("button").filter({ hasText: sendRegex })
+            }
+          }
         )
       ]
     },
@@ -400,7 +608,7 @@ function createDefaultSelectorAuditRegistry(
       page: "profile",
       url: LINKEDIN_PROFILE_URL,
       selectors: [
-        createSelectorAuditSelectorDefinition("profile_header", "Profile header", {
+        createSelectorAuditSelectorDefinition("profile_header", "Profile header", "read", {
           primary: {
             key: "role-heading-h1",
             selectorHint: "getByRole(heading, level: 1)",
@@ -421,26 +629,35 @@ function createDefaultSelectorAuditRegistry(
               })
           }
         }),
-        createSelectorAuditSelectorDefinition("profile_edit_trigger", "Profile edit pencil/button", {
-          primary: {
-            key: "edit-intro-pencil-aria",
-            selectorHint: "button[aria-label*='Edit intro' i], button[aria-label*='Edit' i]",
-            locatorFactory: (page) =>
-              page.locator("button[aria-label*='Edit intro' i], button[aria-label*='Edit' i]").first()
-          },
-          secondary: {
-            key: "edit-intro-link",
-            selectorHint: "a[href*='/edit/intro'], a[href*='/overlay/edit/']",
-            locatorFactory: (page) =>
-              page.locator("a[href*='/edit/intro'], a[href*='/overlay/edit/']")
-          },
-          tertiary: {
-            key: "edit-intro-svg-button",
-            selectorHint: "button:has(svg[data-test-icon='pencil'])",
-            locatorFactory: (page) =>
-              page.locator("button:has(svg[data-test-icon='pencil']), button:has(li-icon[type='pencil'])")
+        createSelectorAuditSelectorDefinition(
+          "profile_edit_intro_button",
+          "Profile edit intro button",
+          "write",
+          {
+            primary: {
+              key: "intro-edit-link",
+              selectorHint: "a[href*='edit/forms/intro'], button[aria-label*='Edit intro']",
+              locatorFactory: (page) =>
+                page.locator("a[href*='edit/forms/intro'], button[aria-label*='Edit intro' i]")
+            },
+            secondary: {
+              key: "edit-pencil-button",
+              selectorHint: "section button[aria-label*='edit' i], a[href*='profileEdit']",
+              locatorFactory: (page) =>
+                page.locator(
+                  "section.artdeco-card button[aria-label*='edit' i], section.artdeco-card a[aria-label*='edit' i], a[href*='profileEdit']"
+                )
+            },
+            tertiary: {
+              key: "top-card-edit-action",
+              selectorHint: ".pv-top-card button svg, .pv-top-card a svg parent button",
+              locatorFactory: (page) =>
+                page.locator(
+                  ".pv-top-card--edit-name-handle-action, .pv-top-card .edit-public-profile-section button, .pv-top-card a[href*='edit']"
+                )
+            }
           }
-        })
+        )
       ]
     },
     {
@@ -450,6 +667,7 @@ function createDefaultSelectorAuditRegistry(
         createSelectorAuditSelectorDefinition(
           "connections_action_buttons",
           "Connection action buttons (Message, Remove)",
+          "write",
           {
             primary: {
               key: "connection-message-button",
@@ -474,6 +692,7 @@ function createDefaultSelectorAuditRegistry(
         createSelectorAuditSelectorDefinition(
           "connections_surface",
           "Connections page surface",
+          "read",
           {
             primary: {
               key: "role-heading-connections",
@@ -499,6 +718,32 @@ function createDefaultSelectorAuditRegistry(
                 })
             }
           }
+        ),
+        createSelectorAuditSelectorDefinition(
+          "connections_message_button",
+          "Connections card message button",
+          "write",
+          {
+            primary: {
+              key: "role-button-message",
+              selectorHint: `getByRole(button, ${messageRegexHint})`,
+              locatorFactory: (page) => page.getByRole("button", { name: messageRegex })
+            },
+            secondary: {
+              key: "connection-card-message-btn",
+              selectorHint:
+                "button.mn-connection-card__message-btn, button[data-control-name='message']",
+              locatorFactory: (page) =>
+                page.locator(
+                  "button.mn-connection-card__message-btn, button[data-control-name='message']"
+                )
+            },
+            tertiary: {
+              key: "button-text-message",
+              selectorHint: `button hasText ${messageRegexHint}`,
+              locatorFactory: (page) => page.locator("button").filter({ hasText: messageRegex })
+            }
+          }
         )
       ]
     },
@@ -509,6 +754,7 @@ function createDefaultSelectorAuditRegistry(
         createSelectorAuditSelectorDefinition(
           "notifications_surface",
           "Notifications list surface",
+          "read",
           {
             primary: {
               key: "role-heading-notifications",
@@ -527,6 +773,83 @@ function createDefaultSelectorAuditRegistry(
               selectorHint: `main hasText ${notificationsSurfaceRegexHint}`,
               locatorFactory: (page) =>
                 page.locator("main").filter({ hasText: notificationsSurfaceRegex })
+            }
+          }
+        )
+      ]
+    },
+    {
+      page: "company",
+      url: LINKEDIN_COMPANY_URL,
+      selectors: [
+        createSelectorAuditSelectorDefinition("company_heading", "Company page heading", "read", {
+          primary: {
+            key: "role-heading-h1",
+            selectorHint: "getByRole(heading, level: 1)",
+            locatorFactory: (page) => page.getByRole("heading", { level: 1 })
+          },
+          secondary: {
+            key: "company-h1",
+            selectorHint: "h1.org-top-card-summary__title, h1[class*='org-top-card'], h1",
+            locatorFactory: (page) =>
+              page.locator("h1.org-top-card-summary__title, h1[class*='org-top-card'], h1")
+          },
+          tertiary: {
+            key: "main-h1",
+            selectorHint: "main h1",
+            locatorFactory: (page) => page.locator("main h1")
+          }
+        }),
+        createSelectorAuditSelectorDefinition(
+          "company_follow_button",
+          "Company page follow button",
+          "write",
+          {
+            primary: {
+              key: "role-button-follow",
+              selectorHint: `getByRole(button, ${followRegexHint})`,
+              locatorFactory: (page) => page.getByRole("button", { name: followRegex })
+            },
+            secondary: {
+              key: "follow-control-button",
+              selectorHint: "button.follow, button[data-control-name*='follow']",
+              locatorFactory: (page) =>
+                page.locator("button.follow, button[data-control-name*='follow']")
+            },
+            tertiary: {
+              key: "button-text-follow",
+              selectorHint: `button hasText ${followRegexHint}`,
+              locatorFactory: (page) => page.locator("button").filter({ hasText: followRegex })
+            }
+          }
+        ),
+        createSelectorAuditSelectorDefinition(
+          "company_overlay_modal",
+          "Company page overlay modal detection",
+          "write",
+          {
+            primary: {
+              key: "org-page-viewing-setting-modal",
+              selectorHint: "[data-test-modal-id='org-page-viewing-setting-modal']",
+              locatorFactory: (page) =>
+                page.locator("[data-test-modal-id='org-page-viewing-setting-modal']")
+            },
+            secondary: {
+              key: "artdeco-modal-overlay-org",
+              selectorHint:
+                ".artdeco-modal-overlay:has([data-test-modal-id='org-page-viewing-setting-modal'])",
+              locatorFactory: (page) =>
+                page.locator(
+                  ".artdeco-modal-overlay:has([data-test-modal-id='org-page-viewing-setting-modal'])"
+                )
+            },
+            tertiary: {
+              key: "dialog-org-setting",
+              selectorHint: "[role='dialog'] has .org-page-viewing-setting",
+              locatorFactory: (page) =>
+                page.locator("[role='dialog']").filter({
+                  has: page.locator(".org-page-viewing-setting, [class*='org-page-viewing']")
+                })
             }
           }
         )
@@ -635,6 +958,40 @@ function validateSelectorAuditInput(input: SelectorAuditInput = {}): SelectorAud
   return input;
 }
 
+function validateSelectorAuditScope(
+  scope: LinkedInSelectorAuditScope | undefined
+): LinkedInSelectorAuditScope {
+  if (scope === undefined) {
+    return "all";
+  }
+
+  const validScopes: readonly string[] = LINKEDIN_SELECTOR_AUDIT_SCOPES;
+  if (!validScopes.includes(scope)) {
+    throw new LinkedInBuddyError(
+      "ACTION_PRECONDITION_FAILED",
+      `Invalid selector audit scope: ${sanitizeUserFacingText(String(scope))}. Valid scopes: ${LINKEDIN_SELECTOR_AUDIT_SCOPES.join(", ")}.`
+    );
+  }
+
+  return scope;
+}
+
+function filterRegistryByScope(
+  registry: SelectorAuditPageDefinition[],
+  scope: LinkedInSelectorAuditScope
+): SelectorAuditPageDefinition[] {
+  if (scope === "all") {
+    return registry;
+  }
+
+  return registry
+    .map((pageDefinition) => ({
+      ...pageDefinition,
+      selectors: pageDefinition.selectors.filter((selector) => selector.category === scope)
+    }))
+    .filter((pageDefinition) => pageDefinition.selectors.length > 0);
+}
+
 function validateAuditPageUrl(page: LinkedInSelectorAuditPage, value: string): void {
   const normalizedUrl = validateNonEmptyText(value, `Selector audit page ${page} URL`);
 
@@ -676,7 +1033,13 @@ function createEmptyPageSummary(page: LinkedInSelectorAuditPage): SelectorAuditP
     total_count: 0,
     pass_count: 0,
     fail_count: 0,
-    fallback_count: 0
+    fallback_count: 0,
+    read_total_count: 0,
+    read_pass_count: 0,
+    read_fail_count: 0,
+    write_total_count: 0,
+    write_pass_count: 0,
+    write_fail_count: 0
   };
 }
 
@@ -684,17 +1047,35 @@ function countSelectorAuditResults(
   results: SelectorAuditResult[]
 ): SelectorAuditSummaryCounts {
   return results.reduce<SelectorAuditSummaryCounts>(
-    (counts, result) => ({
-      totalCount: counts.totalCount + 1,
-      passCount: counts.passCount + (result.status === "pass" ? 1 : 0),
-      failCount: counts.failCount + (result.status === "fail" ? 1 : 0),
-      fallbackCount: counts.fallbackCount + (result.fallback_used !== null ? 1 : 0)
-    }),
+    (counts, result) => {
+      const isRead = result.category === "read";
+      const isPass = result.status === "pass";
+      const isFail = result.status === "fail";
+
+      return {
+        totalCount: counts.totalCount + 1,
+        passCount: counts.passCount + (isPass ? 1 : 0),
+        failCount: counts.failCount + (isFail ? 1 : 0),
+        fallbackCount: counts.fallbackCount + (result.fallback_used !== null ? 1 : 0),
+        readTotalCount: counts.readTotalCount + (isRead ? 1 : 0),
+        readPassCount: counts.readPassCount + (isRead && isPass ? 1 : 0),
+        readFailCount: counts.readFailCount + (isRead && isFail ? 1 : 0),
+        writeTotalCount: counts.writeTotalCount + (!isRead ? 1 : 0),
+        writePassCount: counts.writePassCount + (!isRead && isPass ? 1 : 0),
+        writeFailCount: counts.writeFailCount + (!isRead && isFail ? 1 : 0)
+      };
+    },
     {
       totalCount: 0,
       passCount: 0,
       failCount: 0,
-      fallbackCount: 0
+      fallbackCount: 0,
+      readTotalCount: 0,
+      readPassCount: 0,
+      readFailCount: 0,
+      writeTotalCount: 0,
+      writePassCount: 0,
+      writeFailCount: 0
     }
   );
 }
@@ -725,12 +1106,20 @@ function createSelectorAuditSummary(
   counts: SelectorAuditSummaryCounts,
   pageCount: number
 ): string {
-  return [
+  const parts = [
     `Checked ${formatCountLabel(counts.totalCount, "selector group")} across ${formatCountLabel(pageCount, "page")}.`,
     `${counts.passCount} passed.`,
     `${counts.failCount} failed.`,
     `${counts.fallbackCount} used fallback selectors.`
-  ].join(" ");
+  ];
+
+  if (counts.readTotalCount > 0 && counts.writeTotalCount > 0) {
+    parts.push(
+      `Read: ${counts.readPassCount}/${counts.readTotalCount} passed. Write: ${counts.writePassCount}/${counts.writeTotalCount} passed.`
+    );
+  }
+
+  return parts.join(" ");
 }
 
 function createFailureRecommendedAction(result: SelectorAuditResult): string {
@@ -793,6 +1182,7 @@ function buildFailureSummaries(
             {
               key: result.selector_key,
               description: result.description,
+              category: result.category,
               candidates: []
             }
           ),
@@ -1198,10 +1588,13 @@ export class LinkedInSelectorAuditService {
   async auditSelectors(input: SelectorAuditInput = {}): Promise<SelectorAuditReport> {
     const normalizedInput = validateSelectorAuditInput(input);
     const profileName = validateProfileName(normalizedInput.profileName);
+    const scope = validateSelectorAuditScope(normalizedInput.scope);
+    const scopedRegistry = filterRegistryByScope(this.registry, scope);
 
     this.runtime.logger.log("info", "selector.audit.start", {
       profileName,
-      pageCount: this.registry.length
+      pageCount: scopedRegistry.length,
+      scope
     });
 
     await this.runtime.auth.ensureAuthenticated({ profileName });
@@ -1222,7 +1615,7 @@ export class LinkedInSelectorAuditService {
 
         const pageResults: SelectorAuditResult[] = [];
 
-        for (const pageDefinition of this.registry) {
+        for (const pageDefinition of scopedRegistry) {
           this.runtime.logger.log("info", "selector.audit.page.start", {
             profileName,
             page: pageDefinition.page,
@@ -1252,10 +1645,10 @@ export class LinkedInSelectorAuditService {
       `${SELECTOR_AUDIT_ARTIFACT_DIR}/report.json`
     );
     const checkedAt = new Date().toISOString();
-    const pageSummaries = this.buildPageSummaries(results);
+    const pageSummaries = this.buildPageSummaries(results, scopedRegistry);
     const counts = countSelectorAuditResults(results);
     const pageWarnings = buildPageWarningSummaries(
-      this.registry.map((pageDefinition) => pageDefinition.page),
+      scopedRegistry.map((pageDefinition) => pageDefinition.page),
       results
     );
     const failedSelectors = buildFailureSummaries(results);
@@ -1271,12 +1664,19 @@ export class LinkedInSelectorAuditService {
       run_id: this.runtime.runId,
       profile_name: profileName,
       checked_at: checkedAt,
+      scope,
       outcome: createSelectorAuditOutcome(counts),
-      summary: createSelectorAuditSummary(counts, this.registry.length),
+      summary: createSelectorAuditSummary(counts, scopedRegistry.length),
       total_count: counts.totalCount,
       pass_count: counts.passCount,
       fail_count: counts.failCount,
       fallback_count: counts.fallbackCount,
+      read_total_count: counts.readTotalCount,
+      read_pass_count: counts.readPassCount,
+      read_fail_count: counts.readFailCount,
+      write_total_count: counts.writeTotalCount,
+      write_pass_count: counts.writePassCount,
+      write_fail_count: counts.writeFailCount,
       artifact_dir: artifactDir,
       report_path: reportPath,
       page_summaries: pageSummaries,
@@ -1472,6 +1872,7 @@ export class LinkedInSelectorAuditService {
       page_url: page.url(),
       selector_key: selectorDefinition.key,
       description: selectorDefinition.description,
+      category: selectorDefinition.category,
       status: matchedResult ? "pass" : "fail",
       matched_strategy: matchedResult?.strategy ?? null,
       matched_selector_key: matchedResult?.selector_key ?? null,
@@ -1560,6 +1961,7 @@ export class LinkedInSelectorAuditService {
       page_url: page.url(),
       selector_key: selectorDefinition.key,
       description: selectorDefinition.description,
+      category: selectorDefinition.category,
       status: "fail",
       matched_strategy: null,
       matched_selector_key: null,
@@ -1675,9 +2077,12 @@ export class LinkedInSelectorAuditService {
     return failureArtifacts;
   }
 
-  private buildPageSummaries(results: SelectorAuditResult[]): SelectorAuditPageSummary[] {
+  private buildPageSummaries(
+    results: SelectorAuditResult[],
+    registry: SelectorAuditPageDefinition[]
+  ): SelectorAuditPageSummary[] {
     const pageSummaries = new Map<LinkedInSelectorAuditPage, SelectorAuditPageSummary>(
-      this.registry.map((pageDefinition) => [
+      registry.map((pageDefinition) => [
         pageDefinition.page,
         createEmptyPageSummary(pageDefinition.page)
       ])
@@ -1689,6 +2094,15 @@ export class LinkedInSelectorAuditService {
       summary.pass_count += result.status === "pass" ? 1 : 0;
       summary.fail_count += result.status === "fail" ? 1 : 0;
       summary.fallback_count += result.fallback_used !== null ? 1 : 0;
+      if (result.category === "read") {
+        summary.read_total_count += 1;
+        summary.read_pass_count += result.status === "pass" ? 1 : 0;
+        summary.read_fail_count += result.status === "fail" ? 1 : 0;
+      } else {
+        summary.write_total_count += 1;
+        summary.write_pass_count += result.status === "pass" ? 1 : 0;
+        summary.write_fail_count += result.status === "fail" ? 1 : 0;
+      }
       pageSummaries.set(result.page, summary);
     }
 

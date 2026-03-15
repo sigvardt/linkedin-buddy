@@ -167,7 +167,7 @@ function formatResultSummary(result: SelectorAuditResult): string {
 
 function formatVerboseResultBlock(result: SelectorAuditResult): string[] {
   return [
-    `- ${formatSelectorStatus(result)} ${result.page}/${result.selector_key} — ${result.description}`,
+    `- ${formatSelectorStatus(result)} [${result.category}] ${result.page}/${result.selector_key} — ${result.description}`,
     `  Result: ${formatResultSummary(result)}`,
     `  Strategies: ${formatResultStrategySummary(result)}`,
     ...(result.warnings ?? []).map((warning) => `  Warning: ${warning}`),
@@ -186,7 +186,7 @@ function appendSection(lines: string[], title: string, entries: string[]): void 
 }
 
 function formatPageSummary(summary: SelectorAuditPageSummary): string {
-  return `- ${formatPageStatus(summary)} ${summary.page}: ${summary.pass_count} passed, ${summary.fail_count} failed, ${summary.fallback_count} fallback-only`;
+  return `- ${formatPageStatus(summary)} ${summary.page}: ${summary.pass_count} passed, ${summary.fail_count} failed, ${summary.fallback_count} fallback-only${formatPageCategoryBreakdown(summary)}`;
 }
 
 function formatProgressPageIndex(index: number, totalPages: number | null): string {
@@ -212,6 +212,22 @@ export function resolveSelectorAuditOutputMode(options: {
   return options.json || !isInteractiveOutput ? "json" : "human";
 }
 
+function formatCategoryBreakdown(report: SelectorAuditReport): string | null {
+  if (report.read_total_count === 0 || report.write_total_count === 0) {
+    return null;
+  }
+
+  return `Read: ${report.read_pass_count}/${report.read_total_count} passed, ${report.read_fail_count} failed | Write: ${report.write_pass_count}/${report.write_total_count} passed, ${report.write_fail_count} failed`;
+}
+
+function formatPageCategoryBreakdown(summary: SelectorAuditPageSummary): string {
+  if (summary.read_total_count > 0 && summary.write_total_count > 0) {
+    return ` (read: ${summary.read_pass_count}/${summary.read_total_count} pass | write: ${summary.write_pass_count}/${summary.write_total_count} pass)`;
+  }
+
+  return "";
+}
+
 /**
  * Formats a structured selector audit report for terminal output.
  */
@@ -223,10 +239,16 @@ export function formatSelectorAuditReport(
     `Selector Audit: ${formatOutcome(report)}`,
     `Profile: ${report.profile_name}`,
     `Checked At: ${report.checked_at}`,
+    ...(report.scope !== "all" ? [`Scope: ${report.scope}`] : []),
     `Summary: ${report.summary}`,
     `Report JSON: ${report.report_path}`,
     `Artifacts: ${report.artifact_dir}`
   ];
+
+  const categoryBreakdown = formatCategoryBreakdown(report);
+  if (categoryBreakdown) {
+    lines.push(`Categories: ${categoryBreakdown}`);
+  }
 
   appendSection(lines, "Pages", report.page_summaries.map(formatPageSummary));
   appendSection(
@@ -309,10 +331,12 @@ export class SelectorAuditProgressReporter {
     if (entry.event === "selector.audit.start") {
       this.totalPages = readNumber(entry.payload, "pageCount");
       const profileName = readString(entry.payload, "profileName");
+      const scope = readString(entry.payload, "scope");
       const pageCountSuffix =
         this.totalPages === null ? "" : ` (${formatCountLabel(this.totalPages, "page")})`;
+      const scopeSuffix = scope && scope !== "all" ? ` [scope: ${scope}]` : "";
       this.writeLine(
-        `Starting selector audit${profileName ? ` for profile ${profileName}` : ""}${pageCountSuffix}.`
+        `Starting selector audit${profileName ? ` for profile ${profileName}` : ""}${pageCountSuffix}${scopeSuffix}.`
       );
       return;
     }
