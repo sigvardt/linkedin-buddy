@@ -125,6 +125,7 @@ import {
   type SchedulerTickResult,
   type SearchCategory,
   type SearchResult,
+  type SelectorAuditInput,
   type SelectorAuditReport,
   type WebhookDeliveryAttemptStatus,
   type WebhookSubscriptionStatus,
@@ -9036,12 +9037,13 @@ async function runSelectorAudit(
       scope: input.scope,
     });
 
-    const auditInput = {
+    const validatedScope: "read" | "write" | "all" | undefined =
+      input.scope === "read" || input.scope === "write" || input.scope === "all"
+        ? input.scope
+        : undefined;
+    const auditInput: SelectorAuditInput = {
       profileName,
-      scope:
-        input.scope === "read" || input.scope === "write" || input.scope === "all"
-          ? input.scope
-          : undefined,
+      ...(validatedScope !== undefined ? { scope: validatedScope } : {}),
     };
     const report = await selectorAuditRuntime.selectorAudit.auditSelectors(auditInput);
 

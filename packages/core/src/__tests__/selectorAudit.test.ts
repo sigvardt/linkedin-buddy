@@ -83,12 +83,12 @@ describe("createLinkedInSelectorAuditRegistry", () => {
     expect(registry.map((pageDefinition) => pageDefinition.page)).toEqual([
       ...LINKEDIN_SELECTOR_AUDIT_PAGES
     ]);
-    expect(allSelectors.length).toBe(16);
+    expect(allSelectors.length).toBe(17);
     expect(readSelectors.length).toBe(6);
-    expect(writeSelectors.length).toBe(10);
+    expect(writeSelectors.length).toBe(11);
 
     expect(registry.map((pageDefinition) => pageDefinition.selectors.length)).toEqual([
-      4, 4, 2, 2, 1, 3
+      4, 4, 2, 3, 1, 3
     ]);
 
     for (const pageDefinition of registry) {
@@ -113,7 +113,7 @@ describe("createLinkedInSelectorAuditRegistry", () => {
     const writeSelectors = registry.flatMap((p) =>
       p.selectors.filter((s) => s.category === "write")
     );
-    expect(writeSelectors.length).toBe(10);
+    expect(writeSelectors.length).toBe(11);
     expect(writeSelectors.map((s) => s.key)).toEqual([
       "feed_like_button",
       "feed_comment_button",
@@ -122,6 +122,7 @@ describe("createLinkedInSelectorAuditRegistry", () => {
       "inbox_message_input",
       "inbox_send_button",
       "profile_edit_intro_button",
+      "connections_action_buttons",
       "connections_message_button",
       "company_follow_button",
       "company_overlay_modal"
