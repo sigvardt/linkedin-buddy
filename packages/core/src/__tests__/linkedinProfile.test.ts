@@ -36,6 +36,7 @@ import {
   findIntroLocationFieldLocator,
   extractVisibleTopCardSummaryFromRoot,
   isProfileIntroEditHref,
+  isProfileSectionEditHref,
   navigateToOwnProfile,
   readEditableFieldValue,
   resolveFirstVisibleLocator,
@@ -486,6 +487,112 @@ describe("isProfileIntroEditHref", () => {
     expect(isProfileIntroEditHref("")).toBe(false);
     expect(isProfileIntroEditHref("/in/me/overlay/contact-info/")).toBe(false);
     expect(isProfileIntroEditHref(undefined)).toBe(false);
+  });
+});
+
+describe("isProfileSectionEditHref", () => {
+  it("accepts experience create URL with /edit/forms/position/new/", () => {
+    expect(
+      isProfileSectionEditHref(
+        "https://www.linkedin.com/in/me/edit/forms/position/new/?profileFormEntryPoint=PROFILE_SECTION",
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts experience edit URL with /edit/position/<id>/", () => {
+    expect(
+      isProfileSectionEditHref(
+        "https://www.linkedin.com/in/joi-ascend-a534b73b6/edit/position/12345/",
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts education create URL", () => {
+    expect(
+      isProfileSectionEditHref(
+        "https://www.linkedin.com/in/me/edit/forms/education/new/",
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts certification URL", () => {
+    expect(
+      isProfileSectionEditHref(
+        "https://www.linkedin.com/in/me/edit/forms/certification/new/",
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts language URL", () => {
+    expect(
+      isProfileSectionEditHref(
+        "/in/me/edit/forms/language/new/",
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts project URL", () => {
+    expect(
+      isProfileSectionEditHref(
+        "https://www.linkedin.com/in/me/edit/forms/project/new/",
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts volunteer URL", () => {
+    expect(
+      isProfileSectionEditHref(
+        "https://www.linkedin.com/in/me/edit/forms/volunteer/new/",
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts honor URL", () => {
+    expect(
+      isProfileSectionEditHref(
+        "https://www.linkedin.com/in/me/edit/forms/honor/new/",
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts intro edit URL (included in section patterns)", () => {
+    expect(
+      isProfileSectionEditHref(
+        "https://www.linkedin.com/in/me/edit/forms/intro/new/",
+      ),
+    ).toBe(true);
+  });
+
+  it("filters by specific section when section argument provided", () => {
+    expect(
+      isProfileSectionEditHref(
+        "https://www.linkedin.com/in/me/edit/forms/position/new/",
+        "experience",
+      ),
+    ).toBe(true);
+    expect(
+      isProfileSectionEditHref(
+        "https://www.linkedin.com/in/me/edit/forms/position/new/",
+        "education",
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects unrelated LinkedIn URLs", () => {
+    expect(isProfileSectionEditHref("/in/me/overlay/contact-info/")).toBe(
+      false,
+    );
+    expect(
+      isProfileSectionEditHref(
+        "https://www.linkedin.com/in/me/opportunities/job-opportunities/edit/",
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects empty and falsy values", () => {
+    expect(isProfileSectionEditHref("")).toBe(false);
+    expect(isProfileSectionEditHref(undefined)).toBe(false);
+    expect(isProfileSectionEditHref(null)).toBe(false);
   });
 });
 

@@ -584,6 +584,36 @@ const PROFILE_INTRO_ACTION_LABELS = {
 
 const PROFILE_INTRO_EDIT_HREF_PATTERNS = ["/edit/intro/", "/edit/forms/intro/"] as const;
 
+/**
+ * Maps each profile section type to the URL slugs LinkedIn uses in page-based
+ * edit routes. LinkedIn navigates to URLs like:
+ *   `/in/me/edit/forms/<slug>/new/`   — create
+ *   `/in/<profile>/edit/<slug>/<id>/`  — edit existing
+ */
+const PROFILE_SECTION_EDIT_URL_SLUGS: Readonly<
+  Record<LinkedInProfileSectionType, readonly string[]>
+> = {
+  about: ["about"],
+  experience: ["position"],
+  education: ["education"],
+  certifications: ["certification"],
+  languages: ["language"],
+  projects: ["project"],
+  volunteer_experience: ["volunteer", "volunteerExperience", "volunteer-experience"],
+  honors_awards: ["honor", "honorsAward", "honors-award"]
+};
+
+/**
+ * All known edit URL path fragments for any profile section, including intro.
+ * Used by {@link isProfileSectionEditHref} for broad "is this an edit page?" checks.
+ */
+const PROFILE_SECTION_EDIT_HREF_PATTERNS: readonly string[] = [
+  ...PROFILE_INTRO_EDIT_HREF_PATTERNS,
+  ...Object.values(PROFILE_SECTION_EDIT_URL_SLUGS)
+    .flat()
+    .flatMap((slug) => [`/edit/${slug}/`, `/edit/forms/${slug}/`])
+];
+
 const PROFILE_FEATURED_LABELS = {
   section: {
     en: ["Featured"],
@@ -2634,6 +2664,42 @@ export function isProfileIntroEditHref(href: string | null | undefined): boolean
   }
 }
 
+/**
+ * Checks whether a URL points to a LinkedIn profile section edit page.
+ * When `section` is provided, only that section's URL slugs are checked.
+ * Without `section`, any known section edit URL matches.
+ *
+ * This is the section-editor counterpart to {@link isProfileIntroEditHref}
+ * and covers URLs like `/in/me/edit/forms/position/new/`.
+ */
+export function isProfileSectionEditHref(
+  href: string | null | undefined,
+  section?: LinkedInProfileSectionType
+): boolean {
+  if (typeof href !== "string") {
+    return false;
+  }
+
+  const normalizedHref = normalizeText(href);
+  if (!normalizedHref) {
+    return false;
+  }
+
+  const patterns = section
+    ? PROFILE_SECTION_EDIT_URL_SLUGS[section].flatMap((slug) => [
+        `/edit/${slug}/`,
+        `/edit/forms/${slug}/`
+      ])
+    : PROFILE_SECTION_EDIT_HREF_PATTERNS;
+
+  try {
+    const resolvedUrl = new URL(normalizedHref, "https://www.linkedin.com");
+    return patterns.some((pattern) => resolvedUrl.pathname.includes(pattern));
+  } catch {
+    return patterns.some((pattern) => normalizedHref.includes(pattern));
+  }
+}
+
 function buildProfileIntroEditHrefSelector(): string {
   return PROFILE_INTRO_EDIT_HREF_PATTERNS.map(
     (pattern) => `a[href*="${escapeCssAttributeValue(pattern)}"]`
@@ -3560,25 +3626,6 @@ async function canRecoverOwnProfileNavigationTimeout(page: Page): Promise<boolea
   return hasOwnProfileEditControl(page, { requireVisible: true });
 }
 
-async function waitForVisibleDialog(page: Page): Promise<Locator> {
-  const deadline = Date.now() + 10_000;
-
-  while (Date.now() < deadline) {
-    const resolved = await resolveLatestVisibleDialog(page);
-    if (resolved) {
-      return resolved;
-    }
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 200);
-    });
-  }
-
-  // Final attempt — throw if nothing visible.
-  const fallback = page.locator(PROFILE_DIALOG_ROOT_SELECTOR).last();
-  await fallback.waitFor({ state: "visible", timeout: 1_000 });
-  return fallback;
-}
-
 async function resolveLatestVisibleDialog(page: Page): Promise<Locator | null> {
   const dialogs = page.locator(PROFILE_DIALOG_ROOT_SELECTOR);
   const dialogCount = await dialogs.count().catch(() => 0);
@@ -3712,6 +3759,84 @@ async function waitForVisibleProfileIntroEditorSurface(
   return fallbackSurface;
 }
 
+/**
+ * Detects whether the current page is a LinkedIn section edit page (not intro).
+ * Returns a scoped root Locator containing form fields, or null if the page URL
+ * does not match any known section edit route or no editable fields are found.
+ */
+async function resolveVisibleProfileSectionEditPage(
+  page: Page,
+  section?: LinkedInProfileSectionType
+): Promise<Locator | null> {
+  if (!isProfileSectionEditHref(page.url(), section)) {
+    return null;
+  }
+
+  const fieldSelector = [
+    "input[aria-autocomplete='list']",
+    "input",
+    "textarea",
+    "select",
+    "[role='combobox']",
+    "[role='textbox']",
+    "[contenteditable='true']"
+  ].join(", ");
+
+  const rootCandidates: LocatorCandidate[] = [
+    "dialog[data-testid='dialog'], dialog",
+    "[data-testid='lazy-column']",
+    "form",
+    "main"
+  ].map((selector, index) => ({
+    key: `section-edit-page-root-${index + 1}`,
+    locator: page.locator(selector).filter({
+      has: page.locator(fieldSelector)
+    })
+  }));
+
+  const ready = await findFirstVisibleLocator(rootCandidates);
+  return ready?.locator ?? null;
+}
+
+/**
+ * Generic surface detection that races dialog detection against page-based edit
+ * detection for any profile section. This is the section-editor counterpart to
+ * {@link waitForVisibleProfileIntroEditorSurface}.
+ *
+ * After clicking an edit/add control, LinkedIn may open:
+ *   (a) a traditional modal dialog, or
+ *   (b) navigate to a full-page edit route (e.g. `/in/me/edit/forms/position/new/`).
+ *
+ * This function polls for both and returns whichever appears first.
+ */
+async function waitForProfileEditorSurface(
+  page: Page,
+  timeoutMs: number,
+  section?: LinkedInProfileSectionType
+): Promise<ProfileEditorSurface | null> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    // Check for page-based editor first (LinkedIn's newer pattern).
+    const pageRoot = await resolveVisibleProfileSectionEditPage(page, section);
+    if (pageRoot) {
+      return { kind: "page", root: pageRoot };
+    }
+
+    // Fall back to traditional modal dialog.
+    const dialogRoot = await resolveLatestVisibleDialog(page);
+    if (dialogRoot) {
+      return { kind: "dialog", root: dialogRoot };
+    }
+
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 200);
+    });
+  }
+
+  return null;
+}
+
 async function waitForVisibleOverlay(page: Page): Promise<Locator> {
   const selector = "[role='dialog'], [role='menu']";
   const deadline = Date.now() + 10_000;
@@ -3735,12 +3860,19 @@ async function waitForVisibleOverlay(page: Page): Promise<Locator> {
   return fallback;
 }
 
-async function clickLocatorAndWaitForDialog(
+async function clickLocatorAndWaitForSurface(
   page: Page,
-  locator: Locator
-): Promise<Locator> {
+  locator: Locator,
+  section?: LinkedInProfileSectionType
+): Promise<ProfileEditorSurface> {
   await locator.first().click();
-  return waitForVisibleDialog(page);
+  const surface = await waitForProfileEditorSurface(page, 10_000, section);
+  if (!surface) {
+    const fallback = page.locator(PROFILE_DIALOG_ROOT_SELECTOR).last();
+    await fallback.waitFor({ state: "visible", timeout: 1_000 });
+    return { kind: "dialog", root: fallback };
+  }
+  return surface;
 }
 
 async function clickLocatorAndWaitForOverlay(
@@ -4384,11 +4516,11 @@ async function openGlobalAddSectionDialog(
 
 }
 
-async function openSectionCreateDialog(
+async function openSectionCreateSurface(
   page: Page,
   section: LinkedInProfileSectionType,
   selectorLocale: LinkedInSelectorLocale
-): Promise<Locator> {
+): Promise<ProfileEditorSurface> {
   const sectionRoot = await findProfileSectionRoot(page, section, selectorLocale);
   const addLabels = getUiActionLabels("add", selectorLocale);
 
@@ -4400,7 +4532,7 @@ async function openSectionCreateDialog(
     );
     const resolvedSectionAdd = await findFirstVisibleLocator(sectionAddCandidates);
     if (resolvedSectionAdd) {
-      return clickLocatorAndWaitForDialog(page, resolvedSectionAdd.locator);
+      return clickLocatorAndWaitForSurface(page, resolvedSectionAdd.locator, section);
     }
   }
 
@@ -4440,15 +4572,21 @@ async function openSectionCreateDialog(
 
   await resolved.locator.first().click();
   await page.waitForTimeout(500);
-  return waitForVisibleDialog(page);
+  const surface = await waitForProfileEditorSurface(page, 10_000, section);
+  if (!surface) {
+    const fallback = page.locator(PROFILE_DIALOG_ROOT_SELECTOR).last();
+    await fallback.waitFor({ state: "visible", timeout: 1_000 });
+    return { kind: "dialog", root: fallback };
+  }
+  return surface;
 }
 
-async function openExistingSectionItemDialog(
+async function openExistingSectionItemSurface(
   page: Page,
   section: LinkedInProfileSectionType,
   match: LinkedInProfileSectionItemMatch,
   selectorLocale: LinkedInSelectorLocale
-): Promise<Locator> {
+): Promise<ProfileEditorSurface> {
   const sectionRoot = await findProfileSectionRoot(page, section, selectorLocale);
   if (!sectionRoot) {
     throw new LinkedInBuddyError(
@@ -4476,7 +4614,7 @@ async function openExistingSectionItemDialog(
   );
   const resolvedEdit = await findFirstVisibleLocator(editCandidates);
   if (resolvedEdit) {
-    return clickLocatorAndWaitForDialog(page, resolvedEdit.locator);
+    return clickLocatorAndWaitForSurface(page, resolvedEdit.locator, section);
   }
 
   const moreCandidates = createActionCandidates(
@@ -4510,7 +4648,7 @@ async function openExistingSectionItemDialog(
     );
   }
 
-  return clickLocatorAndWaitForDialog(page, resolvedMenuEdit.locator);
+  return clickLocatorAndWaitForSurface(page, resolvedMenuEdit.locator, section);
 }
 
 async function findDialogFieldLocatorByDefinition(
@@ -4998,9 +5136,13 @@ async function clickSaveInProfileEditorSurface(
   // Page kind: start listening for navigation BEFORE clicking so we never
   // miss a fast redirect. The edit page navigates to the profile on success.
   const navigationPromise = page
-    .waitForURL((url) => !isProfileIntroEditHref(url.toString()), {
-      timeout: 15_000
-    })
+    .waitForURL(
+      (url) => {
+        const urlStr = url.toString();
+        return !isProfileIntroEditHref(urlStr) && !isProfileSectionEditHref(urlStr);
+      },
+      { timeout: 15_000 }
+    )
     .then(() => true as const)
     .catch(() => false as const);
 
@@ -5008,7 +5150,7 @@ async function clickSaveInProfileEditorSurface(
   await waitForNetworkIdleBestEffort(page, 15_000);
   const navigated = await navigationPromise;
 
-  if (!navigated && isProfileIntroEditHref(page.url())) {
+  if (!navigated && (isProfileIntroEditHref(page.url()) || isProfileSectionEditHref(page.url()))) {
     const selectorDiagnostics = summarizeLocatorCandidates(saveCandidates);
     throw new LinkedInBuddyError(
       "ACTION_PRECONDITION_FAILED",
@@ -5035,7 +5177,7 @@ async function closeProfileEditorSurface(
   selectorLocale: LinkedInSelectorLocale
 ): Promise<void> {
   if (surface.kind === "page") {
-    if (isProfileIntroEditHref(page.url())) {
+    if (isProfileIntroEditHref(page.url()) || isProfileSectionEditHref(page.url())) {
       await navigateToOwnProfile(page);
     }
     return;
@@ -5136,6 +5278,70 @@ async function clickDeleteInDialog(
   await page.locator("[role='dialog']").last().waitFor({ state: "hidden", timeout: 10_000 }).catch(
     () => undefined
   );
+  await waitForNetworkIdleBestEffort(page);
+}
+
+/**
+ * Surface-aware delete for profile editor pages.
+ * For dialog surfaces, delegates to {@link clickDeleteInDialog}.
+ * For page surfaces, clicks delete, handles any confirmation overlay,
+ * and waits for navigation back to the profile.
+ */
+async function clickDeleteInProfileEditorSurface(
+  page: Page,
+  surface: ProfileEditorSurface,
+  selectorLocale: LinkedInSelectorLocale
+): Promise<void> {
+  if (surface.kind === "dialog") {
+    await clickDeleteInDialog(page, surface.root, selectorLocale);
+    return;
+  }
+
+  // Page surface: find and click delete within the page editor.
+  const deleteCandidates = createActionCandidates(
+    surface.root,
+    getUiActionLabels("delete", selectorLocale),
+    "page-delete"
+  );
+  const resolvedDelete = await findFirstVisibleLocator(deleteCandidates);
+  if (!resolvedDelete) {
+    throw new LinkedInBuddyError(
+      "TARGET_NOT_FOUND",
+      "Could not find the delete button in the profile editor page."
+    );
+  }
+
+  // Start listening for navigation BEFORE clicking.
+  const navigationPromise = page
+    .waitForURL(
+      (url) => {
+        const urlStr = url.toString();
+        return !isProfileIntroEditHref(urlStr) && !isProfileSectionEditHref(urlStr);
+      },
+      { timeout: 15_000 }
+    )
+    .then(() => true as const)
+    .catch(() => false as const);
+
+  await resolvedDelete.locator.first().click();
+  await page.waitForTimeout(500);
+
+  // Handle confirmation dialog (may appear as overlay even on page surfaces).
+  const confirmDeleteCandidates: LocatorCandidate[] = [
+    ...createActionCandidates(page, getUiActionLabels("delete", selectorLocale), "confirm-delete"),
+    {
+      key: "confirm-delete-generic",
+      locator: page
+        .locator("[role='dialog'] button, [role='dialog'] [role='button']")
+        .filter({ hasText: buildTextRegex(getUiActionLabels("delete", selectorLocale)) })
+    }
+  ];
+  const resolvedConfirmDelete = await findFirstVisibleLocator(confirmDeleteCandidates);
+  if (resolvedConfirmDelete) {
+    await resolvedConfirmDelete.locator.first().click();
+  }
+
+  await navigationPromise;
   await waitForNetworkIdleBestEffort(page);
 }
 
@@ -5581,14 +5787,14 @@ async function extractEditableFeaturedSection(
   };
 }
 
-async function openSectionEditDialog(
+async function openSectionEditSurface(
   page: Page,
   section: LinkedInProfileSectionType,
   selectorLocale: LinkedInSelectorLocale
-): Promise<Locator> {
+): Promise<ProfileEditorSurface> {
   const sectionRoot = await findProfileSectionRoot(page, section, selectorLocale);
   if (!sectionRoot) {
-    return openSectionCreateDialog(page, section, selectorLocale);
+    return openSectionCreateSurface(page, section, selectorLocale);
   }
 
   const editCandidates = createActionCandidates(
@@ -5598,10 +5804,10 @@ async function openSectionEditDialog(
   );
   const resolvedEdit = await findFirstVisibleLocator(editCandidates);
   if (!resolvedEdit) {
-    return openSectionCreateDialog(page, section, selectorLocale);
+    return openSectionCreateSurface(page, section, selectorLocale);
   }
 
-  return clickLocatorAndWaitForDialog(page, resolvedEdit.locator);
+  return clickLocatorAndWaitForSurface(page, resolvedEdit.locator, section);
 }
 
 async function getVisibleDialogOrNull(page: Page): Promise<Locator | null> {
@@ -5831,10 +6037,10 @@ async function selectFeaturedAddOption(
   return (await getVisibleDialogOrNull(page)) ?? overlay;
 }
 
-async function openFeaturedEditDialog(
+async function openFeaturedEditSurface(
   page: Page,
   selectorLocale: LinkedInSelectorLocale
-): Promise<Locator> {
+): Promise<ProfileEditorSurface> {
   const featuredRoot = await findFeaturedSectionRoot(page, selectorLocale);
   if (!featuredRoot) {
     throw new LinkedInBuddyError(
@@ -5856,7 +6062,7 @@ async function openFeaturedEditDialog(
     );
   }
 
-  return clickLocatorAndWaitForDialog(page, resolvedEdit.locator);
+  return clickLocatorAndWaitForSurface(page, resolvedEdit.locator);
 }
 
 async function fillDialogFieldIfPresent(
@@ -6156,7 +6362,8 @@ async function reorderFeaturedItems(
   selectorLocale: LinkedInSelectorLocale,
   itemIds: string[]
 ): Promise<void> {
-  const dialog = await openFeaturedEditDialog(page, selectorLocale);
+  const surface = await openFeaturedEditSurface(page, selectorLocale);
+  const dialog = surface.root;
   const decodedItems = itemIds.map((itemId) => {
     const decoded = decodeProfileFeaturedItemId(itemId);
     if (!decoded) {
@@ -6204,7 +6411,7 @@ async function reorderFeaturedItems(
     await dragLocatorToTarget(page, sourceHandle, targetHandle);
   }
 
-  await clickSaveInDialog(page, dialog, selectorLocale);
+  await clickSaveInProfileEditorSurface(page, surface, selectorLocale);
 }
 
 function getCollectionItemLocator(root: Locator): Locator {
@@ -6289,10 +6496,10 @@ async function maybeOpenSkillsListSurface(
   return (await getVisibleDialogOrNull(page)) ?? page.locator("main");
 }
 
-async function openSkillsAddDialog(
+async function openSkillsAddSurface(
   page: Page,
   selectorLocale: LinkedInSelectorLocale
-): Promise<Locator> {
+): Promise<ProfileEditorSurface> {
   const skillsRoot = await findSkillsSectionRoot(page, selectorLocale);
   const directLabels = dedupeStrings([
     ...getSkillActionLabels("add", selectorLocale),
@@ -6312,7 +6519,7 @@ async function openSkillsAddDialog(
     ];
     const resolvedSectionAdd = await findFirstVisibleLocator(sectionCandidates);
     if (resolvedSectionAdd) {
-      return clickLocatorAndWaitForDialog(page, resolvedSectionAdd.locator);
+      return clickLocatorAndWaitForSurface(page, resolvedSectionAdd.locator);
     }
   }
 
@@ -6341,7 +6548,13 @@ async function openSkillsAddDialog(
 
   await resolvedGlobalAdd.locator.first().click();
   await page.waitForTimeout(500);
-  return waitForVisibleDialog(page);
+  const skillsSurface = await waitForProfileEditorSurface(page, 10_000);
+  if (!skillsSurface) {
+    const fallback = page.locator(PROFILE_DIALOG_ROOT_SELECTOR).last();
+    await fallback.waitFor({ state: "visible", timeout: 1_000 });
+    return { kind: "dialog", root: fallback };
+  }
+  return skillsSurface;
 }
 
 async function findSkillInputLocator(dialog: Locator): Promise<Locator | null> {
@@ -6401,7 +6614,8 @@ async function addSkill(
   selectorLocale: LinkedInSelectorLocale,
   skillName: string
 ): Promise<void> {
-  const dialog = await openSkillsAddDialog(page, selectorLocale);
+  const surface = await openSkillsAddSurface(page, selectorLocale);
+  const dialog = surface.root;
   const skillInput = await findSkillInputLocator(dialog);
   if (!skillInput) {
     throw new LinkedInBuddyError(
@@ -6420,13 +6634,13 @@ async function addSkill(
   });
   await page.waitForTimeout(500);
   await selectAutocompleteOption(page, skillName);
-  await clickSaveInDialog(page, dialog, selectorLocale);
+  await clickSaveInProfileEditorSurface(page, surface, selectorLocale);
 }
 
-async function openSkillsEditDialog(
+async function openSkillsEditSurface(
   page: Page,
   selectorLocale: LinkedInSelectorLocale
-): Promise<Locator> {
+): Promise<ProfileEditorSurface> {
   const skillsRoot = await findSkillsSectionRoot(page, selectorLocale);
   if (!skillsRoot) {
     throw new LinkedInBuddyError(
@@ -6448,7 +6662,7 @@ async function openSkillsEditDialog(
     );
   }
 
-  return clickLocatorAndWaitForDialog(page, resolvedEdit.locator);
+  return clickLocatorAndWaitForSurface(page, resolvedEdit.locator);
 }
 
 async function reorderSkills(
@@ -6456,7 +6670,8 @@ async function reorderSkills(
   selectorLocale: LinkedInSelectorLocale,
   skillNames: string[]
 ): Promise<void> {
-  const dialog = await openSkillsEditDialog(page, selectorLocale);
+  const surface = await openSkillsEditSurface(page, selectorLocale);
+  const dialog = surface.root;
 
   for (let index = skillNames.length - 1; index >= 0; index -= 1) {
     const skillName = skillNames[index]!;
@@ -6481,7 +6696,7 @@ async function reorderSkills(
     await dragLocatorToTarget(page, sourceHandle, targetHandle);
   }
 
-  await clickSaveInDialog(page, dialog, selectorLocale);
+  await clickSaveInProfileEditorSurface(page, surface, selectorLocale);
 }
 
 async function locateSkillRowOnProfile(
@@ -7982,28 +8197,28 @@ async function executeUpsertProfileSectionItem(
         execute: async () => {
           await navigateToOwnProfile(page);
 
-          let dialog: Locator;
+          let surface: ProfileEditorSurface;
           if (section === "about") {
-            dialog = await openSectionEditDialog(page, section, runtime.selectorLocale);
+            surface = await openSectionEditSurface(page, section, runtime.selectorLocale);
           } else if (mode === "update" && match) {
-            dialog = await openExistingSectionItemDialog(
+            surface = await openExistingSectionItemSurface(
               page,
               section,
               match,
               runtime.selectorLocale
             );
           } else {
-            dialog = await openSectionCreateDialog(page, section, runtime.selectorLocale);
+            surface = await openSectionCreateSurface(page, section, runtime.selectorLocale);
           }
 
           for (const definition of getEditableFieldDefinitions(section)) {
             if (!(definition.key in values)) {
               continue;
             }
-            await fillDialogField(page, dialog, definition, values[definition.key]!);
+            await fillDialogField(page, surface.root, definition, values[definition.key]!);
           }
 
-          await clickSaveInDialog(page, dialog, runtime.selectorLocale);
+          await clickSaveInProfileEditorSurface(page, surface, runtime.selectorLocale);
 
           return {
             ok: true,
@@ -8092,9 +8307,9 @@ async function executeRemoveProfileSectionItem(
           await navigateToOwnProfile(page);
 
           if (section === "about") {
-            const dialog = await openSectionEditDialog(page, section, runtime.selectorLocale);
-            await fillDialogField(page, dialog, getEditableFieldDefinitions(section)[0]!, "");
-            await clickSaveInDialog(page, dialog, runtime.selectorLocale);
+            const surface = await openSectionEditSurface(page, section, runtime.selectorLocale);
+            await fillDialogField(page, surface.root, getEditableFieldDefinitions(section)[0]!, "");
+            await clickSaveInProfileEditorSurface(page, surface, runtime.selectorLocale);
           } else {
             if (!match) {
               throw new LinkedInBuddyError(
@@ -8102,13 +8317,13 @@ async function executeRemoveProfileSectionItem(
                 `Removing a ${section} item requires itemId or match details.`
               );
             }
-            const dialog = await openExistingSectionItemDialog(
+            const surface = await openExistingSectionItemSurface(
               page,
               section,
               match,
               runtime.selectorLocale
             );
-            await clickDeleteInDialog(page, dialog, runtime.selectorLocale);
+            await clickDeleteInProfileEditorSurface(page, surface, runtime.selectorLocale);
           }
 
           return {
