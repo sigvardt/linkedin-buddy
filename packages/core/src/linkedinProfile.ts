@@ -695,8 +695,8 @@ export const PROFILE_MEDIA_STRUCTURAL_SELECTORS = {
   ]
 } as const;
 
-
-const PROFILE_DIALOG_ROOT_SELECTOR = "dialog[data-testid='dialog'], [role='dialog'], dialog";
+const PROFILE_DIALOG_ROOT_SELECTOR =
+  "dialog[data-testid='dialog'], [role='dialog'], [aria-modal='true'], dialog";
 
 /**
  * Broader selector that catches standard dialogs AND artdeco overlay modals.
@@ -4818,6 +4818,82 @@ async function fillDialogField(
   await commitAutocompleteFieldIfNeeded(page, locator, stringValue);
 }
 
+
+/**
+ * When the save button is outside the surface root (e.g. LinkedIn places
+ * the action-bar as a sibling of the innermost [role='dialog'] element),
+ * walk up from the narrow root and search progressively broader containers.
+ *
+ * Returns the first visible save-button candidate, or null.
+ */
+async function findSaveButtonInBroaderScope(
+  page: Page,
+  narrowRoot: Locator,
+  saveLabels: readonly string[]
+): Promise<LocatorCandidate | null> {
+  // Broader containers — walk up from the narrow root, then try
+  // artdeco-specific overlay selectors on the page.
+  const broaderRoots: LocatorCandidate[] = [
+    {
+      key: "save-fallback-parent",
+      locator: narrowRoot.locator("xpath=.."),
+      selectorHint: "parent of surface root"
+    },
+    {
+      key: "save-fallback-grandparent",
+      locator: narrowRoot.locator("xpath=../.."),
+      selectorHint: "grandparent of surface root"
+    },
+    {
+      key: "save-fallback-artdeco-overlay",
+      locator: page.locator(".artdeco-modal-overlay--is-top-layer").last(),
+      selectorHint: ".artdeco-modal-overlay--is-top-layer (last)"
+    },
+    {
+      key: "save-fallback-artdeco-modal",
+      locator: page
+        .locator(".artdeco-modal-overlay--is-top-layer .artdeco-modal")
+        .last(),
+      selectorHint: ".artdeco-modal-overlay--is-top-layer .artdeco-modal (last)"
+    },
+    {
+      key: "save-fallback-first-dialog",
+      locator: page.locator(PROFILE_DIALOG_ROOT_SELECTOR).first(),
+      selectorHint: "first (outermost) dialog root on page"
+    }
+  ];
+
+  for (const broaderRoot of broaderRoots) {
+    const isVisible = await broaderRoot.locator.isVisible().catch(() => false);
+    if (!isVisible) continue;
+
+    // Guard: stop if we reached document body — too broad, risk of matching
+    // unrelated buttons.
+    const tagName = await broaderRoot.locator
+      .evaluate((el) => el.tagName.toLowerCase())
+      .catch(() => "");
+    if (tagName === "body" || tagName === "html") continue;
+
+    const candidates: LocatorCandidate[] = [
+      ...createActionCandidates(
+        broaderRoot.locator,
+        saveLabels,
+        broaderRoot.key
+      ),
+      {
+        key: `${broaderRoot.key}-submit`,
+        locator: broaderRoot.locator.locator("button[type='submit']"),
+        selectorHint: `${broaderRoot.selectorHint} > button[type='submit']`
+      }
+    ];
+
+    const found = await findFirstVisibleLocator(candidates);
+    if (found) return found;
+  }
+
+  return null;
+}
+
 async function clickSaveInProfileEditorSurface(
   page: Page,
   surface: ProfileEditorSurface,
@@ -4862,7 +4938,16 @@ async function clickSaveInProfileEditorSurface(
           }
         ];
 
-  const resolved = await waitForFirstVisibleLocator(saveCandidates, 10_000);
+  let resolved = await waitForFirstVisibleLocator(saveCandidates, 10_000);
+
+  // Fallback: LinkedIn may render the save button outside the innermost
+  // [role='dialog'] element — for example in a sibling footer/action-bar
+  // within the broader artdeco modal overlay. Walk up from the surface
+  // root and retry with progressively broader container scopes.
+  if (!resolved) {
+    resolved = await findSaveButtonInBroaderScope(page, surface.root, saveLabels);
+  }
+
   if (!resolved) {
     const selectorDiagnostics = summarizeLocatorCandidates(saveCandidates);
     throw new LinkedInBuddyError(
@@ -4959,14 +5044,22 @@ async function clickSaveInDialog(
   dialog: Locator,
   selectorLocale: LinkedInSelectorLocale
 ): Promise<void> {
+  const saveLabels = getUiActionLabels("save", selectorLocale);
   const saveCandidates: LocatorCandidate[] = [
-    ...createActionCandidates(dialog, getUiActionLabels("save", selectorLocale), "dialog-save"),
+    ...createActionCandidates(dialog, saveLabels, "dialog-save"),
     {
       key: "dialog-save-submit",
       locator: dialog.locator("button[type='submit']")
     }
   ];
-  const resolved = await waitForFirstVisibleLocator(saveCandidates, 10_000);
+  let resolved = await waitForFirstVisibleLocator(saveCandidates, 10_000);
+
+  // Fallback: the save button may live outside the innermost dialog
+  // element (e.g. in a sibling action-bar within the artdeco modal).
+  if (!resolved) {
+    resolved = await findSaveButtonInBroaderScope(page, dialog, saveLabels);
+  }
+
   if (!resolved) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
