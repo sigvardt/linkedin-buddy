@@ -216,7 +216,26 @@ describe("shared", () => {
     });
   });
 
-  describe("dedupeRepeatedText — issue #480 regression cases", () => {
+  describe("dedupeRepeatedText — issue #529 regression: headline with pipe", () => {
+    it("deduplicates exact-half headline containing pipe separator", () => {
+      expect(dedupeRepeatedText(
+        "executive assistant to the director at signikant | making ai workflows human-friendlyexecutive assistant to the director at signikant | making ai workflows human-friendly"
+      )).toBe("executive assistant to the director at signikant | making ai workflows human-friendly");
+    });
+
+    it("deduplicates headline halves with mixed casing", () => {
+      expect(dedupeRepeatedText(
+        "Executive Assistant to the Director at Signikant | Making AI workflows human-friendlyexecutive assistant to the director at signikant | making ai workflows human-friendly"
+      )).toBe("Executive Assistant to the Director at Signikant | Making AI workflows human-friendly");
+    });
+
+    it("deduplicates prefix pattern with mixed casing", () => {
+      expect(dedupeRepeatedText("Developer developer with verification"))
+        .toBe("developer with verification");
+    });
+  });
+
+    describe("dedupeRepeatedText — issue #480 regression cases", () => {
     it("deduplicates author headline", () => {
       expect(dedupeRepeatedText(
         "Personal Assistant to Director at SignikantPersonal Assistant to Director at Signikant"

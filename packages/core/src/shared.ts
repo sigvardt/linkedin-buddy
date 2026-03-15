@@ -79,7 +79,7 @@ export function dedupeRepeatedText(value: string | null | undefined): string {
     const mid = text.length / 2;
     const first = normalizeText(text.slice(0, mid));
     const second = normalizeText(text.slice(mid));
-    if (first && first === second) {
+    if (first && first.toLowerCase() === second.toLowerCase()) {
       return first;
     }
   }
@@ -89,7 +89,7 @@ export function dedupeRepeatedText(value: string | null | undefined): string {
   for (let i = 1; i * 2 <= words.length; i += 1) {
     const prefix = words.slice(0, i).join(" ");
     const next = words.slice(i, i * 2).join(" ");
-    if (prefix === next) {
+    if (prefix.toLowerCase() === next.toLowerCase()) {
       return normalizeText(words.slice(i).join(" "));
     }
   }

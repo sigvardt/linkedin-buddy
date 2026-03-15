@@ -581,6 +581,14 @@ async function extractFeedPosts(
       const normalize = (value: string | null | undefined): string =>
         (value ?? "").replace(/\s+/g, " ").trim();
 
+      // Prefer the aria-hidden span inside an element to avoid reading
+      // both the visible and screen-reader text that LinkedIn renders
+      // as sibling spans (which would double the value).
+      const readElementText = (el: Element): string => {
+        const ariaHidden = el.querySelector("span[aria-hidden='true']");
+        return normalize((ariaHidden ?? el).textContent);
+      };
+
       const toAbsoluteUrl = (href: string | null | undefined): string => {
         const value = normalize(href);
         if (!value) {
@@ -735,7 +743,7 @@ async function extractFeedPosts(
             }
 
             if (!authorName) {
-              const potentialName = normalize(link.textContent);
+              const potentialName = readElementText(link);
               if (potentialName) {
                 authorName = potentialName;
               }
@@ -748,7 +756,7 @@ async function extractFeedPosts(
 
             const siblingDivs = Array.from(parent.querySelectorAll("div"));
             for (const div of siblingDivs) {
-              const text = normalize(div.textContent);
+              const text = readElementText(div);
               if (!text || text === authorName) {
                 continue;
               }
@@ -776,7 +784,7 @@ async function extractFeedPosts(
 
           if (!authorHeadline || !postedAt) {
             const allDivText = Array.from(card.querySelectorAll("div")).map((div) =>
-              normalize(div.textContent),
+              readElementText(div),
             );
             for (const text of allDivText) {
               if (!text || text === authorName || text === authorHeadline) {
