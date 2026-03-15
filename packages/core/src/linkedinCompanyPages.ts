@@ -178,6 +178,71 @@ async function waitForCompanyPageReady(page: Page): Promise<void> {
     .catch(() => undefined);
 }
 
+/**
+ * Selector for the company-page "viewing settings" modal overlay that LinkedIn
+ * may show when navigating to a company page.  The overlay intercepts pointer
+ * events and blocks action buttons (Follow, Unfollow, etc.).
+ */
+const COMPANY_PAGE_OVERLAY_MODAL_SELECTOR = [
+  '[data-test-modal-id="org-page-viewing-setting-modal"]',
+  '.artdeco-modal-overlay:has([data-test-modal-id="org-page-viewing-setting-modal"])'
+].join(", ");
+
+/**
+ * Dismisses the "org-page-viewing-setting-modal" overlay that LinkedIn
+ * occasionally shows when navigating to a company page.  The overlay blocks
+ * pointer events on action buttons (Follow, etc.).
+ *
+ * Tries a close / dismiss button first, then falls back to the Escape key.
+ * Returns silently if no overlay is present.
+ */
+async function dismissCompanyPageOverlayIfPresent(
+  page: Page,
+  selectorLocale: LinkedInSelectorLocale
+): Promise<void> {
+  const overlay = page.locator(COMPANY_PAGE_OVERLAY_MODAL_SELECTOR).first();
+  const isOverlayVisible = await overlay.isVisible().catch(() => false);
+
+  if (!isOverlayVisible) {
+    return;
+  }
+
+  const closeRegex = buildLinkedInSelectorPhraseRegex(
+    ["dismiss", "close"],
+    selectorLocale
+  );
+  const closeAriaSelector = buildLinkedInAriaLabelContainsSelector(
+    "button",
+    ["dismiss", "close"],
+    selectorLocale
+  );
+
+  const closeCandidates: VisibleLocatorCandidate[] = [
+    {
+      key: "overlay-close-role",
+      selectorHint: "overlay getByRole(button, close/dismiss)",
+      locatorFactory: () => overlay.getByRole("button", { name: closeRegex })
+    },
+    {
+      key: "overlay-close-aria",
+      selectorHint: `overlay ${closeAriaSelector}`,
+      locatorFactory: () => overlay.locator(closeAriaSelector)
+    }
+  ];
+
+  const closeButton = await findVisibleLocator(overlay, closeCandidates);
+
+  if (closeButton) {
+    await closeButton.locator.click({ timeout: 3_000 }).catch(() => undefined);
+  } else {
+    await page.keyboard.press("Escape").catch(() => undefined);
+  }
+
+  await overlay
+    .waitFor({ state: "hidden", timeout: 3_000 })
+    .catch(() => undefined);
+}
+
 type LocatorRoot = Page | Locator;
 
 interface VisibleLocatorCandidate {
@@ -477,6 +542,7 @@ async function executeFollowCompanyPage(
           });
           await waitForNetworkIdleBestEffort(page);
           await waitForCompanyPageReady(page);
+          await dismissCompanyPageOverlayIfPresent(page, runtime.selectorLocale);
 
           const followState = await readCompanyFollowState(
             page,
@@ -585,6 +651,7 @@ async function executeUnfollowCompanyPage(
           });
           await waitForNetworkIdleBestEffort(page);
           await waitForCompanyPageReady(page);
+          await dismissCompanyPageOverlayIfPresent(page, runtime.selectorLocale);
 
           const followState = await readCompanyFollowState(
             page,
@@ -751,6 +818,7 @@ export class LinkedInCompanyPagesService {
           await page.goto(aboutUrl, { waitUntil: "domcontentloaded" });
           await waitForNetworkIdleBestEffort(page);
           await waitForCompanyPageReady(page);
+          await dismissCompanyPageOverlayIfPresent(page, this.runtime.selectorLocale);
 
           const company = await extractCompanyPageData(page);
           const followState = await readCompanyFollowState(
