@@ -406,6 +406,7 @@ function isEditorUrl(value: string): boolean {
   return (
     normalizedValue.includes("/pulse/") ||
     normalizedValue.includes("/post/new/") ||
+    normalizedValue.includes("/article/new/") ||
     normalizedValue.includes("/drafts/")
   );
 }
@@ -678,6 +679,12 @@ function createEditorTitleCandidates(
     ["Titel", "Overskrift"]
   );
 
+  const broadTitleRegex = buildLocalizedRegex(
+    selectorLocale,
+    ["Title", "Headline", "Add a title", "Article title", "Enter title"],
+    ["Titel", "Overskrift", "Tilf\u00f8j en titel", "Artikeltitel", "Indtast titel"]
+  );
+
   return [
     {
       key: "editor-title-role-textbox",
@@ -685,47 +692,101 @@ function createEditorTitleCandidates(
       locatorFactory: (page) => page.getByRole("textbox", { name: titleRegex })
     },
     {
+      key: "editor-title-role-textbox-broad",
+      selectorHint: `textbox name ${broadTitleRegex}`,
+      locatorFactory: (page) =>
+        page.getByRole("textbox", { name: broadTitleRegex })
+    },
+    {
       key: "editor-title-placeholder-input",
       selectorHint: "input/textarea placeholder or aria-label title/headline",
       locatorFactory: (page) =>
         page.locator(
           [
-            "input[placeholder*='Title']",
-            "input[placeholder*='title']",
-            "input[placeholder*='Headline']",
-            "input[placeholder*='headline']",
-            "textarea[placeholder*='Title']",
-            "textarea[placeholder*='title']",
-            "textarea[placeholder*='Headline']",
-            "textarea[placeholder*='headline']",
-            "input[aria-label*='Title']",
-            "input[aria-label*='title']",
-            "input[aria-label*='Headline']",
-            "input[aria-label*='headline']",
-            "textarea[aria-label*='Title']",
-            "textarea[aria-label*='title']",
-            "textarea[aria-label*='Headline']",
-            "textarea[aria-label*='headline']"
+            "input[placeholder*='Title' i]",
+            "input[placeholder*='Headline' i]",
+            "textarea[placeholder*='Title' i]",
+            "textarea[placeholder*='Headline' i]",
+            "input[aria-label*='Title' i]",
+            "input[aria-label*='Headline' i]",
+            "textarea[aria-label*='Title' i]",
+            "textarea[aria-label*='Headline' i]"
           ].join(", ")
         )
     },
     {
       key: "editor-title-contenteditable",
-      selectorHint: "contenteditable title/headline",
+      selectorHint: "contenteditable title/headline h1-h3 or attributed",
       locatorFactory: (page) =>
         page.locator(
           [
             "h1[contenteditable='true']",
-            "[contenteditable='true'][data-placeholder*='Title']",
-            "[contenteditable='true'][data-placeholder*='title']",
-            "[contenteditable='true'][data-placeholder*='Headline']",
-            "[contenteditable='true'][data-placeholder*='headline']",
-            "[contenteditable='true'][aria-label*='Title']",
-            "[contenteditable='true'][aria-label*='title']",
-            "[contenteditable='true'][aria-label*='Headline']",
-            "[contenteditable='true'][aria-label*='headline']"
+            "h2[contenteditable='true']",
+            "h3[contenteditable='true']",
+            "h1[contenteditable='plaintext-only']",
+            "h2[contenteditable='plaintext-only']",
+            "[contenteditable='true'][data-placeholder*='Title' i]",
+            "[contenteditable='true'][data-placeholder*='Headline' i]",
+            "[contenteditable='true'][aria-label*='Title' i]",
+            "[contenteditable='true'][aria-label*='Headline' i]",
+            "[contenteditable='plaintext-only'][data-placeholder*='Title' i]",
+            "[contenteditable='plaintext-only'][data-placeholder*='Headline' i]",
+            "[contenteditable='plaintext-only'][aria-label*='Title' i]",
+            "[contenteditable='plaintext-only'][aria-label*='Headline' i]"
           ].join(", ")
         )
+    },
+    {
+      key: "editor-title-prosemirror-heading",
+      selectorHint: "ProseMirror/Tiptap heading contenteditable",
+      locatorFactory: (page) =>
+        page.locator(
+          [
+            ".ProseMirror h1",
+            ".ProseMirror h2",
+            ".ProseMirror[role='textbox'] h1",
+            ".tiptap h1",
+            ".tiptap h2",
+            ".ql-editor h1",
+            ".ql-editor h2"
+          ].join(", ")
+        )
+    },
+    {
+      key: "editor-title-labeled-container",
+      selectorHint: "element with title class/testid in editor context",
+      locatorFactory: (page) =>
+        page.locator(
+          [
+            "[data-testid*='title' i][contenteditable]",
+            "[data-testid*='title' i] [contenteditable]",
+            "[class*='article-title' i][contenteditable]",
+            "[class*='article-title' i] [contenteditable]",
+            "[class*='editor-title' i][contenteditable]",
+            "[class*='editor-title' i] [contenteditable]",
+            "[class*='articleTitle' i][contenteditable]",
+            "[class*='articleTitle' i] [contenteditable]",
+            "[class*='editorTitle' i][contenteditable]",
+            "[class*='editorTitle' i] [contenteditable]"
+          ].join(", ")
+        )
+    },
+    {
+      key: "editor-title-first-ce-in-main",
+      selectorHint: "first contenteditable element in main/article area",
+      locatorFactory: (page) =>
+        page
+          .locator(
+            [
+              "main [contenteditable='true']",
+              "main [contenteditable='plaintext-only']",
+              "article [contenteditable='true']",
+              "article [contenteditable='plaintext-only']",
+              "[role='main'] [contenteditable='true']",
+              "[role='main'] [contenteditable='plaintext-only']"
+            ].join(", ")
+          )
+          .first()
     }
   ];
 }
@@ -739,6 +800,19 @@ function createEditorBodyCandidates(
     ["Skriv her", "Fortæl din historie", "Brødtekst", "Indhold"]
   );
 
+  const broadBodyRegex = buildLocalizedRegex(
+    selectorLocale,
+    [
+      "Write here", "Tell your story", "Body", "Content",
+      "Start writing", "Write your article", "Article body",
+      "Add content", "Type here", "Enter text"
+    ],
+    [
+      "Skriv her", "Fortæl din historie", "Brødtekst", "Indhold",
+      "Begynd at skrive", "Skriv din artikel", "Tilføj indhold"
+    ]
+  );
+
   return [
     {
       key: "editor-body-role-textbox",
@@ -746,33 +820,75 @@ function createEditorBodyCandidates(
       locatorFactory: (page) => page.getByRole("textbox", { name: bodyRegex })
     },
     {
+      key: "editor-body-role-textbox-broad",
+      selectorHint: `textbox name ${broadBodyRegex}`,
+      locatorFactory: (page) =>
+        page.getByRole("textbox", { name: broadBodyRegex })
+    },
+    {
       key: "editor-body-contenteditable-prompt",
       selectorHint: "contenteditable body prompt",
       locatorFactory: (page) =>
         page.locator(
           [
-            "[contenteditable='true'][data-placeholder*='Write']",
-            "[contenteditable='true'][data-placeholder*='write']",
-            "[contenteditable='true'][data-placeholder*='story']",
-            "[contenteditable='true'][data-placeholder*='Story']",
-            "[contenteditable='true'][data-placeholder*='Body']",
-            "[contenteditable='true'][data-placeholder*='body']",
-            "[contenteditable='true'][data-placeholder*='Content']",
-            "[contenteditable='true'][data-placeholder*='content']",
-            "[contenteditable='true'][aria-label*='Write']",
-            "[contenteditable='true'][aria-label*='write']",
-            "[contenteditable='true'][aria-label*='Body']",
-            "[contenteditable='true'][aria-label*='body']",
-            "[contenteditable='true'][aria-label*='Content']",
-            "[contenteditable='true'][aria-label*='content']"
+            "[contenteditable='true'][data-placeholder*='Write' i]",
+            "[contenteditable='true'][data-placeholder*='story' i]",
+            "[contenteditable='true'][data-placeholder*='Body' i]",
+            "[contenteditable='true'][data-placeholder*='Content' i]",
+            "[contenteditable='true'][data-placeholder*='article' i]",
+            "[contenteditable='true'][aria-label*='Write' i]",
+            "[contenteditable='true'][aria-label*='Body' i]",
+            "[contenteditable='true'][aria-label*='Content' i]",
+            "[contenteditable='true'][aria-label*='article' i]",
+            "[contenteditable='true'][aria-label*='editor' i]",
+            "[contenteditable='plaintext-only'][data-placeholder*='Write' i]",
+            "[contenteditable='plaintext-only'][data-placeholder*='Body' i]",
+            "[contenteditable='plaintext-only'][data-placeholder*='Content' i]",
+            "[contenteditable='plaintext-only'][aria-label*='Write' i]",
+            "[contenteditable='plaintext-only'][aria-label*='Body' i]",
+            "[contenteditable='plaintext-only'][aria-label*='Content' i]"
+          ].join(", ")
+        )
+    },
+    {
+      key: "editor-body-prosemirror",
+      selectorHint: "ProseMirror/Tiptap/Quill body editor",
+      locatorFactory: (page) =>
+        page.locator(
+          [
+            ".ProseMirror[contenteditable='true']",
+            ".ProseMirror[contenteditable='plaintext-only']",
+            ".tiptap[contenteditable='true']",
+            ".ql-editor[contenteditable='true']",
+            "[data-test-ql-editor-contenteditable='true']",
+            "[class*='editor-body' i][contenteditable]",
+            "[class*='editorBody' i][contenteditable]",
+            "[class*='article-body' i][contenteditable]",
+            "[class*='articleBody' i][contenteditable]",
+            "[class*='editor-body' i] [contenteditable]",
+            "[class*='article-body' i] [contenteditable]"
           ].join(", ")
         )
     },
     {
       key: "editor-body-last-contenteditable",
-      selectorHint: "last contenteditable element",
+      selectorHint: "last contenteditable element in main area",
       locatorFactory: (page) =>
-        page.locator("[role='textbox'][contenteditable='true'], [contenteditable='true']").last()
+        page
+          .locator(
+            [
+              "main [role='textbox'][contenteditable='true']",
+              "main [contenteditable='true']",
+              "main [contenteditable='plaintext-only']",
+              "article [role='textbox'][contenteditable='true']",
+              "article [contenteditable='true']",
+              "[role='main'] [contenteditable='true']",
+              "[role='textbox'][contenteditable='true']",
+              "[contenteditable='true']",
+              "[contenteditable='plaintext-only']"
+            ].join(", ")
+          )
+          .last()
     }
   ];
 }
@@ -1035,15 +1151,35 @@ async function waitForPublishingEditor(
   await page.waitForLoadState("domcontentloaded").catch(() => undefined);
   await waitForNetworkIdleBestEffort(page, 10_000);
 
-  const title = await findVisibleLocatorOrThrow(
-    page,
-    createEditorTitleCandidates(selectorLocale),
-    "article_editor_title",
-    artifactPaths
-  );
+  // Allow extra time for SPA-rendered editors to hydrate.
+  await page.waitForTimeout(1_500).catch(() => undefined);
+
+  const titleCandidates = createEditorTitleCandidates(selectorLocale);
+  const bodyCandidates = createEditorBodyCandidates(selectorLocale);
+
+  let title: { locator: Locator; key: string };
+  try {
+    title = await findVisibleLocatorOrThrow(
+      page,
+      titleCandidates,
+      "article_editor_title",
+      artifactPaths
+    );
+  } catch {
+    // Retry once after a longer wait — the editor framework may still be
+    // initialising (common with ProseMirror / Tiptap lazy hydration).
+    await page.waitForTimeout(3_000).catch(() => undefined);
+    title = await findVisibleLocatorOrThrow(
+      page,
+      titleCandidates,
+      "article_editor_title",
+      artifactPaths
+    );
+  }
+
   const body = await findVisibleLocatorOrThrow(
     page,
-    createEditorBodyCandidates(selectorLocale),
+    bodyCandidates,
     "article_editor_body",
     artifactPaths
   );
