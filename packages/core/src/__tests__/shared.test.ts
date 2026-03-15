@@ -11,7 +11,8 @@ import {
   isAbsoluteUrl,
   isLocatorVisible,
   isRecord,
-  normalizeText
+  normalizeText,
+  stripTitleBadgeText,
 } from "../shared.js";
 
 describe("shared", () => {
@@ -103,11 +104,17 @@ describe("shared", () => {
       expect(dedupeRepeatedText("Title Title")).toBe("Title");
     });
 
-    it("removes prefix-repeated duplication with trailing text", () => {
+    it("removes prefix-repeated duplication and strips trailing badge text", () => {
       expect(dedupeRepeatedText("Developer Developer with verification"))
-        .toBe("Developer with verification");
+        .toBe("Developer");
       expect(dedupeRepeatedText("Frontend-udvikler Frontend-udvikler with verification"))
-        .toBe("Frontend-udvikler with verification");
+        .toBe("Frontend-udvikler");
+    });
+
+    it("removes prefix-repeated duplication without trailing text", () => {
+      expect(dedupeRepeatedText("Developer Developer")).toBe("Developer");
+      expect(dedupeRepeatedText("Software Engineer Software Engineer"))
+        .toBe("Software Engineer");
     });
 
     it("preserves text that is not doubled", () => {
@@ -229,28 +236,90 @@ describe("shared", () => {
       )).toBe("Executive Assistant to the Director at Signikant | Making AI workflows human-friendly");
     });
 
-    it("deduplicates prefix pattern with mixed casing", () => {
+    it("deduplicates prefix pattern with mixed casing and returns prefix", () => {
       expect(dedupeRepeatedText("Developer developer with verification"))
-        .toBe("developer with verification");
+        .toBe("Developer");
     });
   });
 
-    describe("dedupeRepeatedText — issue #480 regression cases", () => {
+  describe("dedupeRepeatedText — issue #480 regression cases", () => {
     it("deduplicates author headline", () => {
       expect(dedupeRepeatedText(
         "Personal Assistant to Director at SignikantPersonal Assistant to Director at Signikant"
       )).toBe("Personal Assistant to Director at Signikant");
     });
 
-    it("deduplicates job title with prefix pattern", () => {
+    it("deduplicates job title with prefix pattern — returns clean title without badge", () => {
       expect(dedupeRepeatedText("Developer Developer with verification"))
-        .toBe("Developer with verification");
+        .toBe("Developer");
     });
 
     it("deduplicates job title with exact halves", () => {
       expect(dedupeRepeatedText(
         "Software Engineer (C++) - RemoteSoftware Engineer (C++) - Remote"
       )).toBe("Software Engineer (C++) - Remote");
+    });
+  });
+
+  describe("dedupeRepeatedText — issue #533 job search title bugs", () => {
+    it("strips duplicate prefix and trailing badge from multi-word title", () => {
+      expect(dedupeRepeatedText(
+        "Administrativ medarbejder Administrativ medarbejder with verification"
+      )).toBe("Administrativ medarbejder");
+    });
+
+    it("strips duplicate prefix and trailing badge from single-word title", () => {
+      expect(dedupeRepeatedText("Manager Manager Promoted"))
+        .toBe("Manager");
+    });
+
+    it("handles title with no duplication", () => {
+      expect(dedupeRepeatedText("Executive Assistant"))
+        .toBe("Executive Assistant");
+    });
+
+    it("handles title with exact duplication and no badge", () => {
+      expect(dedupeRepeatedText("Data Scientist Data Scientist"))
+        .toBe("Data Scientist");
+    });
+  });
+
+  describe("stripTitleBadgeText", () => {
+    it("returns empty string for falsy input", () => {
+      expect(stripTitleBadgeText(null)).toBe("");
+      expect(stripTitleBadgeText(undefined)).toBe("");
+      expect(stripTitleBadgeText("")).toBe("");
+    });
+
+    it("strips 'with verification' suffix", () => {
+      expect(stripTitleBadgeText("Developer with verification")).toBe("Developer");
+      expect(stripTitleBadgeText("Software Engineer with verification")).toBe("Software Engineer");
+    });
+
+    it("strips 'Promoted' suffix", () => {
+      expect(stripTitleBadgeText("Data Scientist Promoted")).toBe("Data Scientist");
+    });
+
+    it("strips 'Actively recruiting' suffix", () => {
+      expect(stripTitleBadgeText("Engineer Actively recruiting")).toBe("Engineer");
+    });
+
+    it("strips 'Easy Apply' suffix", () => {
+      expect(stripTitleBadgeText("Manager Easy Apply")).toBe("Manager");
+    });
+
+    it("strips dot-separated 'Promoted' suffix", () => {
+      expect(stripTitleBadgeText("Analyst · Promoted")).toBe("Analyst");
+    });
+
+    it("preserves clean titles", () => {
+      expect(stripTitleBadgeText("Software Engineer")).toBe("Software Engineer");
+      expect(stripTitleBadgeText("Senior Full Stack Developer")).toBe("Senior Full Stack Developer");
+    });
+
+    it("is case-insensitive", () => {
+      expect(stripTitleBadgeText("Developer WITH VERIFICATION")).toBe("Developer");
+      expect(stripTitleBadgeText("Engineer PROMOTED")).toBe("Engineer");
     });
   });
 
