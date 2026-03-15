@@ -56,6 +56,21 @@ export function createFeedPostComposerTriggerCandidates(
         page
           .locator("button, [role='button'], a")
           .filter({ hasText: startPostTextRegex })
+    },
+    {
+      key: "sharebox-preload-any-link",
+      selectorHint: "a[href*='sharebox'], button[data-control-name*='share']",
+      locatorFactory: (page) =>
+        page.locator("a[href*='sharebox'], button[data-control-name*='share']")
+    },
+    {
+      key: "feed-share-trigger-class",
+      selectorHint:
+        ".share-creation-state__trigger, .feed-shared-update-v2__share-trigger",
+      locatorFactory: (page) =>
+        page.locator(
+          ".share-creation-state__trigger, .feed-shared-update-v2__share-trigger"
+        )
     }
   ];
 }

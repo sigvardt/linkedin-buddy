@@ -331,6 +331,23 @@ function buildCompanyActionButtonCandidates(input: {
       key: `${input.candidateKeyPrefix}-page-aria`,
       selectorHint: ariaSelector,
       locatorFactory: (pageRoot) => pageRoot.locator(ariaSelector)
+    },
+    {
+      key: `${input.candidateKeyPrefix}-data-control`,
+      selectorHint: "button[data-control-name*='follow']",
+      locatorFactory: (pageRoot) =>
+        pageRoot.locator("button[data-control-name*='follow']")
+    },
+    {
+      key: `${input.candidateKeyPrefix}-main-button-text`,
+      selectorHint: "main button hasText follow",
+      locatorFactory: (pageRoot) => {
+        const textRegex = buildLinkedInSelectorPhraseRegex(
+          input.selectorKeys,
+          input.selectorLocale
+        );
+        return pageRoot.locator("main button").filter({ hasText: textRegex });
+      }
     }
   ];
 }
@@ -530,6 +547,10 @@ async function executeFollowCompanyPage(
           target_company: targetCompany,
           company_url: companyUrl
         },
+        dismissOverlays: {
+          selectorLocale: runtime.selectorLocale,
+          logger: runtime.logger
+        },
         mapError: (error) =>
           asLinkedInBuddyError(
             error,
@@ -638,6 +659,10 @@ async function executeUnfollowCompanyPage(
         errorDetails: {
           target_company: targetCompany,
           company_url: companyUrl
+        },
+        dismissOverlays: {
+          selectorLocale: runtime.selectorLocale,
+          logger: runtime.logger
         },
         mapError: (error) =>
           asLinkedInBuddyError(

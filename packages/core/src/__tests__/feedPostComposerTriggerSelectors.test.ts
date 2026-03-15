@@ -33,10 +33,10 @@ describe("LINKEDIN_FEED_POST_COMPOSER_LINK_SELECTOR", () => {
 });
 
 describe("createFeedPostComposerTriggerCandidates", () => {
-  it("returns the expected three candidates with required fields", () => {
+  it("returns the expected five candidates with required fields", () => {
     const candidates = createFeedPostComposerTriggerCandidates("en");
 
-    expect(candidates).toHaveLength(3);
+    expect(candidates).toHaveLength(5);
 
     for (const candidate of candidates) {
       expect(candidate).toHaveProperty("key");
@@ -70,7 +70,7 @@ describe("createFeedPostComposerTriggerCandidates", () => {
     const englishCandidates = createFeedPostComposerTriggerCandidates("en");
     const danishCandidates = createFeedPostComposerTriggerCandidates("da");
 
-    expect(danishCandidates).toHaveLength(3);
+    expect(danishCandidates).toHaveLength(5);
     expect(danishCandidates[0]?.selectorHint).toContain("Start et opslag");
     expect(danishCandidates[0]?.selectorHint).not.toBe(
       englishCandidates[0]?.selectorHint

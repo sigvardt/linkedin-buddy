@@ -12,6 +12,7 @@ import type { LinkedInAuthService } from "./auth/session.js";
 import { LinkedInBuddyError, asLinkedInBuddyError } from "./errors.js";
 import { scrollLinkedInPageToTop } from "./linkedinPage.js";
 import type { JsonEventLogger } from "./logging.js";
+import { dismissLinkedInOverlaysIfPresent } from "./overlayDismissal.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
 import {
@@ -1827,6 +1828,22 @@ function createComposerRootCandidates(
       locatorFactory: (page) =>
         page.locator(".share-box__open, .share-creation-state"),
     },
+    {
+      key: "dialog-with-contenteditable-div",
+      selectorHint: "[role='dialog']:has(div[contenteditable='true'])",
+      locatorFactory: (page) =>
+        page.locator("[role='dialog']").filter({
+          has: page.locator("div[contenteditable='true']"),
+        }),
+    },
+    {
+      key: "dialog-with-ql-editor",
+      selectorHint: "[role='dialog']:has(.ql-editor)",
+      locatorFactory: (page) =>
+        page.locator("[role='dialog']").filter({
+          has: page.locator(".ql-editor"),
+        }),
+    },
   ];
 }
 
@@ -1872,6 +1889,15 @@ function createComposerInputCandidates(
       key: "textarea",
       selectorHint: "textarea",
       locatorFactory: (root) => root.locator("textarea"),
+    },
+    {
+      key: "contenteditable-paragraph",
+      selectorHint:
+        "p[contenteditable='true'], div[contenteditable='true'][role='textbox']",
+      locatorFactory: (root) =>
+        root.locator(
+          "p[contenteditable='true'], div[contenteditable='true'][role='textbox']",
+        ),
     },
   ];
 }
@@ -2049,6 +2075,24 @@ function createPublishButtonCandidates(
       key: "submit-button",
       selectorHint: "button[type='submit']",
       locatorFactory: (root) => root.locator("button[type='submit']"),
+    },
+    {
+      key: "publish-footer-primary",
+      selectorHint:
+        "footer button.artdeco-button--primary, .share-box-footer button.artdeco-button--primary",
+      locatorFactory: (root) =>
+        root.locator(
+          "footer button.artdeco-button--primary, .share-box-footer button.artdeco-button--primary",
+        ),
+    },
+    {
+      key: "publish-primary-action-class",
+      selectorHint:
+        ".share-actions__primary-action, button.share-actions__primary-action",
+      locatorFactory: (root) =>
+        root.locator(
+          ".share-actions__primary-action, button.share-actions__primary-action",
+        ),
     },
   ];
 }
@@ -2508,9 +2552,11 @@ async function openPostComposer(
   page: Page,
   selectorLocale: LinkedInSelectorLocale,
   artifactPaths: string[],
+  logger?: Pick<JsonEventLogger, "log">,
 ): Promise<{ composerRoot: Locator; triggerKey: string; rootKey: string }> {
   await page.goto(LINKEDIN_FEED_URL, { waitUntil: "domcontentloaded" });
   await waitForNetworkIdleBestEffort(page);
+  await dismissLinkedInOverlaysIfPresent(page, selectorLocale, logger);
   const triggerCandidates =
     createFeedPostComposerTriggerCandidates(selectorLocale);
   const visibleTrigger = await findOptionalVisibleLocator(
@@ -4469,6 +4515,7 @@ class CreatePostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRu
             page,
             runtime.selectorLocale,
             artifactPaths,
+            runtime.logger,
           );
           const visibilityKey = await setPostVisibility(
             page,
@@ -4741,6 +4788,7 @@ class CreateMediaPostActionExecutor implements ActionExecutor<LinkedInPostsExecu
             page,
             runtime.selectorLocale,
             artifactPaths,
+            runtime.logger,
           );
           const visibilityKey = await setPostVisibility(
             page,
@@ -5043,6 +5091,7 @@ class CreatePollPostActionExecutor implements ActionExecutor<LinkedInPostsExecut
             page,
             runtime.selectorLocale,
             artifactPaths,
+            runtime.logger,
           );
           const visibilityKey = await setPostVisibility(
             page,
@@ -5321,6 +5370,11 @@ class EditPostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRunt
 
           await page.goto(postUrl, { waitUntil: "domcontentloaded" });
           await waitForNetworkIdleBestEffort(page);
+          await dismissLinkedInOverlaysIfPresent(
+            page,
+            runtime.selectorLocale,
+            runtime.logger,
+          );
 
           const targetPost = await findTargetPostLocator(
             page,
@@ -5581,6 +5635,11 @@ class DeletePostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRu
 
           await page.goto(postUrl, { waitUntil: "domcontentloaded" });
           await waitForNetworkIdleBestEffort(page);
+          await dismissLinkedInOverlaysIfPresent(
+            page,
+            runtime.selectorLocale,
+            runtime.logger,
+          );
 
           const targetPost = await findTargetPostLocator(
             page,

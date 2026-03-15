@@ -232,7 +232,7 @@ export class LinkedInSearchService {
           await waitForNetworkIdleBestEffort(page);
           await page
             .locator(
-              "main a[href*='/in/'], div[data-view-name='search-entity-result-universal-template'], .reusable-search__result-container"
+              "main a[href*='/in/'], div[data-view-name='search-entity-result-universal-template'], .reusable-search__result-container, li.reusable-search__result-container, [data-view-name='search-entity-result-universal-template'], ul.reusable-search__entity-result-list > li, .search-results-container li"
             )
             .first()
             .waitFor({ state: "visible", timeout: 10_000 })
@@ -366,7 +366,7 @@ export class LinkedInSearchService {
 
             const legacyCards = Array.from(
               globalThis.document.querySelectorAll(
-                "div[data-view-name='search-entity-result-universal-template'], .reusable-search__result-container, li.reusable-search__result-container"
+                "div[data-view-name='search-entity-result-universal-template'], .reusable-search__result-container, li.reusable-search__result-container, [data-view-name='search-entity-result-universal-template'], ul.reusable-search__entity-result-list > li, .search-results-container li"
               )
             ).slice(0, lim);
 
@@ -374,6 +374,8 @@ export class LinkedInSearchService {
               name: pickText(card, [
                 "a[href*='/in/'] span[dir='ltr'] > span[aria-hidden='true']",
                 ".entity-result__title-text a span[aria-hidden='true']",
+                ".entity-result__title-text a span[dir='ltr']",
+                "a[data-field='entity_result_universal_name'] span",
                 ".app-aware-link span[dir='ltr']"
               ]),
               headline:
@@ -466,7 +468,7 @@ export class LinkedInSearchService {
           await waitForNetworkIdleBestEffort(page);
           await page
             .locator(
-              "main a[href*='/company/'], div[data-view-name='search-entity-result-universal-template'], .reusable-search__result-container"
+              "main a[href*='/company/'], div[data-view-name='search-entity-result-universal-template'], .reusable-search__result-container, li.reusable-search__result-container, [data-view-name='search-entity-result-universal-template'], ul.reusable-search__entity-result-list > li, .search-results-container li"
             )
             .first()
             .waitFor({ state: "visible", timeout: 10_000 })
@@ -581,7 +583,7 @@ export class LinkedInSearchService {
 
             const legacyCards = Array.from(
               globalThis.document.querySelectorAll(
-                "div[data-view-name='search-entity-result-universal-template'], .reusable-search__result-container, li.reusable-search__result-container"
+                "div[data-view-name='search-entity-result-universal-template'], .reusable-search__result-container, li.reusable-search__result-container, [data-view-name='search-entity-result-universal-template'], ul.reusable-search__entity-result-list > li, .search-results-container li"
               )
             ).slice(0, lim);
 
@@ -682,7 +684,9 @@ export class LinkedInSearchService {
           });
           await waitForNetworkIdleBestEffort(page);
           await page
-            .locator(".job-card-container, .base-search-card")
+            .locator(
+              ".job-card-container, .base-search-card, .job-card-list__entity-lockup, .jobs-search-results-list__list-item"
+            )
             .first()
             .waitFor({ state: "visible", timeout: 10_000 })
             .catch(() => undefined);
@@ -734,7 +738,7 @@ export class LinkedInSearchService {
 
             const cards = Array.from(
               globalThis.document.querySelectorAll(
-                ".job-card-container, .base-search-card"
+                ".job-card-container, .base-search-card, .job-card-list__entity-lockup, .jobs-search-results-list__list-item"
               )
             ).slice(0, lim);
 

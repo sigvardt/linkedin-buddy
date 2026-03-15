@@ -6,7 +6,9 @@ import type { ArtifactHelpers } from "./artifacts.js";
 import type { ConfirmFailureArtifactConfig } from "./config.js";
 import { LinkedInBuddyError } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
+import type { LinkedInSelectorLocale } from "./selectorLocale.js";
 import type { ActionExecutorResult } from "./twoPhaseCommit.js";
+import { dismissLinkedInOverlaysIfPresent } from "./overlayDismissal.js";
 
 interface TraceArchiveResizeResult {
   originalBytes: number;
@@ -37,6 +39,8 @@ export interface ExecuteConfirmActionWithArtifactsInput<
   metadata?: Record<string, unknown> | undefined;
   errorDetails?: Record<string, unknown> | undefined;
   beforeExecute?: (() => void) | undefined;
+  /** When provided, known LinkedIn overlays are dismissed before execution. */
+  dismissOverlays?: { selectorLocale: LinkedInSelectorLocale; logger?: Pick<JsonEventLogger, "log"> } | undefined;
   mapError: (error: unknown) => LinkedInBuddyError;
   execute: () => Promise<ActionExecutorResult>;
 }
@@ -459,6 +463,15 @@ export async function executeConfirmActionWithArtifacts<
   }
 
   try {
+    // Dismiss any blocking LinkedIn overlays before the write operation.
+    if (input.dismissOverlays) {
+      await dismissLinkedInOverlaysIfPresent(
+        input.page,
+        input.dismissOverlays.selectorLocale,
+        input.dismissOverlays.logger
+      );
+    }
+
     input.beforeExecute?.();
     const result = await input.execute();
     const artifactPaths = [...result.artifacts];
