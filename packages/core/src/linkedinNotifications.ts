@@ -249,16 +249,49 @@ function buildLocalizedRegex(
   );
 }
 
+function legacyHashNotificationFingerprint(input: {
+  link: string;
+  message: string;
+}): string {
+  const fingerprint = [input.link, input.message]
+    .map((segment) => normalizeText(segment))
+    .join("\u001f");
+  return `notif_${createHash("sha256").update(fingerprint).digest("hex").slice(0, 16)}`;
+}
+
+function normalizeNotificationLink(value: string): string {
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return "";
+  }
+
+  try {
+    const parsed = new URL(normalized);
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString().replace(/\/+$/u, "");
+  } catch {
+    return normalized;
+  }
+}
+
+function stripVolatileContent(value: string): string {
+  return normalizeText(value).replace(/\d+/gu, "").replace(/\s+/gu, " ").trim();
+}
+
 function hashNotificationFingerprint(input: {
   link: string;
   message: string;
 }): string {
   // Deliberately excludes timestamp — LinkedIn renders relative times ("8m",
   // "4h") that shift between page loads, making hashes that include them
-  // unstable across CLI invocations.
-  const fingerprint = [input.link, input.message]
-    .map((segment) => normalizeText(segment))
-    .join("\u001f");
+  // unstable across CLI invocations. Link normalization and volatile numeric
+  // content stripping keep IDs stable across separate page loads.
+  const normalizedLink =
+    normalizeNotificationLink(input.link) || normalizeText(input.link);
+  const fingerprint = [normalizedLink, stripVolatileContent(input.message)].join(
+    "\u001f",
+  );
   return `notif_${createHash("sha256").update(fingerprint).digest("hex").slice(0, 16)}`;
 }
 
@@ -804,18 +837,51 @@ async function findNotificationCard(
     page,
     readNotificationScanLimit(searchLimit),
   );
-  const snapshot = snapshots.find((candidate) => candidate.id === normalizedId);
-  if (!snapshot) {
-    return null;
+
+  function toMatch(snapshot: NotificationSnapshot): NotificationCardMatch {
+    return {
+      snapshot,
+      locator: page.locator(NOTIFICATION_CARD_SELECTOR).nth(snapshot.card_index),
+    };
   }
 
-  const locator = page
-    .locator(NOTIFICATION_CARD_SELECTOR)
-    .nth(snapshot.card_index);
-  return {
-    snapshot,
-    locator,
-  };
+  // Strategy 1: Exact ID match (native LinkedIn IDs or current-algorithm hashes).
+  const exactMatch = snapshots.find((candidate) => candidate.id === normalizedId);
+  if (exactMatch) {
+    return toMatch(exactMatch);
+  }
+
+  // Strategy 2: Legacy hash match — IDs generated before link-normalization fix
+  // used raw link URLs with query parameters. Try the old algorithm against
+  // each notification on the current page.
+  if (normalizedId.startsWith("notif_")) {
+    const legacyMatch = snapshots.find((candidate) => {
+      const legacy = legacyHashNotificationFingerprint({
+        link: candidate.link,
+        message: candidate.message,
+      });
+      return legacy === normalizedId;
+    });
+    if (legacyMatch) {
+      return toMatch(legacyMatch);
+    }
+  }
+
+  // Strategy 3: URL-as-identifier — the caller passed a notification link URL
+  // directly instead of a hash ID. Match by normalized link.
+  if (/^https?:\/\//iu.test(normalizedId)) {
+    const targetLink = normalizeNotificationLink(normalizedId);
+    if (targetLink) {
+      const linkMatch = snapshots.find(
+        (candidate) => normalizeNotificationLink(candidate.link) === targetLink,
+      );
+      if (linkMatch) {
+        return toMatch(linkMatch);
+      }
+    }
+  }
+
+  return null;
 }
 
 async function waitForNotificationState(
@@ -1866,3 +1932,12 @@ export class LinkedInNotificationsService {
     });
   }
 }
+
+/** @internal Exported for testing — normalizes notification link URLs for stable comparison. */
+export { normalizeNotificationLink as _normalizeNotificationLink };
+/** @internal Exported for testing — strips volatile numeric content from messages. */
+export { stripVolatileContent as _stripVolatileContent };
+/** @internal Exported for testing — current fingerprint algorithm. */
+export { hashNotificationFingerprint as _hashNotificationFingerprint };
+/** @internal Exported for testing — pre-normalization fingerprint algorithm. */
+export { legacyHashNotificationFingerprint as _legacyHashNotificationFingerprint };
