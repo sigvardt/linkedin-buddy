@@ -35,10 +35,13 @@ const CHECKPOINT_FORM_SELECTOR = "form[action*='checkpoint']";
 const AUTH_NAV_SELECTOR = "nav.global-nav";
 const AUTH_PROFILE_MENU_SELECTOR = "[data-control-name='nav.settings_view_profile']";
 const PROFILE_HEADING_SELECTORS = [
+  "h1.text-heading-xlarge",
+  "h1[class*='text-heading']",
   "main h1",
   ".pv-text-details__left-panel h1",
   "h1"
 ];
+
 const LOGIN_WALL_SELECTOR = [
   "[data-test-id='sign-in-form']",
   ".authwall",
@@ -173,6 +176,7 @@ async function readFirstNonEmptyTextWithTimeout(
     try {
       const rawText = await page
         .locator(selector)
+        .filter({ hasText: /\S/ })
         .first()
         .textContent({ timeout: timeoutMs });
       const normalized = normalizeWhitespace(rawText);
@@ -180,7 +184,7 @@ async function readFirstNonEmptyTextWithTimeout(
         return normalized;
       }
     } catch {
-      // Best effort — element missing or timeout exceeded.
+      // Best effort — element missing, has no text, or timeout exceeded.
     }
   }
 

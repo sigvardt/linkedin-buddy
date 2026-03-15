@@ -122,9 +122,11 @@ function createMockPage(options: {
         return options.getAttribute?.(selector, name, currentUrl) ?? null;
       });
       const first = vi.fn();
+      const filter = vi.fn();
       const mockLocator = {
         click,
         count,
+        filter,
         first,
         getAttribute,
         isVisible,
@@ -132,6 +134,7 @@ function createMockPage(options: {
         waitFor,
       } as unknown as Locator;
       first.mockReturnValue(mockLocator);
+      filter.mockReturnValue(mockLocator);
       return mockLocator;
     }),
     context: vi.fn(() => ({
