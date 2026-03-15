@@ -899,7 +899,7 @@ describe("linkedin live validation CLI integration", () => {
         expect.arrayContaining([
           expect.objectContaining({
             matched_candidate_key: "feed-data-urn",
-            matched_candidate_rank: 1,
+            matched_candidate_rank: 3,
             selector_key: "feed_surface",
             status: "pass"
           }),

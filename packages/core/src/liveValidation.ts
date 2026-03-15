@@ -278,9 +278,11 @@ const READ_ONLY_OPERATION_REGISTRY: ReadonlyArray<ReadOnlyOperationDefinition> =
         key: "feed_surface",
         description: "Feed content surface",
         candidates: [
+          { key: "feed-main-testid", selector: "[data-testid='mainFeed']" },
+          { key: "feed-lazy-column", selector: "[data-component-type='LazyColumn']" },
           { key: "feed-update-card", selector: "div.feed-shared-update-v2" },
           { key: "feed-data-urn", selector: "main [data-urn]" },
-          { key: "feed-main", selector: "main[role='main']" }
+          { key: "feed-main", selector: "main" }
         ]
       },
       {
