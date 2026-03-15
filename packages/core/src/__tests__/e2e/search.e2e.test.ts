@@ -68,4 +68,68 @@ describe("Search E2E", () => {
       expect(typeof first.company).toBe("string");
     }
   });
+
+  it("search posts artificial intelligence returns results with text", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
+    const runtime = e2e.runtime();
+    const result = await runtime.search.search({
+      query: "artificial intelligence",
+      category: "posts",
+      limit: 5
+    });
+
+    if (result.category !== "posts") {
+      throw new Error("Expected posts search result.");
+    }
+
+    expect(result.results.length).toBeGreaterThan(0);
+    const [first] = result.results;
+    expect(first).toBeDefined();
+    if (first) {
+      expect(first.text.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("search groups marketing returns results with name", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
+    const runtime = e2e.runtime();
+    const result = await runtime.search.search({
+      query: "marketing",
+      category: "groups",
+      limit: 5
+    });
+
+    if (result.category !== "groups") {
+      throw new Error("Expected groups search result.");
+    }
+
+    expect(result.results.length).toBeGreaterThan(0);
+    const [first] = result.results;
+    expect(first).toBeDefined();
+    if (first) {
+      expect(first.name.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("search events technology returns results with title", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
+    const runtime = e2e.runtime();
+    const result = await runtime.search.search({
+      query: "technology",
+      category: "events",
+      limit: 5
+    });
+
+    if (result.category !== "events") {
+      throw new Error("Expected events search result.");
+    }
+
+    expect(result.results.length).toBeGreaterThan(0);
+    const [first] = result.results;
+    expect(first).toBeDefined();
+    if (first) {
+      expect(first.title.length).toBeGreaterThan(0);
+    }
+  });
+
 });

@@ -1,7 +1,11 @@
+import { mkdirSync } from "node:fs";
+import path from "node:path";
 import type { LinkedInAuthService } from "./auth/session.js";
+import type { ArtifactHelpers } from "./artifacts.js";
 import { LinkedInBuddyError, asLinkedInBuddyError } from "./errors.js";
 import type { JsonEventLogger } from "./logging.js";
 import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
+import type { Page } from "playwright-core";
 import type { ProfileManager } from "./profileManager.js";
 import { normalizeText, dedupeRepeatedText, cleanPostedAt, getOrCreatePage } from "./shared.js";
 
@@ -139,16 +143,148 @@ export interface LinkedInSearchRuntime {
   cdpUrl?: string | undefined;
   profileManager: ProfileManager;
   logger: JsonEventLogger;
+  artifacts: ArtifactHelpers;
 }
 
-function readSearchLimit(value: number | undefined): number {
+export function readSearchLimit(value: number | undefined): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return 10;
   }
   return Math.max(1, Math.floor(value));
 }
 
-function extractVanityName(url: string): string | null {
+/**
+ * Container selectors tried in order when waiting for search results to appear.
+ * When ALL selectors in a category fail, the result set is likely unparseable
+ * rather than genuinely empty.
+ */
+const SEARCH_CONTAINER_SELECTORS: Record<SearchCategory, string[]> = {
+  people: [
+    "main a[href*='/in/']",
+    "div[data-view-name='search-entity-result-universal-template']",
+    ".reusable-search__result-container",
+    "li.reusable-search__result-container",
+    "ul.reusable-search__entity-result-list > li",
+    ".search-results-container li"
+  ],
+  companies: [
+    "main a[href*='/company/']",
+    "div[data-view-name='search-entity-result-universal-template']",
+    ".reusable-search__result-container",
+    "li.reusable-search__result-container",
+    "ul.reusable-search__entity-result-list > li",
+    ".search-results-container li"
+  ],
+  jobs: [
+    "[data-entity-urn^='urn:li:jobPosting']",
+    ".job-card-container",
+    ".base-search-card",
+    ".job-card-list__entity-lockup",
+    ".jobs-search-results-list__list-item"
+  ],
+  posts: [
+    "div[data-urn*='activity']",
+    "div.feed-shared-update-v2[data-urn]",
+    ".occludable-update[data-urn]",
+    "article[data-urn]"
+  ],
+  groups: [
+    "main a[href*='/groups/']",
+    "div[data-view-name='search-entity-result-universal-template']"
+  ],
+  events: [
+    "main a[href*='/events/']",
+    "div[data-view-name='search-entity-result-universal-template']"
+  ]
+};
+
+/**
+ * Waits for at least one search-result container selector to appear.
+ * Unlike the feed surface helper, this does NOT throw on all-selector-miss
+ * because "no results" is a legitimate search outcome. Instead it logs a
+ * warning so that downstream diagnostics can capture a screenshot.
+ *
+ * @returns `true` if a container was found, `false` if all selectors timed out.
+ */
+async function waitForSearchResults(
+  page: Page,
+  category: SearchCategory,
+  logger: JsonEventLogger
+): Promise<boolean> {
+  const selectors = SEARCH_CONTAINER_SELECTORS[category];
+  for (const selector of selectors) {
+    try {
+      await page
+        .locator(selector)
+        .first()
+        .waitFor({ state: "visible", timeout: 10_000 });
+      return true;
+    } catch {
+      // Try next selector.
+    }
+  }
+
+  logger.log("warn", `search.${category}.selector_miss`, {
+    attempted_selectors: selectors,
+    current_url: page.url()
+  });
+  return false;
+}
+
+/**
+ * Captures a diagnostic screenshot and logs context when a search returns
+ * zero usable results.  Distinguishes two failure modes:
+ *
+ *  1. `rawCount > 0 && filteredCount === 0`  — containers were found but the
+ *     field-level selectors failed to extract any usable data.  This is the
+ *     "selectors may be outdated" case.
+ *
+ *  2. `rawCount === 0` — no containers matched at all.  Either the query
+ *     genuinely has no results or the container selectors themselves are stale.
+ */
+async function diagnoseEmptyResults(
+  page: Page,
+  category: SearchCategory,
+  query: string,
+  rawCount: number,
+  filteredCount: number,
+  runtime: LinkedInSearchRuntime
+): Promise<void> {
+  const screenshotRelPath = `search/${category}-${Date.now()}.png`;
+  try {
+    const absolutePath = runtime.artifacts.resolve(screenshotRelPath);
+    mkdirSync(path.dirname(absolutePath), { recursive: true });
+    await page.screenshot({ path: absolutePath, fullPage: true });
+    runtime.artifacts.registerArtifact(screenshotRelPath, "image/png", {
+      category,
+      query,
+      raw_count: rawCount,
+      filtered_count: filteredCount
+    });
+  } catch {
+    // Screenshot capture must never block the search response.
+  }
+
+  if (rawCount > 0 && filteredCount === 0) {
+    runtime.logger.log("warn", `search.${category}.unparseable`, {
+      query,
+      raw_count: rawCount,
+      message:
+        "Search page loaded and containers were found, but no results " +
+        "could be parsed — selectors may be outdated.",
+      screenshot: screenshotRelPath
+    });
+  } else {
+    runtime.logger.log("info", `search.${category}.empty`, {
+      query,
+      message:
+        "Search returned 0 results. A screenshot was captured for verification.",
+      screenshot: screenshotRelPath
+    });
+  }
+}
+
+export function extractVanityName(url: string): string | null {
   const match = /\/in\/([^/?#]+)/.exec(url);
   const vanityNameRaw = match?.[1];
   if (!vanityNameRaw) {
@@ -220,8 +356,13 @@ export class LinkedInSearchService {
       profileName
     });
 
+    this.runtime.logger.log("info", "search.people.start", {
+      query,
+      limit
+    });
+
     try {
-      const snapshots = await this.runtime.profileManager.runWithPersistentContext(
+      const results = await this.runtime.profileManager.runWithPersistentContext(
         profileName,
         { headless: true },
         async (context) => {
@@ -230,15 +371,9 @@ export class LinkedInSearchService {
             waitUntil: "domcontentloaded"
           });
           await waitForNetworkIdleBestEffort(page);
-          await page
-            .locator(
-              "[data-chameleon-result-urn]:not([data-chameleon-result-urn*='headless']), main a[href*='/in/'], div[data-view-name='search-entity-result-universal-template'], .reusable-search__result-container, li.reusable-search__result-container, [data-view-name='search-entity-result-universal-template'], ul.reusable-search__entity-result-list > li, .search-results-container li"
-            )
-            .first()
-            .waitFor({ state: "visible", timeout: 10_000 })
-            .catch(() => undefined);
+          await waitForSearchResults(page, "people", this.runtime.logger);
 
-          return page.evaluate((lim: number) => {
+          const snapshots = await page.evaluate((lim: number) => {
             const normalize = (value: string | null | undefined): string =>
               (value ?? "").replace(/\s+/g, " ").trim();
             const origin = globalThis.window.location.origin;
@@ -433,10 +568,8 @@ export class LinkedInSearchService {
               ])
             }));
           }, limit);
-        }
-      );
 
-      const results = snapshots
+          const processed = snapshots
         .map((snapshot) => {
           const profileUrl = normalizeText(snapshot.profile_url);
           return {
@@ -453,6 +586,27 @@ export class LinkedInSearchService {
         })
         .filter((result) => result.name.length > 0 || result.profile_url.length > 0)
         .slice(0, limit);
+
+          if (processed.length === 0) {
+            await diagnoseEmptyResults(
+              page,
+              "people",
+              query,
+              snapshots.length,
+              processed.length,
+              this.runtime
+            );
+          }
+
+          return processed;
+        }
+      );
+
+
+      this.runtime.logger.log("info", "search.people.complete", {
+        query,
+        result_count: results.length
+      });
 
       return {
         query,
@@ -489,8 +643,13 @@ export class LinkedInSearchService {
       profileName
     });
 
+    this.runtime.logger.log("info", "search.companies.start", {
+      query,
+      limit
+    });
+
     try {
-      const snapshots = await this.runtime.profileManager.runWithPersistentContext(
+      const results = await this.runtime.profileManager.runWithPersistentContext(
         profileName,
         { headless: true },
         async (context) => {
@@ -499,15 +658,9 @@ export class LinkedInSearchService {
             waitUntil: "domcontentloaded"
           });
           await waitForNetworkIdleBestEffort(page);
-          await page
-            .locator(
-              "[data-chameleon-result-urn]:not([data-chameleon-result-urn*='headless']), main a[href*='/company/'], div[data-view-name='search-entity-result-universal-template'], .reusable-search__result-container, li.reusable-search__result-container, [data-view-name='search-entity-result-universal-template'], ul.reusable-search__entity-result-list > li, .search-results-container li"
-            )
-            .first()
-            .waitFor({ state: "visible", timeout: 10_000 })
-            .catch(() => undefined);
+          await waitForSearchResults(page, "companies", this.runtime.logger);
 
-          return page.evaluate((lim: number) => {
+          const snapshots = await page.evaluate((lim: number) => {
             const normalize = (value: string | null | undefined): string =>
               (value ?? "").replace(/\s+/g, " ").trim();
             const origin = globalThis.window.location.origin;
@@ -697,10 +850,8 @@ export class LinkedInSearchService {
               };
             });
           }, limit);
-        }
-      );
 
-      const results = snapshots
+          const processed = snapshots
         .map((snapshot) => ({
           name: normalizeText(snapshot.name),
           industry: normalizeText(snapshot.industry),
@@ -711,6 +862,27 @@ export class LinkedInSearchService {
         }))
         .filter((result) => result.name.length > 0 || result.company_url.length > 0)
         .slice(0, limit);
+
+          if (processed.length === 0) {
+            await diagnoseEmptyResults(
+              page,
+              "companies",
+              query,
+              snapshots.length,
+              processed.length,
+              this.runtime
+            );
+          }
+
+          return processed;
+        }
+      );
+
+
+      this.runtime.logger.log("info", "search.companies.complete", {
+        query,
+        result_count: results.length
+      });
 
       return {
         query,
@@ -745,8 +917,13 @@ export class LinkedInSearchService {
       profileName
     });
 
+    this.runtime.logger.log("info", "search.jobs.start", {
+      query,
+      limit
+    });
+
     try {
-      const snapshots = await this.runtime.profileManager.runWithPersistentContext(
+      const results = await this.runtime.profileManager.runWithPersistentContext(
         profileName,
         { headless: true },
         async (context) => {
@@ -755,15 +932,9 @@ export class LinkedInSearchService {
             waitUntil: "domcontentloaded"
           });
           await waitForNetworkIdleBestEffort(page);
-          await page
-            .locator(
-              "[data-chameleon-result-urn]:not([data-chameleon-result-urn*='headless']), [data-entity-urn^='urn:li:jobPosting'], .job-card-container, .base-search-card, .job-card-list__entity-lockup, .jobs-search-results-list__list-item"
-            )
-            .first()
-            .waitFor({ state: "visible", timeout: 10_000 })
-            .catch(() => undefined);
+          await waitForSearchResults(page, "jobs", this.runtime.logger);
 
-          return page.evaluate((lim: number) => {
+          const snapshots = await page.evaluate((lim: number) => {
             const normalize = (value: string | null | undefined): string =>
               (value ?? "").replace(/\s+/g, " ").trim();
             const origin = globalThis.window.location.origin;
@@ -857,10 +1028,8 @@ export class LinkedInSearchService {
               };
             });
           }, limit);
-        }
-      );
 
-      const results = snapshots
+          const processed = snapshots
         .map((snapshot) => ({
           title: dedupeRepeatedText(snapshot.title),
           company: normalizeText(snapshot.company),
@@ -872,6 +1041,27 @@ export class LinkedInSearchService {
         }))
         .filter((result) => result.title.length > 0 || result.job_url.length > 0)
         .slice(0, limit);
+
+          if (processed.length === 0) {
+            await diagnoseEmptyResults(
+              page,
+              "jobs",
+              query,
+              snapshots.length,
+              processed.length,
+              this.runtime
+            );
+          }
+
+          return processed;
+        }
+      );
+
+
+      this.runtime.logger.log("info", "search.jobs.complete", {
+        query,
+        result_count: results.length
+      });
 
       return {
         query,
@@ -906,8 +1096,13 @@ export class LinkedInSearchService {
       profileName
     });
 
+    this.runtime.logger.log("info", "search.posts.start", {
+      query,
+      limit
+    });
+
     try {
-      const snapshots = await this.runtime.profileManager.runWithPersistentContext(
+      const results = await this.runtime.profileManager.runWithPersistentContext(
         profileName,
         { headless: true },
         async (context) => {
@@ -916,15 +1111,9 @@ export class LinkedInSearchService {
             waitUntil: "domcontentloaded"
           });
           await waitForNetworkIdleBestEffort(page);
-          await page
-            .locator(
-              "[data-chameleon-result-urn]:not([data-chameleon-result-urn*='headless']), div[data-urn*='activity'], article, .occludable-update, .feed-shared-update-v2"
-            )
-            .first()
-            .waitFor({ state: "visible", timeout: 10_000 })
-            .catch(() => undefined);
+          await waitForSearchResults(page, "posts", this.runtime.logger);
 
-          return page.evaluate((lim: number) => {
+          const snapshots = await page.evaluate((lim: number) => {
             const normalize = (value: string | null | undefined): string =>
               (value ?? "").replace(/\s+/g, " ").trim();
             const origin = globalThis.window.location.origin;
@@ -1042,10 +1231,8 @@ export class LinkedInSearchService {
 
             return legacyPostContainers.map(mapPost);
           }, limit);
-        }
-      );
 
-      const results = snapshots
+          const processed = snapshots
         .map((snapshot) => ({
           author: dedupeRepeatedText(snapshot.author),
           author_headline: dedupeRepeatedText(snapshot.author_headline),
@@ -1057,6 +1244,27 @@ export class LinkedInSearchService {
         }))
         .filter((result) => result.text.length > 0 || result.post_url.length > 0)
         .slice(0, limit);
+
+          if (processed.length === 0) {
+            await diagnoseEmptyResults(
+              page,
+              "posts",
+              query,
+              snapshots.length,
+              processed.length,
+              this.runtime
+            );
+          }
+
+          return processed;
+        }
+      );
+
+
+      this.runtime.logger.log("info", "search.posts.complete", {
+        query,
+        result_count: results.length
+      });
 
       return {
         query,
@@ -1091,8 +1299,13 @@ export class LinkedInSearchService {
       profileName
     });
 
+    this.runtime.logger.log("info", "search.groups.start", {
+      query,
+      limit
+    });
+
     try {
-      const snapshots = await this.runtime.profileManager.runWithPersistentContext(
+      const results = await this.runtime.profileManager.runWithPersistentContext(
         profileName,
         { headless: true },
         async (context) => {
@@ -1101,13 +1314,9 @@ export class LinkedInSearchService {
             waitUntil: "domcontentloaded"
           });
           await waitForNetworkIdleBestEffort(page);
-          await page
-            .locator("[data-chameleon-result-urn]:not([data-chameleon-result-urn*='headless']), main a[href*='/groups/'], div[data-view-name='search-entity-result-universal-template']")
-            .first()
-            .waitFor({ state: "visible", timeout: 10_000 })
-            .catch(() => undefined);
+          await waitForSearchResults(page, "groups", this.runtime.logger);
 
-          return page.evaluate((lim: number) => {
+          const snapshots = await page.evaluate((lim: number) => {
             const normalize = (value: string | null | undefined): string =>
               (value ?? "").replace(/\s+/g, " ").trim();
             const origin = globalThis.window.location.origin;
@@ -1269,10 +1478,8 @@ export class LinkedInSearchService {
               };
             });
           }, limit);
-        }
-      );
 
-      const results = snapshots
+          const processed = snapshots
         .map((snapshot) => ({
           name: normalizeText(snapshot.name),
           group_type: normalizeText(snapshot.group_type),
@@ -1282,6 +1489,27 @@ export class LinkedInSearchService {
         }))
         .filter((result) => result.name.length > 0 || result.group_url.length > 0)
         .slice(0, limit);
+
+          if (processed.length === 0) {
+            await diagnoseEmptyResults(
+              page,
+              "groups",
+              query,
+              snapshots.length,
+              processed.length,
+              this.runtime
+            );
+          }
+
+          return processed;
+        }
+      );
+
+
+      this.runtime.logger.log("info", "search.groups.complete", {
+        query,
+        result_count: results.length
+      });
 
       return {
         query,
@@ -1316,8 +1544,13 @@ export class LinkedInSearchService {
       profileName
     });
 
+    this.runtime.logger.log("info", "search.events.start", {
+      query,
+      limit
+    });
+
     try {
-      const snapshots = await this.runtime.profileManager.runWithPersistentContext(
+      const results = await this.runtime.profileManager.runWithPersistentContext(
         profileName,
         { headless: true },
         async (context) => {
@@ -1326,13 +1559,9 @@ export class LinkedInSearchService {
             waitUntil: "domcontentloaded"
           });
           await waitForNetworkIdleBestEffort(page);
-          await page
-            .locator("[data-chameleon-result-urn]:not([data-chameleon-result-urn*='headless']), main a[href*='/events/'], div[data-view-name='search-entity-result-universal-template']")
-            .first()
-            .waitFor({ state: "visible", timeout: 10_000 })
-            .catch(() => undefined);
+          await waitForSearchResults(page, "events", this.runtime.logger);
 
-          return page.evaluate((lim: number) => {
+          const snapshots = await page.evaluate((lim: number) => {
             const normalize = (value: string | null | undefined): string =>
               (value ?? "").replace(/\s+/g, " ").trim();
             const origin = globalThis.window.location.origin;
@@ -1521,10 +1750,8 @@ export class LinkedInSearchService {
               };
             });
           }, limit);
-        }
-      );
 
-      const results = snapshots
+          const processed = snapshots
         .map((snapshot) => ({
           title: normalizeText(snapshot.title),
           date: normalizeText(snapshot.date),
@@ -1536,6 +1763,27 @@ export class LinkedInSearchService {
         }))
         .filter((result) => result.title.length > 0 || result.event_url.length > 0)
         .slice(0, limit);
+
+          if (processed.length === 0) {
+            await diagnoseEmptyResults(
+              page,
+              "events",
+              query,
+              snapshots.length,
+              processed.length,
+              this.runtime
+            );
+          }
+
+          return processed;
+        }
+      );
+
+
+      this.runtime.logger.log("info", "search.events.complete", {
+        query,
+        result_count: results.length
+      });
 
       return {
         query,
