@@ -2595,54 +2595,106 @@ async function openProfileMessageComposer(input: {
   });
   await waitForNetworkIdleBestEffort(input.page);
 
-  const messageRegex = buildLinkedInSelectorPhraseRegex(
+  const messageExactRegex = buildLinkedInSelectorPhraseRegex(
     "message",
     input.runtime.selectorLocale,
     { exact: true }
   );
-  const messageRegexHint = formatLinkedInSelectorRegexHint(
+  const messageExactRegexHint = formatLinkedInSelectorRegexHint(
     "message",
     input.runtime.selectorLocale,
     { exact: true }
+  );
+  const messageTextRegex = buildLinkedInSelectorPhraseRegex(
+    "message",
+    input.runtime.selectorLocale
+  );
+  const messageTextRegexHint = formatLinkedInSelectorRegexHint(
+    "message",
+    input.runtime.selectorLocale
+  );
+  const messageAriaSelector = buildLinkedInAriaLabelContainsSelector(
+    "button",
+    "message",
+    input.runtime.selectorLocale
   );
   const topCardRoot = input.page.locator("main .pv-top-card, .pv-top-card, main").first();
-  const messageButton = await findVisibleLocatorOrThrow(
-    input.page,
-    [
+  const directCandidates: SelectorCandidate[] = [
+    {
+      key: "topcard-role-message-exact",
+      selectorHint: `topCard.getByRole(button, ${messageExactRegexHint})`,
+      locatorFactory: () => topCardRoot.getByRole("button", { name: messageExactRegex })
+    },
+    {
+      key: "topcard-aria-message",
+      selectorHint: `topCard ${messageAriaSelector}`,
+      locatorFactory: () => topCardRoot.locator(messageAriaSelector)
+    },
+    {
+      key: "topcard-text-message",
+      selectorHint: `topCard button hasText ${messageTextRegexHint}`,
+      locatorFactory: () => topCardRoot.locator("button").filter({ hasText: messageTextRegex })
+    },
+    {
+      key: "page-role-message-exact",
+      selectorHint: `page.getByRole(button, ${messageExactRegexHint})`,
+      locatorFactory: (targetPage) =>
+        targetPage.getByRole("button", { name: messageExactRegex })
+    },
+    {
+      key: "page-aria-message",
+      selectorHint: messageAriaSelector,
+      locatorFactory: (targetPage) => targetPage.locator(messageAriaSelector)
+    },
+    {
+      key: "profile-message-data-control",
+      selectorHint: "button[data-control-name*='message']",
+      locatorFactory: (targetPage) =>
+        targetPage.locator("button[data-control-name*='message']")
+    },
+    {
+      key: "profile-message-main-text",
+      selectorHint: `main button hasText ${messageTextRegexHint}`,
+      locatorFactory: (targetPage) =>
+        targetPage
+          .locator("main button, .pv-top-card button")
+          .filter({ hasText: messageTextRegex })
+    }
+  ];
+
+  let messageButton = await findVisibleLocator(input.page, directCandidates);
+
+  if (!messageButton) {
+    messageButton = await findProfileMessageViaMoreMenu(
+      input.page,
+      topCardRoot,
+      input.runtime.selectorLocale
+    );
+  }
+
+  if (!messageButton) {
+    throw new LinkedInBuddyError(
+      "UI_CHANGED_SELECTOR_FAILED",
+      `Could not locate LinkedIn selector group "profile_message_button".`,
       {
-        key: "topcard-role-button-message",
-        selectorHint: `topCard.getByRole(button, ${messageRegexHint})`,
-        locatorFactory: () => topCardRoot.getByRole("button", { name: messageRegex })
-      },
-      {
-        key: "topcard-button-text-message",
-        selectorHint: `topCard button hasText ${messageRegexHint}`,
-        locatorFactory: () => topCardRoot.locator("button").filter({ hasText: messageRegex })
-      },
-      {
-        key: "page-role-button-message",
-        selectorHint: `page.getByRole(button, ${messageRegexHint})`,
-        locatorFactory: (targetPage) =>
-          targetPage.getByRole("button", { name: messageRegex })
-      },
-      {
-        key: "profile-message-data-control",
-        selectorHint: "button[data-control-name*='message']",
-        locatorFactory: (targetPage) =>
-          targetPage.locator("button[data-control-name*='message']")
-      },
-      {
-        key: "profile-message-main-button-text",
-        selectorHint: "main button hasText message",
-        locatorFactory: (targetPage) =>
-          targetPage
-            .locator("main button, .pv-top-card button")
-            .filter({ hasText: messageRegex })
+        selector_key: "profile_message_button",
+        current_url: input.page.url(),
+        attempted_selectors: directCandidates.map((candidate) => candidate.selectorHint),
+        artifact_paths: input.artifactPaths
       }
-    ],
-    "profile_message_button",
-    input.artifactPaths
+    );
+  }
+
+  input.runtime.logger.log(
+    "debug",
+    "linkedin.inbox.open_profile_message_composer.selector_match",
+    {
+      recipient_url: input.recipient.profile_url,
+      selector_key: messageButton.key,
+      url: input.page.url()
+    }
   );
+
   await messageButton.locator.click({ timeout: 5_000 });
   await input.page.waitForTimeout(600);
   await waitForNetworkIdleBestEffort(input.page);
@@ -2652,6 +2704,128 @@ async function openProfileMessageComposer(input: {
     "message_composer",
     input.artifactPaths
   );
+}
+
+/**
+ * Attempts to find the Message action inside the profile "More" dropdown menu.
+ * Some LinkedIn profile layouts place Message behind the "More" button instead
+ * of showing it directly in the top card action row.
+ */
+async function findProfileMessageViaMoreMenu(
+  page: Page,
+  topCardRoot: Locator,
+  selectorLocale: LinkedInSelectorLocale
+): Promise<{ locator: Locator; key: string } | null> {
+  const moreExactRegex = buildLinkedInSelectorPhraseRegex(
+    "more",
+    selectorLocale,
+    { exact: true }
+  );
+  const moreExactRegexHint = formatLinkedInSelectorRegexHint(
+    "more",
+    selectorLocale,
+    { exact: true }
+  );
+  const moreActionsAriaSelector = buildLinkedInAriaLabelContainsSelector(
+    "button",
+    "more_actions",
+    selectorLocale
+  );
+
+  const moreCandidates: SelectorCandidate[] = [
+    {
+      key: "topcard-more-role",
+      selectorHint: `topCard.getByRole(button, ${moreExactRegexHint})`,
+      locatorFactory: () =>
+        topCardRoot.getByRole("button", { name: moreExactRegex })
+    },
+    {
+      key: "topcard-more-aria",
+      selectorHint: `topCard ${moreActionsAriaSelector}`,
+      locatorFactory: () => topCardRoot.locator(moreActionsAriaSelector)
+    },
+    {
+      key: "page-more-role",
+      selectorHint: `page.getByRole(button, ${moreExactRegexHint})`,
+      locatorFactory: (targetPage) =>
+        targetPage.getByRole("button", { name: moreExactRegex })
+    },
+    {
+      key: "page-more-aria",
+      selectorHint: moreActionsAriaSelector,
+      locatorFactory: (targetPage) => targetPage.locator(moreActionsAriaSelector)
+    }
+  ];
+
+  const moreButton = await findVisibleLocator(page, moreCandidates);
+  if (!moreButton) {
+    return null;
+  }
+
+  await moreButton.locator.click({ timeout: 5_000 });
+  await page.waitForTimeout(400);
+
+  const messageMenuExactRegex = buildLinkedInSelectorPhraseRegex(
+    "message",
+    selectorLocale,
+    { exact: true }
+  );
+  const messageMenuExactRegexHint = formatLinkedInSelectorRegexHint(
+    "message",
+    selectorLocale,
+    { exact: true }
+  );
+  const messageMenuTextRegex = buildLinkedInSelectorPhraseRegex(
+    "message",
+    selectorLocale
+  );
+  const messageMenuTextRegexHint = formatLinkedInSelectorRegexHint(
+    "message",
+    selectorLocale
+  );
+
+  const menuCandidates: SelectorCandidate[] = [
+    {
+      key: "menu-message-roleitem",
+      selectorHint: `[role='menuitem'] hasText ${messageMenuExactRegexHint}`,
+      locatorFactory: (targetPage) =>
+        targetPage.getByRole("menuitem", { name: messageMenuExactRegex })
+    },
+    {
+      key: "menu-message-dropdown-button",
+      selectorHint: `.artdeco-dropdown__content-inner [role='button'] hasText ${messageMenuExactRegexHint}`,
+      locatorFactory: (targetPage) =>
+        targetPage
+          .locator(".artdeco-dropdown__content-inner [role='button']")
+          .filter({ hasText: messageMenuExactRegex })
+    },
+    {
+      key: "menu-message-li-text",
+      selectorHint: `.artdeco-dropdown__content-inner li hasText ${messageMenuTextRegexHint}`,
+      locatorFactory: (targetPage) =>
+        targetPage
+          .locator(".artdeco-dropdown__content-inner li")
+          .filter({ hasText: messageMenuTextRegex })
+    },
+    {
+      key: "menu-message-span-text",
+      selectorHint: `.artdeco-dropdown__content-inner span hasText ${messageMenuTextRegexHint}`,
+      locatorFactory: (targetPage) =>
+        targetPage
+          .locator(".artdeco-dropdown__content-inner span")
+          .filter({ hasText: messageMenuTextRegex })
+    }
+  ];
+
+  const menuMessage = await findVisibleLocator(page, menuCandidates);
+  if (!menuMessage) {
+    return null;
+  }
+
+  return {
+    locator: menuMessage.locator,
+    key: `${moreButton.key}:${menuMessage.key}`
+  };
 }
 
 async function openAddRecipientsFlow(input: {
