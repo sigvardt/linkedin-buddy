@@ -2,6 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
   DISMISS_NOTIFICATION_ACTION_TYPE,
   LINKEDIN_NOTIFICATION_PREFERENCE_CHANNELS,
+  _hashNotificationFingerprint as hashNotificationFingerprint,
+  _legacyHashNotificationFingerprint as legacyHashNotificationFingerprint,
+  _normalizeNotificationLink as normalizeNotificationLink,
+  _stripVolatileContent as stripVolatileContent,
   LinkedInNotificationsService,
   NOTIFICATION_LIST_MAX_LIMIT,
   NOTIFICATION_SCAN_MAX_LIMIT,
@@ -907,5 +911,175 @@ describe("LinkedInNotificationsService.prepareUpdatePreference", () => {
 
     const call = prepare.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(call).not.toHaveProperty("operatorNote");
+  });
+});
+
+describe("normalizeNotificationLink", () => {
+  it("strips query parameters", () => {
+    expect(
+      normalizeNotificationLink(
+        "https://www.linkedin.com/feed/update/urn:li:activity:123?utm_source=share",
+      ),
+    ).toBe("https://www.linkedin.com/feed/update/urn:li:activity:123");
+  });
+
+  it("strips fragments", () => {
+    expect(normalizeNotificationLink("https://www.linkedin.com/in/someone#section")).toBe(
+      "https://www.linkedin.com/in/someone",
+    );
+  });
+
+  it("strips trailing slashes", () => {
+    expect(normalizeNotificationLink("https://www.linkedin.com/notifications/")).toBe(
+      "https://www.linkedin.com/notifications",
+    );
+  });
+
+  it("strips query params and fragments together", () => {
+    expect(
+      normalizeNotificationLink(
+        "https://www.linkedin.com/feed/update/urn:li:activity:123?foo=bar#baz",
+      ),
+    ).toBe("https://www.linkedin.com/feed/update/urn:li:activity:123");
+  });
+
+  it("returns empty string for empty input", () => {
+    expect(normalizeNotificationLink("")).toBe("");
+  });
+
+  it("returns input for non-URL strings", () => {
+    expect(normalizeNotificationLink("not-a-url")).toBe("not-a-url");
+  });
+
+  it("handles null/undefined via normalizeText", () => {
+    expect(normalizeNotificationLink(undefined as unknown as string)).toBe("");
+    expect(normalizeNotificationLink(null as unknown as string)).toBe("");
+  });
+
+  it("normalizes whitespace before parsing", () => {
+    expect(normalizeNotificationLink("  https://www.linkedin.com/in/someone  ")).toBe(
+      "https://www.linkedin.com/in/someone",
+    );
+  });
+});
+
+describe("stripVolatileContent", () => {
+  it("strips digits from messages", () => {
+    expect(stripVolatileContent("Your post has reached 22 impressions")).toBe(
+      "Your post has reached impressions",
+    );
+  });
+
+  it("handles multiple numbers", () => {
+    expect(stripVolatileContent("5 people viewed your profile 3 times")).toBe(
+      "people viewed your profile times",
+    );
+  });
+
+  it("collapses resulting double spaces", () => {
+    const result = stripVolatileContent("Got 100 views");
+    expect(result).not.toContain("  ");
+  });
+
+  it("returns empty string for empty input", () => {
+    expect(stripVolatileContent("")).toBe("");
+  });
+
+  it("returns unchanged text with no numbers", () => {
+    expect(stripVolatileContent("Someone liked your post")).toBe(
+      "Someone liked your post",
+    );
+  });
+});
+
+describe("hashNotificationFingerprint", () => {
+  it("produces stable ID when link query params change", () => {
+    const id1 = hashNotificationFingerprint({
+      link: "https://www.linkedin.com/feed/update/urn:li:activity:123?utm=a",
+      message: "Someone liked your post",
+    });
+    const id2 = hashNotificationFingerprint({
+      link: "https://www.linkedin.com/feed/update/urn:li:activity:123?utm=b",
+      message: "Someone liked your post",
+    });
+    expect(id1).toBe(id2);
+  });
+
+  it("produces stable ID when message counters change", () => {
+    const id1 = hashNotificationFingerprint({
+      link: "https://www.linkedin.com/analytics/post-summary/123",
+      message: "Your post has reached 22 impressions",
+    });
+    const id2 = hashNotificationFingerprint({
+      link: "https://www.linkedin.com/analytics/post-summary/123",
+      message: "Your post has reached 47 impressions",
+    });
+    expect(id1).toBe(id2);
+  });
+
+  it("differentiates notifications with different links", () => {
+    const id1 = hashNotificationFingerprint({
+      link: "https://www.linkedin.com/feed/update/urn:li:activity:111",
+      message: "Someone liked your post",
+    });
+    const id2 = hashNotificationFingerprint({
+      link: "https://www.linkedin.com/feed/update/urn:li:activity:222",
+      message: "Someone liked your post",
+    });
+    expect(id1).not.toBe(id2);
+  });
+
+  it("differentiates notifications with same link but different message structure", () => {
+    const id1 = hashNotificationFingerprint({
+      link: "https://www.linkedin.com/feed/update/urn:li:activity:123",
+      message: "Alice liked your post",
+    });
+    const id2 = hashNotificationFingerprint({
+      link: "https://www.linkedin.com/feed/update/urn:li:activity:123",
+      message: "Your post has reached some impressions",
+    });
+    expect(id1).not.toBe(id2);
+  });
+
+  it("starts with notif_ prefix", () => {
+    const id = hashNotificationFingerprint({
+      link: "https://www.linkedin.com/feed/update/urn:li:activity:123",
+      message: "Test",
+    });
+    expect(id).toMatch(/^notif_[0-9a-f]{16}$/);
+  });
+});
+
+describe("legacyHashNotificationFingerprint", () => {
+  it("uses raw link without normalization", () => {
+    const id1 = legacyHashNotificationFingerprint({
+      link: "https://www.linkedin.com/feed/update/urn:li:activity:123?utm=a",
+      message: "Test message",
+    });
+    const id2 = legacyHashNotificationFingerprint({
+      link: "https://www.linkedin.com/feed/update/urn:li:activity:123?utm=b",
+      message: "Test message",
+    });
+    expect(id1).not.toBe(id2);
+  });
+
+  it("uses raw message without stripping digits", () => {
+    const id1 = legacyHashNotificationFingerprint({
+      link: "https://www.linkedin.com/analytics/post-summary/123",
+      message: "Your post has reached 22 impressions",
+    });
+    const id2 = legacyHashNotificationFingerprint({
+      link: "https://www.linkedin.com/analytics/post-summary/123",
+      message: "Your post has reached 47 impressions",
+    });
+    expect(id1).not.toBe(id2);
+  });
+
+  it("starts with notif_ prefix", () => {
+    const id = legacyHashNotificationFingerprint({
+      link: "https://www.linkedin.com/test",
+      message: "Test",
+    });
+    expect(id).toMatch(/^notif_[0-9a-f]{16}$/);
   });
 });
