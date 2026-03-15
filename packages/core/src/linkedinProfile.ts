@@ -517,6 +517,7 @@ export const PROFILE_GLOBAL_ADD_SECTION_CONTROL = {
   roles: ["button", "link"]
 } as const;
 
+
 export const PROFILE_TOP_CARD_HEADING_SELECTORS = [
   "h1.text-heading-xlarge",
   "h1[class*='text-heading']",
@@ -561,12 +562,25 @@ const PROFILE_ACTION_LABELS = {
   }
 } as const;
 
+/**
+ * Labels for the "Add to profile" wizard that LinkedIn shows on empty profiles.
+ * The wizard offers "Resume-assisted setup" and "Manual setup" — we click through
+ * "Manual setup" to reach the section category dialog.
+ */
+const PROFILE_ADD_SECTION_WIZARD_LABELS = {
+  manualSetup: {
+    en: ["Manual setup", "Manual", "Set up manually"],
+    da: ["Manuel opsætning", "Opsæt manuelt", "Manuel"]
+  }
+} as const;
+
 const PROFILE_INTRO_ACTION_LABELS = {
   edit: {
     en: ["Edit intro", "Edit profile intro", "Edit introduction"],
     da: ["Rediger intro", "Rediger profilintro", "Rediger introduktion"]
   }
 } as const;
+
 
 const PROFILE_INTRO_EDIT_HREF_PATTERNS = ["/edit/intro/", "/edit/forms/intro/"] as const;
 
@@ -602,6 +616,7 @@ const PROFILE_FEATURED_LABELS = {
     ]
   }
 } as const;
+
 
 const PROFILE_MEDIA_LABELS = {
   photo: {
@@ -665,6 +680,7 @@ const PROFILE_MEDIA_LABELS = {
   }
 } as const;
 
+
 export const PROFILE_MEDIA_STRUCTURAL_SELECTORS = {
   photo: [
     "button.profile-photo-edit__edit-btn",
@@ -679,7 +695,21 @@ export const PROFILE_MEDIA_STRUCTURAL_SELECTORS = {
   ]
 } as const;
 
+
 const PROFILE_DIALOG_ROOT_SELECTOR = "dialog[data-testid='dialog'], [role='dialog'], dialog";
+
+/**
+ * Broader selector that catches standard dialogs AND artdeco overlay modals.
+ * Used only in the wizard-aware path (openGlobalAddSectionDialog) — other
+ * dialog flows continue using the narrower PROFILE_DIALOG_ROOT_SELECTOR.
+ */
+const PROFILE_DIALOG_OR_OVERLAY_SELECTOR = [
+  PROFILE_DIALOG_ROOT_SELECTOR,
+  ".artdeco-modal-overlay--is-top-layer",
+  ".artdeco-modal",
+  "[aria-modal='true']"
+].join(", ");
+
 
 export const PROFILE_INTRO_EDITOR_SURFACE_SELECTORS = {
   topCardHeadings: PROFILE_TOP_CARD_HEADING_SELECTORS,
@@ -692,6 +722,7 @@ export const PROFILE_INTRO_EDITOR_SURFACE_SELECTORS = {
     "body"
   ]
 } as const;
+
 
 const PROFILE_SKILL_LABELS = {
   section: {
@@ -716,6 +747,7 @@ const PROFILE_SKILL_LABELS = {
     da: ["Anerkend", "Støt", "Anbefal"]
   }
 } as const;
+
 
 const PROFILE_RECOMMENDATION_LABELS = {
   request: {
@@ -759,6 +791,7 @@ const PROFILE_RECOMMENDATION_LABELS = {
     da: ["Anbefaling", "Skriv en anbefaling"]
   }
 } as const;
+
 
 const PROFILE_SECTION_LABELS: Record<
   LinkedInProfileSectionType,
@@ -3560,6 +3593,40 @@ async function resolveLatestVisibleDialog(page: Page): Promise<Locator | null> {
   return null;
 }
 
+
+async function resolveLatestVisibleDialogOrOverlay(page: Page): Promise<Locator | null> {
+  const surfaces = page.locator(PROFILE_DIALOG_OR_OVERLAY_SELECTOR);
+  const surfaceCount = await surfaces.count().catch(() => 0);
+
+  for (let index = surfaceCount - 1; index >= 0; index -= 1) {
+    const candidate = surfaces.nth(index);
+    if (await candidate.isVisible().catch(() => false)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+async function waitForVisibleDialogOrOverlay(page: Page): Promise<Locator> {
+  const deadline = Date.now() + 10_000;
+
+  while (Date.now() < deadline) {
+    const resolved = await resolveLatestVisibleDialogOrOverlay(page);
+    if (resolved) {
+      return resolved;
+    }
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 200);
+    });
+  }
+
+  // Final attempt — throw if nothing visible.
+  const fallback = page.locator(PROFILE_DIALOG_OR_OVERLAY_SELECTOR).last();
+  await fallback.waitFor({ state: "visible", timeout: 1_000 });
+  return fallback;
+}
+
 async function resolveVisibleProfileIntroEditPage(page: Page): Promise<Locator | null> {
   if (!isProfileIntroEditHref(page.url())) {
     return null;
@@ -3682,6 +3749,49 @@ async function clickLocatorAndWaitForOverlay(
 ): Promise<Locator> {
   await locator.first().click();
   return waitForVisibleOverlay(page);
+}
+
+
+/**
+ * Detects and dismisses the "Add to profile" wizard that LinkedIn shows on
+ * empty profiles. The wizard offers "Resume-assisted setup" and "Manual setup".
+ * If the wizard is present, clicks "Manual setup" to proceed to the section
+ * category dialog.
+ *
+ * @returns `true` if the wizard was detected and dismissed, `false` otherwise.
+ */
+async function dismissAddToProfileWizardIfPresent(
+  page: Page,
+  surface: Locator,
+  selectorLocale: LinkedInSelectorLocale
+): Promise<boolean> {
+  const wizardLabels = getLocalizedLabels(
+    PROFILE_ADD_SECTION_WIZARD_LABELS.manualSetup,
+    selectorLocale
+  );
+  const candidates: LocatorCandidate[] = [
+    ...createActionCandidates(surface, wizardLabels, "wizard-manual-setup"),
+    {
+      key: "wizard-manual-setup-generic",
+      locator: surface
+        .locator("button, a, [role='button'], [role='link']")
+        .filter({ hasText: buildTextRegex(wizardLabels) })
+    },
+    {
+      key: "wizard-manual-setup-page-fallback",
+      locator: page
+        .locator("button, a, [role='button'], [role='link']")
+        .filter({ hasText: buildTextRegex(wizardLabels) })
+    }
+  ];
+  const resolved = await findFirstVisibleLocator(candidates);
+  if (!resolved) {
+    return false;
+  }
+
+  await resolved.locator.first().click();
+  await page.waitForTimeout(500);
+  return true;
 }
 
 export async function navigateToOwnProfile(page: Page): Promise<void> {
@@ -4256,9 +4366,22 @@ async function openGlobalAddSectionDialog(
     );
   }
 
-  const dialog = await clickLocatorAndWaitForDialog(page, resolved.locator);
-  await waitForAddSectionDialogContent(dialog);
-  return dialog;
+  await resolved.locator.first().click();
+
+  // On empty profiles, LinkedIn may show an "Add to profile" wizard
+  // with "Resume-assisted setup" / "Manual setup" options instead of
+  // the section category dialog. Use a broader selector to detect either.
+  let surface = await waitForVisibleDialogOrOverlay(page);
+
+  // If the wizard appeared, dismiss it by clicking "Manual setup",
+  // then wait for the actual section category dialog.
+  if (await dismissAddToProfileWizardIfPresent(page, surface, selectorLocale)) {
+    surface = await waitForVisibleDialogOrOverlay(page);
+  }
+
+  await waitForAddSectionDialogContent(surface);
+  return surface;
+
 }
 
 async function openSectionCreateDialog(
