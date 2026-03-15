@@ -532,3 +532,232 @@ describe("CLI activity seed workflow", () => {
     expect(stderrChunks.join("")).toContain("No running keepalive daemon was detected");
   });
 });
+
+describe("CLI activity seed --continue-on-error", () => {
+  let tempDir = "";
+  let consoleLogSpy: ReturnType<typeof vi.spyOn>;
+  let stderrWriteSpy: ReturnType<typeof vi.spyOn>;
+  let stdoutChunks: string[] = [];
+  let stderrChunks: string[] = [];
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(path.join(os.tmpdir(), "linkedin-cli-activity-seed-coe-"));
+    process.env.LINKEDIN_BUDDY_HOME = path.join(tempDir, "buddy-home");
+    process.exitCode = undefined;
+    stdoutChunks = [];
+    stderrChunks = [];
+    vi.resetAllMocks();
+
+    activitySeedCliMocks.createCoreRuntime.mockImplementation(() => ({
+      runId: "run-activity-seed-coe",
+      evasion: {
+        level: "moderate",
+        diagnosticsEnabled: false
+      },
+      logger: {
+        log: activitySeedCliMocks.loggerLog
+      },
+      connections: {
+        listPendingInvitations: activitySeedCliMocks.listPendingInvitations,
+        listConnections: activitySeedCliMocks.listConnections,
+        prepareAcceptInvitation: activitySeedCliMocks.prepareAcceptInvitation,
+        prepareSendInvitation: activitySeedCliMocks.prepareSendInvitation
+      },
+      posts: {
+        prepareCreate: activitySeedCliMocks.prepareCreate,
+        prepareCreateMedia: activitySeedCliMocks.prepareCreateMedia
+      },
+      feed: {
+        viewFeed: activitySeedCliMocks.viewFeed,
+        viewPost: activitySeedCliMocks.viewPost,
+        prepareLikePost: activitySeedCliMocks.prepareLikePost,
+        prepareCommentOnPost: activitySeedCliMocks.prepareCommentOnPost
+      },
+      jobs: {
+        searchJobs: activitySeedCliMocks.jobsSearchJobs,
+        viewJob: activitySeedCliMocks.jobsViewJob
+      },
+      inbox: {
+        listThreads: activitySeedCliMocks.listThreads,
+        getThread: activitySeedCliMocks.getThread,
+        prepareNewThread: activitySeedCliMocks.prepareNewThread,
+        prepareReply: activitySeedCliMocks.prepareReply
+      },
+      notifications: {
+        listNotifications: activitySeedCliMocks.listNotifications
+      },
+      twoPhaseCommit: {
+        confirmByToken: activitySeedCliMocks.confirmByToken
+      },
+      close: activitySeedCliMocks.close
+    }));
+
+    activitySeedCliMocks.listPendingInvitations.mockResolvedValue([]);
+    activitySeedCliMocks.listConnections.mockResolvedValue([]);
+    activitySeedCliMocks.viewFeed.mockResolvedValue([]);
+    activitySeedCliMocks.listThreads.mockResolvedValue([]);
+
+    consoleLogSpy = vi.spyOn(console, "log").mockImplementation((value?: unknown) => {
+      stdoutChunks.push(String(value ?? ""));
+    });
+    stderrWriteSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((...args: Parameters<typeof process.stderr.write>) => {
+        const [chunk] = args;
+        stderrChunks.push(String(chunk));
+        return true;
+      });
+  });
+
+  afterEach(async () => {
+    consoleLogSpy.mockRestore();
+    stderrWriteSpy.mockRestore();
+    delete process.env.LINKEDIN_BUDDY_HOME;
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("continues past a failing action and reports summary", async () => {
+    const { LinkedInBuddyError: LBE } = await import("@linkedin-buddy/core");
+
+    activitySeedCliMocks.prepareCreate
+      .mockResolvedValueOnce({
+        preparedActionId: "pa-post-1",
+        confirmToken: "ct-post-1",
+        expiresAtMs: 1,
+        preview: { summary: "Create post" }
+      })
+      .mockResolvedValueOnce({
+        preparedActionId: "pa-post-2",
+        confirmToken: "ct-post-2",
+        expiresAtMs: 1,
+        preview: { summary: "Create post" }
+      });
+
+    activitySeedCliMocks.prepareLikePost.mockReturnValue({
+      preparedActionId: "pa-like",
+      confirmToken: "ct-like",
+      expiresAtMs: 1,
+      preview: { summary: "Like post" }
+    });
+
+    activitySeedCliMocks.confirmByToken
+      .mockResolvedValueOnce({
+        preparedActionId: "pa-post-1",
+        status: "executed",
+        actionType: "post.create",
+        result: { status: "post_created", published_post_url: "" },
+        artifacts: []
+      })
+      .mockRejectedValueOnce(
+        new LBE("UI_CHANGED_SELECTOR_FAILED", "Post composer not found")
+      )
+      .mockResolvedValueOnce({
+        preparedActionId: "pa-like",
+        status: "executed",
+        actionType: "feed.like_post",
+        result: { status: "post_liked" },
+        artifacts: []
+      });
+
+    activitySeedCliMocks.viewFeed.mockResolvedValue([]);
+
+    const specPath = path.join(tempDir, "activity-spec-coe.json");
+    await writeFile(
+      specPath,
+      JSON.stringify(
+        {
+          posts: [
+            { text: "First post content" },
+            { text: "Second post content" }
+          ],
+          feed: {
+            likes: [{ postUrl: "https://www.linkedin.com/feed/update/urn:li:activity:123/" }]
+          }
+        },
+        null,
+        2
+      )
+    );
+
+    await runCli([
+      "node",
+      "linkedin",
+      "seed",
+      "activity",
+      "--profile",
+      "smoke",
+      "--spec",
+      specPath,
+      "--continue-on-error",
+      "--yes",
+      "--delay-ms",
+      "0"
+    ]);
+
+    const output = JSON.parse(stdoutChunks.join("\n")) as {
+      continue_on_error: boolean;
+      succeeded_action_count: number;
+      failed_action_count: number;
+      executed_action_count: number;
+      posts: Array<{ status: string; error_code?: string }>;
+      feed: { liked: Array<{ status: string }> };
+      verification: Record<string, unknown>;
+    };
+
+    expect(output.continue_on_error).toBe(true);
+    expect(output.succeeded_action_count).toBe(2);
+    expect(output.failed_action_count).toBe(1);
+    expect(output.executed_action_count).toBe(3);
+    expect(output.posts[0]!.status).toBe("executed");
+    expect(output.posts[1]!.status).toBe("failed");
+    expect(output.posts[1]!.error_code).toBe("UI_CHANGED_SELECTOR_FAILED");
+    expect(output.feed.liked[0]!.status).toBe("executed");
+    expect(stderrChunks.join("")).toContain("2/3 actions succeeded, 1 failed");
+    expect(process.exitCode).toBe(1);
+    expect(output.verification).toBeDefined();
+  });
+
+  it("stops on fatal AUTH_REQUIRED despite --continue-on-error", async () => {
+    const { LinkedInBuddyError: LBE } = await import("@linkedin-buddy/core");
+
+    activitySeedCliMocks.prepareCreate.mockResolvedValue({
+      preparedActionId: "pa-post-1",
+      confirmToken: "ct-post-1",
+      expiresAtMs: 1,
+      preview: { summary: "Create post" }
+    });
+
+    activitySeedCliMocks.confirmByToken.mockRejectedValueOnce(
+      new LBE("AUTH_REQUIRED", "Session expired")
+    );
+
+    const specPath = path.join(tempDir, "activity-spec-fatal.json");
+    await writeFile(
+      specPath,
+      JSON.stringify(
+        {
+          posts: [{ text: "Test post" }]
+        },
+        null,
+        2
+      )
+    );
+
+    await expect(
+      runCli([
+        "node",
+        "linkedin",
+        "seed",
+        "activity",
+        "--profile",
+        "smoke",
+        "--spec",
+        specPath,
+        "--continue-on-error",
+        "--yes",
+        "--delay-ms",
+        "0"
+      ])
+    ).rejects.toThrow("Session expired");
+  });
+});

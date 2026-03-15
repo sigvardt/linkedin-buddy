@@ -7391,6 +7391,27 @@ function createActivitySeedOperatorNote(
   return `activity seed: ${path.basename(resolvedSpecPath)} / ${sectionLabel}`;
 }
 
+function isFatalSeedError(error: LinkedInBuddyError): boolean {
+  return (
+    error.code === "AUTH_REQUIRED" ||
+    error.code === "CAPTCHA_OR_CHALLENGE"
+  );
+}
+
+function summarizeActionFailure(
+  summary: string,
+  error: LinkedInBuddyError,
+): Record<string, unknown> {
+  return {
+    summary,
+    action_type: null,
+    prepared_action_id: null,
+    status: "failed",
+    error_code: error.code,
+    error_message: error.message,
+  };
+}
+
 function summarizeConfirmedAction(confirmed: {
   actionType: string;
   preparedActionId: string;
@@ -7438,6 +7459,7 @@ async function runProfileApplySpec(
     allowPartial: boolean;
     delayMs: number;
     yes: boolean;
+    continueOnError: boolean;
     outputPath?: string;
   },
   cdpUrl?: string,
@@ -7508,22 +7530,39 @@ async function runProfileApplySpec(
       }
     }
 
+    let failedActionCount = 0;
     const actionResults: Array<Record<string, unknown>> = [];
     for (let index = 0; index < plan.actions.length; index += 1) {
       const action = plan.actions[index]!;
-      const prepared = prepareProfileSeedAction(runtime, action);
-      const confirmed = await runtime.twoPhaseCommit.confirmByToken({
-        confirmToken: prepared.confirmToken,
-      });
+      try {
+        const prepared = prepareProfileSeedAction(runtime, action);
+        const confirmed = await runtime.twoPhaseCommit.confirmByToken({
+          confirmToken: prepared.confirmToken,
+        });
 
-      actionResults.push({
-        summary: action.summary,
-        action_type: confirmed.actionType,
-        prepared_action_id: confirmed.preparedActionId,
-        status: confirmed.status,
-        result: confirmed.result,
-        artifacts: confirmed.artifacts,
-      });
+        actionResults.push({
+          summary: action.summary,
+          action_type: confirmed.actionType,
+          prepared_action_id: confirmed.preparedActionId,
+          status: confirmed.status,
+          result: confirmed.result,
+          artifacts: confirmed.artifacts,
+        });
+      } catch (rawError) {
+        const error = asLinkedInBuddyError(rawError);
+        if (!input.continueOnError || isFatalSeedError(error)) {
+          throw error;
+        }
+
+        runtime.logger.log("warn", "cli.profile.apply_spec.action_failed", {
+          actionIndex: index,
+          summary: action.summary,
+          errorCode: error.code,
+          errorMessage: error.message,
+        });
+        actionResults.push(summarizeActionFailure(action.summary, error));
+        failedActionCount += 1;
+      }
 
       if (index < plan.actions.length - 1 && input.delayMs > 0) {
         await sleep(sampleSeedDelay(input.delayMs));
@@ -7535,15 +7574,19 @@ async function runProfileApplySpec(
       target: "me",
     });
 
+    const succeededActionCount = actionResults.length - failedActionCount;
     const report: Record<string, unknown> = {
       run_id: runtime.runId,
       profile_name: input.profileName,
       spec_path: resolvedSpecPath,
       replace: input.replace,
       allow_partial: input.allowPartial,
+      continue_on_error: input.continueOnError,
       delay_ms: input.delayMs,
       planned_action_count: plan.actions.length,
       executed_action_count: actionResults.length,
+      succeeded_action_count: succeededActionCount,
+      failed_action_count: failedActionCount,
       unsupported_fields: plan.unsupportedFields,
       actions: actionResults,
       profile: finalProfile,
@@ -7552,12 +7595,21 @@ async function runProfileApplySpec(
     if (input.outputPath) {
       report.output_path = await writeOutputJsonFile(input.outputPath, report);
     }
+    if (failedActionCount > 0) {
+      writeCliWarning(
+        `${succeededActionCount}/${actionResults.length} edits succeeded, ${failedActionCount} failed.`,
+      );
+      process.exitCode = 1;
+    }
+
 
     runtime.logger.log("info", "cli.profile.apply_spec.done", {
       profileName: input.profileName,
       specPath: resolvedSpecPath,
       plannedActionCount: plan.actions.length,
       executedActionCount: actionResults.length,
+      succeededActionCount,
+      failedActionCount,
       unsupportedFieldCount: plan.unsupportedFields.length,
     });
 
@@ -7604,6 +7656,7 @@ async function runSeedActivity(
     specPath: string;
     delayMs: number;
     yes: boolean;
+    continueOnError: boolean;
     outputPath?: string;
   },
   cdpUrl?: string,
@@ -7676,6 +7729,8 @@ async function runSeedActivity(
         : {}),
     };
 
+    let failedActionCount = 0;
+
     const connectionsSection: Record<string, unknown> = {
       accepted_pending: [] as Record<string, unknown>[],
       invites: [] as Record<string, unknown>[],
@@ -7694,25 +7749,42 @@ async function runSeedActivity(
       connectionsSection.pending_received = pendingReceived;
 
       for (const [index, invitation] of pendingToAccept.entries()) {
-        const prepared = runtime.connections.prepareAcceptInvitation({
-          profileName: input.profileName,
-          targetProfile: invitation.profile_url,
-          operatorNote: createActivitySeedOperatorNote(
-            resolvedSpecPath,
-            `accept pending ${index + 1}`,
-            undefined,
-          ),
-        });
-        const confirmed = await runtime.twoPhaseCommit.confirmByToken({
-          confirmToken: prepared.confirmToken,
-        });
-        (connectionsSection.accepted_pending as Record<string, unknown>[]).push(
-          {
-            target_profile: invitation.profile_url,
-            full_name: invitation.full_name,
-            ...summarizeConfirmedAction(confirmed),
-          },
-        );
+        try {
+          const prepared = runtime.connections.prepareAcceptInvitation({
+            profileName: input.profileName,
+            targetProfile: invitation.profile_url,
+            operatorNote: createActivitySeedOperatorNote(
+              resolvedSpecPath,
+              `accept pending ${index + 1}`,
+              undefined,
+            ),
+          });
+          const confirmed = await runtime.twoPhaseCommit.confirmByToken({
+            confirmToken: prepared.confirmToken,
+          });
+          (connectionsSection.accepted_pending as Record<string, unknown>[]).push(
+            {
+              target_profile: invitation.profile_url,
+              full_name: invitation.full_name,
+              ...summarizeConfirmedAction(confirmed),
+            },
+          );
+        } catch (rawError) {
+          const error = asLinkedInBuddyError(rawError);
+          if (!input.continueOnError || isFatalSeedError(error)) {
+            throw error;
+          }
+          runtime.logger.log("warn", "cli.seed.activity.action_failed", {
+            section: "connections.accept_pending",
+            actionIndex: index,
+            errorCode: error.code,
+            errorMessage: error.message,
+          });
+          (connectionsSection.accepted_pending as Record<string, unknown>[]).push(
+            summarizeActionFailure(`accept pending ${index + 1}`, error),
+          );
+          failedActionCount += 1;
+        }
         await maybeSleepSeedDelay(input.delayMs);
       }
     }
@@ -7769,24 +7841,41 @@ async function runSeedActivity(
           continue;
         }
 
-        const prepared = runtime.connections.prepareSendInvitation({
-          profileName: input.profileName,
-          targetProfile: invite.targetProfile,
-          ...(invite.note ? { note: invite.note } : {}),
-          operatorNote: createActivitySeedOperatorNote(
-            resolvedSpecPath,
-            `invite ${index + 1}`,
-            invite.operatorNote,
-          ),
-        });
-        const confirmed = await runtime.twoPhaseCommit.confirmByToken({
-          confirmToken: prepared.confirmToken,
-        });
-        (connectionsSection.invites as Record<string, unknown>[]).push({
-          target_profile: invite.targetProfile,
-          ...(invite.note ? { note: invite.note } : {}),
-          ...summarizeConfirmedAction(confirmed),
-        });
+        try {
+          const prepared = runtime.connections.prepareSendInvitation({
+            profileName: input.profileName,
+            targetProfile: invite.targetProfile,
+            ...(invite.note ? { note: invite.note } : {}),
+            operatorNote: createActivitySeedOperatorNote(
+              resolvedSpecPath,
+              `invite ${index + 1}`,
+              invite.operatorNote,
+            ),
+          });
+          const confirmed = await runtime.twoPhaseCommit.confirmByToken({
+            confirmToken: prepared.confirmToken,
+          });
+          (connectionsSection.invites as Record<string, unknown>[]).push({
+            target_profile: invite.targetProfile,
+            ...(invite.note ? { note: invite.note } : {}),
+            ...summarizeConfirmedAction(confirmed),
+          });
+        } catch (rawError) {
+          const error = asLinkedInBuddyError(rawError);
+          if (!input.continueOnError || isFatalSeedError(error)) {
+            throw error;
+          }
+          runtime.logger.log("warn", "cli.seed.activity.action_failed", {
+            section: "connections.invites",
+            actionIndex: index,
+            errorCode: error.code,
+            errorMessage: error.message,
+          });
+          (connectionsSection.invites as Record<string, unknown>[]).push(
+            summarizeActionFailure(`invite ${index + 1}`, error),
+          );
+          failedActionCount += 1;
+        }
         pendingTargets.add(normalizedTarget);
         await maybeSleepSeedDelay(input.delayMs);
       }
@@ -7808,42 +7897,59 @@ async function runSeedActivity(
         post.operatorNote,
       );
 
-      const prepared = mediaPath
-        ? await runtime.posts.prepareCreateMedia({
-            profileName: input.profileName,
-            text: post.text,
-            mediaPaths: [mediaPath],
-            visibility,
-            operatorNote,
-          })
-        : await runtime.posts.prepareCreate({
-            profileName: input.profileName,
-            text: post.text,
-            visibility,
-            operatorNote,
-          });
-      const confirmed = await runtime.twoPhaseCommit.confirmByToken({
-        confirmToken: prepared.confirmToken,
-      });
-      const publishedPostUrl =
-        typeof confirmed.result.published_post_url === "string" &&
-        confirmed.result.published_post_url.trim().length > 0
-          ? confirmed.result.published_post_url.trim()
+      try {
+        const prepared = mediaPath
+          ? await runtime.posts.prepareCreateMedia({
+              profileName: input.profileName,
+              text: post.text,
+              mediaPaths: [mediaPath],
+              visibility,
+              operatorNote,
+            })
+          : await runtime.posts.prepareCreate({
+              profileName: input.profileName,
+              text: post.text,
+              visibility,
+              operatorNote,
+            });
+        const confirmed = await runtime.twoPhaseCommit.confirmByToken({
+          confirmToken: prepared.confirmToken,
+        });
+        const publishedPostUrl =
+          typeof confirmed.result.published_post_url === "string" &&
+          confirmed.result.published_post_url.trim().length > 0
+            ? confirmed.result.published_post_url.trim()
+            : undefined;
+        const verification = publishedPostUrl
+          ? await runtime.feed.viewPost({
+              profileName: input.profileName,
+              postUrl: publishedPostUrl,
+            })
           : undefined;
-      const verification = publishedPostUrl
-        ? await runtime.feed.viewPost({
-            profileName: input.profileName,
-            postUrl: publishedPostUrl,
-          })
-        : undefined;
 
-      postsSection.push({
-        text: post.text,
-        visibility,
-        ...(mediaPath ? { media_path: mediaPath } : {}),
-        ...summarizeConfirmedAction(confirmed),
-        ...(verification ? { verification } : {}),
-      });
+        postsSection.push({
+          text: post.text,
+          visibility,
+          ...(mediaPath ? { media_path: mediaPath } : {}),
+          ...summarizeConfirmedAction(confirmed),
+          ...(verification ? { verification } : {}),
+        });
+      } catch (rawError) {
+        const error = asLinkedInBuddyError(rawError);
+        if (!input.continueOnError || isFatalSeedError(error)) {
+          throw error;
+        }
+        runtime.logger.log("warn", "cli.seed.activity.action_failed", {
+          section: "posts",
+          actionIndex: index,
+          errorCode: error.code,
+          errorMessage: error.message,
+        });
+        postsSection.push(
+          summarizeActionFailure(`post ${index + 1}`, error),
+        );
+        failedActionCount += 1;
+      }
       await maybeSleepSeedDelay(input.delayMs);
     }
     report.posts = postsSection;
@@ -7867,46 +7973,80 @@ async function runSeedActivity(
     }
 
     for (const [index, like] of spec.feed.likes.entries()) {
-      const prepared = runtime.feed.prepareLikePost({
-        profileName: input.profileName,
-        postUrl: like.postUrl,
-        ...(like.reaction ? { reaction: like.reaction } : {}),
-        operatorNote: createActivitySeedOperatorNote(
-          resolvedSpecPath,
-          `feed like ${index + 1}`,
-          like.operatorNote,
-        ),
-      });
-      const confirmed = await runtime.twoPhaseCommit.confirmByToken({
-        confirmToken: prepared.confirmToken,
-      });
-      (feedSection.liked as Record<string, unknown>[]).push({
-        post_url: like.postUrl,
-        ...(like.reaction ? { reaction: like.reaction } : {}),
-        ...summarizeConfirmedAction(confirmed),
-      });
+      try {
+        const prepared = runtime.feed.prepareLikePost({
+          profileName: input.profileName,
+          postUrl: like.postUrl,
+          ...(like.reaction ? { reaction: like.reaction } : {}),
+          operatorNote: createActivitySeedOperatorNote(
+            resolvedSpecPath,
+            `feed like ${index + 1}`,
+            like.operatorNote,
+          ),
+        });
+        const confirmed = await runtime.twoPhaseCommit.confirmByToken({
+          confirmToken: prepared.confirmToken,
+        });
+        (feedSection.liked as Record<string, unknown>[]).push({
+          post_url: like.postUrl,
+          ...(like.reaction ? { reaction: like.reaction } : {}),
+          ...summarizeConfirmedAction(confirmed),
+        });
+      } catch (rawError) {
+        const error = asLinkedInBuddyError(rawError);
+        if (!input.continueOnError || isFatalSeedError(error)) {
+          throw error;
+        }
+        runtime.logger.log("warn", "cli.seed.activity.action_failed", {
+          section: "feed.likes",
+          actionIndex: index,
+          errorCode: error.code,
+          errorMessage: error.message,
+        });
+        (feedSection.liked as Record<string, unknown>[]).push(
+          summarizeActionFailure(`feed like ${index + 1}`, error),
+        );
+        failedActionCount += 1;
+      }
       await maybeSleepSeedDelay(input.delayMs);
     }
 
     for (const [index, comment] of spec.feed.comments.entries()) {
-      const prepared = runtime.feed.prepareCommentOnPost({
-        profileName: input.profileName,
-        postUrl: comment.postUrl,
-        text: comment.text,
-        operatorNote: createActivitySeedOperatorNote(
-          resolvedSpecPath,
-          `feed comment ${index + 1}`,
-          comment.operatorNote,
-        ),
-      });
-      const confirmed = await runtime.twoPhaseCommit.confirmByToken({
-        confirmToken: prepared.confirmToken,
-      });
-      (feedSection.commented as Record<string, unknown>[]).push({
-        post_url: comment.postUrl,
-        text: comment.text,
-        ...summarizeConfirmedAction(confirmed),
-      });
+      try {
+        const prepared = runtime.feed.prepareCommentOnPost({
+          profileName: input.profileName,
+          postUrl: comment.postUrl,
+          text: comment.text,
+          operatorNote: createActivitySeedOperatorNote(
+            resolvedSpecPath,
+            `feed comment ${index + 1}`,
+            comment.operatorNote,
+          ),
+        });
+        const confirmed = await runtime.twoPhaseCommit.confirmByToken({
+          confirmToken: prepared.confirmToken,
+        });
+        (feedSection.commented as Record<string, unknown>[]).push({
+          post_url: comment.postUrl,
+          text: comment.text,
+          ...summarizeConfirmedAction(confirmed),
+        });
+      } catch (rawError) {
+        const error = asLinkedInBuddyError(rawError);
+        if (!input.continueOnError || isFatalSeedError(error)) {
+          throw error;
+        }
+        runtime.logger.log("warn", "cli.seed.activity.action_failed", {
+          section: "feed.comments",
+          actionIndex: index,
+          errorCode: error.code,
+          errorMessage: error.message,
+        });
+        (feedSection.commented as Record<string, unknown>[]).push(
+          summarizeActionFailure(`feed comment ${index + 1}`, error),
+        );
+        failedActionCount += 1;
+      }
       await maybeSleepSeedDelay(input.delayMs);
     }
 
@@ -7935,70 +8075,104 @@ async function runSeedActivity(
     }
 
     for (const [index, thread] of spec.messaging.newThreads.entries()) {
-      const prepared = await runtime.inbox.prepareNewThread({
-        profileName: input.profileName,
-        recipients: thread.recipients,
-        text: thread.text,
-        operatorNote: createActivitySeedOperatorNote(
-          resolvedSpecPath,
-          `new thread ${index + 1}`,
-          thread.operatorNote,
-        ),
-      });
-      const confirmed = await runtime.twoPhaseCommit.confirmByToken({
-        confirmToken: prepared.confirmToken,
-      });
-      const threadUrl =
-        typeof confirmed.result.thread_url === "string" &&
-        confirmed.result.thread_url.trim().length > 0
-          ? confirmed.result.thread_url.trim()
+      try {
+        const prepared = await runtime.inbox.prepareNewThread({
+          profileName: input.profileName,
+          recipients: thread.recipients,
+          text: thread.text,
+          operatorNote: createActivitySeedOperatorNote(
+            resolvedSpecPath,
+            `new thread ${index + 1}`,
+            thread.operatorNote,
+          ),
+        });
+        const confirmed = await runtime.twoPhaseCommit.confirmByToken({
+          confirmToken: prepared.confirmToken,
+        });
+        const threadUrl =
+          typeof confirmed.result.thread_url === "string" &&
+          confirmed.result.thread_url.trim().length > 0
+            ? confirmed.result.thread_url.trim()
+            : undefined;
+        const verification = threadUrl
+          ? await runtime.inbox.getThread({
+              profileName: input.profileName,
+              thread: threadUrl,
+              limit: 10,
+            })
           : undefined;
-      const verification = threadUrl
-        ? await runtime.inbox.getThread({
-            profileName: input.profileName,
-            thread: threadUrl,
-            limit: 10,
-          })
-        : undefined;
-      (messagingSection.new_threads as Record<string, unknown>[]).push({
-        recipients: thread.recipients,
-        text: thread.text,
-        ...summarizeConfirmedAction(confirmed),
-        ...(verification ? { verification } : {}),
-      });
+        (messagingSection.new_threads as Record<string, unknown>[]).push({
+          recipients: thread.recipients,
+          text: thread.text,
+          ...summarizeConfirmedAction(confirmed),
+          ...(verification ? { verification } : {}),
+        });
+      } catch (rawError) {
+        const error = asLinkedInBuddyError(rawError);
+        if (!input.continueOnError || isFatalSeedError(error)) {
+          throw error;
+        }
+        runtime.logger.log("warn", "cli.seed.activity.action_failed", {
+          section: "messaging.new_threads",
+          actionIndex: index,
+          errorCode: error.code,
+          errorMessage: error.message,
+        });
+        (messagingSection.new_threads as Record<string, unknown>[]).push(
+          summarizeActionFailure(`new thread ${index + 1}`, error),
+        );
+        failedActionCount += 1;
+      }
       await maybeSleepSeedDelay(input.delayMs);
     }
 
     for (const [index, reply] of spec.messaging.replies.entries()) {
-      const prepared = await runtime.inbox.prepareReply({
-        profileName: input.profileName,
-        thread: reply.thread,
-        text: reply.text,
-        operatorNote: createActivitySeedOperatorNote(
-          resolvedSpecPath,
-          `reply ${index + 1}`,
-          reply.operatorNote,
-        ),
-      });
-      const confirmed = await runtime.twoPhaseCommit.confirmByToken({
-        confirmToken: prepared.confirmToken,
-      });
-      const threadUrl =
-        typeof confirmed.result.thread_url === "string" &&
-        confirmed.result.thread_url.trim().length > 0
-          ? confirmed.result.thread_url.trim()
-          : reply.thread;
-      const verification = await runtime.inbox.getThread({
-        profileName: input.profileName,
-        thread: threadUrl,
-        limit: 10,
-      });
-      (messagingSection.replies as Record<string, unknown>[]).push({
-        thread: reply.thread,
-        text: reply.text,
-        ...summarizeConfirmedAction(confirmed),
-        verification,
-      });
+      try {
+        const prepared = await runtime.inbox.prepareReply({
+          profileName: input.profileName,
+          thread: reply.thread,
+          text: reply.text,
+          operatorNote: createActivitySeedOperatorNote(
+            resolvedSpecPath,
+            `reply ${index + 1}`,
+            reply.operatorNote,
+          ),
+        });
+        const confirmed = await runtime.twoPhaseCommit.confirmByToken({
+          confirmToken: prepared.confirmToken,
+        });
+        const threadUrl =
+          typeof confirmed.result.thread_url === "string" &&
+          confirmed.result.thread_url.trim().length > 0
+            ? confirmed.result.thread_url.trim()
+            : reply.thread;
+        const verification = await runtime.inbox.getThread({
+          profileName: input.profileName,
+          thread: threadUrl,
+          limit: 10,
+        });
+        (messagingSection.replies as Record<string, unknown>[]).push({
+          thread: reply.thread,
+          text: reply.text,
+          ...summarizeConfirmedAction(confirmed),
+          verification,
+        });
+      } catch (rawError) {
+        const error = asLinkedInBuddyError(rawError);
+        if (!input.continueOnError || isFatalSeedError(error)) {
+          throw error;
+        }
+        runtime.logger.log("warn", "cli.seed.activity.action_failed", {
+          section: "messaging.replies",
+          actionIndex: index,
+          errorCode: error.code,
+          errorMessage: error.message,
+        });
+        (messagingSection.replies as Record<string, unknown>[]).push(
+          summarizeActionFailure(`reply ${index + 1}`, error),
+        );
+        failedActionCount += 1;
+      }
       await maybeSleepSeedDelay(input.delayMs);
     }
 
@@ -8012,6 +8186,21 @@ async function runSeedActivity(
           : {}),
       });
     }
+
+    const totalWriteActionsAttempted =
+      (connectionsSection.accepted_pending as unknown[]).length +
+      (connectionsSection.invites as unknown[]).length +
+      (report.posts as unknown[]).length +
+      (feedSection.liked as unknown[]).length +
+      (feedSection.commented as unknown[]).length +
+      (messagingSection.new_threads as unknown[]).length +
+      (messagingSection.replies as unknown[]).length;
+    const succeededActionCount = totalWriteActionsAttempted - failedActionCount;
+
+    report.continue_on_error = input.continueOnError;
+    report.executed_action_count = totalWriteActionsAttempted;
+    report.succeeded_action_count = succeededActionCount;
+    report.failed_action_count = failedActionCount;
 
     report.verification = {
       connections: await runtime.connections.listConnections({
@@ -8032,10 +8221,19 @@ async function runSeedActivity(
       report.output_path = await writeOutputJsonFile(input.outputPath, report);
     }
 
+    if (failedActionCount > 0) {
+      writeCliWarning(
+        `${succeededActionCount}/${totalWriteActionsAttempted} actions succeeded, ${failedActionCount} failed.`,
+      );
+      process.exitCode = 1;
+    }
+
     runtime.logger.log("info", "cli.seed.activity.done", {
       profileName: input.profileName,
       specPath: resolvedSpecPath,
       totalWriteActions: planSummary.totalWriteActions,
+      succeededActionCount,
+      failedActionCount,
       totalReadSteps: planSummary.totalReadSteps,
     });
 
@@ -12728,6 +12926,11 @@ export function createCliProgram(): Command {
       false,
     )
     .option(
+      "--continue-on-error",
+      "Record action failures and continue with remaining edits instead of stopping",
+      false,
+    )
+    .option(
       "--delay-ms <ms>",
       "Base delay between confirmed profile edits",
       "3500",
@@ -12753,6 +12956,7 @@ export function createCliProgram(): Command {
         allowPartial: boolean;
         delayMs: string;
         yes: boolean;
+        continueOnError: boolean;
         output?: string;
       }) => {
         await runProfileApplySpec(
@@ -12763,6 +12967,7 @@ export function createCliProgram(): Command {
             allowPartial: options.allowPartial,
             delayMs: coerceNonNegativeInt(options.delayMs, "delay-ms"),
             yes: options.yes,
+            continueOnError: options.continueOnError,
             ...(options.output ? { outputPath: options.output } : {}),
           },
           readCdpUrl(),
@@ -12851,6 +13056,11 @@ export function createCliProgram(): Command {
       "Base delay between confirmed write actions",
       "4500",
     )
+    .option(
+      "--continue-on-error",
+      "Record action failures and continue with remaining actions instead of stopping",
+      false,
+    )
     .option("-y, --yes", "Skip the interactive confirmation prompt", false)
     .option("--output <path>", "Write the final JSON report to a file")
     .addHelpText(
@@ -12871,6 +13081,7 @@ export function createCliProgram(): Command {
         spec: string;
         delayMs: string;
         yes: boolean;
+        continueOnError: boolean;
         output?: string;
       }) => {
         await runSeedActivity(
@@ -12879,6 +13090,7 @@ export function createCliProgram(): Command {
             specPath: options.spec,
             delayMs: coerceNonNegativeInt(options.delayMs, "delay-ms"),
             yes: options.yes,
+            continueOnError: options.continueOnError,
             ...(options.output ? { outputPath: options.output } : {}),
           },
           readCdpUrl(),
