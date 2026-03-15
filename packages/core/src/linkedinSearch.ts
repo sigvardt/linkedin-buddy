@@ -839,7 +839,7 @@ export class LinkedInSearchService {
           await waitForNetworkIdleBestEffort(page);
           await page
             .locator(
-              "div[data-urn*='activity'], .occludable-update, .feed-shared-update-v2"
+              "div[data-urn*='activity'], article, .occludable-update, .feed-shared-update-v2"
             )
             .first()
             .waitFor({ state: "visible", timeout: 10_000 })
@@ -953,7 +953,7 @@ export class LinkedInSearchService {
 
             const legacyPostContainers = Array.from(
               globalThis.document.querySelectorAll(
-                "div.feed-shared-update-v2[data-urn], .occludable-update[data-urn]"
+                "div.feed-shared-update-v2[data-urn], .occludable-update[data-urn], article[data-urn]"
               )
             ).slice(0, lim);
 

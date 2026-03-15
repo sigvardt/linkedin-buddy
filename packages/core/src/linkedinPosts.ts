@@ -71,17 +71,18 @@ export const LINKEDIN_POST_POLL_MAX_OPTIONS = 4;
 export const LINKEDIN_POST_POLL_DURATION_DAYS = [1, 3, 7, 14] as const;
 export const LINKEDIN_POST_FEED_SURFACE_SELECTORS = [
   "[data-testid='mainFeed']",
-  "main[role='main']",
+  "[data-testid='mainFeed'] [role='listitem']",
+  "[data-component-type='LazyColumn']",
   "[data-urn]",
   ".feed-shared-update-v2",
   ".occludable-update",
-  ".share-box-feed-entry",
   "main",
 ] as const;
 export const LINKEDIN_POST_ACTIVITY_SURFACE_SELECTORS = [
-  "main[role='main']",
+  "[data-testid='mainFeed']",
   "[data-urn]",
   "article",
+  "[data-component-type='LazyColumn']",
   ".feed-shared-update-v2",
   ".occludable-update",
   "main",
@@ -3152,12 +3153,12 @@ async function findVisiblePostBySnippet(
 ): Promise<Locator | null> {
   const postCandidates = [
     page
-      .locator("article, .feed-shared-update-v2, .occludable-update")
+      .locator("article, [data-urn], .feed-shared-update-v2, .occludable-update")
       .filter({ hasText: snippet }),
     page
       .getByText(snippet)
       .locator(
-        "xpath=ancestor-or-self::*[self::article or contains(@class, 'feed-shared-update-v2') or contains(@class, 'occludable-update')]",
+        "xpath=ancestor-or-self::*[self::article or @data-urn or contains(@class, 'feed-shared-update-v2') or contains(@class, 'occludable-update')]",
       ),
   ];
 

@@ -540,7 +540,7 @@ describe("verifyPublishedPost", () => {
     const page = createMockPublishedPostPage(
       {
         [feedUrl]: {
-          visibleSelectors: ["main[role='main']"]
+          visibleSelectors: ["main"]
         }
       },
       feedUrl
@@ -556,10 +556,10 @@ describe("verifyPublishedPost", () => {
     const page = createMockPublishedPostPage(
       {
         [feedUrl]: {
-          visibleSelectors: ["main[role='main']"]
+          visibleSelectors: ["main"]
         },
         [activityUrl]: {
-          visibleSelectors: ["main[role='main']"],
+          visibleSelectors: ["main"],
           hasSnippet: true,
           publishedPostUrl
         }

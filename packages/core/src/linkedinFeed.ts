@@ -1920,12 +1920,12 @@ async function findVisiblePostBySnippet(
 ): Promise<Locator | null> {
   const postCandidates = [
     page
-      .locator("article, .feed-shared-update-v2, .occludable-update")
+      .locator("article, [data-urn], .feed-shared-update-v2, .occludable-update")
       .filter({ hasText: snippet }),
     page
       .getByText(snippet)
       .locator(
-        "xpath=ancestor-or-self::*[self::article or contains(@class, 'feed-shared-update-v2') or contains(@class, 'occludable-update')]",
+        "xpath=ancestor-or-self::*[self::article or @data-urn or contains(@class, 'feed-shared-update-v2') or contains(@class, 'occludable-update')]",
       ),
   ];
 
