@@ -664,6 +664,8 @@ async function waitForJobSearchSurface(page: Page): Promise<void> {
     ".job-card-container",
     ".base-search-card",
     ".jobs-search-results-list",
+    ".jobs-search-create-alert__wrapper",
+    ".jobs-search-results-list__header",
     "main",
   ];
 
@@ -1705,22 +1707,72 @@ async function markJobsButton(
         );
       };
 
+      const container =
+        globalThis.document.querySelector("main") ??
+        globalThis.document.body;
+
+      // --- Primary detection: Artdeco toggle (alert-toggle only) ---
+      // LinkedIn renders the job-alert control as an <input role="switch">
+      // inside a `.jobs-search-create-alert__wrapper` container rather than
+      // a <button>.  Try stable selectors first before falling through to
+      // the generic scoring path.
+      if (buttonKind === "alert-toggle") {
+        const artdecoToggle =
+          container.querySelector(
+            ".jobs-search-create-alert__wrapper input[role='switch']",
+          ) ??
+          container.querySelector(
+            ".jobs-search-create-alert__wrapper [data-artdeco-toggle-button]",
+          ) ??
+          container.querySelector(
+            "input[role='switch'].artdeco-toggle__button",
+          );
+
+        if (artdecoToggle && isVisible(artdecoToggle)) {
+          artdecoToggle.setAttribute(
+            buttonAttributeName,
+            buttonMarkerValue,
+          );
+          return true;
+        }
+      }
+
       const buttons = Array.from(
-        (
-          globalThis.document.querySelector("main") ?? globalThis.document.body
-        ).querySelectorAll("button, a[role='button']"),
+        container.querySelectorAll(
+          buttonKind === "alert-toggle"
+            ? "button, a[role='button'], div[role='button'], input[role='switch'], [role='switch'], [data-artdeco-toggle-button]"
+            : "button, a[role='button']",
+        ),
       ).filter((element) => isVisible(element));
 
       const getScore = (element: Element): number => {
         const htmlElement = element as HTMLElement;
         const rect = htmlElement.getBoundingClientRect();
-        const text = normalize(htmlElement.textContent);
+        let text = normalize(htmlElement.textContent);
         const ariaLabel = normalize(htmlElement.getAttribute("aria-label"));
         const title = normalize(htmlElement.getAttribute("title"));
         const className = normalize(htmlElement.getAttribute("class"));
         const controlName = normalize(
           htmlElement.getAttribute("data-control-name"),
         );
+
+        // For input/switch elements (e.g. Artdeco toggle), gather text
+        // from the parent toggle container since inputs have no meaningful
+        // textContent of their own.
+        if (
+          buttonKind === "alert-toggle" &&
+          (htmlElement.tagName === "INPUT" ||
+            htmlElement.getAttribute("role") === "switch") &&
+          !text.trim()
+        ) {
+          const toggleContainer = htmlElement.closest(
+            ".artdeco-toggle, [class*='create-alert'], [class*='job-alert']",
+          );
+          if (toggleContainer) {
+            text = normalize(toggleContainer.textContent);
+          }
+        }
+
         const haystack = [text, ariaLabel, title, className, controlName]
           .filter(Boolean)
           .join(" ");
@@ -1746,7 +1798,11 @@ async function markJobsButton(
         }
 
         if (buttonKind === "alert-toggle") {
-          if (!/alert/.test(haystack)) {
+          if (
+            !/alert|notify|notification|bell|subscribe|artdeco-toggle/.test(
+              haystack,
+            )
+          ) {
             return 0;
           }
           if (/security|privacy|saved searches/.test(haystack)) {
@@ -1771,7 +1827,7 @@ async function markJobsButton(
         if (
           buttonKind === "alert-toggle" &&
           htmlElement.closest(
-            ".jobs-search-two-pane, .jobs-search-results-list",
+            ".jobs-search-two-pane, .jobs-search-results-list, .jobs-search-create-alert__wrapper, .jobs-search-results-list__header",
           )
         ) {
           score += 20;
@@ -1830,12 +1886,32 @@ async function readJobsToggleState(
       (value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
 
     const htmlElement = element as HTMLElement;
-    const text = normalize(htmlElement.textContent);
+    let text = normalize(htmlElement.textContent);
     const ariaLabel = normalize(htmlElement.getAttribute("aria-label"));
     const title = normalize(htmlElement.getAttribute("title"));
     const ariaPressed = normalize(htmlElement.getAttribute("aria-pressed"));
     const ariaChecked = normalize(htmlElement.getAttribute("aria-checked"));
-    const combined = [text, ariaLabel, title].filter(Boolean).join(" ");
+
+    // For input/switch elements (Artdeco toggle), the checked property
+    // and aria-checked attribute are the most reliable state indicators.
+    const isSwitch =
+      htmlElement.tagName === "INPUT" ||
+      htmlElement.getAttribute("role") === "switch";
+
+    if (isSwitch) {
+      if (
+        ariaChecked === "true" ||
+        (htmlElement as unknown as HTMLInputElement).checked === true
+      ) {
+        return true;
+      }
+      if (
+        ariaChecked === "false" ||
+        (htmlElement as unknown as HTMLInputElement).checked === false
+      ) {
+        return false;
+      }
+    }
 
     if (ariaPressed === "true" || ariaChecked === "true") {
       return true;
@@ -1843,6 +1919,19 @@ async function readJobsToggleState(
     if (ariaPressed === "false" || ariaChecked === "false") {
       return false;
     }
+
+    // For input/switch elements, gather text from parent toggle container
+    // since inputs have no meaningful textContent.
+    if (isSwitch && !text.trim()) {
+      const toggleContainer = htmlElement.closest(
+        ".artdeco-toggle, [class*='create-alert'], [class*='job-alert']",
+      );
+      if (toggleContainer) {
+        text = normalize(toggleContainer.textContent);
+      }
+    }
+
+    const combined = [text, ariaLabel, title].filter(Boolean).join(" ");
 
     if (buttonKind === "save") {
       if (/\b(saved|unsave)\b/.test(combined)) {
@@ -1855,11 +1944,17 @@ async function readJobsToggleState(
     }
 
     if (
-      /\b(job alert set|remove alert|manage alert|alert on)\b/.test(combined)
+      /\b(job alert set|remove alert|manage alert|alert on|notifications? on|subscribed)\b/.test(
+        combined,
+      )
     ) {
       return true;
     }
-    if (/\b(set alert|create alert|alert off)\b/.test(combined)) {
+    if (
+      /\b(set alert|create alert|alert off|notify me|get notified|notifications? off|subscribe)\b/.test(
+        combined,
+      )
+    ) {
       return false;
     }
 
