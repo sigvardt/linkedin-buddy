@@ -742,23 +742,24 @@
     const GROUP_ID = "9806731";
     const GROUP_URL = `https://www.linkedin.com/groups/${GROUP_ID}/`;
     root.innerHTML = `
-      <div class="reusable-search__result-container">
-        <a href="${GROUP_URL}">
-          <span>Software Engineering Community</span>
-          <span>Public group</span>
-          <span>15,432 members</span>
-          <span>A community for software engineers to share knowledge and best practices.</span>
-        </a>
-      </div>
-      <div class="reusable-search__result-container">
-        <a href="https://www.linkedin.com/groups/1234567/">
-          <span>Tech Leaders Network</span>
-          <span>Private listed group</span>
-          <span>8,200 members</span>
-          <span>Join</span>
-          <span>Connect with technology leaders worldwide.</span>
-        </a>
-      </div>
+      <main>
+        <ul>
+          <li class="reusable-search__result-container">
+            <a href="${GROUP_URL}"><span aria-hidden="true">Software Engineering Community</span></a>
+            <p>Software Engineering Community</p>
+            <p>Public group</p>
+            <p>15,432 members</p>
+            <p>A community for software engineers to share knowledge and best practices.</p>
+          </li>
+          <li class="reusable-search__result-container">
+            <a href="https://www.linkedin.com/groups/1234567/"><span aria-hidden="true">Tech Leaders Network</span></a>
+            <p>Tech Leaders Network</p>
+            <p>Private listed group</p>
+            <p>8,200 members</p>
+            <p>Connect with technology leaders worldwide.</p>
+          </li>
+        </ul>
+      </main>
     `;
   }
 
@@ -1067,6 +1068,27 @@
     }
   }
 
+  function renderSearchPosts() {
+    const root = document.querySelector("#replay-root");
+    const state = loadState();
+    const posts = getAllPosts(state);
+    root.innerHTML = posts.map(function(post) {
+      const safeText = escapeHtml(post.text);
+      const comments = state.feed.comments[post.id] || [];
+      const baseReactionCount = Number(post.reactionsCount) || 0;
+      return [
+        '<div data-urn="' + escapeHtml(post.id) + '" class="feed-shared-update-v2 occludable-update">',
+        '  <div class="update-components-actor__title"><span dir="ltr"><span aria-hidden="true">' + escapeHtml(post.authorName) + '</span></span></div>',
+        '  <div class="update-components-actor__description"><span aria-hidden="true">' + escapeHtml(post.authorHeadline) + '</span></div>',
+        '  <time>' + escapeHtml(post.postedAt) + '</time>',
+        '  <div class="update-components-text"><span class="break-words">' + safeText + '</span></div>',
+        '  <div class="social-details-social-counts__reactions-count">' + baseReactionCount + ' reactions</div>',
+        '  <div class="social-details-social-counts__comments">' + comments.length + ' comments</div>',
+        '</div>'
+      ].join("\n");
+    }).join("\n");
+  }
+
   function renderSearchEvents() {
     const root = document.querySelector("#replay-root");
     const EVENT_ID_1 = "7654321098765432101";
@@ -1074,24 +1096,24 @@
     const EVENT_ID_2 = "7654321098765432102";
     const EVENT_URL_2 = "https://www.linkedin.com/events/" + EVENT_ID_2 + "/";
     root.innerHTML = [
-      '<div class="reusable-search__result-container">',
-      '  <a href="' + EVENT_URL_1 + '">',
-      '    <div>Tech Innovation Summit 2026</div>',
-      '    <div>Wed, Apr 15, 2026 10:00 AM</div>',
-      '    <div>San Francisco, CA \u2022 By Tech Leaders Network</div>',
-      '    <div>1,250 attendees</div>',
-      '    <div>Join industry leaders for a day of innovation and networking.</div>',
-      '  </a>',
-      '</div>',
-      '<div class="reusable-search__result-container">',
-      '  <a href="' + EVENT_URL_2 + '">',
-      '    <div>AI and Machine Learning Conference</div>',
-      '    <div>Thu, May 20, 2026 9:00 AM</div>',
-      '    <div>Online \u2022 By AI Research Group</div>',
-      '    <div>3,500 attendees</div>',
-      '    <div>Explore the latest in AI and ML research.</div>',
-      '  </a>',
-      '</div>'
+      '<main><ul>',
+      '<li class="reusable-search__result-container">',
+      '  <a href="' + EVENT_URL_1 + '"><span aria-hidden="true">Tech Innovation Summit 2026</span></a>',
+      '  <p>Tech Innovation Summit 2026</p>',
+      '  <p>Wed, Apr 15, 2026 10:00 AM</p>',
+      '  <p>San Francisco, CA \u2022 By Tech Leaders Network</p>',
+      '  <p>1,250 attendees</p>',
+      '  <p>Join industry leaders for a day of innovation and networking.</p>',
+      '</li>',
+      '<li class="reusable-search__result-container">',
+      '  <a href="' + EVENT_URL_2 + '"><span aria-hidden="true">AI and Machine Learning Conference</span></a>',
+      '  <p>AI and Machine Learning Conference</p>',
+      '  <p>Thu, May 20, 2026 9:00 AM</p>',
+      '  <p>Online \u2022 By AI Research Group</p>',
+      '  <p>3,500 attendees</p>',
+      '  <p>Explore the latest in AI and ML research.</p>',
+      '</li>',
+      '</ul></main>'
     ].join("\n");
   }
 
@@ -1194,6 +1216,11 @@
 
     if (normalizedPath === "/jobs/job-alerts/") {
       renderJobAlerts();
+      return;
+    }
+
+    if (normalizedPath === "/search/results/content/") {
+      renderSearchPosts();
       return;
     }
 
