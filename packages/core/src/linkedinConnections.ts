@@ -966,7 +966,6 @@ async function executeSendInvitation(
         );
       }
 
-      // Pre-flight: detect if already connected (Message button = connected)
       const alreadyConnectedCandidates = buildProfileActionButtonCandidates({
         topCardRoot,
         selectorLocale: runtime.selectorLocale,
@@ -974,17 +973,40 @@ async function executeSendInvitation(
         candidateKeyPrefix: "already-connected"
       });
       const alreadyConnected = await findVisibleLocator(page, alreadyConnectedCandidates);
+      let preflightMessageSelectorKey: string | null = null;
+      let preflightFollowSelectorKey: string | null = null;
       if (alreadyConnected) {
-        throw new LinkedInBuddyError(
-          "ACTION_PRECONDITION_FAILED",
-          `Already connected with "${targetProfile}".`,
-          {
-            target_profile: targetProfile,
-            url: page.url(),
-            detected_state: "connected",
-            detected_selector_key: alreadyConnected.key
-          }
-        );
+        preflightMessageSelectorKey = alreadyConnected.key;
+        const followVisibleCandidates = buildProfileActionButtonCandidates({
+          topCardRoot,
+          selectorLocale: runtime.selectorLocale,
+          selectorKeys: "follow",
+          candidateKeyPrefix: "connected-follow-check"
+        });
+        const followVisible = await findVisibleLocator(page, followVisibleCandidates);
+        preflightFollowSelectorKey = followVisible?.key ?? null;
+
+        runtime.logger.log("debug", "linkedin.connections.send_invitation.preflight", {
+          target_profile: targetProfile,
+          url: page.url(),
+          message_visible: true,
+          message_selector_key: preflightMessageSelectorKey,
+          follow_visible: Boolean(followVisible),
+          follow_selector_key: preflightFollowSelectorKey
+        });
+
+        if (!followVisible) {
+          throw new LinkedInBuddyError(
+            "ACTION_PRECONDITION_FAILED",
+            `Already connected with "${targetProfile}".`,
+            {
+              target_profile: targetProfile,
+              url: page.url(),
+              detected_state: "connected",
+              detected_selector_key: alreadyConnected.key
+            }
+          );
+        }
       }
 
       const connectCandidates: VisibleLocatorCandidate[] = [
@@ -1049,6 +1071,20 @@ async function executeSendInvitation(
             targetPage.getByRole("button", {
               name: moreExactRegex
             })
+        },
+        {
+          key: "topcard-more-ellipsis-aria",
+          selectorHint: "topCard button[aria-label*='more' i]",
+          locatorFactory: () =>
+            topCardRoot.locator("button[aria-label*='more' i]").filter({
+              hasNotText: /message|connect|follow/iu
+            })
+        },
+        {
+          key: "page-more-actions-aria",
+          selectorHint: `page ${moreActionsAriaSelector}`,
+          locatorFactory: (targetPage: LocatorRoot) =>
+            (targetPage as Page).locator(moreActionsAriaSelector)
         }
       ];
 
@@ -1076,21 +1112,47 @@ async function executeSendInvitation(
             targetPage.locator(".artdeco-dropdown__content-inner li").filter({
               hasText: connectTextRegex
             })
+        },
+        {
+          key: "menu-connect-span-text",
+          selectorHint: `.artdeco-dropdown__content-inner span hasText ${connectTextRegexHint}`,
+          locatorFactory: (targetPage) =>
+            targetPage.locator(".artdeco-dropdown__content-inner span").filter({
+              hasText: connectTextRegex
+            })
         }
       ];
 
       let connectSelectorKey: string | null = null;
       const directConnect = await findVisibleLocator(page, connectCandidates);
       if (directConnect) {
+        runtime.logger.log("debug", "linkedin.connections.send_invitation.selector_match", {
+          target_profile: targetProfile,
+          source: "direct",
+          selector_key: directConnect.key,
+          url: page.url()
+        });
         await directConnect.locator.click({ timeout: 5_000 });
         connectSelectorKey = directConnect.key;
       } else {
         const moreButton = await findVisibleLocator(page, moreCandidates);
         if (moreButton) {
+          runtime.logger.log("debug", "linkedin.connections.send_invitation.selector_match", {
+            target_profile: targetProfile,
+            source: "more-button",
+            selector_key: moreButton.key,
+            url: page.url()
+          });
           await moreButton.locator.click({ timeout: 5_000 });
           await page.waitForTimeout(600);
           const menuConnect = await findVisibleLocator(page, menuConnectCandidates);
           if (menuConnect) {
+            runtime.logger.log("debug", "linkedin.connections.send_invitation.selector_match", {
+              target_profile: targetProfile,
+              source: "more-menu",
+              selector_key: menuConnect.key,
+              url: page.url()
+            });
             await menuConnect.locator.click({ timeout: 5_000 });
             connectSelectorKey = `${moreButton.key}:${menuConnect.key}`;
           }
@@ -1115,6 +1177,8 @@ async function executeSendInvitation(
               target_profile: targetProfile,
               url: page.url(),
               follow_button_key: followButton.key,
+              preflight_message_selector_key: preflightMessageSelectorKey,
+              preflight_follow_selector_key: preflightFollowSelectorKey,
               attempted_connect_selectors: connectCandidates.map((c) => c.selectorHint),
               attempted_more_selectors: moreCandidates.map((c) => c.selectorHint),
               attempted_menu_selectors: menuConnectCandidates.map((c) => c.selectorHint)
@@ -1129,6 +1193,8 @@ async function executeSendInvitation(
           {
             target_profile: targetProfile,
             url: page.url(),
+            preflight_message_selector_key: preflightMessageSelectorKey,
+            preflight_follow_selector_key: preflightFollowSelectorKey,
             attempted_connect_selectors: connectCandidates.map((c) => c.selectorHint),
             attempted_more_selectors: moreCandidates.map((c) => c.selectorHint),
             attempted_menu_selectors: menuConnectCandidates.map((c) => c.selectorHint)
