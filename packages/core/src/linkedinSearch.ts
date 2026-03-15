@@ -160,7 +160,11 @@ export function readSearchLimit(value: number | undefined): number {
  */
 const SEARCH_CONTAINER_SELECTORS: Record<SearchCategory, string[]> = {
   people: [
+    "div[componentkey='SearchResultsMainContent']",
     "main a[href*='/in/']",
+    "div[data-view-tracking-scope]",
+    ".search-results-container",
+    "main ul > li",
     "div[data-view-name='search-entity-result-universal-template']",
     ".reusable-search__result-container",
     "li.reusable-search__result-container",
@@ -168,7 +172,11 @@ const SEARCH_CONTAINER_SELECTORS: Record<SearchCategory, string[]> = {
     ".search-results-container li"
   ],
   companies: [
+    "div[componentkey='SearchResultsMainContent']",
     "main a[href*='/company/']",
+    "div[data-view-tracking-scope]",
+    ".search-results-container",
+    "main ul > li",
     "div[data-view-name='search-entity-result-universal-template']",
     ".reusable-search__result-container",
     "li.reusable-search__result-container",
@@ -176,24 +184,36 @@ const SEARCH_CONTAINER_SELECTORS: Record<SearchCategory, string[]> = {
     ".search-results-container li"
   ],
   jobs: [
-    "[data-entity-urn^='urn:li:jobPosting']",
+    "li[data-occludable-job-id]",
+    "div[data-job-id]",
+    "div[componentkey='SearchResultsMainContent']",
+    ".scaffold-layout__list",
     ".job-card-container",
+    "main ul > li",
+    "[data-entity-urn^='urn:li:jobPosting']",
     ".base-search-card",
     ".job-card-list__entity-lockup",
     ".jobs-search-results-list__list-item"
   ],
   posts: [
     "div[data-urn*='activity']",
+    "div[componentkey='SearchResultsMainContent']",
     "div.feed-shared-update-v2[data-urn]",
     ".occludable-update[data-urn]",
     "article[data-urn]"
   ],
   groups: [
+    "div[componentkey='SearchResultsMainContent']",
     "main a[href*='/groups/']",
+    "div[data-view-tracking-scope]",
+    "main ul > li",
     "div[data-view-name='search-entity-result-universal-template']"
   ],
   events: [
+    "div[componentkey='SearchResultsMainContent']",
     "main a[href*='/events/']",
+    "div[data-view-tracking-scope]",
+    "main ul > li",
     "div[data-view-name='search-entity-result-universal-template']"
   ]
 };
@@ -222,6 +242,16 @@ async function waitForSearchResults(
     } catch {
       // Try next selector.
     }
+  }
+
+  try {
+    await page
+      .locator("main ul > li")
+      .first()
+      .waitFor({ state: "visible", timeout: 3_000 });
+    return true;
+  } catch {
+    // Generic list fallback also missed.
   }
 
   logger.log("warn", `search.${category}.selector_miss`, {
@@ -386,6 +416,21 @@ export class LinkedInSearchService {
               }
               return "";
             };
+
+            const splitLines = (value: string): string[] =>
+              normalize(value)
+                .split("\n")
+                .map((line) => normalize(line))
+                .filter(Boolean);
+
+            const getCardLines = (card: Element): string[] => {
+              const raw = normalize((card as HTMLElement).innerText || card.textContent || "");
+              if (!raw) {
+                return [];
+              }
+              const lines = splitLines(raw);
+              return lines.filter((line, index) => lines.indexOf(line) === index);
+            };
             const toAbsoluteHref = (value: string): string => {
               if (!value) {
                 return "";
@@ -440,6 +485,62 @@ export class LinkedInSearchService {
               return "";
             };
 
+            const extractPersonCard = (
+              card: Element,
+              link: HTMLAnchorElement | null
+            ): Record<string, string> => {
+              const lines = getCardLines(card);
+              const nameFromSpan = normalize(
+                (
+                  link?.querySelector("span[dir='ltr'] span[aria-hidden='true']") ??
+                  link?.querySelector("span[aria-hidden='true']")
+                )?.textContent
+              );
+              const profileUrl = toAbsoluteHref(
+                normalize(link?.getAttribute("href")) || normalize(link?.href)
+              );
+              const allText = normalize((card as HTMLElement).innerText);
+              const degreeMatch = /(\d(?:st|nd|rd))/i.exec(allText);
+              const mutualMatch = /(\d+\s*mutual\s*connection(?:s)?)/i.exec(allText);
+              const fallbackHeadline =
+                lines.find((line) =>
+                  line &&
+                  line !== nameFromSpan &&
+                  !/mutual\s*connection/i.test(line) &&
+                  !/(?:\d(?:st|nd|rd))/.test(line)
+                ) ?? "";
+              const fallbackLocation =
+                lines.find(
+                  (line) =>
+                    line &&
+                    line !== nameFromSpan &&
+                    line !== fallbackHeadline &&
+                    !/mutual\s*connection/i.test(line)
+                ) ?? "";
+
+              return {
+                name: nameFromSpan || lines[0] || "",
+                headline:
+                  pickSiblingText(card, "a[href*='/in/']", 0) ||
+                  pickText(card, [
+                    "[data-view-tracking-scope] span[dir='ltr']",
+                    ".entity-result__primary-subtitle",
+                    "div.t-14.t-black.t-normal"
+                  ]) ||
+                  fallbackHeadline,
+                location:
+                  pickSiblingText(card, "a[href*='/in/']", 1) ||
+                  pickText(card, [
+                    ".entity-result__secondary-subtitle",
+                    "div.t-14.t-normal:not(.t-black)"
+                  ]) ||
+                  fallbackLocation,
+                profile_url: profileUrl,
+                connection_degree: normalize(degreeMatch?.[1]),
+                mutual_connections: normalize(mutualMatch?.[1])
+              };
+            };
+
             const extractModernCards = (): Array<Record<string, string>> => {
               const links = Array.from(
                 globalThis.document.querySelectorAll("main a[href*='/in/']")
@@ -460,69 +561,64 @@ export class LinkedInSearchService {
                 return true;
               });
 
-              return uniqueLinks.slice(0, lim).map((link) => {
-                const card = link.closest("li") ?? link.closest("div");
-                if (!card) {
-                  return {
-                    name: "",
-                    headline: "",
-                    location: "",
-                    profile_url: "",
-                    connection_degree: "",
-                    mutual_connections: ""
-                  };
-                }
-
-                const paragraphs = Array.from(card.querySelectorAll("p"));
-                const pickTextFromCard = (selectors: string[]): string => {
-                  for (const selector of selectors) {
-                    const text = normalize(
-                      (card.querySelector(selector) as HTMLElement | null)?.innerText ||
-                        card.querySelector(selector)?.textContent
-                    );
-                    if (text) {
-                      return text;
-                    }
+              return uniqueLinks
+                .map((link) => {
+                  const card = link.closest("li") ?? link.closest("div");
+                  if (!card) {
+                    return {
+                      name: "",
+                      headline: "",
+                      location: "",
+                      profile_url: "",
+                      connection_degree: "",
+                      mutual_connections: ""
+                    };
                   }
-                  return "";
-                };
-                const nameFromSpan = normalize(
-                  (
-                    link.querySelector("span[dir='ltr'] span[aria-hidden='true']") ??
-                    link.querySelector("span[aria-hidden='true']")
-                  )?.textContent
-                );
-                const rawName =
-                  nameFromSpan ||
-                  normalize((paragraphs[0]?.innerText ?? "").split("\n")[0]);
-                const allText = normalize((card as HTMLElement).innerText);
-                const degreeMatch = /(\d(?:st|nd|rd))/i.exec(allText);
-                const mutualMatch = /(\d+\s*mutual\s*connection(?:s)?)/i.exec(allText);
-
-                return {
-                  name: rawName,
-                  headline:
-                    pickTextFromCard([
-                      "div.t-14.t-black.t-normal",
-                      ".entity-result__primary-subtitle"
-                    ]) || normalize(paragraphs[1]?.innerText),
-                  location:
-                    pickTextFromCard([
-                      "div.t-14.t-normal:not(.t-black)",
-                      ".entity-result__secondary-subtitle"
-                    ]) || normalize(paragraphs[2]?.innerText),
-                  profile_url: toAbsoluteHref(
-                    normalize(link.getAttribute("href")) || normalize(link.href)
-                  ),
-                  connection_degree: normalize(degreeMatch?.[1]),
-                  mutual_connections: normalize(mutualMatch?.[1])
-                };
-              });
+                  return extractPersonCard(card, link);
+                })
+                .slice(0, lim);
             };
 
             const modernCards = extractModernCards();
             if (modernCards.some((card) => card.name || card.profile_url)) {
               return modernCards;
+            }
+
+            const extractAiCards = (): Array<Record<string, string>> => {
+              const aiRoot = globalThis.document.querySelector(
+                "div[componentkey='SearchResultsMainContent']"
+              );
+              if (!aiRoot) {
+                return [];
+              }
+
+              const aiCards = Array.from(
+                aiRoot.querySelectorAll("div[data-view-tracking-scope]")
+              );
+              return aiCards
+                .map((aiCard) => {
+                  const link = aiCard.querySelector(
+                    "a[href*='/in/']"
+                  ) as HTMLAnchorElement | null;
+                  if (!link) {
+                    return {
+                      name: "",
+                      headline: "",
+                      location: "",
+                      profile_url: "",
+                      connection_degree: "",
+                      mutual_connections: ""
+                    };
+                  }
+                  return extractPersonCard(aiCard, link);
+                })
+                .filter((card) => card.name || card.profile_url)
+                .slice(0, lim);
+            };
+
+            const aiCards = extractAiCards();
+            if (aiCards.some((card) => card.name || card.profile_url)) {
+              return aiCards;
             }
 
             const legacyCards = Array.from(
@@ -531,9 +627,10 @@ export class LinkedInSearchService {
               )
             ).slice(0, lim);
 
-            return legacyCards.map((card) => ({
+            const legacyResults = legacyCards.map((card) => ({
               name: pickText(card, [
                 "a[href*='/in/'] span[dir='ltr'] span[aria-hidden='true']",
+                "a[href*='/in/'] span[aria-hidden='true']",
                 "a[data-test-app-aware-link] span[dir='ltr'] span[aria-hidden='true']",
                 "a[data-test-app-aware-link] span[aria-hidden='true']",
                 "a[href*='/in/'] span[dir='ltr'] > span[aria-hidden='true']",
@@ -543,17 +640,18 @@ export class LinkedInSearchService {
                 ".app-aware-link span[dir='ltr']"
               ]),
               headline:
-                pickSiblingText(card, "a[data-test-app-aware-link], .entity-result__title-text a", 0) ||
+                pickSiblingText(card, "a[href*='/in/'], a[data-test-app-aware-link], .entity-result__title-text a", 0) ||
                 pickText(card, [
-                  "div.t-14.t-black.t-normal",
                   ".entity-result__primary-subtitle",
+                  "[data-view-tracking-scope] span[dir='ltr']",
+                  "div.t-14.t-black.t-normal",
                   ".entity-result__summary"
                 ]),
               location:
-                pickSiblingText(card, "a[data-test-app-aware-link], .entity-result__title-text a", 1) ||
+                pickSiblingText(card, "a[href*='/in/'], a[data-test-app-aware-link], .entity-result__title-text a", 1) ||
                 pickText(card, [
-                  "div.t-14.t-normal:not(.t-black)",
-                  ".entity-result__secondary-subtitle"
+                  ".entity-result__secondary-subtitle",
+                  "div.t-14.t-normal:not(.t-black)"
                 ]),
               profile_url: pickHref(card, ["a[href*='/in/']"]),
               connection_degree: pickText(card, [
@@ -567,6 +665,35 @@ export class LinkedInSearchService {
                 ".member-insights"
               ])
             }));
+
+            if (legacyResults.some((card) => card.name || card.profile_url)) {
+              return legacyResults;
+            }
+
+            const listFallback = Array.from(
+              globalThis.document.querySelectorAll("main li")
+            )
+              .map((card) => {
+                const lines = getCardLines(card);
+                const link = card.querySelector("a[href*='/in/']") as HTMLAnchorElement | null;
+                const allText = normalize((card as HTMLElement).innerText);
+                const degreeMatch = /(\d(?:st|nd|rd))/i.exec(allText);
+                const mutualMatch = /(\d+\s*mutual\s*connection(?:s)?)/i.exec(allText);
+                return {
+                  name: lines[0] ?? "",
+                  headline: lines[1] ?? "",
+                  location: lines[2] ?? "",
+                  profile_url: toAbsoluteHref(
+                    normalize(link?.getAttribute("href")) || normalize(link?.href)
+                  ),
+                  connection_degree: normalize(degreeMatch?.[1]),
+                  mutual_connections: normalize(mutualMatch?.[1])
+                };
+              })
+              .filter((card) => card.name || card.profile_url)
+              .slice(0, lim);
+
+            return listFallback;
           }, limit);
 
           const processed = snapshots
@@ -673,6 +800,20 @@ export class LinkedInSearchService {
               }
               return "";
             };
+            const splitLines = (value: string): string[] =>
+              normalize(value)
+                .split("\n")
+                .map((line) => normalize(line))
+                .filter(Boolean);
+
+            const getCardLines = (card: Element): string[] => {
+              const raw = normalize((card as HTMLElement).innerText || card.textContent || "");
+              if (!raw) {
+                return [];
+              }
+              const lines = splitLines(raw);
+              return lines.filter((line, index) => lines.indexOf(line) === index);
+            };
             const toAbsoluteHref = (value: string): string => {
               if (!value) {
                 return "";
@@ -707,6 +848,50 @@ export class LinkedInSearchService {
               return "";
             };
 
+            const extractCompanyCard = (
+              card: Element,
+              link: HTMLAnchorElement | null
+            ): Record<string, string> => {
+              const lines = getCardLines(card);
+              const summaryLine =
+                lines.find((line) => /follower|employee|industry/i.test(line)) ?? "";
+              const subtitleRaw =
+                pickSiblingText(card, "a[href*='/company/']", 0) ||
+                pickText(card, [
+                  "[data-view-tracking-scope] span[dir='ltr']",
+                  ".entity-result__primary-subtitle",
+                  "div.t-14.t-black.t-normal"
+                ]) ||
+                lines[1] ||
+                "";
+              const subtitleParts = subtitleRaw.split("•").map((part) => normalize(part));
+              const logoElement = card.querySelector("img") as HTMLImageElement | null;
+              const nameFromSpan = normalize(
+                (
+                  link?.querySelector("span[dir='ltr'] span[aria-hidden='true']") ??
+                  link?.querySelector("span[aria-hidden='true']")
+                )?.textContent
+              );
+
+              return {
+                name: nameFromSpan || lines[0] || "",
+                industry: subtitleParts[0] ?? "",
+                follower_count:
+                  pickSiblingText(card, "a[href*='/company/']", 1) ||
+                  pickText(card, [
+                    ".entity-result__secondary-subtitle",
+                    "div.t-14.t-normal:not(.t-black)"
+                  ]) ||
+                  lines[2] ||
+                  summaryLine,
+                description: lines[3] || lines[2] || "",
+                company_url: toAbsoluteHref(
+                  normalize(link?.getAttribute("href")) || normalize(link?.href)
+                ),
+                logo_url: normalize(logoElement?.src)
+              };
+            };
+
             const extractModernCards = (): Array<Record<string, string>> => {
               const links = Array.from(
                 globalThis.document.querySelectorAll("main a[href*='/company/']")
@@ -727,74 +912,64 @@ export class LinkedInSearchService {
                 return true;
               });
 
-              return uniqueLinks.slice(0, lim).map((link) => {
-                const card = link.closest("li") ?? link.closest("div");
-                if (!card) {
-                  return {
-                    name: "",
-                    industry: "",
-                    follower_count: "",
-                    description: "",
-                    company_url: "",
-                    logo_url: ""
-                  };
-                }
-
-                const paragraphs = Array.from(card.querySelectorAll("p"));
-                const pickTextFromCard = (selectors: string[]): string => {
-                  for (const selector of selectors) {
-                    const text = normalize(
-                      (card.querySelector(selector) as HTMLElement | null)?.innerText ||
-                        card.querySelector(selector)?.textContent
-                    );
-                    if (text) {
-                      return text;
-                    }
+              return uniqueLinks
+                .map((link) => {
+                  const card = link.closest("li") ?? link.closest("div");
+                  if (!card) {
+                    return {
+                      name: "",
+                      industry: "",
+                      follower_count: "",
+                      description: "",
+                      company_url: "",
+                      logo_url: ""
+                    };
                   }
-                  return "";
-                };
-                const summaryParagraph = paragraphs.find((paragraph) =>
-                  /follower|employee|industry/i.test(
-                    normalize((paragraph as HTMLElement).innerText)
-                  )
-                );
-                const nameFromSpan = normalize(
-                  (
-                    link.querySelector("span[dir='ltr'] span[aria-hidden='true']") ??
-                    link.querySelector("span[aria-hidden='true']")
-                  )?.textContent
-                );
-                const subtitleRaw =
-                  pickTextFromCard([
-                    "div.t-14.t-black.t-normal",
-                    ".entity-result__primary-subtitle"
-                  ]) || normalize(paragraphs[1]?.innerText);
-                const subtitleParts = subtitleRaw.split("•").map((s) => s.trim());
-
-                return {
-                  name:
-                    nameFromSpan ||
-                    normalize((paragraphs[0]?.innerText ?? "").split("\n")[0]),
-                  industry: subtitleParts[0] ?? "",
-                  follower_count:
-                    pickTextFromCard([
-                      "div.t-14.t-normal:not(.t-black)",
-                      ".entity-result__secondary-subtitle"
-                    ]) ||
-                    normalize(paragraphs[2]?.innerText) ||
-                    normalize((summaryParagraph as HTMLElement | undefined)?.innerText),
-                  description: normalize(paragraphs[3]?.innerText),
-                  company_url: toAbsoluteHref(
-                    normalize(link.getAttribute("href")) || normalize(link.href)
-                  ),
-                  logo_url: normalize((card.querySelector("img") as HTMLImageElement | null)?.src)
-                };
-              });
+                  return extractCompanyCard(card, link);
+                })
+                .slice(0, lim);
             };
 
             const modernCards = extractModernCards();
             if (modernCards.some((card) => card.name || card.company_url)) {
               return modernCards;
+            }
+
+            const extractAiCards = (): Array<Record<string, string>> => {
+              const aiRoot = globalThis.document.querySelector(
+                "div[componentkey='SearchResultsMainContent']"
+              );
+              if (!aiRoot) {
+                return [];
+              }
+
+              const aiCards = Array.from(
+                aiRoot.querySelectorAll("div[data-view-tracking-scope]")
+              );
+              return aiCards
+                .map((aiCard) => {
+                  const link = aiCard.querySelector(
+                    "a[href*='/company/']"
+                  ) as HTMLAnchorElement | null;
+                  if (!link) {
+                    return {
+                      name: "",
+                      industry: "",
+                      follower_count: "",
+                      description: "",
+                      company_url: "",
+                      logo_url: ""
+                    };
+                  }
+                  return extractCompanyCard(aiCard, link);
+                })
+                .filter((card) => card.name || card.company_url)
+                .slice(0, lim);
+            };
+
+            const aiCards = extractAiCards();
+            if (aiCards.some((card) => card.name || card.company_url)) {
+              return aiCards;
             }
 
             const legacyCards = Array.from(
@@ -803,7 +978,7 @@ export class LinkedInSearchService {
               )
             ).slice(0, lim);
 
-            return legacyCards.map((card) => {
+            const legacyResults = legacyCards.map((card) => {
               const companyLinkElement = card.querySelector(
                 "a[href*='/company/']"
               ) as HTMLAnchorElement | null;
@@ -816,16 +991,18 @@ export class LinkedInSearchService {
                 ? normalize(nameLink.textContent)
                 : pickText(card, [
                     "a[href*='/company/'] span[dir='ltr'] span[aria-hidden='true']",
+                    "a[href*='/company/'] span[aria-hidden='true']",
                     "a[data-test-app-aware-link] span[dir='ltr'] span[aria-hidden='true']",
                     "a[data-test-app-aware-link] span[aria-hidden='true']",
                     ".entity-result__title-text a span[aria-hidden='true']"
                   ]);
 
               const subtitleRaw =
-                pickSiblingText(card, "a[data-test-app-aware-link], .entity-result__title-text a", 0) ||
+                pickSiblingText(card, "a[href*='/company/'], a[data-test-app-aware-link], .entity-result__title-text a", 0) ||
                 pickText(card, [
-                  "div.t-14.t-black.t-normal",
-                  ".entity-result__primary-subtitle"
+                  ".entity-result__primary-subtitle",
+                  "[data-view-tracking-scope] span[dir='ltr']",
+                  "div.t-14.t-black.t-normal"
                 ]);
               const subtitleParts = subtitleRaw.split("•").map((s) => s.trim());
 
@@ -833,10 +1010,10 @@ export class LinkedInSearchService {
                 name,
                 industry: subtitleParts[0] ?? "",
                 follower_count:
-                  pickSiblingText(card, "a[data-test-app-aware-link], .entity-result__title-text a", 1) ||
+                  pickSiblingText(card, "a[href*='/company/'], a[data-test-app-aware-link], .entity-result__title-text a", 1) ||
                   pickText(card, [
-                    "div.t-14.t-normal:not(.t-black)",
-                    ".entity-result__secondary-subtitle"
+                    ".entity-result__secondary-subtitle",
+                    "div.t-14.t-normal:not(.t-black)"
                   ]),
                 description: pickText(card, [
                   "p[class*='entity-result__summary']",
@@ -849,6 +1026,36 @@ export class LinkedInSearchService {
                 logo_url: normalize(logoElement?.src)
               };
             });
+
+            if (legacyResults.some((card) => card.name || card.company_url)) {
+              return legacyResults;
+            }
+
+            const listFallback = Array.from(
+              globalThis.document.querySelectorAll("main li")
+            )
+              .map((card) => {
+                const lines = getCardLines(card);
+                const link = card.querySelector(
+                  "a[href*='/company/']"
+                ) as HTMLAnchorElement | null;
+                return {
+                  name: lines[0] ?? "",
+                  industry: lines[1] ?? "",
+                  follower_count: lines[2] ?? "",
+                  description: lines[3] ?? "",
+                  company_url: toAbsoluteHref(
+                    normalize(link?.getAttribute("href")) || normalize(link?.href)
+                  ),
+                  logo_url: normalize(
+                    (card.querySelector("img") as HTMLImageElement | null)?.src
+                  )
+                };
+              })
+              .filter((card) => card.name || card.company_url)
+              .slice(0, lim);
+
+            return listFallback;
           }, limit);
 
           const processed = snapshots
@@ -947,6 +1154,20 @@ export class LinkedInSearchService {
               }
               return "";
             };
+            const splitLines = (value: string): string[] =>
+              normalize(value)
+                .split("\n")
+                .map((line) => normalize(line))
+                .filter(Boolean);
+
+            const getCardLines = (card: Element): string[] => {
+              const raw = normalize((card as HTMLElement).innerText || card.textContent || "");
+              if (!raw) {
+                return [];
+              }
+              const lines = splitLines(raw);
+              return lines.filter((line, index) => lines.indexOf(line) === index);
+            };
             const toAbsoluteHref = (value: string): string => {
               if (!value) {
                 return "";
@@ -965,6 +1186,7 @@ export class LinkedInSearchService {
               const signal =
                 insightText ||
                 pickText(root, [
+                  ".job-card-job-posting-card-wrapper__footer-items > li",
                   ".job-card-container__metadata-item",
                   ".job-card-container__job-insight",
                   ".base-search-card__metadata"
@@ -979,43 +1201,45 @@ export class LinkedInSearchService {
               return normalize(match?.[1] ?? "");
             };
 
-            const cards = Array.from(
-              globalThis.document.querySelectorAll(
-                "[data-entity-urn^='urn:li:jobPosting'], li[data-chameleon-result-urn]:not([data-chameleon-result-urn*='headless']), .job-card-container, .base-search-card, .job-card-list__entity-lockup, .jobs-search-results-list__list-item"
-              )
-            ).slice(0, lim);
-
-            return cards.map((card) => {
+            const mapJobCard = (card: Element): Record<string, string> => {
               const jobLinkElement = card.querySelector(
                 "a[href*='/jobs/view/']"
               ) as HTMLAnchorElement | null;
+              const lines = getCardLines(card);
               return {
-                title: pickText(card, [
-                  "h3.base-search-card__title",
-                  "a[href*='/jobs/view/'] span[aria-hidden='true']",
-                  ".job-card-container__link",
-                  ".job-card-list__title",
-                  ".base-search-card__title"
-                ]),
-                company: pickText(card, [
-                  "h4.base-search-card__subtitle a",
-                  ".artdeco-entity-lockup__subtitle span[dir='ltr']",
-                  ".job-card-container__primary-description",
-                  ".job-card-container__company-name",
-                  ".base-search-card__subtitle"
-                ]),
-                location: pickText(card, [
-                  ".job-search-card__location",
-                  ".artdeco-entity-lockup__caption span[dir='ltr']",
-                  ".job-card-container__metadata-wrapper span[dir='ltr']",
-                  ".job-card-container__metadata-item",
-                  ".job-search-card__location"
-                ]),
-                posted_at: pickText(card, [
-                  "time",
-                  ".job-card-container__listed-status",
-                  ".job-card-container__footer"
-                ]),
+                title:
+                  pickText(card, [
+                    ".job-card-list__title--link strong",
+                    ".job-card-list__title",
+                    "h3.base-search-card__title",
+                    "a[href*='/jobs/view/'] span[aria-hidden='true']",
+                    ".job-card-container__link",
+                    ".base-search-card__title"
+                  ]) || lines[0] || "",
+                company:
+                  pickText(card, [
+                    ".artdeco-entity-lockup__subtitle span[dir='ltr']",
+                    ".artdeco-entity-lockup__subtitle",
+                    "h4.base-search-card__subtitle a",
+                    ".job-card-container__primary-description",
+                    ".job-card-container__company-name",
+                    ".base-search-card__subtitle"
+                  ]) || lines[1] || "",
+                location:
+                  pickText(card, [
+                    ".artdeco-entity-lockup__caption span[dir='ltr']",
+                    ".artdeco-entity-lockup__caption",
+                    ".job-search-card__location",
+                    ".job-card-container__metadata-wrapper span[dir='ltr']",
+                    ".job-card-container__metadata-item"
+                  ]) || lines[2] || "",
+                posted_at:
+                  pickText(card, [
+                    "time",
+                    ".job-card-job-posting-card-wrapper__footer-items > li",
+                    ".job-card-container__listed-status",
+                    ".job-card-container__footer"
+                  ]) || lines[3] || "",
                 job_url: toAbsoluteHref(
                   normalize(jobLinkElement?.getAttribute("href")) ||
                     normalize(jobLinkElement?.href)
@@ -1026,7 +1250,56 @@ export class LinkedInSearchService {
                 ]),
                 employment_type: pickEmploymentType(card)
               };
-            });
+            };
+
+            const modernCards = Array.from(
+              globalThis.document.querySelectorAll(
+                "li[data-occludable-job-id], div[data-job-id], [data-entity-urn^='urn:li:jobPosting'], .job-card-container, .base-search-card, .job-card-list__entity-lockup, .jobs-search-results-list__list-item"
+              )
+            )
+              .map((card) => mapJobCard(card))
+              .filter((card) => card.title || card.job_url)
+              .slice(0, lim);
+
+            if (modernCards.length > 0) {
+              return modernCards;
+            }
+
+            const aiRoot = globalThis.document.querySelector(
+              "div[componentkey='SearchResultsMainContent']"
+            );
+            if (aiRoot) {
+              const aiCards = Array.from(
+                aiRoot.querySelectorAll(
+                  "div[componentkey^='job-card-component-ref'], div[data-view-tracking-scope]"
+                )
+              )
+                .map((card) => mapJobCard(card))
+                .filter((card) => card.title || card.job_url)
+                .slice(0, lim);
+
+              if (aiCards.length > 0) {
+                return aiCards;
+              }
+            }
+
+            const legacyCards = Array.from(
+              globalThis.document.querySelectorAll(
+                "li[data-chameleon-result-urn]:not([data-chameleon-result-urn*='headless']), .job-card-container, .base-search-card, .job-card-list__entity-lockup, .jobs-search-results-list__list-item"
+              )
+            )
+              .map((card) => mapJobCard(card))
+              .filter((card) => card.title || card.job_url)
+              .slice(0, lim);
+
+            if (legacyCards.length > 0) {
+              return legacyCards;
+            }
+
+            return Array.from(globalThis.document.querySelectorAll("main li"))
+              .map((card) => mapJobCard(card))
+              .filter((card) => card.title || card.job_url)
+              .slice(0, lim);
           }, limit);
 
           const processed = snapshots
@@ -1219,17 +1492,58 @@ export class LinkedInSearchService {
               return modernPostContainers.map(mapPost);
             }
 
+            const aiRoot = globalThis.document.querySelector(
+              "div[componentkey='SearchResultsMainContent']"
+            );
+            if (aiRoot) {
+              const aiPostContainers = Array.from(
+                aiRoot.querySelectorAll("div[data-view-tracking-scope]")
+              )
+                .filter((post) => {
+                  const urn = normalize(post.getAttribute("data-urn"));
+                  const hasPostLink = Boolean(post.querySelector("a[href*='/feed/update/']"));
+                  return Boolean(urn || hasPostLink);
+                })
+                .slice(0, lim);
+
+              if (aiPostContainers.length > 0) {
+                return aiPostContainers.map(mapPost);
+              }
+            }
+
             const legacyPostContainers = Array.from(
               globalThis.document.querySelectorAll(
                 "div[data-chameleon-result-urn]:not([data-chameleon-result-urn*='headless']), li[data-chameleon-result-urn]:not([data-chameleon-result-urn*='headless']), div.feed-shared-update-v2[data-urn], .occludable-update[data-urn], article[data-urn]"
               )
             ).slice(0, lim);
 
-            if (legacyPostContainers.length === 0) {
-              return [] as Array<Record<string, string>>;
+            if (legacyPostContainers.length > 0) {
+              return legacyPostContainers.map(mapPost);
             }
 
-            return legacyPostContainers.map(mapPost);
+            return Array.from(globalThis.document.querySelectorAll("main li"))
+              .map((item) => {
+                const lines = normalize((item as HTMLElement).innerText)
+                  .split("\n")
+                  .map((line) => normalize(line))
+                  .filter(Boolean);
+                const postLink = item.querySelector(
+                  "a[href*='/feed/update/'], a[href*='/posts/']"
+                ) as HTMLAnchorElement | null;
+                return {
+                  author: lines[0] ?? "",
+                  author_headline: lines[1] ?? "",
+                  posted_at: lines[2] ?? "",
+                  text: (lines.slice(3).join(" ") || lines[1] || "").slice(0, 500),
+                  post_url: toAbsoluteHref(
+                    normalize(postLink?.getAttribute("href")) || normalize(postLink?.href)
+                  ),
+                  reaction_count: "",
+                  comment_count: ""
+                };
+              })
+              .filter((post) => post.text || post.post_url)
+              .slice(0, lim);
           }, limit);
 
           const processed = snapshots
@@ -1440,13 +1754,58 @@ export class LinkedInSearchService {
               return modernCards;
             }
 
+            const extractAiCards = (): Array<Record<string, string>> => {
+              const aiRoot = globalThis.document.querySelector(
+                "div[componentkey='SearchResultsMainContent']"
+              );
+              if (!aiRoot) {
+                return [];
+              }
+
+              const aiCards = Array.from(
+                aiRoot.querySelectorAll("div[data-view-tracking-scope]")
+              );
+              return aiCards
+                .map((card) => {
+                  const link = card.querySelector(
+                    "a[href*='/groups/']"
+                  ) as HTMLAnchorElement | null;
+                  const lines = normalize((card as HTMLElement).innerText)
+                    .split("\n")
+                    .map((line) => normalize(line))
+                    .filter(Boolean);
+                  return {
+                    name:
+                      normalize(
+                        (
+                          link?.querySelector("span[dir='ltr'] span[aria-hidden='true']") ??
+                          link?.querySelector("span[aria-hidden='true']")
+                        )?.textContent
+                      ) || lines[0] || "",
+                    group_type: lines[1] || "",
+                    member_count: lines.find((line) => /member/i.test(line)) ?? "",
+                    description: lines[2] || lines[3] || "",
+                    group_url: toAbsoluteHref(
+                      normalize(link?.getAttribute("href")) || normalize(link?.href)
+                    )
+                  };
+                })
+                .filter((card) => card.name || card.group_url)
+                .slice(0, lim);
+            };
+
+            const aiCards = extractAiCards();
+            if (aiCards.some((card) => card.name || card.group_url)) {
+              return aiCards;
+            }
+
             const legacyCards = Array.from(
               globalThis.document.querySelectorAll(
                 "li[data-chameleon-result-urn]:not([data-chameleon-result-urn*='headless']), div[data-view-name='search-entity-result-universal-template']"
               )
             ).slice(0, lim);
 
-            return legacyCards.map((card) => {
+            const legacyResults = legacyCards.map((card) => {
               const nameLink = card.querySelector(
                 "a[data-test-app-aware-link]"
               );
@@ -1477,6 +1836,30 @@ export class LinkedInSearchService {
                 group_url: pickHref(card, ["a[href*='/groups/']"])
               };
             });
+
+            if (legacyResults.some((card) => card.name || card.group_url)) {
+              return legacyResults;
+            }
+
+            return Array.from(globalThis.document.querySelectorAll("main li"))
+              .map((card) => {
+                const lines = normalize((card as HTMLElement).innerText)
+                  .split("\n")
+                  .map((line) => normalize(line))
+                  .filter(Boolean);
+                const link = card.querySelector("a[href*='/groups/']") as HTMLAnchorElement | null;
+                return {
+                  name: lines[0] ?? "",
+                  group_type: lines[1] ?? "",
+                  member_count: lines.find((line) => /member/i.test(line)) ?? "",
+                  description: lines[2] ?? "",
+                  group_url: toAbsoluteHref(
+                    normalize(link?.getAttribute("href")) || normalize(link?.href)
+                  )
+                };
+              })
+              .filter((card) => card.name || card.group_url)
+              .slice(0, lim);
           }, limit);
 
           const processed = snapshots
@@ -1695,13 +2078,63 @@ export class LinkedInSearchService {
               return modernCards;
             }
 
+            const extractAiCards = (): Array<Record<string, string>> => {
+              const aiRoot = globalThis.document.querySelector(
+                "div[componentkey='SearchResultsMainContent']"
+              );
+              if (!aiRoot) {
+                return [];
+              }
+
+              const aiCards = Array.from(
+                aiRoot.querySelectorAll("div[data-view-tracking-scope]")
+              );
+              return aiCards
+                .map((card) => {
+                  const link = card.querySelector(
+                    "a[href*='/events/']"
+                  ) as HTMLAnchorElement | null;
+                  const lines = normalize((card as HTMLElement).innerText)
+                    .split("\n")
+                    .map((line) => normalize(line))
+                    .filter(Boolean);
+                  const venueLine = lines[2] ?? lines[1] ?? "";
+                  const organizerMatch = /^(.*?)\s*[•·]\s*By\s+(.*)$/i.exec(venueLine);
+                  return {
+                    title:
+                      normalize(
+                        (
+                          link?.querySelector("span[dir='ltr'] span[aria-hidden='true']") ??
+                          link?.querySelector("span[aria-hidden='true']")
+                        )?.textContent
+                      ) || lines[0] || "",
+                    date: lines[1] ?? "",
+                    location: normalize(organizerMatch?.[1] ?? venueLine),
+                    organizer: normalize(organizerMatch?.[2] ?? ""),
+                    description: lines[3] ?? "",
+                    attendee_count:
+                      lines.find((line) => /attendee|going|interested/i.test(line)) ?? "",
+                    event_url: toAbsoluteHref(
+                      normalize(link?.getAttribute("href")) || normalize(link?.href)
+                    )
+                  };
+                })
+                .filter((card) => card.title || card.event_url)
+                .slice(0, lim);
+            };
+
+            const aiCards = extractAiCards();
+            if (aiCards.some((card) => card.title || card.event_url)) {
+              return aiCards;
+            }
+
             const legacyCards = Array.from(
               globalThis.document.querySelectorAll(
                 "li[data-chameleon-result-urn]:not([data-chameleon-result-urn*='headless']), div[data-view-name='search-entity-result-universal-template']"
               )
             ).slice(0, lim);
 
-            return legacyCards.map((card) => {
+            const legacyResults = legacyCards.map((card) => {
               const nameLink = card.querySelector(
                 "a[data-test-app-aware-link]"
               );
@@ -1749,6 +2182,35 @@ export class LinkedInSearchService {
                 event_url: pickHref(card, ["a[href*='/events/']"])
               };
             });
+
+            if (legacyResults.some((card) => card.title || card.event_url)) {
+              return legacyResults;
+            }
+
+            return Array.from(globalThis.document.querySelectorAll("main li"))
+              .map((card) => {
+                const lines = normalize((card as HTMLElement).innerText)
+                  .split("\n")
+                  .map((line) => normalize(line))
+                  .filter(Boolean);
+                const link = card.querySelector("a[href*='/events/']") as HTMLAnchorElement | null;
+                const venueLine = lines[2] ?? lines[1] ?? "";
+                const organizerMatch = /^(.*?)\s*[•·]\s*By\s+(.*)$/i.exec(venueLine);
+                return {
+                  title: lines[0] ?? "",
+                  date: lines[1] ?? "",
+                  location: normalize(organizerMatch?.[1] ?? venueLine),
+                  organizer: normalize(organizerMatch?.[2] ?? ""),
+                  description: lines[3] ?? "",
+                  attendee_count:
+                    lines.find((line) => /attendee|going|interested/i.test(line)) ?? "",
+                  event_url: toAbsoluteHref(
+                    normalize(link?.getAttribute("href")) || normalize(link?.href)
+                  )
+                };
+              })
+              .filter((card) => card.title || card.event_url)
+              .slice(0, lim);
           }, limit);
 
           const processed = snapshots
