@@ -406,6 +406,43 @@ function printPrepareResult(value: Record<string, unknown>): void {
   printJson(value);
 }
 
+async function maybeAutoExecute(
+  runtime: ReturnType<typeof createRuntime>,
+  prepared: {
+    preparedActionId: string;
+    confirmToken: string;
+    expiresAtMs: number;
+    preview: Record<string, unknown>;
+  },
+  options: { execute: boolean; profileName: string },
+): Promise<void> {
+  if (!options.execute) {
+    printPrepareResult({
+      run_id: runtime.runId,
+      profile_name: options.profileName,
+      ...prepared,
+    });
+    return;
+  }
+
+  const result = await runtime.twoPhaseCommit.confirmByToken({
+    confirmToken: prepared.confirmToken,
+  });
+
+  const summary =
+    typeof prepared.preview.summary === "string"
+      ? prepared.preview.summary
+      : `Action ${result.actionType}`;
+  writeCliNotice(`Executed: ${summary}`);
+
+  printJson({
+    run_id: runtime.runId,
+    profile_name: options.profileName,
+    auto_executed: true,
+    ...result,
+  });
+}
+
 function formatSearchResults(result: SearchResult): string {
   const lines: string[] = [];
   lines.push(`Search: "${result.query}" (${result.category}) — ${result.count} result(s)`);
@@ -5620,6 +5657,7 @@ async function runPrepareReply(
     profileName: string;
     thread: string;
     text: string;
+    execute: boolean;
   },
   cdpUrl?: string,
 ): Promise<void> {
@@ -5642,10 +5680,9 @@ async function runPrepareReply(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printPrepareResult({
-      run_id: runtime.runId,
-      profile_name: input.profileName,
-      ...prepared,
+    await maybeAutoExecute(runtime, prepared, {
+      execute: input.execute,
+      profileName: input.profileName,
     });
   } finally {
     runtime.close();
@@ -5696,6 +5733,7 @@ async function runPrepareNewThread(
     profileName: string;
     recipients: string[];
     text: string;
+    execute: boolean;
   },
   cdpUrl?: string,
 ): Promise<void> {
@@ -5719,10 +5757,9 @@ async function runPrepareNewThread(
       recipientCount: input.recipients.length,
     });
 
-    printPrepareResult({
-      run_id: runtime.runId,
-      profile_name: input.profileName,
-      ...prepared,
+    await maybeAutoExecute(runtime, prepared, {
+      execute: input.execute,
+      profileName: input.profileName,
     });
   } finally {
     runtime.close();
@@ -6016,6 +6053,7 @@ async function runConnectionsInvite(
     profileName: string;
     targetProfile: string;
     note?: string;
+    execute: boolean;
   },
   cdpUrl?: string,
 ): Promise<void> {
@@ -6038,10 +6076,9 @@ async function runConnectionsInvite(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printPrepareResult({
-      run_id: runtime.runId,
-      profile_name: input.profileName,
-      ...prepared,
+    await maybeAutoExecute(runtime, prepared, {
+      execute: input.execute,
+      profileName: input.profileName,
     });
   } finally {
     runtime.close();
@@ -6052,6 +6089,7 @@ async function runConnectionsAccept(
   input: {
     profileName: string;
     targetProfile: string;
+    execute: boolean;
   },
   cdpUrl?: string,
 ): Promise<void> {
@@ -6073,10 +6111,9 @@ async function runConnectionsAccept(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printPrepareResult({
-      run_id: runtime.runId,
-      profile_name: input.profileName,
-      ...prepared,
+    await maybeAutoExecute(runtime, prepared, {
+      execute: input.execute,
+      profileName: input.profileName,
     });
   } finally {
     runtime.close();
@@ -6087,6 +6124,7 @@ async function runConnectionsWithdraw(
   input: {
     profileName: string;
     targetProfile: string;
+    execute: boolean;
   },
   cdpUrl?: string,
 ): Promise<void> {
@@ -6108,10 +6146,9 @@ async function runConnectionsWithdraw(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printPrepareResult({
-      run_id: runtime.runId,
-      profile_name: input.profileName,
-      ...prepared,
+    await maybeAutoExecute(runtime, prepared, {
+      execute: input.execute,
+      profileName: input.profileName,
     });
   } finally {
     runtime.close();
@@ -6391,6 +6428,7 @@ async function runFeedList(
     profileName: string;
     limit: number;
     mine: boolean;
+    scrollAttempts: number;
   },
   cdpUrl?: string,
 ): Promise<void> {
@@ -6401,12 +6439,14 @@ async function runFeedList(
       profileName: input.profileName,
       limit: input.limit,
       mine: input.mine,
+      scrollAttempts: input.scrollAttempts,
     });
 
     const posts = await runtime.feed.viewFeed({
       profileName: input.profileName,
       limit: input.limit,
       mine: input.mine,
+      scrollAttempts: input.scrollAttempts,
     });
 
     runtime.logger.log("info", "cli.feed.list.done", {
@@ -6414,6 +6454,13 @@ async function runFeedList(
       count: posts.length,
       mine: input.mine,
     });
+
+    if (posts.length === 0) {
+      writeCliNotice(
+        "No feed posts found. For accounts with few connections, " +
+          "try increasing --scroll-attempts or follow more companies and people to populate your feed.",
+      );
+    }
 
     printJson({
       run_id: runtime.runId,
@@ -6468,6 +6515,7 @@ async function runFeedLike(
     postUrl: string;
     reaction?: string;
     operatorNote?: string;
+    execute: boolean;
   },
   cdpUrl?: string,
 ): Promise<void> {
@@ -6494,10 +6542,9 @@ async function runFeedLike(
       reaction,
     });
 
-    printPrepareResult({
-      run_id: runtime.runId,
-      profile_name: input.profileName,
-      ...prepared,
+    await maybeAutoExecute(runtime, prepared, {
+      execute: input.execute,
+      profileName: input.profileName,
     });
   } finally {
     runtime.close();
@@ -6510,6 +6557,7 @@ async function runFeedComment(
     postUrl: string;
     text: string;
     operatorNote?: string;
+    execute: boolean;
   },
   cdpUrl?: string,
 ): Promise<void> {
@@ -6533,10 +6581,9 @@ async function runFeedComment(
       preparedActionId: prepared.preparedActionId,
     });
 
-    printPrepareResult({
-      run_id: runtime.runId,
-      profile_name: input.profileName,
-      ...prepared,
+    await maybeAutoExecute(runtime, prepared, {
+      execute: input.execute,
+      profileName: input.profileName,
     });
   } finally {
     runtime.close();
@@ -6736,6 +6783,7 @@ async function runPostPrepare(
     text: string;
     visibility?: string;
     operatorNote?: string;
+    execute: boolean;
   },
   cdpUrl?: string,
 ): Promise<void> {
@@ -6764,10 +6812,9 @@ async function runPostPrepare(
       visibility,
     });
 
-    printPrepareResult({
-      run_id: runtime.runId,
-      profile_name: input.profileName,
-      ...prepared,
+    await maybeAutoExecute(runtime, prepared, {
+      execute: input.execute,
+      profileName: input.profileName,
     });
   } finally {
     runtime.close();
@@ -11345,17 +11392,20 @@ export function createCliProgram(): Command {
     )
     .requiredOption("--text <text>", "First message text")
     .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-x, --execute", "Immediately execute the action (skip separate confirm step)", false)
     .action(
       async (options: {
         profile: string;
         recipient: string[];
         text: string;
+        execute: boolean;
       }) => {
         await runPrepareNewThread(
           {
             profileName: options.profile,
             recipients: options.recipient,
             text: options.text,
+            execute: options.execute,
           },
           readCdpUrl(),
         );
@@ -11368,13 +11418,15 @@ export function createCliProgram(): Command {
     .requiredOption("--thread <thread>", "Thread id or LinkedIn thread URL")
     .requiredOption("--text <text>", "Message text")
     .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-x, --execute", "Immediately execute the action (skip separate confirm step)", false)
     .action(
-      async (options: { profile: string; thread: string; text: string }) => {
+      async (options: { profile: string; thread: string; text: string; execute: boolean }) => {
         await runPrepareReply(
           {
             profileName: options.profile,
             thread: options.thread,
             text: options.text,
+            execute: options.execute,
           },
           readCdpUrl(),
         );
@@ -11551,13 +11603,15 @@ export function createCliProgram(): Command {
     .argument("<target>", "Vanity name or profile URL")
     .option("-p, --profile <profile>", "Profile name", "default")
     .option("-n, --note <note>", "Optional invitation note")
+    .option("-x, --execute", "Immediately execute the action (skip separate confirm step)", false)
     .action(
-      async (target: string, options: { profile: string; note?: string }) => {
+      async (target: string, options: { profile: string; note?: string; execute: boolean }) => {
         await runConnectionsInvite(
           {
             profileName: options.profile,
             targetProfile: target,
             ...(options.note ? { note: options.note } : {}),
+            execute: options.execute,
           },
           readCdpUrl(),
         );
@@ -11569,11 +11623,13 @@ export function createCliProgram(): Command {
     .description("Prepare to accept a connection invitation (two-phase)")
     .argument("<target>", "Vanity name or profile URL of the sender")
     .option("-p, --profile <profile>", "Profile name", "default")
-    .action(async (target: string, options: { profile: string }) => {
+    .option("-x, --execute", "Immediately execute the action (skip separate confirm step)", false)
+    .action(async (target: string, options: { profile: string; execute: boolean }) => {
       await runConnectionsAccept(
         {
           profileName: options.profile,
           targetProfile: target,
+          execute: options.execute,
         },
         readCdpUrl(),
       );
@@ -11584,11 +11640,13 @@ export function createCliProgram(): Command {
     .description("Prepare to withdraw a sent invitation (two-phase)")
     .argument("<target>", "Vanity name or profile URL")
     .option("-p, --profile <profile>", "Profile name", "default")
-    .action(async (target: string, options: { profile: string }) => {
+    .option("-x, --execute", "Immediately execute the action (skip separate confirm step)", false)
+    .action(async (target: string, options: { profile: string; execute: boolean }) => {
       await runConnectionsWithdraw(
         {
           profileName: options.profile,
           targetProfile: target,
+          execute: options.execute,
         },
         readCdpUrl(),
       );
@@ -11764,13 +11822,27 @@ export function createCliProgram(): Command {
       "-m, --mine",
       "Show only your own posts (navigates to your activity page)",
     )
+    .option(
+      "--scroll-attempts <n>",
+      "Number of scroll attempts for loading feed content (increase for sparse feeds)",
+      "6",
+    )
     .action(
-      async (options: { profile: string; limit: string; mine?: true }) => {
+      async (options: {
+        profile: string;
+        limit: string;
+        mine?: true;
+        scrollAttempts: string;
+      }) => {
         await runFeedList(
           {
             profileName: options.profile,
             limit: coercePositiveInt(options.limit, "limit"),
             mine: options.mine === true,
+            scrollAttempts: coercePositiveInt(
+              options.scrollAttempts,
+              "scroll-attempts",
+            ),
           },
           readCdpUrl(),
         );
@@ -11804,10 +11876,11 @@ export function createCliProgram(): Command {
       "like",
     )
     .option("-o, --operator-note <note>", "Optional operator note")
+    .option("-x, --execute", "Immediately execute the action (skip separate confirm step)", false)
     .action(
       async (
         post: string,
-        options: { profile: string; reaction: string; operatorNote?: string },
+        options: { profile: string; reaction: string; operatorNote?: string; execute: boolean },
       ) => {
         await runFeedLike(
           {
@@ -11817,6 +11890,7 @@ export function createCliProgram(): Command {
             ...(options.operatorNote
               ? { operatorNote: options.operatorNote }
               : {}),
+            execute: options.execute,
           },
           readCdpUrl(),
         );
@@ -11830,10 +11904,11 @@ export function createCliProgram(): Command {
     .requiredOption("--text <text>", "Comment text")
     .option("-p, --profile <profile>", "Profile name", "default")
     .option("-o, --operator-note <note>", "Optional operator note")
+    .option("-x, --execute", "Immediately execute the action (skip separate confirm step)", false)
     .action(
       async (
         post: string,
-        options: { profile: string; text: string; operatorNote?: string },
+        options: { profile: string; text: string; operatorNote?: string; execute: boolean },
       ) => {
         await runFeedComment(
           {
@@ -11843,6 +11918,7 @@ export function createCliProgram(): Command {
             ...(options.operatorNote
               ? { operatorNote: options.operatorNote }
               : {}),
+            execute: options.execute,
           },
           readCdpUrl(),
         );
@@ -12174,12 +12250,14 @@ export function createCliProgram(): Command {
     )
     .option("-p, --profile <profile>", "Profile name", "default")
     .option("-o, --operator-note <note>", "Optional operator note")
+    .option("-x, --execute", "Immediately execute the action (skip separate confirm step)", false)
     .action(
       async (options: {
         profile: string;
         text: string;
         visibility: string;
         operatorNote?: string;
+        execute: boolean;
       }) => {
         await runPostPrepare(
           {
@@ -12189,6 +12267,7 @@ export function createCliProgram(): Command {
             ...(options.operatorNote
               ? { operatorNote: options.operatorNote }
               : {}),
+            execute: options.execute,
           },
           readCdpUrl(),
         );
