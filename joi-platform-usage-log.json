@@ -1,0 +1,21 @@
+{
+  "session": "issue-555-platform-usage",
+  "account": "joi-ascend",
+  "date": "2026-03-16",
+  "summary": "Comprehensive LinkedIn platform usage test using linkedin-buddy CLI and Playwright MCP.",
+  "profile_completion": "all_sections_complete",
+  "posts_published": 3,
+  "feed_likes": 2,
+  "connections_sent": 1,
+  "jobs_browsed": true,
+  "newsletter_attempted": true,
+  "newsletter_blocked_reason": "Account requires minimum connections for newsletter creation",
+  "bugs_filed": [556, 558],
+  "discoveries": [
+    "CLI headless browser at about:blank breaks page-dependent operations",
+    "LinkedIn Start a post changed from button to div",
+    "Profile edit form URLs: /in/{username}/edit/forms/{section}/new/",
+    "Headless login blocked by CAPTCHA, visible browser bypasses",
+    "Newsletter requires minimum network size"
+  ]
+}
