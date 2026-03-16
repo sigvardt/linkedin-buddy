@@ -13,7 +13,7 @@ import { LinkedInBuddyError, asLinkedInBuddyError } from "./errors.js";
 import { scrollLinkedInPageToTop } from "./linkedinPage.js";
 import type { JsonEventLogger } from "./logging.js";
 import { dismissLinkedInOverlaysIfPresent } from "./overlayDismissal.js";
-import { waitForNetworkIdleBestEffort } from "./pageLoad.js";
+import { navigateToLinkedIn, waitForNetworkIdleBestEffort } from "./pageLoad.js";
 import type { ProfileManager } from "./profileManager.js";
 import {
   consumeRateLimitOrThrow,
@@ -2554,8 +2554,7 @@ async function openPostComposer(
   artifactPaths: string[],
   logger?: Pick<JsonEventLogger, "log">,
 ): Promise<{ composerRoot: Locator; triggerKey: string; rootKey: string }> {
-  await page.goto(LINKEDIN_FEED_URL, { waitUntil: "domcontentloaded" });
-  await waitForNetworkIdleBestEffort(page);
+  await navigateToLinkedIn(page, LINKEDIN_FEED_URL);
   await dismissLinkedInOverlaysIfPresent(page, selectorLocale, logger);
   const triggerCandidates =
     createFeedPostComposerTriggerCandidates(selectorLocale);
@@ -3253,18 +3252,14 @@ async function locatePublishedPostOnSurface(
 ): Promise<Locator | null> {
   if (surface === "feed") {
     if (!page.url().startsWith(LINKEDIN_FEED_URL)) {
-      await page.goto(LINKEDIN_FEED_URL, { waitUntil: "domcontentloaded" });
-      await waitForNetworkIdleBestEffort(page);
+      await navigateToLinkedIn(page, LINKEDIN_FEED_URL);
     }
     await scrollLinkedInPageToTop(page);
     await waitForFeedSurface(page);
     return findVisiblePostBySnippet(page, snippet);
   }
 
-  await page.goto(LINKEDIN_PROFILE_ACTIVITY_URL, {
-    waitUntil: "domcontentloaded",
-  });
-  await waitForNetworkIdleBestEffort(page);
+  await navigateToLinkedIn(page, LINKEDIN_PROFILE_ACTIVITY_URL);
   await scrollLinkedInPageToTop(page);
   await waitForProfileActivitySurface(page);
   return findVisiblePostBySnippet(page, snippet);
