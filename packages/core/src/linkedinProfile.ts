@@ -762,7 +762,18 @@ export const PROFILE_MEDIA_STRUCTURAL_SELECTORS = {
   ]
 } as const;
 
+/**
+ * Primary selector for finding profile edit dialogs.
+ *
+ * LinkedIn's March 2026 UI uses native `<dialog>` elements with the `open`
+ * attribute for visibility.  Earlier builds used `[role='dialog']` and/or
+ * `[aria-modal='true']` — those are kept as fallbacks for any residual pages.
+ *
+ * **Selector order matters**: more-specific selectors first avoids matching
+ * hidden ad-related `<dialog>` shells that LinkedIn keeps in the DOM.
+ */
 const PROFILE_DIALOG_ROOT_SELECTOR =
+  "dialog[open][data-testid='dialog'], dialog[open], " +
   "dialog[data-testid='dialog'], [role='dialog'], [aria-modal='true'], dialog";
 
 /**
@@ -771,6 +782,7 @@ const PROFILE_DIALOG_ROOT_SELECTOR =
  * dialog flows continue using the narrower PROFILE_DIALOG_ROOT_SELECTOR.
  */
 const PROFILE_DIALOG_OR_OVERLAY_SELECTOR = [
+  "dialog[open]",
   PROFILE_DIALOG_ROOT_SELECTOR,
   ".artdeco-modal-overlay--is-top-layer",
   ".artdeco-modal",
@@ -782,6 +794,7 @@ export const PROFILE_INTRO_EDITOR_SURFACE_SELECTORS = {
   topCardHeadings: PROFILE_TOP_CARD_HEADING_SELECTORS,
   dialogRootSelector: PROFILE_DIALOG_ROOT_SELECTOR,
   pageRootSelectors: [
+    "dialog[open]",
     "dialog[data-testid='dialog'], dialog",
     "[data-testid='lazy-column']",
     "form",
@@ -3856,6 +3869,14 @@ async function canRecoverOwnProfileNavigationTimeout(page: Page): Promise<boolea
 }
 
 async function resolveLatestVisibleDialog(page: Page): Promise<Locator | null> {
+  // Fast path: dialog[open] is the most reliable indicator in LinkedIn's
+  // March 2026 UI — avoids iterating over hidden ad-related <dialog> shells.
+  const openDialog = page.locator("dialog[open]").last();
+  if (await openDialog.isVisible().catch(() => false)) {
+    return openDialog;
+  }
+
+  // Fallback: iterate through all candidates (for older LinkedIn pages).
   const dialogs = page.locator(PROFILE_DIALOG_ROOT_SELECTOR);
   const dialogCount = await dialogs.count().catch(() => 0);
 
@@ -3871,6 +3892,13 @@ async function resolveLatestVisibleDialog(page: Page): Promise<Locator | null> {
 
 
 async function resolveLatestVisibleDialogOrOverlay(page: Page): Promise<Locator | null> {
+  // Fast path: dialog[open] is the most reliable indicator.
+  const openDialog = page.locator("dialog[open]").last();
+  if (await openDialog.isVisible().catch(() => false)) {
+    return openDialog;
+  }
+
+  // Fallback: iterate through all overlay candidates.
   const surfaces = page.locator(PROFILE_DIALOG_OR_OVERLAY_SELECTOR);
   const surfaceCount = await surfaces.count().catch(() => 0);
 
@@ -3898,7 +3926,7 @@ async function waitForVisibleDialogOrOverlay(page: Page): Promise<Locator> {
   }
 
   // Final attempt — throw if nothing visible.
-  const fallback = page.locator(PROFILE_DIALOG_OR_OVERLAY_SELECTOR).last();
+  const fallback = page.locator("dialog[open]").last();
   await fallback.waitFor({ state: "visible", timeout: 1_000 });
   return fallback;
 }
@@ -4029,6 +4057,7 @@ async function resolveVisibleProfileSectionEditPage(
   ].join(", ");
 
   const rootCandidates: LocatorCandidate[] = [
+    "dialog[open]",
     "dialog[data-testid='dialog'], dialog",
     "[data-testid='lazy-column']",
     "form",
@@ -4084,7 +4113,7 @@ async function waitForProfileEditorSurface(
 }
 
 async function waitForVisibleOverlay(page: Page): Promise<Locator> {
-  const selector = "[role='dialog'], [role='menu']";
+  const selector = "dialog[open], [role='dialog'], [role='menu']";
   const deadline = Date.now() + 10_000;
 
   while (Date.now() < deadline) {
@@ -4114,7 +4143,7 @@ async function clickLocatorAndWaitForSurface(
   await locator.first().click();
   const surface = await waitForProfileEditorSurface(page, 10_000, section);
   if (!surface) {
-    const fallback = page.locator(PROFILE_DIALOG_ROOT_SELECTOR).last();
+    const fallback = page.locator("dialog[open]").last();
     await fallback.waitFor({ state: "visible", timeout: 1_000 });
     return { kind: "dialog", root: fallback };
   }
@@ -4828,7 +4857,7 @@ async function openSectionCreateSurface(
   await page.waitForTimeout(500);
   const surface = await waitForProfileEditorSurface(page, 10_000, section);
   if (!surface) {
-    const fallback = page.locator(PROFILE_DIALOG_ROOT_SELECTOR).last();
+    const fallback = page.locator("dialog[open]").last();
     await fallback.waitFor({ state: "visible", timeout: 1_000 });
     return { kind: "dialog", root: fallback };
   }
@@ -5237,6 +5266,12 @@ async function findSaveButtonInBroaderScope(
       selectorHint: "grandparent of surface root"
     },
     {
+      key: "save-fallback-open-dialog",
+      locator: page.locator("dialog[open]").last(),
+      selectorHint: "dialog[open] (last)"
+    },
+
+    {
       key: "save-fallback-artdeco-overlay",
       locator: page.locator(".artdeco-modal-overlay--is-top-layer").last(),
       selectorHint: ".artdeco-modal-overlay--is-top-layer (last)"
@@ -5260,7 +5295,7 @@ async function findSaveButtonInBroaderScope(
     },
     {
       key: "save-fallback-last-dialog",
-      locator: page.locator("[role='dialog']").last(),
+      locator: page.locator("dialog[open], [role='dialog']").last(),
       selectorHint: "[role='dialog'] (last)"
     }
   ];
@@ -5330,7 +5365,8 @@ async function clickSaveInProfileEditorSurface(
             key: "profile-editor-save-footer-primary",
             locator: surface.root.locator(
               ".artdeco-modal__actionbar button.artdeco-button--primary, " +
-              "footer button.artdeco-button--primary"
+              "footer button.artdeco-button--primary, " +
+              "footer button"
             ),
             selectorHint: ".artdeco-modal__actionbar or footer primary button"
           }
@@ -5349,6 +5385,7 @@ async function clickSaveInProfileEditorSurface(
           {
             key: "profile-editor-save-dialog-primary",
             locator: surface.root.locator(
+              "dialog[open] button.artdeco-button--primary, " +
               "[role='dialog'] button.artdeco-button--primary, " +
               ".artdeco-modal button.artdeco-button--primary"
             ).last(),
@@ -5520,7 +5557,7 @@ async function clickDeleteInDialog(
     {
       key: "confirm-delete-generic",
       locator: page
-        .locator("[role='dialog'] button, [role='dialog'] [role='button']")
+        .locator("dialog[open] button, dialog[open] [role='button'], [role='dialog'] button, [role='dialog'] [role='button']")
         .filter({ hasText: buildTextRegex(getUiActionLabels("delete", selectorLocale)) })
     }
   ];
@@ -5529,7 +5566,7 @@ async function clickDeleteInDialog(
     await resolvedConfirmDelete.locator.first().click();
   }
 
-  await page.locator("[role='dialog']").last().waitFor({ state: "hidden", timeout: 10_000 }).catch(
+  await page.locator("dialog[open], [role='dialog']").last().waitFor({ state: "hidden", timeout: 10_000 }).catch(
     () => undefined
   );
   await waitForNetworkIdleBestEffort(page);
@@ -5586,7 +5623,7 @@ async function clickDeleteInProfileEditorSurface(
     {
       key: "confirm-delete-generic",
       locator: page
-        .locator("[role='dialog'] button, [role='dialog'] [role='button']")
+        .locator("dialog[open] button, dialog[open] [role='button'], [role='dialog'] button, [role='dialog'] [role='button']")
         .filter({ hasText: buildTextRegex(getUiActionLabels("delete", selectorLocale)) })
     }
   ];
@@ -6065,8 +6102,14 @@ async function openSectionEditSurface(
 }
 
 async function getVisibleDialogOrNull(page: Page): Promise<Locator | null> {
-  const dialog = page.locator("[role='dialog']").last();
-  return (await isLocatorVisible(dialog)) ? dialog : null;
+  // Prefer dialog[open] — most reliable for LinkedIn's current UI.
+  const openDialog = page.locator("dialog[open]").last();
+  if (await isLocatorVisible(openDialog)) {
+    return openDialog;
+  }
+  // Fallback for older LinkedIn pages that still use role="dialog".
+  const roleDialog = page.locator("[role='dialog']").last();
+  return (await isLocatorVisible(roleDialog)) ? roleDialog : null;
 }
 
 async function findVisibleFileInput(root: Page | Locator): Promise<Locator | null> {
@@ -6804,7 +6847,7 @@ async function openSkillsAddSurface(
   await page.waitForTimeout(500);
   const skillsSurface = await waitForProfileEditorSurface(page, 10_000);
   if (!skillsSurface) {
-    const fallback = page.locator(PROFILE_DIALOG_ROOT_SELECTOR).last();
+    const fallback = page.locator("dialog[open]").last();
     await fallback.waitFor({ state: "visible", timeout: 1_000 });
     return { kind: "dialog", root: fallback };
   }
