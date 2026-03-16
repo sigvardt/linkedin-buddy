@@ -125,8 +125,10 @@ export type LinkedInSelectorPhraseKey =
   | "discard"
   | "dismiss"
   | "done"
+  | "certifications"
   | "education"
   | "experience"
+  | "honors_awards"
   | "follow"
   | "following"
   | "funny"
@@ -145,10 +147,12 @@ export type LinkedInSelectorPhraseKey =
   | "more_actions"
   | "notifications"
   | "open_to"
+  | "languages"
   | "pending"
   | "post"
   | "post_comment"
   | "post_settings"
+  | "projects"
   | "react"
   | "reaction"
   | "remove"
@@ -167,6 +171,7 @@ export type LinkedInSelectorPhraseKey =
   | "unsave"
   | "unfollow"
   | "visibility"
+  | "volunteer_experience"
   | "what_do_you_want_to_talk_about"
   | "who_can_see_your_post"
   | "withdraw"
@@ -195,8 +200,10 @@ const ENGLISH_SELECTOR_PHRASES: SelectorPhraseDictionary = {
   discard: ["Discard"],
   dismiss: ["Dismiss"],
   done: ["Done"],
+  certifications: ["Licenses & certifications", "Certifications"],
   education: ["Education"],
   experience: ["Experience"],
+  honors_awards: ["Honors & awards", "Honors and awards"],
   follow: ["Follow"],
   following: ["Following"],
   funny: ["Funny"],
@@ -215,10 +222,12 @@ const ENGLISH_SELECTOR_PHRASES: SelectorPhraseDictionary = {
   more_actions: ["More actions"],
   notifications: ["Notifications"],
   open_to: ["Open to"],
+  languages: ["Languages"],
   pending: ["Pending"],
   post: ["Post"],
   post_comment: ["Post comment"],
   post_settings: ["Post settings"],
+  projects: ["Projects"],
   react: ["React"],
   reaction: ["Reaction", "Reactions"],
   remove: ["Remove"],
@@ -237,6 +246,7 @@ const ENGLISH_SELECTOR_PHRASES: SelectorPhraseDictionary = {
   unsave: ["Unsave"],
   unfollow: ["Unfollow"],
   visibility: ["Visibility"],
+  volunteer_experience: ["Volunteer experience", "Volunteering"],
   what_do_you_want_to_talk_about: ["What do you want to talk about?"],
   who_can_see_your_post: ["Who can see your post?"],
   withdraw: ["Withdraw"],
@@ -259,8 +269,10 @@ const DANISH_SELECTOR_PHRASE_OVERRIDES: SelectorPhraseOverrides = {
   discard: ["Kassér", "Fjern"],
   dismiss: ["Luk"],
   done: ["Færdig", "Udført"],
+  certifications: ["Licenser og certificeringer", "Certificeringer"],
   education: ["Uddannelse"],
   experience: ["Erfaring"],
+  honors_awards: ["Hædersbevisninger og priser"],
   follow: ["Følg"],
   following: ["Følger"],
   funny: ["Sjov"],
@@ -279,10 +291,12 @@ const DANISH_SELECTOR_PHRASE_OVERRIDES: SelectorPhraseOverrides = {
   more_actions: ["Flere handlinger", "Mere"],
   notifications: ["Notifikationer", "Meddelelser"],
   open_to: ["Åben for", "Åben over for"],
+  languages: ["Sprog"],
   pending: ["Afventer"],
   post: ["Slå op", "Opslag"],
   post_comment: ["Slå kommentar op", "Send kommentar"],
   post_settings: ["Opslagsindstillinger", "Indstillinger for opslag"],
+  projects: ["Projekter"],
   react: ["Reager"],
   reaction: ["Reaktion", "Reaktioner"],
   remove: ["Fjern"],
@@ -297,6 +311,7 @@ const DANISH_SELECTOR_PHRASE_OVERRIDES: SelectorPhraseOverrides = {
   time_ago: ["siden"],
   unfollow: ["Følg ikke længere", "Stop med at følge"],
   visibility: ["Synlighed"],
+  volunteer_experience: ["Frivilligt arbejde"],
   what_do_you_want_to_talk_about: [
     "Hvad vil du tale om?",
     "Hvad vil du skrive om?"

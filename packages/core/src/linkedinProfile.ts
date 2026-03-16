@@ -64,6 +64,38 @@ export interface LinkedInEducation {
   dates: string;
 }
 
+export interface LinkedInCertification {
+  name: string;
+  issuing_organization: string;
+  issue_date: string;
+  credential_id: string;
+}
+
+export interface LinkedInLanguage {
+  name: string;
+  proficiency: string;
+}
+
+export interface LinkedInProject {
+  name: string;
+  description: string;
+  dates: string;
+}
+
+export interface LinkedInVolunteerExperience {
+  role: string;
+  organization: string;
+  duration: string;
+  description: string;
+}
+
+export interface LinkedInHonorAward {
+  title: string;
+  issuer: string;
+  date: string;
+  description: string;
+}
+
 export interface LinkedInProfile {
   profile_url: string;
   vanity_name: string | null;
@@ -74,6 +106,11 @@ export interface LinkedInProfile {
   connection_degree: string;
   experience: LinkedInExperience[];
   education: LinkedInEducation[];
+  certifications: LinkedInCertification[];
+  languages: LinkedInLanguage[];
+  projects: LinkedInProject[];
+  volunteer_experience: LinkedInVolunteerExperience[];
+  honors_awards: LinkedInHonorAward[];
 }
 
 export interface ViewProfileInput {
@@ -2107,7 +2144,12 @@ async function extractProfileData(
       about: "",
       connection_degree: "",
       experience: [],
-      education: []
+      education: [],
+      certifications: [],
+      languages: [],
+      projects: [],
+      volunteer_experience: [],
+      honors_awards: []
     };
 
     const pickText = (
@@ -2455,6 +2497,153 @@ async function extractProfileData(
         })
         .filter((item) => item.school || item.degree || item.field_of_study || item.dates);
 
+      const certificationsSection = findSectionRoot(
+        "certifications",
+        sectionLabels.certifications
+      );
+      const certifications = collectSectionItems(certificationsSection)
+        .map((item) => {
+          const name = pickText(
+            [".t-bold span[aria-hidden='true']", ".t-bold", "[data-field='name']"],
+            item
+          );
+          const issuingOrganization = pickText(
+            [".t-normal span[aria-hidden='true']", ".t-normal", "[data-field='issuer']"],
+            item
+          );
+          const issueDate = pickText(
+            [
+              ".pvs-entity__caption-wrapper span[aria-hidden='true']",
+              ".pvs-entity__caption-wrapper",
+              "[data-field='date']"
+            ],
+            item
+          );
+          const credentialId = pickText(
+            [
+              ".pvs-entity__extra-details span[aria-hidden='true']",
+              "[data-field='credential_id']"
+            ],
+            item
+          );
+          return {
+            name,
+            issuing_organization: issuingOrganization,
+            issue_date: issueDate,
+            credential_id: credentialId
+          };
+        })
+        .filter((item) => item.name || item.issuing_organization);
+
+      const languagesSection = findSectionRoot("languages", sectionLabels.languages);
+      const languages = collectSectionItems(languagesSection)
+        .map((item) => {
+          const name = pickText([".t-bold span[aria-hidden='true']", ".t-bold"], item);
+          const proficiency = pickText(
+            [".t-normal span[aria-hidden='true']", ".t-normal"],
+            item
+          );
+          return {
+            name,
+            proficiency
+          };
+        })
+        .filter((item) => item.name || item.proficiency);
+
+      const projectsSection = findSectionRoot("projects", sectionLabels.projects);
+      const projects = collectSectionItems(projectsSection)
+        .map((item) => {
+          const name = pickText([".t-bold span[aria-hidden='true']", ".t-bold"], item);
+          const description = pickText(
+            [
+              ".inline-show-more-text span[aria-hidden='true']",
+              ".inline-show-more-text"
+            ],
+            item
+          );
+          const dates = pickText(
+            [
+              ".pvs-entity__caption-wrapper span[aria-hidden='true']",
+              ".pvs-entity__caption-wrapper"
+            ],
+            item
+          );
+          return {
+            name,
+            description,
+            dates
+          };
+        })
+        .filter((item) => item.name || item.description || item.dates);
+
+      const volunteerExperienceSection = findSectionRoot(
+        "volunteering_experience",
+        sectionLabels.volunteer_experience
+      );
+      const volunteer_experience = collectSectionItems(volunteerExperienceSection)
+        .map((item) => {
+          const role = pickText([".t-bold span[aria-hidden='true']", ".t-bold"], item);
+          const organization = pickText(
+            [".t-normal span[aria-hidden='true']", ".t-normal"],
+            item
+          );
+          const duration = pickText(
+            [
+              ".pvs-entity__caption-wrapper span[aria-hidden='true']",
+              ".pvs-entity__caption-wrapper"
+            ],
+            item
+          );
+          const description = pickText(
+            [
+              ".inline-show-more-text span[aria-hidden='true']",
+              ".inline-show-more-text"
+            ],
+            item
+          );
+          return {
+            role,
+            organization,
+            duration,
+            description
+          };
+        })
+        .filter((item) => item.role || item.organization || item.duration || item.description);
+
+      const honorsAwardsSection = findSectionRoot(
+        "honors_and_awards",
+        sectionLabels.honors_awards
+      );
+      const honors_awards = collectSectionItems(honorsAwardsSection)
+        .map((item) => {
+          const title = pickText([".t-bold span[aria-hidden='true']", ".t-bold"], item);
+          const issuer = pickText(
+            [".t-normal span[aria-hidden='true']", ".t-normal"],
+            item
+          );
+          const date = pickText(
+            [
+              ".pvs-entity__caption-wrapper span[aria-hidden='true']",
+              ".pvs-entity__caption-wrapper"
+            ],
+            item
+          );
+          const description = pickText(
+            [
+              ".inline-show-more-text span[aria-hidden='true']",
+              ".inline-show-more-text"
+            ],
+            item
+          );
+          return {
+            title,
+            issuer,
+            date,
+            description
+          };
+        })
+        .filter((item) => item.title || item.issuer || item.date || item.description);
+
       return {
         profile_url: globalThis.window.location.href,
         vanity_name: vanityName,
@@ -2464,7 +2653,12 @@ async function extractProfileData(
         about,
         connection_degree: connectionDegree,
         experience,
-        education
+        education,
+        certifications,
+        languages,
+        projects,
+        volunteer_experience,
+        honors_awards
       };
     } catch {
       return emptyProfile;
@@ -2472,7 +2666,15 @@ async function extractProfileData(
   }, {
     about: getLinkedInSelectorPhrases("about", selectorLocale),
     experience: getLinkedInSelectorPhrases("experience", selectorLocale),
-    education: getLinkedInSelectorPhrases("education", selectorLocale)
+    education: getLinkedInSelectorPhrases("education", selectorLocale),
+    certifications: getLinkedInSelectorPhrases("certifications", selectorLocale),
+    languages: getLinkedInSelectorPhrases("languages", selectorLocale),
+    projects: getLinkedInSelectorPhrases("projects", selectorLocale),
+    volunteer_experience: getLinkedInSelectorPhrases(
+      "volunteer_experience",
+      selectorLocale
+    ),
+    honors_awards: getLinkedInSelectorPhrases("honors_awards", selectorLocale)
   });
 
   return {
@@ -2505,6 +2707,33 @@ async function extractProfileData(
       degree: normalizeText(item.degree),
       field_of_study: normalizeText(item.field_of_study),
       dates: normalizeText(item.dates)
+    })),
+    certifications: extracted.certifications.map((item) => ({
+      name: normalizeText(item.name),
+      issuing_organization: normalizeText(item.issuing_organization),
+      issue_date: normalizeText(item.issue_date),
+      credential_id: normalizeText(item.credential_id)
+    })),
+    languages: extracted.languages.map((item) => ({
+      name: normalizeText(item.name),
+      proficiency: normalizeText(item.proficiency)
+    })),
+    projects: extracted.projects.map((item) => ({
+      name: normalizeText(item.name),
+      description: normalizeText(item.description),
+      dates: normalizeText(item.dates)
+    })),
+    volunteer_experience: extracted.volunteer_experience.map((item) => ({
+      role: normalizeText(item.role),
+      organization: normalizeText(item.organization),
+      duration: normalizeText(item.duration),
+      description: normalizeText(item.description)
+    })),
+    honors_awards: extracted.honors_awards.map((item) => ({
+      title: normalizeText(item.title),
+      issuer: normalizeText(item.issuer),
+      date: normalizeText(item.date),
+      description: normalizeText(item.description)
     }))
   };
 }

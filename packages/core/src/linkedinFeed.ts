@@ -65,6 +65,12 @@ export interface ViewFeedInput {
   profileName?: string;
   limit?: number;
   mine?: boolean;
+  /**
+   * Number of scroll attempts when loading feed posts.
+   * Higher values help with sparse feeds on new accounts.
+   * @default 6
+   */
+  scrollAttempts?: number;
 }
 
 export interface ViewPostInput {
@@ -1020,10 +1026,11 @@ async function extractFeedPosts(
 async function loadFeedPosts(
   page: Page,
   limit: number,
+  scrollAttempts: number = 6,
 ): Promise<LinkedInFeedPost[]> {
   let posts = await extractFeedPosts(page, limit);
 
-  for (let i = 0; i < 6 && posts.length < limit; i++) {
+  for (let i = 0; i < scrollAttempts && posts.length < limit; i++) {
     await scrollLinkedInPageToBottom(page);
     await page.waitForTimeout(800);
     posts = await extractFeedPosts(page, limit);
@@ -3653,7 +3660,8 @@ export class LinkedInFeedService {
           await page.goto(targetUrl, { waitUntil: "domcontentloaded" });
           await waitForFeedSurface(page);
           await waitForNetworkIdleBestEffort(page, 8_000);
-          const posts = await loadFeedPosts(page, limit);
+          const scrollAttempts = input.scrollAttempts ?? 6;
+          const posts = await loadFeedPosts(page, limit, scrollAttempts);
           return posts.slice(0, limit);
         },
       );

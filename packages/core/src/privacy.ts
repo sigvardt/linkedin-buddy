@@ -101,6 +101,39 @@ const LIKELY_NAME_FALSE_POSITIVES: ReadonlySet<string> = new Set([
   "Riyadh", "Seoul", "Shanghai", "Singapore", "Stockholm",
   "Taipei", "Tokyo", "Toronto", "Vancouver", "Vienna",
   "Warsaw", "Zurich",
+
+  // Contractions (common at sentence starts, never person names)
+  "I've", "I'm", "I'll", "I'd",
+  "We've", "We're", "We'll", "We'd",
+  "They've", "They'll", "They'd",
+  "You've", "You'll", "You'd",
+  "He'd", "He'll",
+  "She'd", "She'll",
+  "It's", "It'll",
+  "That's", "That'll",
+  "What's", "Who's", "Where's", "When's", "How's",
+  "There's", "Here's", "Let's",
+  "Don't", "Can't", "Won't", "Isn't", "Aren't",
+  "Wasn't", "Weren't", "Doesn't", "Didn't",
+  "Haven't", "Hasn't", "Hadn't",
+  "Couldn't", "Wouldn't", "Shouldn't", "Mightn't",
+
+  // Compound words and indefinite pronouns (sentence starts)
+  "Something", "Everything", "Nothing", "Anything",
+  "Someone", "Everyone", "Anyone", "Somebody", "Everybody",
+  "Anybody", "Somewhere", "Everywhere", "Anywhere",
+  "Sometimes", "Another", "Whatever", "Whenever", "Wherever",
+  "Whoever", "Ourselves", "Themselves", "Yourself", "Myself",
+
+  // Common sentence-start words in professional writing
+  "Because", "Although", "Whether", "Whereas", "Moreover",
+  "Furthermore", "Regardless", "Alternatively", "Additionally",
+  "Consequently", "Specifically", "Essentially", "Unfortunately",
+  "Fortunately", "Apparently", "Obviously", "Certainly",
+  "Absolutely", "Definitely", "Ultimately", "Previously",
+  "Currently", "Recently", "Typically", "Generally",
+  "Particularly", "Especially", "Importantly", "Interestingly",
+  "Surprisingly", "Significantly", "Increasingly", "Successfully",
 ]);
 
 const LINKEDIN_PROFILE_URL_PATTERN =

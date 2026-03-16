@@ -222,6 +222,21 @@ export class ProfileManager {
             error.message.includes("ECONNREFUSED"));
 
         if (!isDisconnect || attempt >= maxRetries) {
+          if (isDisconnect) {
+            throw new LinkedInBuddyError(
+              "NETWORK_ERROR",
+              `Browser connection lost after ${maxRetries + 1} attempt(s). ` +
+                "The browser may have been closed or crashed. " +
+                'Run "linkedin keepalive start" to maintain a persistent session, ' +
+                'or restart the browser and try again.',
+              {
+                attempted_retries: maxRetries,
+                last_error_message:
+                  error instanceof Error ? error.message : String(error),
+              },
+              { cause: error instanceof Error ? error : undefined },
+            );
+          }
           throw error;
         }
 
