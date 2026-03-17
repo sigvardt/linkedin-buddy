@@ -9,6 +9,10 @@
 | `sessionInspection.ts` | Session diagnostics and health probes |
 | `loginSelectors.ts` | Login page selector strategies (email field, password field, submit button) |
 | `rateLimitState.ts` | Rate limit cooldown state — persisted to `rate-limit-state.json`, checked before operations |
+| `identityCache.ts` | Caches identity resolution results for sub-second identity checks |
+| `whoami.ts` | Fast identity extraction from cookies/DOM using cached hints |
+| `fingerprint.ts` | Browser fingerprinting utilities |
+| `sessionHealthCheck.ts` | Additional checks for session validity |
 
 ## Auth Flow
 
@@ -41,3 +45,8 @@ When LinkedIn returns HTTP 429/999 or a checkpoint URL:
 1. `rateLimitState.ts` records expiry timestamp
 2. All subsequent operations check cooldown before proceeding
 3. `keepAlive.ts` monitors and alerts on cooldown state
+
+
+## Core Principle
+
+**GitHub is our source of truth.** Always check issue history, commits, and comments before starting implementation.

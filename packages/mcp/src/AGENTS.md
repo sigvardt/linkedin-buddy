@@ -3,7 +3,7 @@
 ## Overview
 
 Model Context Protocol stdio server exposing all core services as AI-consumable tools.
-100+ tools across 15 categories. Entry point: `bin/linkedin-mcp.ts` (8,000+ lines).
+100+ tools across 15 categories. Entry point: `bin/linkedin-mcp.ts` (7,555+ lines).
 
 ## Files
 
@@ -87,3 +87,8 @@ async function handleToolName(args: ToolArgs): Promise<ToolResult> {
 - NEVER forget `runtime.close()` — always use try/finally
 - Tool names follow `linkedin.<domain>.<action>` convention — never deviate
 - All tools include optional `cdpUrl` and `selectorLocale` parameters
+
+
+## Core Principle
+
+**GitHub is our source of truth.** Always check issue history, commits, and comments before starting implementation.

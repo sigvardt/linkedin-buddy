@@ -45,3 +45,8 @@ Diagnostics: set `LINKEDIN_BUDDY_EVASION_DIAGNOSTICS=true` for verbose logging.
 - NEVER make evasion patterns too uniform — randomization is critical for avoiding detection
 - NEVER skip evasion for credential entry — use `humanize.ts` typing profiles for sensitive fields
 - Changes to math distributions require careful validation — small changes can make patterns detectable
+
+
+## Core Principle
+
+**GitHub is our source of truth.** Always check issue history, commits, and comments before starting implementation.

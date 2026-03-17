@@ -1,5 +1,16 @@
 # AGENTS.md — Sub-Agent Instructions
 
+## Core Working Principle: GitHub Source of Truth
+
+**GitHub is our source of truth.** You have all history here. Use it when you're tackling a problem:
+- Search through previous issues.
+- Check commits and comments to understand what was tried before.
+- Maybe you've tried to fix this bug before.
+
+Always check the repository history before starting implementation.
+
+
+
 ## Repo Overview
 
 LinkedIn Buddy — Playwright-based browser automation for LinkedIn with CLI and MCP server.
