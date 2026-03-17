@@ -2175,6 +2175,9 @@ async function runStatus(profileName: string, cdpUrl?: string): Promise<void> {
     runtime.close();
   }
 }
+/* eslint-enable no-undef */
+
+
 
 function buildFeedbackJsonResult(
   result:
@@ -8897,6 +8900,53 @@ async function runAnalyticsPostMetrics(
     runtime.close();
   }
 }
+
+/* eslint-disable no-undef */
+async function runEventsPrepareCreate(
+  input: {
+    profileName: string;
+    name: string;
+    description?: string;
+    startDate?: string;
+    startTime?: string;
+    endDate?: string;
+    endTime?: string;
+    isOnline?: boolean;
+    externalLink?: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.events.prepare_create.start", {
+      profileName: input.profileName,
+      name: input.name,
+    });
+
+    const prepared = runtime.events.prepareCreateEvent({
+      ...input
+    });
+
+    runtime.logger.log("info", "cli.events.prepare_create.done", {
+      profileName: input.profileName,
+      actionId: prepared.preparedActionId,
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      prepared_action_id: prepared.preparedActionId,
+      confirm_token: prepared.confirmToken,
+      expires_at_ms: prepared.expiresAtMs,
+      preview: prepared.preview,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+/* eslint-enable no-undef */
 
 async function runEventsSearch(
   input: {

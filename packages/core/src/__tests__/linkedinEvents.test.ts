@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  EVENT_CREATE_ACTION_TYPE,
   EVENT_RSVP_ACTION_TYPE,
   LinkedInEventsService,
   buildEventSearchUrl,
@@ -26,8 +27,9 @@ describe("createEventActionExecutors", () => {
   it("registers the RSVP executor", () => {
     const executors = createEventActionExecutors();
 
-    expect(Object.keys(executors)).toEqual([EVENT_RSVP_ACTION_TYPE]);
+    expect(Object.keys(executors)).toEqual([EVENT_RSVP_ACTION_TYPE, EVENT_CREATE_ACTION_TYPE]);
     expect(executors[EVENT_RSVP_ACTION_TYPE]).toBeDefined();
+    expect(executors[EVENT_CREATE_ACTION_TYPE]).toBeDefined();
   });
 });
 

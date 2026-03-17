@@ -345,6 +345,7 @@ async function scrollSearchResultsIfNeeded(
   return snapshots;
 }
 
+/* eslint-disable no-undef */
 async function extractGroupSearchResults(
   page: Page,
   limit: number
@@ -433,6 +434,7 @@ async function extractGroupSearchResults(
     });
   }, limit);
 }
+/* eslint-enable no-undef */
 
 async function extractGroupDetailSnapshot(page: Page): Promise<GroupDetailSnapshot> {
   return page.evaluate(() => {
@@ -855,6 +857,7 @@ async function executePostToGroup(
 }
 
 
+/* eslint-disable no-undef */
 export class CreateGroupActionExecutor
   implements ActionExecutor<LinkedInGroupsExecutorRuntime>
 {
@@ -995,6 +998,7 @@ export class LinkedInGroupsService {
   constructor(private readonly runtime: LinkedInGroupsRuntime) {}
 
 
+  /* eslint-disable no-undef */
   prepareCreateGroup(
     input: CreateGroupInput,
   ): PreparedAction<LinkedInGroupsExecutorRuntime> {

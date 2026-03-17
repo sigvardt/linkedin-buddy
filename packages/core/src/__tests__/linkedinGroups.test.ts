@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  GROUP_CREATE_ACTION_TYPE,
   GROUP_JOIN_ACTION_TYPE,
   GROUP_LEAVE_ACTION_TYPE,
   GROUP_POST_ACTION_TYPE,
@@ -28,10 +29,11 @@ describe("createGroupActionExecutors", () => {
   it("registers the supported group action executors", () => {
     const executors = createGroupActionExecutors();
 
-    expect(Object.keys(executors)).toHaveLength(3);
+    expect(Object.keys(executors)).toHaveLength(4);
     expect(executors[GROUP_JOIN_ACTION_TYPE]).toBeDefined();
     expect(executors[GROUP_LEAVE_ACTION_TYPE]).toBeDefined();
     expect(executors[GROUP_POST_ACTION_TYPE]).toBeDefined();
+    expect(executors[GROUP_CREATE_ACTION_TYPE]).toBeDefined();
   });
 });
 

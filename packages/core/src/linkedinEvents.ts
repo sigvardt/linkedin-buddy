@@ -319,6 +319,7 @@ async function extractEventSearchResults(
       return match?.[1] ?? "";
     };
 
+    /* eslint-disable no-undef */
     const origin = globalThis.window.location.origin;
     const links = Array.from(
       globalThis.document.querySelectorAll("main a[href*='/events/'], ul a[href*='/events/'], .search-results-container a[href*='/events/']")
@@ -339,6 +340,7 @@ async function extractEventSearchResults(
       return true;
     });
 
+    /* eslint-disable no-undef */
     return uniqueLinks.slice(0, maxEvents).map((link) => {
       const card = link.closest("li") ?? link.closest("div[data-view-tracking-scope]") ?? link.closest("div.search-result__wrapper") ?? link.parentElement;
       
@@ -396,8 +398,10 @@ async function extractEventSearchResults(
         is_online: isOnline
       } satisfies EventSearchSnapshot;
     });
+    /* eslint-enable no-undef */
   }, limit);
 }
+/* eslint-enable no-undef */
 
 async function extractEventDetailSnapshot(page: Page): Promise<EventDetailSnapshot> {
   return page.evaluate(() => {
@@ -622,6 +626,7 @@ async function executeEventRsvp(
 }
 
 
+/* eslint-disable no-undef */
 export class CreateEventActionExecutor
   implements ActionExecutor<LinkedInEventsExecutorRuntime>
 {
@@ -724,6 +729,7 @@ export class LinkedInEventsService {
   constructor(private readonly runtime: LinkedInEventsRuntime) {}
 
 
+  /* eslint-disable no-undef */
   prepareCreateEvent(
     input: CreateEventInput,
   ): PreparedAction<LinkedInEventsExecutorRuntime> {
