@@ -8817,6 +8817,43 @@ async function runGroupsPreparePost(
   }
 }
 
+
+async function runAnalyticsPostMetrics(
+  input: {
+    profileName: string;
+    postUrl: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.analytics.post_metrics.start", {
+      profileName: input.profileName,
+      postUrl: input.postUrl,
+    });
+
+    const summary = await runtime.analytics.getPostMetrics({
+      profileName: input.profileName,
+      postUrl: input.postUrl,
+    });
+
+    runtime.logger.log("info", "cli.analytics.post_metrics.done", {
+      profileName: input.profileName,
+      post_url: summary.post.post_url,
+      metric_count: summary.metrics.length,
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...summary,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 async function runEventsSearch(
   input: {
     profileName: string;
@@ -12212,6 +12249,26 @@ export function createCliProgram(): Command {
         );
       },
     );
+
+  
+  const analyticsCommand = program
+    .command("analytics")
+    .description("View LinkedIn analytics");
+
+  analyticsCommand
+    .command("post-metrics")
+    .description("View post-specific analytics metrics")
+    .argument("<post>", "LinkedIn post URL")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(async (postUrl: string, options: { profile: string }) => {
+      await runAnalyticsPostMetrics(
+        {
+          profileName: options.profile,
+          postUrl,
+        },
+        readCdpUrl(),
+      );
+    });
 
   const eventsCommand = program
     .command("events")
