@@ -80,3 +80,8 @@ Without these flags, write tests only execute prepare (no confirm).
 3. For read tests: call service methods, assert response structure
 4. For write tests: ONLY call `prepare*()` unless confirm opt-in flag is set
 5. Always clean up: close runtime in `afterAll()`
+
+
+## Core Principle
+
+**GitHub is our source of truth.** Always check issue history, commits, and comments before starting implementation.

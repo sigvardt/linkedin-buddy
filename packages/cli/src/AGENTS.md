@@ -3,7 +3,7 @@
 ## Overview
 
 Commander-based CLI exposing all core services as terminal commands. 127+ commands across 15 categories.
-Entry point: `bin/linkedin.ts` (11,100+ lines — largest file in the repo).
+Entry point: `bin/linkedin.ts` (14,077+ lines — largest file in the repo).
 
 ## Files
 
@@ -63,3 +63,8 @@ program
 - NEVER call core services without `try/finally` for `runtime.close()`
 - NEVER skip `--profile` option — every command needs profile selection
 - Output formatters belong in dedicated `*Output.ts` files, not inline in the command
+
+
+## Core Principle
+
+**GitHub is our source of truth.** Always check issue history, commits, and comments before starting implementation.

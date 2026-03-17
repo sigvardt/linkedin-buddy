@@ -41,3 +41,8 @@ __tests__/
 - Mock the runtime object — never instantiate real services in unit tests
 - Use `vi.useFakeTimers()` for time-dependent tests (rate limiting, token expiry)
 - Test error paths: verify `LinkedInBuddyError` codes, not just "throws"
+
+
+## Core Principle
+
+**GitHub is our source of truth.** Always check issue history, commits, and comments before starting implementation.
