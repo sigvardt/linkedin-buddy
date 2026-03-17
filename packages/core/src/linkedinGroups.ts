@@ -31,11 +31,17 @@ import type {
 } from "./twoPhaseCommit.js";
 import { normalizeText, getOrCreatePage, escapeRegExp } from "./shared.js";
 
+export const GROUP_CREATE_ACTION_TYPE = "groups.create";
 export const GROUP_JOIN_ACTION_TYPE = "groups.join";
 export const GROUP_LEAVE_ACTION_TYPE = "groups.leave";
 export const GROUP_POST_ACTION_TYPE = "groups.post";
 
 const GROUP_RATE_LIMIT_CONFIGS = {
+  
+  [GROUP_CREATE_ACTION_TYPE]: {
+    limit: 10,
+    windowSizeMs: 24 * 60 * 60 * 1000,
+  },
   [GROUP_JOIN_ACTION_TYPE]: {
     counterKey: "linkedin.groups.join",
     windowSizeMs: 24 * 60 * 60 * 1000,
@@ -79,6 +85,18 @@ export interface LinkedInGroupDetail {
   about: string;
   joined_at: string | null;
   membership_state: LinkedInGroupMembershipState;
+}
+
+
+export interface CreateGroupInput {
+  profileName?: string;
+  name: string;
+  description: string;
+  rules?: string;
+  industry?: string;
+  location?: string;
+  isUnlisted?: boolean;
+  operatorNote?: string;
 }
 
 export interface SearchGroupsInput {
@@ -836,6 +854,73 @@ async function executePostToGroup(
   );
 }
 
+
+export class CreateGroupActionExecutor
+  implements ActionExecutor<LinkedInGroupsExecutorRuntime>
+{
+  async execute(
+    runtime: LinkedInGroupsExecutorRuntime,
+    payload: unknown,
+  ): Promise<ExecuteActionResult> {
+    const data = payload as CreateGroupInput;
+    
+    // Check rate limit before executing
+    await runtime.rateLimiter.consumeOrThrow(
+      getGroupRateLimitConfig(GROUP_CREATE_ACTION_TYPE),
+      createConfirmRateLimitMessage(GROUP_CREATE_ACTION_TYPE),
+    );
+
+    const group = await runtime.profileManager.runWithPersistentContext(
+      data.profileName ?? "default",
+      { headless: false },
+      async (context) => {
+        const page = await context.newPage();
+        try {
+          await page.goto("https://www.linkedin.com/groups/create/", {
+            waitUntil: "domcontentloaded",
+          });
+          
+          await page.locator("input[name='groupName']").waitFor({ state: "visible", timeout: 10000 });
+          await page.locator("input[name='groupName']").fill(data.name);
+          
+          if (data.description) {
+            await page.locator("textarea[name='groupDescription']").fill(data.description);
+          }
+          
+          if (data.rules) {
+            await page.locator("textarea[name='groupRules']").fill(data.rules);
+          }
+          
+          if (data.isUnlisted) {
+            await page.locator("label[for='unlisted-group']").click();
+          }
+          
+          await page.locator("button[type='submit']").click();
+          
+          // Wait for redirect to new group page
+          await page.waitForURL(/\/groups\/\d+/i, { timeout: 15000 });
+          
+          const url = page.url();
+          const groupId = /\/groups\/(\d+)/iu.exec(url)?.[1] ?? "";
+          
+          return {
+            group_id: groupId,
+            name: data.name,
+            group_url: url
+          };
+        } finally {
+          await page.close().catch(() => {});
+        }
+      },
+    );
+
+    return {
+      message: `Successfully created LinkedIn group: "${data.name}"`,
+      data: group,
+    };
+  }
+}
+
 export class JoinGroupActionExecutor
   implements ActionExecutor<LinkedInGroupsExecutorRuntime>
 {
@@ -901,12 +986,41 @@ export function createGroupActionExecutors(): ActionExecutorRegistry<LinkedInGro
   return {
     [GROUP_JOIN_ACTION_TYPE]: new JoinGroupActionExecutor(),
     [GROUP_LEAVE_ACTION_TYPE]: new LeaveGroupActionExecutor(),
-    [GROUP_POST_ACTION_TYPE]: new PostToGroupActionExecutor()
+    [GROUP_POST_ACTION_TYPE]: new PostToGroupActionExecutor(),
+    [GROUP_CREATE_ACTION_TYPE]: new CreateGroupActionExecutor()
   };
 }
 
 export class LinkedInGroupsService {
   constructor(private readonly runtime: LinkedInGroupsRuntime) {}
+
+
+  prepareCreateGroup(
+    input: CreateGroupInput,
+  ): PreparedAction<LinkedInGroupsExecutorRuntime> {
+    const profileName = input.profileName ?? "default";
+
+    return this.runtime.twoPhaseCommit.prepare({
+      profileName,
+      actionType: GROUP_CREATE_ACTION_TYPE,
+      operatorNote: input.operatorNote,
+      requireToken: false,
+      payload: {
+        profileName,
+        name: input.name,
+        description: input.description,
+        rules: input.rules,
+        industry: input.industry,
+        location: input.location,
+        isUnlisted: input.isUnlisted,
+      },
+      preview: {
+        action: "Create Group",
+        group_name: input.name,
+        description: input.description,
+      },
+    });
+  }
 
   async searchGroups(input: SearchGroupsInput): Promise<SearchGroupsOutput> {
     const profileName = input.profileName ?? "default";

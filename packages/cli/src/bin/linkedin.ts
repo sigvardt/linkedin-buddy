@@ -8704,6 +8704,50 @@ async function runGroupsView(
   }
 }
 
+
+async function runGroupsPrepareCreate(
+  input: {
+    profileName: string;
+    name: string;
+    description: string;
+    rules?: string;
+    industry?: string;
+    location?: string;
+    isUnlisted?: boolean;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.groups.prepare_create.start", {
+      profileName: input.profileName,
+      name: input.name,
+    });
+
+    const prepared = runtime.groups.prepareCreateGroup({
+      ...input
+    });
+
+    runtime.logger.log("info", "cli.groups.prepare_create.done", {
+      profileName: input.profileName,
+      actionId: prepared.preparedActionId,
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      prepared_action_id: prepared.preparedActionId,
+      confirm_token: prepared.confirmToken,
+      expires_at_ms: prepared.expiresAtMs,
+      preview: prepared.preview,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 async function runGroupsPrepareJoin(
   input: {
     profileName: string;
@@ -12170,6 +12214,40 @@ export function createCliProgram(): Command {
           {
             profileName: options.profile,
             group,
+          },
+          readCdpUrl(),
+        );
+      },
+    );
+
+
+  groupsCommand
+    .command("prepare-create")
+    .description("Prepare to create a new LinkedIn group (two-phase)")
+    .requiredOption("-n, --name <name>", "Name of the group")
+    .requiredOption("-d, --description <description>", "Description of the group")
+    .option("-r, --rules <rules>", "Group rules")
+    .option("-i, --industry <industry>", "Group industry")
+    .option("-l, --location <location>", "Group location")
+    .option("--unlisted", "Make the group unlisted")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-o, --operator-note <note>", "Optional operator note")
+    .action(
+      async (
+        options: { profile: string; name: string; description: string; rules?: string; industry?: string; location?: string; unlisted?: boolean; operatorNote?: string },
+      ) => {
+        await runGroupsPrepareCreate(
+          {
+            profileName: options.profile,
+            name: options.name,
+            description: options.description,
+            ...(options.rules ? { rules: options.rules } : {}),
+            ...(options.industry ? { industry: options.industry } : {}),
+            ...(options.location ? { location: options.location } : {}),
+            ...(options.unlisted ? { isUnlisted: options.unlisted } : {}),
+            ...(options.operatorNote
+              ? { operatorNote: options.operatorNote }
+              : {}),
           },
           readCdpUrl(),
         );
