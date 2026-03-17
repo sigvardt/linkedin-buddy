@@ -1554,7 +1554,30 @@ async function extractJobAlerts(
       const isVisible = (element: Element): boolean => {
         const htmlElement = element as HTMLElement;
         const style = globalThis.window.getComputedStyle(htmlElement);
-        const rect = htmlElement.getBoundingClientRect();
+        let rect = htmlElement.getBoundingClientRect();
+
+        if (
+          htmlElement.tagName === "INPUT" &&
+          (htmlElement.getAttribute("type") === "checkbox" ||
+            htmlElement.getAttribute("role") === "switch")
+        ) {
+          const toggleContainer = htmlElement.closest(
+            ".artdeco-toggle, [class*='create-alert'], [class*='job-alert']",
+          );
+          if (toggleContainer) {
+            const containerStyle = globalThis.window.getComputedStyle(toggleContainer);
+            rect = toggleContainer.getBoundingClientRect();
+            if (
+              containerStyle.visibility !== "hidden" &&
+              containerStyle.display !== "none" &&
+              rect.width > 0 &&
+              rect.height > 0
+            ) {
+              return true;
+            }
+          }
+        }
+
         return (
           style.visibility !== "hidden" &&
           style.display !== "none" &&
@@ -1727,7 +1750,30 @@ async function markJobsButton(
       const isVisible = (element: Element): boolean => {
         const htmlElement = element as HTMLElement;
         const style = globalThis.window.getComputedStyle(htmlElement);
-        const rect = htmlElement.getBoundingClientRect();
+        let rect = htmlElement.getBoundingClientRect();
+
+        if (
+          htmlElement.tagName === "INPUT" &&
+          (htmlElement.getAttribute("type") === "checkbox" ||
+            htmlElement.getAttribute("role") === "switch")
+        ) {
+          const toggleContainer = htmlElement.closest(
+            ".artdeco-toggle, [class*='create-alert'], [class*='job-alert']",
+          );
+          if (toggleContainer) {
+            const containerStyle = globalThis.window.getComputedStyle(toggleContainer);
+            rect = toggleContainer.getBoundingClientRect();
+            if (
+              containerStyle.visibility !== "hidden" &&
+              containerStyle.display !== "none" &&
+              rect.width > 0 &&
+              rect.height > 0
+            ) {
+              return true;
+            }
+          }
+        }
+
         return (
           style.visibility !== "hidden" &&
           style.display !== "none" &&
@@ -1757,19 +1803,22 @@ async function markJobsButton(
             "input[role='switch'].artdeco-toggle__button",
           );
 
-        if (artdecoToggle && isVisible(artdecoToggle)) {
-          artdecoToggle.setAttribute(
-            buttonAttributeName,
-            buttonMarkerValue,
-          );
-          return true;
+        if (artdecoToggle) {
+          const target = artdecoToggle.closest(".artdeco-toggle") ?? artdecoToggle;
+          if (isVisible(target)) {
+            target.setAttribute(
+              buttonAttributeName,
+              buttonMarkerValue,
+            );
+            return true;
+          }
         }
       }
 
       const buttons = Array.from(
         container.querySelectorAll(
           buttonKind === "alert-toggle"
-            ? "button, a[role='button'], div[role='button'], input[role='switch'], [role='switch'], [data-artdeco-toggle-button]"
+            ? "button, a[role='button'], div[role='button'], input[role='switch'], [role='switch'], [data-artdeco-toggle-button], label.artdeco-toggle__text, label[for], .artdeco-toggle"
             : "button, a[role='button']",
         ),
       ).filter((element) => isVisible(element));
@@ -1921,22 +1970,32 @@ async function readJobsToggleState(
     const ariaPressed = normalize(htmlElement.getAttribute("aria-pressed"));
     const ariaChecked = normalize(htmlElement.getAttribute("aria-checked"));
 
+    const inputChild = htmlElement.querySelector(
+      "input[type='checkbox'], input[role='switch']",
+    ) as HTMLInputElement | null;
+
     // For input/switch elements (Artdeco toggle), the checked property
     // and aria-checked attribute are the most reliable state indicators.
     const isSwitch =
       htmlElement.tagName === "INPUT" ||
-      htmlElement.getAttribute("role") === "switch";
+      htmlElement.getAttribute("role") === "switch" ||
+      inputChild !== null;
+
+    const switchElement = inputChild ?? (htmlElement as HTMLInputElement);
 
     if (isSwitch) {
+      const switchAriaChecked = normalize(
+        switchElement.getAttribute("aria-checked"),
+      );
       if (
-        ariaChecked === "true" ||
-        (htmlElement as unknown as HTMLInputElement).checked === true
+        switchAriaChecked === "true" ||
+        switchElement.checked === true
       ) {
         return true;
       }
       if (
-        ariaChecked === "false" ||
-        (htmlElement as unknown as HTMLInputElement).checked === false
+        switchAriaChecked === "false" ||
+        switchElement.checked === false
       ) {
         return false;
       }
@@ -1952,7 +2011,7 @@ async function readJobsToggleState(
     // For input/switch elements, gather text from parent toggle container
     // since inputs have no meaningful textContent.
     if (isSwitch && !text.trim()) {
-      const toggleContainer = htmlElement.closest(
+      const toggleContainer = switchElement.closest(
         ".artdeco-toggle, [class*='create-alert'], [class*='job-alert']",
       );
       if (toggleContainer) {
