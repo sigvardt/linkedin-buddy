@@ -10,6 +10,22 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** Returns true if the error indicates that the Playwright CDP connection, context, or page was destroyed/closed. */
+export function isPageClosedError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const message = error.message;
+  return (
+    message.includes("Target page, context or browser has been closed") ||
+    message.includes("Target closed") ||
+    message.includes("Browser has been closed") ||
+    message.includes("Connection refused") ||
+    message.includes("WebSocket error") ||
+    message.includes("ECONNREFUSED")
+  );
+}
+
 /** Escapes special regex metacharacters so the string can be used inside new RegExp(). */
 export function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

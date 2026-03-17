@@ -40,6 +40,7 @@ import {
   escapeCssAttributeValue,
   isAbsoluteUrl,
   isLocatorVisible,
+  isPageClosedError,
 } from "./shared.js";
 import type {
   ActionExecutor,
@@ -1597,6 +1598,7 @@ async function clickPostMoreMenuAction(input: {
     | readonly LinkedInSelectorPhraseKey[];
   candidateKeyPrefix: string;
   selectorKey: string;
+  onActionCommitted?: () => void;
 }): Promise<string> {
   const menuActionCandidates = createPageMenuActionCandidates({
     selectorLocale: input.selectorLocale,
@@ -1626,7 +1628,8 @@ async function clickPostMoreMenuAction(input: {
       input.selectorKey,
     ));
 
-  await menuAction.locator.click({ timeout: 5_000 });
+  input.onActionCommitted?.();
+  await menuAction.locator.click({ timeout: 5_000, noWaitAfter: true });
   return `${triggerKey}:${menuAction.key}`;
 }
 
@@ -2763,48 +2766,81 @@ export class CommentOnPostActionExecutor implements ActionExecutor<LinkedInFeedE
               );
             }
 
-            await submitButton.locator.click({ timeout: 5_000 });
-            await page.waitForTimeout(1_200);
+            let actionCommitted = false;
+            try {
+              await submitButton.locator.click({ timeout: 5_000, noWaitAfter: true });
+              actionCommitted = true;
+              await page.waitForTimeout(1_200);
 
-            await page.reload({ waitUntil: "domcontentloaded" });
-            await waitForPostSurface(page);
-            targetPost = await findTargetPostLocator(page, postUrl);
-            const reopenCommentKey = await expandCommentsForPost(
-              page,
-              targetPost.locator,
-              runtime.selectorLocale,
-            );
-
-            const commentVerified = await waitForCondition(
-              async () => isCommentVisibleInPost(targetPost.locator, text),
-              12_000,
-            );
-
-            if (!commentVerified) {
-              throw new LinkedInBuddyError(
-                "UNKNOWN",
-                "Comment action could not be verified on the target post.",
-                {
-                  action_id: action.id,
-                  profile_name: profileName,
-                  post_url: postUrl,
-                  post_identity: targetPost.postIdentity,
-                  activity_id: targetPost.activityId,
-                  reopen_comment_selector_key: reopenCommentKey ?? null,
-                  text,
-                },
+              await page.reload({ waitUntil: "domcontentloaded" });
+              await waitForPostSurface(page);
+              targetPost = await findTargetPostLocator(page, postUrl);
+              const reopenCommentKey = await expandCommentsForPost(
+                page,
+                targetPost.locator,
+                runtime.selectorLocale,
               );
+
+              const commentVerified = await waitForCondition(
+                async () => isCommentVisibleInPost(targetPost.locator, text),
+                12_000,
+              );
+
+              if (!commentVerified) {
+                throw new LinkedInBuddyError(
+                  "UNKNOWN",
+                  "Comment action could not be verified on the target post.",
+                  {
+                    action_id: action.id,
+                    profile_name: profileName,
+                    post_url: postUrl,
+                    selector_key: reopenCommentKey,
+                    post_identity: targetPost.postIdentity,
+                    activity_id: targetPost.activityId,
+                  },
+                );
+              }
+            } catch (error) {
+              if (actionCommitted && isPageClosedError(error)) {
+                return {
+                  ok: true,
+                  result: {
+                    commented: true,
+                    post_url: postUrl,
+                    text,
+                    rate_limit: formatRateLimitState(rateLimitState),
+                  },
+                  artifacts: [],
+                };
+              }
+              throw error;
             }
 
             const screenshotPath = `linkedin/screenshot-feed-comment-${Date.now()}.png`;
-            await captureScreenshotArtifact(runtime, page, screenshotPath, {
-              action: COMMENT_ON_POST_ACTION_TYPE,
-              action_id: action.id,
-              profile_name: profileName,
-              post_url: postUrl,
-              selector_key: submitButton.key,
-              post_selector_key: targetPost.key,
-            });
+            try {
+              await captureScreenshotArtifact(runtime, page, screenshotPath, {
+                action: COMMENT_ON_POST_ACTION_TYPE,
+                action_id: action.id,
+                profile_name: profileName,
+                post_url: postUrl,
+                selector_key: submitButton.key,
+                post_selector_key: targetPost.key,
+              });
+            } catch (error) {
+              if (actionCommitted && isPageClosedError(error)) {
+                return {
+                  ok: true,
+                  result: {
+                    commented: true,
+                    post_url: postUrl,
+                    text,
+                    rate_limit: formatRateLimitState(rateLimitState),
+                  },
+                  artifacts: [],
+                };
+              }
+              throw error;
+            }
 
             return {
               ok: true,
@@ -3218,44 +3254,96 @@ export class SavePostActionExecutor implements ActionExecutor<LinkedInFeedExecut
             );
 
             let selectorKey = "feed-save-existing-state";
+            let actionCommitted = false;
             if (initialSavedState !== true) {
-              selectorKey = await clickPostMoreMenuAction({
-                page,
-                postRoot: targetPost.locator,
-                selectorLocale: runtime.selectorLocale,
-                selectorKeys: "save",
-                candidateKeyPrefix: "feed-save",
-                selectorKey: "feed_save_menu_action",
-              });
+              try {
+                selectorKey = await clickPostMoreMenuAction({
+                  page,
+                  postRoot: targetPost.locator,
+                  selectorLocale: runtime.selectorLocale,
+                  selectorKeys: "save",
+                  candidateKeyPrefix: "feed-save",
+                  selectorKey: "feed_save_menu_action",
+                  onActionCommitted: () => {
+                    actionCommitted = true;
+                  },
+                });
+              } catch (error) {
+                if (actionCommitted && isPageClosedError(error)) {
+                  return {
+                    ok: true,
+                    result: {
+                      saved: true,
+                      already_saved: false,
+                      post_url: postUrl,
+                      rate_limit: formatRateLimitState(rateLimitState),
+                    },
+                    artifacts: [],
+                  };
+                }
+                throw error;
+              }
             }
 
             let verified = initialSavedState === true;
             if (!verified) {
-              verified = await waitForCondition(async () => {
-                try {
-                  return (
-                    (await readPostSavedState(
-                      page,
-                      targetPost.locator,
-                      runtime.selectorLocale,
-                    )) === true
-                  );
-                } catch {
-                  return false;
+              try {
+                verified = await waitForCondition(async () => {
+                  try {
+                    return (
+                      (await readPostSavedState(
+                        page,
+                        targetPost.locator,
+                        runtime.selectorLocale,
+                      )) === true
+                    );
+                  } catch {
+                    return false;
+                  }
+                }, 6_000);
+              } catch (error) {
+                if (actionCommitted && isPageClosedError(error)) {
+                  return {
+                    ok: true,
+                    result: {
+                      saved: true,
+                      already_saved: false,
+                      post_url: postUrl,
+                      rate_limit: formatRateLimitState(rateLimitState),
+                    },
+                    artifacts: [],
+                  };
                 }
-              }, 6_000);
+                throw error;
+              }
             }
 
             if (!verified) {
-              await page.reload({ waitUntil: "domcontentloaded" });
-              await waitForPostSurface(page);
-              targetPost = await findTargetPostLocator(page, postUrl);
-              verified =
-                (await readPostSavedState(
-                  page,
-                  targetPost.locator,
-                  runtime.selectorLocale,
-                )) === true;
+              try {
+                await page.reload({ waitUntil: "domcontentloaded" });
+                await waitForPostSurface(page);
+                targetPost = await findTargetPostLocator(page, postUrl);
+                verified =
+                  (await readPostSavedState(
+                    page,
+                    targetPost.locator,
+                    runtime.selectorLocale,
+                  )) === true;
+              } catch (error) {
+                if (actionCommitted && isPageClosedError(error)) {
+                  return {
+                    ok: true,
+                    result: {
+                      saved: true,
+                      already_saved: false,
+                      post_url: postUrl,
+                      rate_limit: formatRateLimitState(rateLimitState),
+                    },
+                    artifacts: [],
+                  };
+                }
+                throw error;
+              }
             }
 
             if (!verified) {
@@ -3274,14 +3362,30 @@ export class SavePostActionExecutor implements ActionExecutor<LinkedInFeedExecut
             }
 
             const screenshotPath = `linkedin/screenshot-feed-save-${Date.now()}.png`;
-            await captureScreenshotArtifact(runtime, page, screenshotPath, {
-              action: SAVE_POST_ACTION_TYPE,
-              action_id: action.id,
-              profile_name: profileName,
-              post_url: postUrl,
-              selector_key: selectorKey,
-              post_selector_key: targetPost.key,
-            });
+            try {
+              await captureScreenshotArtifact(runtime, page, screenshotPath, {
+                action: SAVE_POST_ACTION_TYPE,
+                action_id: action.id,
+                profile_name: profileName,
+                post_url: postUrl,
+                selector_key: selectorKey,
+                post_selector_key: targetPost.key,
+              });
+            } catch (error) {
+              if (actionCommitted && isPageClosedError(error)) {
+                return {
+                  ok: true,
+                  result: {
+                    saved: true,
+                    already_saved: false,
+                    post_url: postUrl,
+                    rate_limit: formatRateLimitState(rateLimitState),
+                  },
+                  artifacts: [],
+                };
+              }
+              throw error;
+            }
 
             return {
               ok: true,
@@ -3373,44 +3477,96 @@ export class UnsavePostActionExecutor implements ActionExecutor<LinkedInFeedExec
             );
 
             let selectorKey = "feed-unsave-existing-state";
+            let actionCommitted = false;
             if (initialSavedState !== false) {
-              selectorKey = await clickPostMoreMenuAction({
-                page,
-                postRoot: targetPost.locator,
-                selectorLocale: runtime.selectorLocale,
-                selectorKeys: "unsave",
-                candidateKeyPrefix: "feed-unsave",
-                selectorKey: "feed_unsave_menu_action",
-              });
+              try {
+                selectorKey = await clickPostMoreMenuAction({
+                  page,
+                  postRoot: targetPost.locator,
+                  selectorLocale: runtime.selectorLocale,
+                  selectorKeys: "unsave",
+                  candidateKeyPrefix: "feed-unsave",
+                  selectorKey: "feed_unsave_menu_action",
+                  onActionCommitted: () => {
+                    actionCommitted = true;
+                  },
+                });
+              } catch (error) {
+                if (actionCommitted && isPageClosedError(error)) {
+                  return {
+                    ok: true,
+                    result: {
+                      saved: false,
+                      already_unsaved: false,
+                      post_url: postUrl,
+                      rate_limit: formatRateLimitState(rateLimitState),
+                    },
+                    artifacts: [],
+                  };
+                }
+                throw error;
+              }
             }
 
             let verified = initialSavedState === false;
             if (!verified) {
-              verified = await waitForCondition(async () => {
-                try {
-                  return (
-                    (await readPostSavedState(
-                      page,
-                      targetPost.locator,
-                      runtime.selectorLocale,
-                    )) === false
-                  );
-                } catch {
-                  return false;
+              try {
+                verified = await waitForCondition(async () => {
+                  try {
+                    return (
+                      (await readPostSavedState(
+                        page,
+                        targetPost.locator,
+                        runtime.selectorLocale,
+                      )) === false
+                    );
+                  } catch {
+                    return false;
+                  }
+                }, 6_000);
+              } catch (error) {
+                if (actionCommitted && isPageClosedError(error)) {
+                  return {
+                    ok: true,
+                    result: {
+                      saved: false,
+                      already_unsaved: false,
+                      post_url: postUrl,
+                      rate_limit: formatRateLimitState(rateLimitState),
+                    },
+                    artifacts: [],
+                  };
                 }
-              }, 6_000);
+                throw error;
+              }
             }
 
             if (!verified) {
-              await page.reload({ waitUntil: "domcontentloaded" });
-              await waitForPostSurface(page);
-              targetPost = await findTargetPostLocator(page, postUrl);
-              verified =
-                (await readPostSavedState(
-                  page,
-                  targetPost.locator,
-                  runtime.selectorLocale,
-                )) === false;
+              try {
+                await page.reload({ waitUntil: "domcontentloaded" });
+                await waitForPostSurface(page);
+                targetPost = await findTargetPostLocator(page, postUrl);
+                verified =
+                  (await readPostSavedState(
+                    page,
+                    targetPost.locator,
+                    runtime.selectorLocale,
+                  )) === false;
+              } catch (error) {
+                if (actionCommitted && isPageClosedError(error)) {
+                  return {
+                    ok: true,
+                    result: {
+                      saved: false,
+                      already_unsaved: false,
+                      post_url: postUrl,
+                      rate_limit: formatRateLimitState(rateLimitState),
+                    },
+                    artifacts: [],
+                  };
+                }
+                throw error;
+              }
             }
 
             if (!verified) {
@@ -3429,14 +3585,30 @@ export class UnsavePostActionExecutor implements ActionExecutor<LinkedInFeedExec
             }
 
             const screenshotPath = `linkedin/screenshot-feed-unsave-${Date.now()}.png`;
-            await captureScreenshotArtifact(runtime, page, screenshotPath, {
-              action: UNSAVE_POST_ACTION_TYPE,
-              action_id: action.id,
-              profile_name: profileName,
-              post_url: postUrl,
-              selector_key: selectorKey,
-              post_selector_key: targetPost.key,
-            });
+            try {
+              await captureScreenshotArtifact(runtime, page, screenshotPath, {
+                action: UNSAVE_POST_ACTION_TYPE,
+                action_id: action.id,
+                profile_name: profileName,
+                post_url: postUrl,
+                selector_key: selectorKey,
+                post_selector_key: targetPost.key,
+              });
+            } catch (error) {
+              if (actionCommitted && isPageClosedError(error)) {
+                return {
+                  ok: true,
+                  result: {
+                    saved: false,
+                    already_unsaved: false,
+                    post_url: postUrl,
+                    rate_limit: formatRateLimitState(rateLimitState),
+                  },
+                  artifacts: [],
+                };
+              }
+              throw error;
+            }
 
             return {
               ok: true,
