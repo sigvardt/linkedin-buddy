@@ -1,0 +1,21 @@
+  const analyticsCommand = program
+    .command("analytics")
+    .description("View analytics data");
+
+  analyticsCommand
+    .command("post-metrics")
+    .description("View metrics for a specific post")
+    .argument("<postUrl>", "URL of the post")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(
+      async (postUrl: string, options: { profile: string }) => {
+        await runAnalyticsPostMetrics(
+          {
+            profileName: options.profile,
+            postUrl,
+          },
+          readCdpUrl(),
+        );
+      },
+    );
+

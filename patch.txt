@@ -1,0 +1,11 @@
+async function runAnalyticsPostMetrics(
+  input: {
+    profileName: string;
+    postUrl: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = await createRuntime(cdpUrl);
+  const metrics = await runtime.analytics.getPostMetrics(input);
+  process.stdout.write(JSON.stringify(metrics, null, 2) + "\n");
+}

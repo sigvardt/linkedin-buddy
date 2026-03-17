@@ -817,45 +817,6 @@ async function captureFixtureResponse(
   };
 }
 
-
-async function runCreateGroup(
-  input: {
-    profileName: string;
-    name: string;
-    description: string;
-  },
-  cdpUrl?: string,
-): Promise<void> {
-  const runtime = await createRuntime(cdpUrl);
-  const result = await runtime.groups.createGroup(input);
-  process.stdout.write(JSON.stringify(result, null, 2) + "\n");
-}
-
-async function runCreateEvent(
-  input: {
-    profileName: string;
-    name: string;
-    description: string;
-  },
-  cdpUrl?: string,
-): Promise<void> {
-  const runtime = await createRuntime(cdpUrl);
-  const result = await runtime.events.createEvent(input);
-  process.stdout.write(JSON.stringify(result, null, 2) + "\n");
-}
-
-async function runAnalyticsPostMetrics(
-  input: {
-    profileName: string;
-    postUrl: string;
-  },
-  cdpUrl?: string,
-): Promise<void> {
-  const runtime = await createRuntime(cdpUrl);
-  const metrics = await runtime.analytics.getPostMetrics(input);
-  process.stdout.write(JSON.stringify(metrics, null, 2) + "\n");
-}
-
 async function runFixturesCheck(input: {
   manifestPath?: string;
   maxAgeDays?: number;
@@ -11360,29 +11321,6 @@ export function createCliProgram(): Command {
       )
       .action(runFixtureCheckCommand);
 
-
-  const analyticsCommand = program
-    .command("analytics")
-    .description("View analytics data");
-
-  analyticsCommand
-    .command("post-metrics")
-    .description("View metrics for a specific post")
-    .argument("<postUrl>", "URL of the post")
-    .option("-p, --profile <profile>", "Profile name", "default")
-    .action(
-      async (postUrl: string, options: { profile: string }) => {
-        await runAnalyticsPostMetrics(
-          {
-            profileName: options.profile,
-            postUrl,
-          },
-          readCdpUrl(),
-        );
-      },
-    );
-
-
   const fixturesCommand = program
     .command("fixtures")
     .description("Record and validate LinkedIn replay fixture sets");
@@ -11423,37 +11361,6 @@ export function createCliProgram(): Command {
           },
           readCdpUrl(),
         );
-      },
-    );
-
-  const inboxCommand = program
-    .command("inbox")
-    .description("List and inspect LinkedIn inbox threads");
-
-  inboxCommand
-    .command("search-recipients")
-    .description("Search LinkedIn recipients for new messaging flows")
-    .requiredOption("--query <query>", "Recipient search keywords")
-    .option("-p, --profile <profile>", "Profile name", "default")
-    .option("-l, --limit <limit>", "Max recipients", "10")
-    .action(
-      async (options: { profile: string; query: string; limit: string }) => {
-        await runInboxSearchRecipients(
-          {
-            profileName: options.profile,
-            query: options.query,
-            limit: coercePositiveInt(options.limit, "limit"),
-          },
-          readCdpUrl(),
-        );
-      },
-    );
-
-  inboxCommand
-    .command("list")
-    .description("List inbox threads")
-    .option("-p, --profile <profile>", "Profile name", "default")
-    .option("-u, --unread", "Only show unread threads", false)
     .option("-l, --limit <limit>", "Max threads", "20")
     .action(
       async (options: { profile: string; unread: boolean; limit: string }) => {
@@ -12165,26 +12072,6 @@ export function createCliProgram(): Command {
       "Search, view, join, leave, and post in LinkedIn groups",
     );
 
-
-  groupsCommand
-    .command("create")
-    .description("Create a new LinkedIn group")
-    .argument("<name>", "Name of the group")
-    .argument("<description>", "Description of the group")
-    .option("-p, --profile <profile>", "Profile name", "default")
-    .action(
-      async (name: string, description: string, options: { profile: string }) => {
-        await runCreateGroup(
-          {
-            profileName: options.profile,
-            name,
-            description,
-          },
-          readCdpUrl(),
-        );
-      },
-    );
-
   groupsCommand
     .command("search")
     .description("Search LinkedIn groups by keyword")
@@ -12296,71 +12183,6 @@ export function createCliProgram(): Command {
     );
 
   const eventsCommand = program
-    .command("events")
-    .description(
-      "Search, view, and RSVP to LinkedIn events",
-    );
-
-
-  eventsCommand
-    .command("create")
-    .description("Create a new LinkedIn event")
-    .argument("<name>", "Name of the event")
-    .argument("<description>", "Description of the event")
-    .option("-p, --profile <profile>", "Profile name", "default")
-    .action(
-      async (name: string, description: string, options: { profile: string }) => {
-        await runCreateEvent(
-          {
-            profileName: options.profile,
-            name,
-            description,
-          },
-          readCdpUrl(),
-        );
-      },
-    );
-
-  eventsCommand
-    .command("search")
-    .description("Search LinkedIn events by keyword")
-    .requiredOption("-q, --query <query>", "Search keywords for LinkedIn events")
-    .option("-p, --profile <profile>", "Profile name", "default")
-    .option("-l, --limit <limit>", "Maximum number of results", "10")
-    .action(
-      async (options: { profile: string; query: string; limit: string }) => {
-        await runEventsSearch(
-          {
-            profileName: options.profile,
-            query: options.query,
-            limit: parseInt(options.limit, 10) || 10,
-          },
-          readCdpUrl(),
-        );
-      },
-    );
-
-  eventsCommand
-    .command("view")
-    .description("View details of a LinkedIn event")
-    .argument("<event>", "LinkedIn event URL or numeric event ID")
-    .option("-p, --profile <profile>", "Profile name", "default")
-    .action(
-      async (event: string, options: { profile: string }) => {
-        await runEventsView(
-          {
-            profileName: options.profile,
-            event,
-          },
-          readCdpUrl(),
-        );
-      },
-    );
-
-  eventsCommand
-    .command("rsvp")
-    .description("Prepare to RSVP attend for a LinkedIn event (two-phase)")
-    .argument("<event>", "LinkedIn event URL or numeric event ID")
     .option("-p, --profile <profile>", "Profile name", "default")
     .option("-o, --operator-note <note>", "Optional operator note")
     .action(

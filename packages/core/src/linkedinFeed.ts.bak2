@@ -722,20 +722,16 @@ async function extractFeedPosts(
         }
 
         const listItems = Array.from(feedRoot.querySelectorAll("[role='listitem']"));
+        if (listItems.length > 0) { console.log("List item attributes:", listItems[0].getAttributeNames(), "data-id:", listItems[0].getAttribute("data-id")); }
         const postCards = listItems.filter((item) => {
           const componentKey = normalize(item.getAttribute("componentkey"));
-          if (componentKey && /FeedType/i.test(componentKey)) return true;
-          // Support for March 2026 UI (data-id)
-          const dataId = normalize(item.getAttribute("data-id"));
-          if (dataId && dataId.includes("urn:li:activity:")) return true;
-          return false;
+          return /FeedType/i.test(componentKey);
         });
 
         const sduiResults: FeedPostSnapshot[] = [];
         for (const card of postCards) {
           const componentKey = normalize(card.getAttribute("componentkey"));
-          const dataId = normalize(card.getAttribute("data-id"));
-          const postId = extractSduiPostId(componentKey) || extractSduiPostId(dataId);
+          const postId = extractSduiPostId(componentKey);
           if (!postId) {
             continue;
           }
@@ -863,6 +859,7 @@ async function extractFeedPosts(
       const extractLegacyPosts = (): FeedPostSnapshot[] => {
         const cardCandidates = [
           ...Array.from(globalThis.document.querySelectorAll("[data-urn]")),
+        ...Array.from(globalThis.document.querySelectorAll("div[data-id]")),
           ...Array.from(
             globalThis.document.querySelectorAll("div.feed-shared-update-v2"),
           ),

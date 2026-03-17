@@ -81,6 +81,18 @@ export interface LinkedInGroupDetail {
   membership_state: LinkedInGroupMembershipState;
 }
 
+
+export interface CreateGroupInput {
+  profileName?: string;
+  name: string;
+  description: string;
+}
+
+export interface CreateGroupOutput {
+  groupId: string;
+  url: string;
+}
+
 export interface SearchGroupsInput {
   profileName?: string;
   query: string;
@@ -245,7 +257,7 @@ function resolveGroupReference(group: string): {
   }
 
   return {
-    groupId,
+    groupId: groupId || "",
     groupUrl: buildGroupViewUrl(groupId)
   };
 }
@@ -896,6 +908,88 @@ export function createGroupActionExecutors(): ActionExecutorRegistry<LinkedInGro
 
 export class LinkedInGroupsService {
   constructor(private readonly runtime: LinkedInGroupsRuntime) {}
+
+
+  async createGroup(input: CreateGroupInput): Promise<CreateGroupOutput> {
+    const profileName = input.profileName ?? "default";
+    const name = normalizeText(input.name);
+    const description = normalizeText(input.description);
+
+    if (!name || !description) {
+      throw new LinkedInBuddyError(
+        "ACTION_PRECONDITION_FAILED",
+        "name and description are required."
+      );
+    }
+    
+    await this.runtime.auth.ensureAuthenticated({
+      profileName
+    });
+
+    try {
+      return await this.runtime.profileManager.runWithPersistentContext(
+        profileName,
+        { headless: true },
+        async (context) => {
+          const page = await getOrCreatePage(context);
+          await page.goto("https://www.linkedin.com/groups/create/", {
+            waitUntil: "domcontentloaded"
+          });
+          await waitForNetworkIdleBestEffort(page);
+
+          if (!page.url().match(/\/groups\/create/i)) {
+            const createBtn = page.getByRole("button", { name: /create group/i }).first();
+            if (await createBtn.isVisible()) {
+              await createBtn.click();
+              await waitForNetworkIdleBestEffort(page);
+            } else {
+              const createLink = page.getByRole("link", { name: /create group/i }).first();
+              if (await createLink.isVisible()) {
+                await createLink.click();
+                await waitForNetworkIdleBestEffort(page);
+              }
+            }
+          }
+
+          const nameInput = page.getByLabel(/Group Name/i, { exact: false }).first();
+          await nameInput.waitFor({ state: "visible", timeout: 10_000 });
+          await nameInput.fill(name);
+
+          const descInput = page.getByLabel(/Description/i, { exact: false }).first();
+          await descInput.fill(description);
+
+          // Submit the form
+          const submitBtn = page.getByRole("button", { name: /^Create$/i }).first();
+          await submitBtn.waitFor({ state: "visible" });
+          await submitBtn.click();
+
+          // Wait for successful creation (navigation to the new group page)
+          await page.waitForURL(/\/groups\/\d+/i, { timeout: 15_000 });
+          
+          const newUrl = page.url();
+          const match = /\/groups\/(\d+)/i.exec(newUrl);
+          
+          if (!match) {
+            throw new Error(`Failed to extract group ID from URL: ${newUrl}`);
+          }
+
+          return {
+            groupId: match[1] || "",
+            url: newUrl
+          };
+        }
+      );
+    } catch (error) {
+      if (error instanceof LinkedInBuddyError) {
+        throw error;
+      }
+      throw asLinkedInBuddyError(
+        error,
+        "UNKNOWN",
+        "Failed to create group."
+      );
+    }
+  }
 
   async searchGroups(input: SearchGroupsInput): Promise<SearchGroupsOutput> {
     const profileName = input.profileName ?? "default";
