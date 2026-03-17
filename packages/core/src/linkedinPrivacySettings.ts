@@ -482,14 +482,14 @@ async function applyProfileViewingMode(
   );
 
   if (explicitOption) {
-    await explicitOption.locator.click({ timeout: 5_000 });
+    await explicitOption.locator.click({ timeout: 5_000, force: true });
   } else {
     const fallbackIndex = PROFILE_VIEWING_MODE_VALUE_ORDER.indexOf(targetValue);
     const roleRadios = page.locator(
       "main [role='radio'], [role='main'] [role='radio'], form [role='radio']"
     );
     if ((await roleRadios.count()) >= PROFILE_VIEWING_MODE_VALUE_ORDER.length) {
-      await roleRadios.nth(fallbackIndex).click({ timeout: 5_000 });
+      await roleRadios.nth(fallbackIndex).click({ timeout: 5_000, force: true });
     } else {
       const fallbackLabels = page.locator(
         "main label, [role='main'] label, form label"
@@ -506,7 +506,7 @@ async function applyProfileViewingMode(
         );
       }
 
-      await fallbackLabels.nth(fallbackIndex).click({ timeout: 5_000 });
+      await fallbackLabels.nth(fallbackIndex).click({ timeout: 5_000, force: true });
     }
   }
 
@@ -625,7 +625,7 @@ async function clickBinaryRadioOption(
     "main input[type='radio'], [role='main'] input[type='radio'], form input[type='radio']"
   );
   if ((await radioInputs.count()) >= optionCount) {
-    await radioInputs.nth(targetIndex).check({ timeout: 5_000 });
+    await radioInputs.nth(targetIndex).check({ timeout: 5_000, force: true });
     return `${settingKey}-radio-input-index-${targetIndex}`;
   }
 
@@ -633,7 +633,7 @@ async function clickBinaryRadioOption(
     "main [role='radio'], [role='main'] [role='radio'], form [role='radio']"
   );
   if ((await roleRadios.count()) >= optionCount) {
-    await roleRadios.nth(targetIndex).click({ timeout: 5_000 });
+    await roleRadios.nth(targetIndex).click({ timeout: 5_000, force: true });
     return `${settingKey}-role-radio-index-${targetIndex}`;
   }
 
@@ -641,7 +641,7 @@ async function clickBinaryRadioOption(
     "main label, [role='main'] label, form label"
   );
   if ((await fallbackLabels.count()) > targetIndex) {
-    await fallbackLabels.nth(targetIndex).click({ timeout: 5_000 });
+    await fallbackLabels.nth(targetIndex).click({ timeout: 5_000, force: true });
     return `${settingKey}-label-index-${targetIndex}`;
   }
 
@@ -650,7 +650,7 @@ async function clickBinaryRadioOption(
     createToggleControlCandidates()
   );
   if (toggle) {
-    await toggle.locator.click({ timeout: 5_000 });
+    await toggle.locator.click({ timeout: 5_000, force: true });
     return `${settingKey}-toggle-fallback:${toggle.key}`;
   }
 
