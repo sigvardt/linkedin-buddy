@@ -1,0 +1,109 @@
+{
+  "experience": [
+    {
+      "title": "Executive Assistant to the Director",
+      "company": "Signikant",
+      "employmentType": "Full-time",
+      "location": "Copenhagen, Denmark",
+      "startMonth": "March",
+      "startYear": "2025",
+      "description": "Supporting the director in day-to-day operations and strategic planning at an AI tooling company. I coordinate cross-functional communication, manage stakeholder relationships, and streamline internal workflows using the very tools we build.\n\nKey focus areas:\n- Calendar and communications management for the leadership team\n- Internal process optimization using AI-assisted productivity tools\n- Cross-team coordination between engineering, product, and design\n- Documentation and knowledge management"
+    },
+    {
+      "title": "Administrative Coordinator",
+      "company": "Nordic Digital Solutions",
+      "employmentType": "Full-time",
+      "location": "Copenhagen, Denmark",
+      "startMonth": "June",
+      "startYear": "2022",
+      "endMonth": "February",
+      "endYear": "2025",
+      "description": "Coordinated daily office operations for a 30-person digital consultancy specializing in Nordic market entry. Managed everything from client onboarding to quarterly team events.\n\nHighlights:\n- Implemented a new project management system that cut meeting overhead by 25%\n- Managed CRM pipeline and client communications for 40+ active accounts\n- Organized quarterly team retreats and industry networking events\n- Trained 5 new hires on internal tools and processes"
+    },
+    {
+      "title": "Office Assistant",
+      "company": "TechHub Copenhagen",
+      "employmentType": "Part-time",
+      "location": "Copenhagen, Denmark",
+      "startMonth": "September",
+      "startYear": "2020",
+      "endMonth": "May",
+      "endYear": "2022",
+      "description": "Provided front-desk and administrative support at Copenhagen's premier co-working space for tech startups. Assisted with event logistics, member onboarding, and community engagement."
+    }
+  ],
+  "education": [
+    {
+      "school": "Copenhagen Business School",
+      "degree": "Bachelor's degree",
+      "fieldOfStudy": "Business Administration and Management",
+      "startYear": "2018",
+      "endYear": "2022",
+      "description": "Focused on organizational management and digital business transformation. Active member of the CBS Entrepreneurship Club."
+    }
+  ],
+  "certifications": [
+    {
+      "name": "Google Workspace Administrator",
+      "issuingOrganization": "Google",
+      "issueMonth": "September",
+      "issueYear": "2023"
+    },
+    {
+      "name": "Certified Administrative Professional (CAP)",
+      "issuingOrganization": "IAAP - International Association of Administrative Professionals",
+      "issueMonth": "March",
+      "issueYear": "2023"
+    }
+  ],
+  "languages": [
+    {
+      "name": "English",
+      "proficiency": "Native or bilingual proficiency"
+    },
+    {
+      "name": "Danish",
+      "proficiency": "Professional working proficiency"
+    },
+    {
+      "name": "Swedish",
+      "proficiency": "Limited working proficiency"
+    }
+  ],
+  "projects": [
+    {
+      "title": "Internal Knowledge Base Redesign",
+      "description": "Led the restructuring of Signikant's internal documentation from scattered Google Docs into a searchable, AI-indexable knowledge base. Reduced average information lookup time from 8 minutes to under 30 seconds.",
+      "startMonth": "April",
+      "startYear": "2025"
+    },
+    {
+      "title": "New Hire Onboarding Playbook",
+      "description": "Created a comprehensive onboarding playbook at Nordic Digital Solutions that standardized the first-week experience for new team members. Adopted company-wide and maintained through three hiring cycles.",
+      "startMonth": "January",
+      "startYear": "2023",
+      "endMonth": "June",
+      "endYear": "2023"
+    }
+  ],
+  "volunteer_experience": [
+    {
+      "role": "Event Volunteer",
+      "organization": "Copenhagen Tech Week",
+      "description": "Helped organize panels and networking sessions at one of Scandinavia's largest annual technology conferences. Coordinated speaker logistics and attendee registration for 500+ participants.",
+      "startMonth": "September",
+      "startYear": "2023",
+      "endMonth": "September",
+      "endYear": "2024"
+    }
+  ],
+  "honors_awards": [
+    {
+      "title": "Employee of the Quarter",
+      "issuer": "Nordic Digital Solutions",
+      "issueMonth": "December",
+      "issueYear": "2023",
+      "description": "Recognized for outstanding contributions to operational efficiency and team culture."
+    }
+  ]
+}
