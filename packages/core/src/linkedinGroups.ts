@@ -343,7 +343,7 @@ async function extractGroupSearchResults(
     const cards = new Map<string, string>();
     for (const link of Array.from(globalThis.document.links)) {
       const href = normalize(link.href);
-      if (!href.includes("/groups/") || !extractGroupIdFromUrl(href)) {
+      if (!href.includes("/groups/") && !extractGroupIdFromUrl(href)) {
         continue;
       }
 
