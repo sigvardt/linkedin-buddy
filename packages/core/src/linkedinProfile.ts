@@ -774,21 +774,8 @@ export const PROFILE_MEDIA_STRUCTURAL_SELECTORS = {
  */
 const PROFILE_DIALOG_ROOT_SELECTOR =
   "dialog[open][data-testid='dialog'], dialog[open], " +
-  "dialog[data-testid='dialog'], [role='dialog'], [aria-modal='true'], dialog";
-
-/**
- * Broader selector that catches standard dialogs AND artdeco overlay modals.
- * Used only in the wizard-aware path (openGlobalAddSectionDialog) — other
- * dialog flows continue using the narrower PROFILE_DIALOG_ROOT_SELECTOR.
- */
-const PROFILE_DIALOG_OR_OVERLAY_SELECTOR = [
-  "dialog[open]",
-  PROFILE_DIALOG_ROOT_SELECTOR,
-  ".artdeco-modal-overlay--is-top-layer",
-  ".artdeco-modal",
-  "[aria-modal='true']"
-].join(", ");
-
+  "dialog[data-testid='dialog'], [role='dialog'], [aria-modal='true'], dialog, " +
+  ".artdeco-modal-overlay--is-top-layer .artdeco-modal, .artdeco-modal";
 
 export const PROFILE_INTRO_EDITOR_SURFACE_SELECTORS = {
   topCardHeadings: PROFILE_TOP_CARD_HEADING_SELECTORS,
@@ -3869,29 +3856,6 @@ async function canRecoverOwnProfileNavigationTimeout(page: Page): Promise<boolea
 }
 
 async function resolveLatestVisibleDialog(page: Page): Promise<Locator | null> {
-  // Fast path: dialog[open] is the most reliable indicator in LinkedIn's
-  // March 2026 UI — avoids iterating over hidden ad-related <dialog> shells.
-  const openDialog = page.locator("dialog[open]").last();
-  if (await openDialog.isVisible().catch(() => false)) {
-    return openDialog;
-  }
-
-  // Fallback: iterate through all candidates (for older LinkedIn pages).
-  const dialogs = page.locator(PROFILE_DIALOG_ROOT_SELECTOR);
-  const dialogCount = await dialogs.count().catch(() => 0);
-
-  for (let index = dialogCount - 1; index >= 0; index -= 1) {
-    const candidate = dialogs.nth(index);
-    if (await candidate.isVisible().catch(() => false)) {
-      return candidate;
-    }
-  }
-
-  return null;
-}
-
-
-async function resolveLatestVisibleDialogOrOverlay(page: Page): Promise<Locator | null> {
   // Fast path: dialog[open] is the most reliable indicator.
   const openDialog = page.locator("dialog[open]").last();
   if (await openDialog.isVisible().catch(() => false)) {
@@ -3899,7 +3863,7 @@ async function resolveLatestVisibleDialogOrOverlay(page: Page): Promise<Locator 
   }
 
   // Fallback: iterate through all overlay candidates.
-  const surfaces = page.locator(PROFILE_DIALOG_OR_OVERLAY_SELECTOR);
+  const surfaces = page.locator(PROFILE_DIALOG_ROOT_SELECTOR);
   const surfaceCount = await surfaces.count().catch(() => 0);
 
   for (let index = surfaceCount - 1; index >= 0; index -= 1) {
@@ -3912,11 +3876,11 @@ async function resolveLatestVisibleDialogOrOverlay(page: Page): Promise<Locator 
   return null;
 }
 
-async function waitForVisibleDialogOrOverlay(page: Page): Promise<Locator> {
+async function waitForVisibleDialog(page: Page): Promise<Locator> {
   const deadline = Date.now() + 10_000;
 
   while (Date.now() < deadline) {
-    const resolved = await resolveLatestVisibleDialogOrOverlay(page);
+    const resolved = await resolveLatestVisibleDialog(page);
     if (resolved) {
       return resolved;
     }
@@ -4113,7 +4077,7 @@ async function waitForProfileEditorSurface(
 }
 
 async function waitForVisibleOverlay(page: Page): Promise<Locator> {
-  const selector = "dialog[open], [role='dialog'], [role='menu']";
+  const selector = "dialog[open], [role='dialog'], [role='menu'], .artdeco-modal-overlay--is-top-layer .artdeco-modal, .artdeco-modal";
   const deadline = Date.now() + 10_000;
 
   while (Date.now() < deadline) {
@@ -4786,12 +4750,12 @@ async function openGlobalAddSectionDialog(
   // On empty profiles, LinkedIn may show an "Add to profile" wizard
   // with "Resume-assisted setup" / "Manual setup" options instead of
   // the section category dialog. Use a broader selector to detect either.
-  let surface = await waitForVisibleDialogOrOverlay(page);
+  let surface = await waitForVisibleDialog(page);
 
   // If the wizard appeared, dismiss it by clicking "Manual setup",
   // then wait for the actual section category dialog.
   if (await dismissAddToProfileWizardIfPresent(page, surface, selectorLocale)) {
-    surface = await waitForVisibleDialogOrOverlay(page);
+    surface = await waitForVisibleDialog(page);
   }
 
   await waitForAddSectionDialogContent(surface);
@@ -5295,7 +5259,7 @@ async function findSaveButtonInBroaderScope(
     },
     {
       key: "save-fallback-last-dialog",
-      locator: page.locator("dialog[open], [role='dialog']").last(),
+      locator: page.locator(PROFILE_DIALOG_ROOT_SELECTOR).last(),
       selectorHint: "[role='dialog'] (last)"
     }
   ];
@@ -5566,7 +5530,7 @@ async function clickDeleteInDialog(
     await resolvedConfirmDelete.locator.first().click();
   }
 
-  await page.locator("dialog[open], [role='dialog']").last().waitFor({ state: "hidden", timeout: 10_000 }).catch(
+  await page.locator(PROFILE_DIALOG_ROOT_SELECTOR).last().waitFor({ state: "hidden", timeout: 10_000 }).catch(
     () => undefined
   );
   await waitForNetworkIdleBestEffort(page);
