@@ -1,0 +1,28 @@
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      evasionLevel:
+        type: string
+        enum:
+          - "off"
+          - "light"
+          - "moderate"
+          - "aggressive"
+        description: "Anti-bot evasion level (default: moderate)"
+      selectorLocale:
+        type: string
+        enum:
+          - "en"
+          - "da"
+        description: "LinkedIn UI language for selectors (default: en)"
+  commandFunction: |-
+    (config) => ({
+      command: "npx",
+      args: ["-y", "@linkedin-buddy/mcp"],
+      env: {
+        ...(config.evasionLevel ? { LINKEDIN_BUDDY_EVASION_LEVEL: config.evasionLevel } : {}),
+        ...(config.selectorLocale ? { LINKEDIN_BUDDY_SELECTOR_LOCALE: config.selectorLocale } : {})
+      }
+    })

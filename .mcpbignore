@@ -1,0 +1,16 @@
+*.test.ts
+__tests__/
+src/
+docs/
+scripts/
+.github/
+.worktrees/
+node_modules/
+*.md
+!README.md
+.env*
+*.sqlite
+coverage/
+.eslint*
+tsconfig*.json
+vitest*.ts

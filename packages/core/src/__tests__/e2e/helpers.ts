@@ -116,6 +116,7 @@ import {
   LINKEDIN_PRIVACY_PREPARE_UPDATE_SETTING_TOOL,
   LINKEDIN_SEARCH_TOOL,
   LINKEDIN_SESSION_HEALTH_TOOL,
+  LINKEDIN_UPDATE_CHECK_TOOL,
   LINKEDIN_SESSION_OPEN_LOGIN_TOOL,
   LINKEDIN_SESSION_STATUS_TOOL,
   SUBMIT_FEEDBACK_TOOL
@@ -987,6 +988,7 @@ export async function getCliCoverageFixtures(runtime: CoreRuntime): Promise<CliC
 
 /** Canonical MCP tool names used by the E2E contract suites. */
 export const MCP_TOOL_NAMES = {
+  updateCheck: LINKEDIN_UPDATE_CHECK_TOOL,
   analyticsContentMetrics: LINKEDIN_ANALYTICS_CONTENT_METRICS_TOOL,
   analyticsPostMetrics: LINKEDIN_ANALYTICS_POST_METRICS_TOOL,
   analyticsProfileViews: LINKEDIN_ANALYTICS_PROFILE_VIEWS_TOOL,

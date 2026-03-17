@@ -6,6 +6,7 @@ import {
   ACTIVITY_EVENT_TYPES,
   ACTIVITY_WATCH_KINDS,
   ACTIVITY_WATCH_STATUSES,
+  checkForUpdate,
    DEFAULT_LINKEDIN_PERSONA_POST_IMAGE_COUNT,
    DEFAULT_FOLLOWUP_SINCE,
    createFeedbackTechnicalContext,
@@ -27,6 +28,7 @@ import {
   readFeedbackStateSnapshot,
   recordFeedbackInvocation,
   resolveFollowupSinceWindow,
+  resolveUpdateCheckConfig,
   SEARCH_CATEGORIES,
   toLinkedInBuddyErrorPayload,
   submitFeedback,
@@ -152,7 +154,8 @@ import {
    LINKEDIN_SESSION_HEALTH_TOOL,
    LINKEDIN_SESSION_OPEN_LOGIN_TOOL,
    LINKEDIN_SESSION_STATUS_TOOL,
- } from "../index.js";
+   LINKEDIN_UPDATE_CHECK_TOOL,
+  } from "../index.js";
 import {
   type ToolArgs,
   readString,
@@ -232,14 +235,44 @@ async function handleSessionStatus(args: ToolArgs): Promise<ToolResult> {
       evasion_diagnostics_enabled: status.evasion?.diagnosticsEnabled ?? false,
     });
 
+    let updateInfo:
+      | {
+          updateAvailable: boolean;
+          currentVersion: string;
+          latestVersion: string;
+          updateCommand: string;
+        }
+      | undefined;
+    try {
+      const updateConfig = resolveUpdateCheckConfig({ timeoutMs: 2_000 });
+      if (updateConfig.enabled) {
+        const result = await checkForUpdate(updateConfig, packageJson.version);
+        if (result.updateAvailable) {
+          updateInfo = {
+            updateAvailable: result.updateAvailable,
+            currentVersion: result.currentVersion,
+            latestVersion: result.latestVersion,
+            updateCommand: result.updateCommand,
+          };
+        }
+      }
+    } catch { /* ignore */ }
+
     return toToolResult({
       run_id: runtime.runId,
       profile_name: profileName,
       status,
+      ...(updateInfo !== undefined ? { update: updateInfo } : {}),
     });
   } finally {
     runtime.close();
   }
+}
+
+async function handleUpdateCheck(): Promise<ToolResult> {
+  const config = resolveUpdateCheckConfig();
+  const result = await checkForUpdate(config, packageJson.version);
+  return toToolResult(result);
 }
 
 async function handleSessionOpenLogin(args: ToolArgs): Promise<ToolResult> {
@@ -4326,6 +4359,16 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
     },
   },
   {
+    name: LINKEDIN_UPDATE_CHECK_TOOL,
+    description:
+      "Check whether a newer version of LinkedIn Buddy is available. Returns the current version, latest version, and the command to run for updating.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {},
+    },
+  },
+  {
     name: LINKEDIN_AUTH_WHOAMI_TOOL,
     description:
       "Fast sub-second authentication status check using stored session files. Returns identity, session age, and health without launching a browser. Use this before linkedin.session.status when you only need to verify authentication state.",
@@ -7263,6 +7306,7 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
    [LINKEDIN_SESSION_STATUS_TOOL]: handleSessionStatus,
    [LINKEDIN_SESSION_OPEN_LOGIN_TOOL]: handleSessionOpenLogin,
    [LINKEDIN_SESSION_HEALTH_TOOL]: handleSessionHealth,
+   [LINKEDIN_UPDATE_CHECK_TOOL]: handleUpdateCheck,
    [LINKEDIN_AUTH_WHOAMI_TOOL]: handleAuthWhoami,
    [LINKEDIN_INBOX_SEARCH_RECIPIENTS_TOOL]: handleSearchRecipients,
   [LINKEDIN_INBOX_LIST_THREADS_TOOL]: handleListThreads,

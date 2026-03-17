@@ -1,0 +1,37 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.sigvardt/linkedin-buddy",
+  "title": "LinkedIn Buddy MCP Server",
+  "description": "LinkedIn automation via MCP — inbox, feed, connections, profile, search, jobs, notifications, and safe prepare-and-confirm actions.",
+  "repository": {
+    "url": "https://github.com/sigvardt/linkedin-buddy",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@linkedin-buddy/mcp",
+      "version": "0.1.0",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "LINKEDIN_BUDDY_EVASION_LEVEL",
+          "description": "Anti-bot evasion level: off, light, moderate (default), aggressive",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "LINKEDIN_BUDDY_SELECTOR_LOCALE",
+          "description": "LinkedIn UI language for selectors: en (default), da",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ]
+}
