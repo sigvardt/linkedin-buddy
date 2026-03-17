@@ -162,9 +162,13 @@ const SEARCH_CONTAINER_SELECTORS: Record<SearchCategory, string[]> = {
   people: [
     "div[componentkey='SearchResultsMainContent']",
     "main a[href*='/in/']",
+    "ul a[href*='/in/']",
+    ".search-results-container a[href*='/in/']",
     "div[data-view-tracking-scope]",
     ".search-results-container",
     "main ul > li",
+    "div.search-results-container ul > li",
+    "ul.reusable-search__entity-result-list > li",
     "div[data-view-name='search-entity-result-universal-template']",
     ".reusable-search__result-container",
     "li.reusable-search__result-container",
@@ -174,9 +178,13 @@ const SEARCH_CONTAINER_SELECTORS: Record<SearchCategory, string[]> = {
   companies: [
     "div[componentkey='SearchResultsMainContent']",
     "main a[href*='/company/']",
+    "ul a[href*='/company/']",
+    ".search-results-container a[href*='/company/']",
     "div[data-view-tracking-scope]",
     ".search-results-container",
     "main ul > li",
+    "div.search-results-container ul > li",
+    "ul.reusable-search__entity-result-list > li",
     "div[data-view-name='search-entity-result-universal-template']",
     ".reusable-search__result-container",
     "li.reusable-search__result-container",
@@ -190,6 +198,8 @@ const SEARCH_CONTAINER_SELECTORS: Record<SearchCategory, string[]> = {
     ".scaffold-layout__list",
     ".job-card-container",
     "main ul > li",
+    "div.search-results-container ul > li",
+    "ul.reusable-search__entity-result-list > li",
     "[data-entity-urn^='urn:li:jobPosting']",
     ".base-search-card",
     ".job-card-list__entity-lockup",
@@ -205,15 +215,23 @@ const SEARCH_CONTAINER_SELECTORS: Record<SearchCategory, string[]> = {
   groups: [
     "div[componentkey='SearchResultsMainContent']",
     "main a[href*='/groups/']",
+    "ul a[href*='/groups/']",
+    ".search-results-container a[href*='/groups/']",
     "div[data-view-tracking-scope]",
     "main ul > li",
+    "div.search-results-container ul > li",
+    "ul.reusable-search__entity-result-list > li",
     "div[data-view-name='search-entity-result-universal-template']"
   ],
   events: [
     "div[componentkey='SearchResultsMainContent']",
     "main a[href*='/events/']",
+    "ul a[href*='/events/']",
+    ".search-results-container a[href*='/events/']",
     "div[data-view-tracking-scope]",
     "main ul > li",
+    "div.search-results-container ul > li",
+    "ul.reusable-search__entity-result-list > li",
     "div[data-view-name='search-entity-result-universal-template']"
   ]
 };
@@ -246,7 +264,7 @@ async function waitForSearchResults(
 
   try {
     await page
-      .locator("main ul > li")
+      .locator("main ul > li, div.search-results-container ul > li, ul.reusable-search__entity-result-list > li, li[data-chameleon-result-urn]")
       .first()
       .waitFor({ state: "visible", timeout: 3_000 });
     return true;
@@ -543,7 +561,7 @@ export class LinkedInSearchService {
 
             const extractModernCards = (): Array<Record<string, string>> => {
               const links = Array.from(
-                globalThis.document.querySelectorAll("main a[href*='/in/']")
+                globalThis.document.querySelectorAll("main a[href*='/in/'], ul a[href*='/in/'], .search-results-container a[href*='/in/']")
               ).filter((link): link is HTMLAnchorElement => {
                 const href = normalize(link.getAttribute("href"));
                 return /\/in\/[A-Za-z0-9-]+/.test(href);
@@ -586,7 +604,7 @@ export class LinkedInSearchService {
 
             const extractAiCards = (): Array<Record<string, string>> => {
               const aiRoot = globalThis.document.querySelector(
-                "div[componentkey='SearchResultsMainContent']"
+                "div[componentkey='SearchResultsMainContent'], div.search-results-container"
               );
               if (!aiRoot) {
                 return [];
@@ -671,7 +689,7 @@ export class LinkedInSearchService {
             }
 
             const listFallback = Array.from(
-              globalThis.document.querySelectorAll("main li")
+              globalThis.document.querySelectorAll("main li, div.search-results-container ul > li, ul.reusable-search__entity-result-list > li")
             )
               .map((card) => {
                 const lines = getCardLines(card);
@@ -894,7 +912,7 @@ export class LinkedInSearchService {
 
             const extractModernCards = (): Array<Record<string, string>> => {
               const links = Array.from(
-                globalThis.document.querySelectorAll("main a[href*='/company/']")
+                globalThis.document.querySelectorAll("main a[href*='/company/'], ul a[href*='/company/'], .search-results-container a[href*='/company/']")
               ).filter((link): link is HTMLAnchorElement => {
                 const href = normalize(link.getAttribute("href"));
                 return /\/company\/[A-Za-z0-9-]+/.test(href);
@@ -937,7 +955,7 @@ export class LinkedInSearchService {
 
             const extractAiCards = (): Array<Record<string, string>> => {
               const aiRoot = globalThis.document.querySelector(
-                "div[componentkey='SearchResultsMainContent']"
+                "div[componentkey='SearchResultsMainContent'], div.search-results-container"
               );
               if (!aiRoot) {
                 return [];
@@ -1032,7 +1050,7 @@ export class LinkedInSearchService {
             }
 
             const listFallback = Array.from(
-              globalThis.document.querySelectorAll("main li")
+              globalThis.document.querySelectorAll("main li, div.search-results-container ul > li, ul.reusable-search__entity-result-list > li")
             )
               .map((card) => {
                 const lines = getCardLines(card);
@@ -1266,8 +1284,8 @@ export class LinkedInSearchService {
             }
 
             const aiRoot = globalThis.document.querySelector(
-              "div[componentkey='SearchResultsMainContent']"
-            );
+                "div[componentkey='SearchResultsMainContent'], div.search-results-container"
+              );
             if (aiRoot) {
               const aiCards = Array.from(
                 aiRoot.querySelectorAll(
@@ -1296,7 +1314,7 @@ export class LinkedInSearchService {
               return legacyCards;
             }
 
-            return Array.from(globalThis.document.querySelectorAll("main li"))
+            return Array.from(globalThis.document.querySelectorAll("main li, div.search-results-container ul > li, ul.reusable-search__entity-result-list > li"))
               .map((card) => mapJobCard(card))
               .filter((card) => card.title || card.job_url)
               .slice(0, lim);
@@ -1493,8 +1511,8 @@ export class LinkedInSearchService {
             }
 
             const aiRoot = globalThis.document.querySelector(
-              "div[componentkey='SearchResultsMainContent']"
-            );
+                "div[componentkey='SearchResultsMainContent'], div.search-results-container"
+              );
             if (aiRoot) {
               const aiPostContainers = Array.from(
                 aiRoot.querySelectorAll("div[data-view-tracking-scope]")
@@ -1521,7 +1539,7 @@ export class LinkedInSearchService {
               return legacyPostContainers.map(mapPost);
             }
 
-            return Array.from(globalThis.document.querySelectorAll("main li"))
+            return Array.from(globalThis.document.querySelectorAll("main li, div.search-results-container ul > li, ul.reusable-search__entity-result-list > li"))
               .map((item) => {
                 const lines = normalize((item as HTMLElement).innerText)
                   .split("\n")
@@ -1694,7 +1712,7 @@ export class LinkedInSearchService {
 
             const extractModernCards = (): Array<Record<string, string>> => {
               const links = Array.from(
-                globalThis.document.querySelectorAll("main a[href*='/groups/']")
+                globalThis.document.querySelectorAll("main a[href*='/groups/'], ul a[href*='/groups/'], .search-results-container a[href*='/groups/']")
               ).filter((link): link is HTMLAnchorElement => {
                 const href = normalize(link.getAttribute("href"));
                 return /\/groups\/[A-Za-z0-9-]+/.test(href);
@@ -1756,7 +1774,7 @@ export class LinkedInSearchService {
 
             const extractAiCards = (): Array<Record<string, string>> => {
               const aiRoot = globalThis.document.querySelector(
-                "div[componentkey='SearchResultsMainContent']"
+                "div[componentkey='SearchResultsMainContent'], div.search-results-container"
               );
               if (!aiRoot) {
                 return [];
@@ -1841,7 +1859,7 @@ export class LinkedInSearchService {
               return legacyResults;
             }
 
-            return Array.from(globalThis.document.querySelectorAll("main li"))
+            return Array.from(globalThis.document.querySelectorAll("main li, div.search-results-container ul > li, ul.reusable-search__entity-result-list > li"))
               .map((card) => {
                 const lines = normalize((card as HTMLElement).innerText)
                   .split("\n")
@@ -2008,7 +2026,7 @@ export class LinkedInSearchService {
 
             const extractModernCards = (): Array<Record<string, string>> => {
               const links = Array.from(
-                globalThis.document.querySelectorAll("main a[href*='/events/']")
+                globalThis.document.querySelectorAll("main a[href*='/events/'], ul a[href*='/events/'], .search-results-container a[href*='/events/']")
               ).filter((link): link is HTMLAnchorElement => {
                 const href = normalize(link.getAttribute("href"));
                 return /\/events\/[A-Za-z0-9-]+/.test(href);
@@ -2080,7 +2098,7 @@ export class LinkedInSearchService {
 
             const extractAiCards = (): Array<Record<string, string>> => {
               const aiRoot = globalThis.document.querySelector(
-                "div[componentkey='SearchResultsMainContent']"
+                "div[componentkey='SearchResultsMainContent'], div.search-results-container"
               );
               if (!aiRoot) {
                 return [];
@@ -2187,7 +2205,7 @@ export class LinkedInSearchService {
               return legacyResults;
             }
 
-            return Array.from(globalThis.document.querySelectorAll("main li"))
+            return Array.from(globalThis.document.querySelectorAll("main li, div.search-results-container ul > li, ul.reusable-search__entity-result-list > li"))
               .map((card) => {
                 const lines = normalize((card as HTMLElement).innerText)
                   .split("\n")
