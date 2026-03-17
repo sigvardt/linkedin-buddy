@@ -291,6 +291,75 @@ async function waitForCondition(
   return condition();
 }
 
+
+function buildCompanyMenuActionCandidates(input: {
+  selectorLocale: LinkedInSelectorLocale;
+  selectorKeys: LinkedInSelectorPhraseKey | readonly LinkedInSelectorPhraseKey[];
+  candidateKeyPrefix: string;
+}): VisibleLocatorCandidate[] {
+  const exactRegex = buildLinkedInSelectorPhraseRegex(
+    input.selectorKeys,
+    input.selectorLocale,
+    { exact: true }
+  );
+  const exactRegexHint = formatLinkedInSelectorRegexHint(
+    input.selectorKeys,
+    input.selectorLocale,
+    { exact: true }
+  );
+  const textRegex = buildLinkedInSelectorPhraseRegex(
+    input.selectorKeys,
+    input.selectorLocale
+  );
+  const textRegexHint = formatLinkedInSelectorRegexHint(
+    input.selectorKeys,
+    input.selectorLocale
+  );
+
+  return [
+    {
+      key: `${input.candidateKeyPrefix}-menu-roleitem`,
+      selectorHint: `[role='menuitem'] hasText ${exactRegexHint}`,
+      locatorFactory: (page) =>
+        page.locator("[role='menuitem']").filter({
+          hasText: exactRegex
+        })
+    },
+    {
+      key: `${input.candidateKeyPrefix}-menu-dropdown-item`,
+      selectorHint: `.artdeco-dropdown__content-inner [role='button'] hasText ${exactRegexHint}`,
+      locatorFactory: (page) =>
+        page.locator(".artdeco-dropdown__content-inner [role='button']").filter({
+          hasText: exactRegex
+        })
+    },
+    {
+      key: `${input.candidateKeyPrefix}-menu-li-text`,
+      selectorHint: `.artdeco-dropdown__content-inner li hasText ${textRegexHint}`,
+      locatorFactory: (page) =>
+        page.locator(".artdeco-dropdown__content-inner li").filter({
+          hasText: textRegex
+        })
+    },
+    {
+      key: `${input.candidateKeyPrefix}-modal-primary-btn`,
+      selectorHint: `.artdeco-modal button.artdeco-button--primary hasText ${exactRegexHint}`,
+      locatorFactory: (page) =>
+        page.locator(".artdeco-modal button.artdeco-button--primary").filter({
+          hasText: exactRegex
+        })
+    },
+    {
+      key: `${input.candidateKeyPrefix}-modal-btn`,
+      selectorHint: `.artdeco-modal button hasText ${exactRegexHint}`,
+      locatorFactory: (page) =>
+        page.locator(".artdeco-modal button").filter({
+          hasText: exactRegex
+        })
+    }
+  ];
+}
+
 function buildCompanyActionButtonCandidates(input: {
   root: Locator;
   selectorLocale: LinkedInSelectorLocale;
@@ -708,14 +777,25 @@ async function executeUnfollowCompanyPage(
             );
           }
 
-          const selectorKey = await clickCompanyAction({
+          let selectorKey = await clickCompanyAction({
             page,
             selectorLocale: runtime.selectorLocale,
-            selectorKeys: "following",
+            selectorKeys: ["unfollow", "following"],
             actionLabel: "Unfollow",
             targetCompany,
             candidateKeyPrefix: "company-unfollow"
           });
+
+          const confirmCandidates = buildCompanyMenuActionCandidates({
+            selectorLocale: runtime.selectorLocale,
+            selectorKeys: "unfollow",
+            candidateKeyPrefix: "company-unfollow-confirm"
+          });
+          const confirmAction = await findVisibleLocator(page, confirmCandidates);
+          if (confirmAction) {
+            await confirmAction.locator.click({ timeout: 5_000 });
+            selectorKey = `${selectorKey}:${confirmAction.key}`;
+          }
 
           const unfollowed = await waitForCondition(async () => {
             const nextState = await readCompanyFollowState(
