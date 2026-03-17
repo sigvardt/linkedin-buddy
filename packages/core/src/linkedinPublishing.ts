@@ -787,6 +787,63 @@ function createEditorTitleCandidates(
             ].join(", ")
           )
           .first()
+    },
+    {
+      key: "editor-title-name-id-class",
+      selectorHint: "textarea/input with title/headline in name/id/class",
+      locatorFactory: (page) =>
+        page.locator(
+          [
+            "textarea[name*='title' i]",
+            "textarea[name*='headline' i]",
+            "textarea[id*='title' i]",
+            "textarea[id*='headline' i]",
+            "textarea[class*='title' i]",
+            "textarea[class*='headline' i]",
+            "input[name*='title' i]",
+            "input[name*='headline' i]",
+            "input[id*='title' i]",
+            "input[id*='headline' i]",
+            "input[class*='title' i]",
+            "input[class*='headline' i]"
+          ].join(", ")
+        )
+    },
+    {
+      key: "editor-title-fallback-textarea",
+      selectorHint: "first textarea in main/article",
+      locatorFactory: (page) =>
+        page
+          .locator(
+            [
+              "main textarea",
+              "article textarea",
+              "[role='main'] textarea",
+              ".artdeco-text-input--title",
+              ".artdeco-text-input"
+            ].join(", ")
+          )
+          .first()
+    },
+    {
+      key: "editor-title-iframe-fallback",
+      selectorHint: "title in iframe",
+      locatorFactory: (page) =>
+        page
+          .frameLocator("iframe")
+          .first()
+          .locator(
+            [
+              "[aria-label*='Title' i]",
+              "[aria-label*='Headline' i]",
+              "[placeholder*='Title' i]",
+              "[placeholder*='Headline' i]",
+              "h1[contenteditable='true']",
+              "textarea",
+              "[contenteditable='true']"
+            ].join(", ")
+          )
+          .first()
     }
   ];
 }
@@ -886,6 +943,63 @@ function createEditorBodyCandidates(
               "[role='textbox'][contenteditable='true']",
               "[contenteditable='true']",
               "[contenteditable='plaintext-only']"
+            ].join(", ")
+          )
+          .last()
+    },
+    {
+      key: "editor-body-name-id-class",
+      selectorHint: "textarea/contenteditable with body/content/text in name/id/class",
+      locatorFactory: (page) =>
+        page.locator(
+          [
+            "textarea[name*='body' i]",
+            "textarea[name*='content' i]",
+            "textarea[name*='text' i]",
+            "textarea[id*='body' i]",
+            "textarea[id*='content' i]",
+            "textarea[id*='text' i]",
+            "textarea[class*='body' i]",
+            "textarea[class*='content' i]",
+            "textarea[class*='text' i]",
+            "[contenteditable][id*='body' i]",
+            "[contenteditable][id*='content' i]",
+            "[contenteditable][id*='text' i]"
+          ].join(", ")
+        )
+    },
+    {
+      key: "editor-body-last-textarea",
+      selectorHint: "last textarea in main/article",
+      locatorFactory: (page) =>
+        page
+          .locator(
+            [
+              "main textarea",
+              "article textarea",
+              "[role='main'] textarea",
+              "textarea"
+            ].join(", ")
+          )
+          .last()
+    },
+    {
+      key: "editor-body-iframe-fallback",
+      selectorHint: "body in iframe",
+      locatorFactory: (page) =>
+        page
+          .frameLocator("iframe")
+          .first()
+          .locator(
+            [
+              "[aria-label*='Body' i]",
+              "[aria-label*='Content' i]",
+              "[placeholder*='Write' i]",
+              "[placeholder*='story' i]",
+              ".ProseMirror[contenteditable='true']",
+              ".tiptap[contenteditable='true']",
+              "[contenteditable='true']",
+              "textarea"
             ].join(", ")
           )
           .last()
