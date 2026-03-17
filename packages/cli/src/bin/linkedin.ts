@@ -2175,7 +2175,7 @@ async function runStatus(profileName: string, cdpUrl?: string): Promise<void> {
     runtime.close();
   }
 }
-/* eslint-enable no-undef */
+ 
 
 
 
@@ -8901,7 +8901,7 @@ async function runAnalyticsPostMetrics(
   }
 }
 
-/* eslint-disable no-undef */
+ 
 async function runEventsPrepareCreate(
   input: {
     profileName: string;
@@ -8946,7 +8946,7 @@ async function runEventsPrepareCreate(
     runtime.close();
   }
 }
-/* eslint-enable no-undef */
+ 
 
 async function runEventsSearch(
   input: {

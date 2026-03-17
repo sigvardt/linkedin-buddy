@@ -401,7 +401,7 @@ async function extractEventSearchResults(
     /* eslint-enable no-undef */
   }, limit);
 }
-/* eslint-enable no-undef */
+ 
 
 async function extractEventDetailSnapshot(page: Page): Promise<EventDetailSnapshot> {
   return page.evaluate(() => {
@@ -626,20 +626,20 @@ async function executeEventRsvp(
 }
 
 
-/* eslint-disable no-undef */
+ 
 export class CreateEventActionExecutor
   implements ActionExecutor<LinkedInEventsExecutorRuntime>
 {
-  async execute(
-    runtime: LinkedInEventsExecutorRuntime,
-    payload: unknown,
-  ): Promise<ExecuteActionResult> {
-    const data = payload as CreateEventInput;
+  async execute({
+    runtime,
+    action,
+  }: ActionExecutorInput<LinkedInEventsExecutorRuntime>): Promise<ActionExecutorResult> {
+    const data = action.payload as unknown as CreateEventInput;
 
-    await runtime.rateLimiter.consumeOrThrow(
-      EVENT_CREATE_RATE_LIMIT_CONFIG,
-      createConfirmRateLimitMessage(EVENT_CREATE_ACTION_TYPE),
-    );
+    await consumeRateLimitOrThrow(runtime.rateLimiter, {
+      config: EVENT_CREATE_RATE_LIMIT_CONFIG,
+      message: createConfirmRateLimitMessage(EVENT_CREATE_ACTION_TYPE)
+    });
 
     const event = await runtime.profileManager.runWithPersistentContext(
       data.profileName ?? "default",
@@ -692,8 +692,12 @@ export class CreateEventActionExecutor
     );
 
     return {
-      message: `Successfully created LinkedIn event: "${data.name}"`,
-      data: event,
+      ok: true,
+      result: {
+        message: `Successfully created LinkedIn event: "${data.name}"`,
+        data: event,
+      },
+      artifacts: [],
     };
   }
 }
@@ -729,17 +733,22 @@ export class LinkedInEventsService {
   constructor(private readonly runtime: LinkedInEventsRuntime) {}
 
 
-  /* eslint-disable no-undef */
   prepareCreateEvent(
     input: CreateEventInput,
-  ): PreparedAction<LinkedInEventsExecutorRuntime> {
+  ): {
+    preparedActionId: string;
+    confirmToken: string;
+    expiresAtMs: number;
+    preview: Record<string, unknown>;
+  } {
     const profileName = input.profileName ?? "default";
+    const target = {
+      profile_name: profileName
+    };
 
     return this.runtime.twoPhaseCommit.prepare({
-      profileName,
       actionType: EVENT_CREATE_ACTION_TYPE,
-      operatorNote: input.operatorNote,
-      requireToken: false,
+      target,
       payload: {
         profileName,
         name: input.name,
@@ -752,10 +761,17 @@ export class LinkedInEventsService {
         externalLink: input.externalLink,
       },
       preview: {
+        summary: `Create LinkedIn event "${input.name}"`,
         action: "Create Event",
         event_name: input.name,
         description: input.description,
+        rate_limit: peekRateLimitPreviewOrThrow(
+          this.runtime.rateLimiter,
+          EVENT_CREATE_RATE_LIMIT_CONFIG,
+          createPrepareRateLimitMessage(EVENT_CREATE_ACTION_TYPE)
+        )
       },
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
     });
   }
 

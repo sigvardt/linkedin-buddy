@@ -39,6 +39,7 @@ export const GROUP_POST_ACTION_TYPE = "groups.post";
 const GROUP_RATE_LIMIT_CONFIGS = {
   
   [GROUP_CREATE_ACTION_TYPE]: {
+    counterKey: "linkedin.groups.create",
     limit: 10,
     windowSizeMs: 24 * 60 * 60 * 1000,
   },
@@ -857,21 +858,21 @@ async function executePostToGroup(
 }
 
 
-/* eslint-disable no-undef */
+ 
 export class CreateGroupActionExecutor
   implements ActionExecutor<LinkedInGroupsExecutorRuntime>
 {
-  async execute(
-    runtime: LinkedInGroupsExecutorRuntime,
-    payload: unknown,
-  ): Promise<ExecuteActionResult> {
-    const data = payload as CreateGroupInput;
+  async execute({
+    runtime,
+    action,
+  }: ActionExecutorInput<LinkedInGroupsExecutorRuntime>): Promise<ActionExecutorResult> {
+    const data = action.payload as unknown as CreateGroupInput;
     
     // Check rate limit before executing
-    await runtime.rateLimiter.consumeOrThrow(
-      getGroupRateLimitConfig(GROUP_CREATE_ACTION_TYPE),
-      createConfirmRateLimitMessage(GROUP_CREATE_ACTION_TYPE),
-    );
+    await consumeRateLimitOrThrow(runtime.rateLimiter, {
+      config: getGroupRateLimitConfig(GROUP_CREATE_ACTION_TYPE),
+      message: createConfirmRateLimitMessage(GROUP_CREATE_ACTION_TYPE)
+    });
 
     const group = await runtime.profileManager.runWithPersistentContext(
       data.profileName ?? "default",
@@ -918,8 +919,12 @@ export class CreateGroupActionExecutor
     );
 
     return {
-      message: `Successfully created LinkedIn group: "${data.name}"`,
-      data: group,
+      ok: true,
+      result: {
+        message: `Successfully created LinkedIn group: "${data.name}"`,
+        data: group,
+      },
+      artifacts: [],
     };
   }
 }
@@ -998,17 +1003,22 @@ export class LinkedInGroupsService {
   constructor(private readonly runtime: LinkedInGroupsRuntime) {}
 
 
-  /* eslint-disable no-undef */
   prepareCreateGroup(
     input: CreateGroupInput,
-  ): PreparedAction<LinkedInGroupsExecutorRuntime> {
+  ): {
+    preparedActionId: string;
+    confirmToken: string;
+    expiresAtMs: number;
+    preview: Record<string, unknown>;
+  } {
     const profileName = input.profileName ?? "default";
+    const target = {
+      profile_name: profileName
+    };
 
     return this.runtime.twoPhaseCommit.prepare({
-      profileName,
       actionType: GROUP_CREATE_ACTION_TYPE,
-      operatorNote: input.operatorNote,
-      requireToken: false,
+      target,
       payload: {
         profileName,
         name: input.name,
@@ -1019,10 +1029,17 @@ export class LinkedInGroupsService {
         isUnlisted: input.isUnlisted,
       },
       preview: {
+        summary: `Create LinkedIn group "${input.name}"`,
         action: "Create Group",
         group_name: input.name,
         description: input.description,
+        rate_limit: peekRateLimitPreviewOrThrow(
+          this.runtime.rateLimiter,
+          getGroupRateLimitConfig(GROUP_CREATE_ACTION_TYPE),
+          createPrepareRateLimitMessage(GROUP_CREATE_ACTION_TYPE)
+        )
       },
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
     });
   }
 
