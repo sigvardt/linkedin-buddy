@@ -12373,6 +12373,44 @@ export function createCliProgram(): Command {
       },
     );
 
+
+  eventsCommand
+    .command("prepare-create")
+    .description("Prepare to create a new LinkedIn event (two-phase)")
+    .requiredOption("-n, --name <name>", "Name of the event")
+    .option("-d, --description <description>", "Description of the event")
+    .option("--start-date <date>", "Start date")
+    .option("--start-time <time>", "Start time")
+    .option("--end-date <date>", "End date")
+    .option("--end-time <time>", "End time")
+    .option("--online", "Make the event online")
+    .option("--external-link <link>", "External registration link")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-o, --operator-note <note>", "Optional operator note")
+    .action(
+      async (
+        options: { profile: string; name: string; description?: string; startDate?: string; startTime?: string; endDate?: string; endTime?: string; online?: boolean; externalLink?: string; operatorNote?: string },
+      ) => {
+        await runEventsPrepareCreate(
+          {
+            profileName: options.profile,
+            name: options.name,
+            ...(options.description ? { description: options.description } : {}),
+            ...(options.startDate ? { startDate: options.startDate } : {}),
+            ...(options.startTime ? { startTime: options.startTime } : {}),
+            ...(options.endDate ? { endDate: options.endDate } : {}),
+            ...(options.endTime ? { endTime: options.endTime } : {}),
+            ...(options.online ? { isOnline: options.online } : {}),
+            ...(options.externalLink ? { externalLink: options.externalLink } : {}),
+            ...(options.operatorNote
+              ? { operatorNote: options.operatorNote }
+              : {}),
+          },
+          readCdpUrl(),
+        );
+      },
+    );
+
   eventsCommand
     .command("view")
     .description("View details of a LinkedIn event")
