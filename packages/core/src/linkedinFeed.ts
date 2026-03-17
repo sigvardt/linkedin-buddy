@@ -735,102 +735,96 @@ async function extractFeedPosts(
             continue;
           }
 
-          const profileLinks = Array.from(
-            card.querySelectorAll("a[href*='/in/']"),
-          ) as HTMLAnchorElement[];
+          const postUrl = buildPostUrl(postId);
+
+          // Get image elements first
+          const profileImages = Array.from(card.querySelectorAll("img")).filter(img => {
+            const src = img.getAttribute("src") || "";
+            return src.includes("profile-displayphoto") || src.includes("company-logo") || src.includes("ghost-person");
+          });
 
           let authorName = "";
           let authorHeadline = "";
           let postedAt = "";
           let authorProfileUrl = "";
-
-          for (const link of profileLinks) {
-            if (!authorProfileUrl) {
-              authorProfileUrl = toAbsoluteUrl(link.getAttribute("href"));
-            }
-
-            if (!authorName) {
-              const potentialName = readElementText(link);
-              if (potentialName) {
-                authorName = potentialName;
-              }
-            }
-
-            const parent = link.parentElement;
-            if (!parent) {
-              continue;
-            }
-
-            const siblingDivs = Array.from(parent.querySelectorAll("div"));
-            for (const div of siblingDivs) {
-              const text = readElementText(div);
-              if (!text || text === authorName) {
-                continue;
-              }
-              if (!postedAt && /(^|\s)\d+\s*[hdwmy]\s*[•.]?/i.test(text)) {
-                postedAt = text;
-                continue;
-              }
-              if (!postedAt && text.includes("•")) {
-                postedAt = text;
-                continue;
-              }
-              if (!authorHeadline) {
-                authorHeadline = text;
+          
+          
+          
+          if (!authorName) authorName = pickText(["a[href*='/in/'] div", "a[href*='/in/']", "a[href*='/company/']"], card);
+          if (!authorProfileUrl) authorProfileUrl = pickHref(["a[href*='/in/']", "a[href*='/company/']"], card);
+          
+          // Clean up author name using aria-label if possible, since standard text often merges name+headline
+          for (const img of profileImages) {
+            const label = img.getAttribute("aria-label") || img.getAttribute("alt") || "";
+            if (label && label.length < 50 && !label.includes("•")) {
+              let cleanName = label.replace("View ", "").replace("'s profile", "").replace("’s profile", "").trim();
+              if (cleanName) {
+                authorName = cleanName;
+                break;
               }
             }
           }
+          
+          // One more cleanup in case it's still polluted
+          authorName = authorName.replace(/^View\s+/i, "").replace(/'s profile$/, "").replace(/’s profile$/, "").trim();
 
-          if (!authorName) {
-            authorName = pickText(["a[href*='/in/'] div", "a[href*='/in/']"], card);
-          }
-
-          if (!authorProfileUrl) {
-            authorProfileUrl = pickHref(["a[href*='/in/']"], card);
-          }
-
-          if (!authorHeadline || !postedAt) {
-            const allDivText = Array.from(card.querySelectorAll("div")).map((div) =>
-              readElementText(div),
-            );
-            for (const text of allDivText) {
-              if (!text || text === authorName || text === authorHeadline) {
-                continue;
-              }
-              if (!postedAt && /(^|\s)\d+\s*[hdwmy]\s*[•.]?/i.test(text)) {
-                postedAt = text;
-                continue;
-              }
-              if (!postedAt && text.includes("•")) {
-                postedAt = text;
-                continue;
-              }
-              if (!authorHeadline) {
-                authorHeadline = text;
-              }
+          // Find headline and timestamp (usually adjacent text to author name)
+          if (authorName) {
+            // Find all text blocks in the card
+            const allTextSpans = Array.from(card.querySelectorAll("span[dir='ltr'], div > span[aria-hidden='true']"))
+              .map(el => readElementText(el))
+              .filter(t => t && t.length > 0);
+            
+            // First look for time
+            for (const text of allTextSpans) {
+               if (!postedAt && /(^|\s)\d+\s*[hdwmy]\s*[•.]?/i.test(text)) {
+                 postedAt = text;
+                 break; // once we find time we stop
+               }
+            }
+            
+            // Now look for headline (which should be between name and time usually)
+            for (const text of allTextSpans) {
+               if (!authorHeadline && text.length > 5 && text !== authorName && !text.includes("•") && !/(^|\s)\d+\s*[hdwmy]\s*[•.]?/i.test(text)) {
+                 authorHeadline = text;
+                 break;
+               }
             }
           }
 
-          const text = normalize(
-            card.querySelector("span[data-testid='expandable-text-box']")?.textContent,
-          );
+          // Expandable text box is the most reliable text indicator
+          let text = normalize(card.querySelector("span[data-testid='expandable-text-box']")?.textContent);
+          
+          if (!text) {
+             // Look for long text nodes that aren't the author
+             const allTextBlocks = Array.from(card.querySelectorAll("span[dir='ltr'], div > span[aria-hidden='true']"))
+               .map(el => readElementText(el))
+               .filter(t => t && t.length > 30 && !t.includes("•") && t !== authorName && t !== authorHeadline);
+             
+             if (allTextBlocks.length > 0) {
+               text = allTextBlocks.sort((a,b) => b.length - a.length)[0] || "";
+             }
+          }
 
           let reactions = "";
           let comments = "";
           let reposts = "";
 
-          const spanText = Array.from(card.querySelectorAll("span")).map((span) =>
-            normalize(span.textContent),
-          );
-          for (const value of spanText) {
-            if (!reactions) {
-              reactions = pickMetricLabel(value, "reaction");
-            }
-            if (!comments) {
-              comments = pickMetricLabel(value, "comment");
-            }
-            if (!reposts) {
-              reposts = pickMetricLabel(value, "repost");
+          // Find metrics (reactions, comments, reposts) usually at bottom
+          const buttons = Array.from(card.querySelectorAll("button"));
+          for (const btn of buttons) {
+            const btnText = readElementText(btn);
+            if (!reactions) reactions = pickMetricLabel(btnText, "reaction");
+            if (!comments) comments = pickMetricLabel(btnText, "comment");
+            if (!reposts) reposts = pickMetricLabel(btnText, "repost");
+          }
+          
+          if (!reactions || !comments || !reposts) {
+            const spanText = Array.from(card.querySelectorAll("span")).map((span) => normalize(span.textContent));
+            for (const value of spanText) {
+              if (!reactions) reactions = pickMetricLabel(value, "reaction");
+              if (!comments) comments = pickMetricLabel(value, "comment");
+              if (!reposts) reposts = pickMetricLabel(value, "repost");
             }
           }
 
@@ -840,11 +834,11 @@ async function extractFeedPosts(
             author_headline: authorHeadline,
             author_profile_url: authorProfileUrl,
             posted_at: postedAt,
-            text,
+            text: text || "",
             reactions_count: reactions,
             comments_count: comments,
             reposts_count: reposts,
-            post_url: "",
+            post_url: postUrl,
           });
 
           if (sduiResults.length >= maxPosts) {
