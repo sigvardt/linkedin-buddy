@@ -2175,6 +2175,9 @@ async function runStatus(profileName: string, cdpUrl?: string): Promise<void> {
     runtime.close();
   }
 }
+ 
+
+
 
 function buildFeedbackJsonResult(
   result:
@@ -8704,6 +8707,50 @@ async function runGroupsView(
   }
 }
 
+
+async function runGroupsPrepareCreate(
+  input: {
+    profileName: string;
+    name: string;
+    description: string;
+    rules?: string;
+    industry?: string;
+    location?: string;
+    isUnlisted?: boolean;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.groups.prepare_create.start", {
+      profileName: input.profileName,
+      name: input.name,
+    });
+
+    const prepared = runtime.groups.prepareCreateGroup({
+      ...input
+    });
+
+    runtime.logger.log("info", "cli.groups.prepare_create.done", {
+      profileName: input.profileName,
+      actionId: prepared.preparedActionId,
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      prepared_action_id: prepared.preparedActionId,
+      confirm_token: prepared.confirmToken,
+      expires_at_ms: prepared.expiresAtMs,
+      preview: prepared.preview,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 async function runGroupsPrepareJoin(
   input: {
     profileName: string;
@@ -8816,6 +8863,90 @@ async function runGroupsPreparePost(
     runtime.close();
   }
 }
+
+
+async function runAnalyticsPostMetrics(
+  input: {
+    profileName: string;
+    postUrl: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.analytics.post_metrics.start", {
+      profileName: input.profileName,
+      postUrl: input.postUrl,
+    });
+
+    const summary = await runtime.analytics.getPostMetrics({
+      profileName: input.profileName,
+      postUrl: input.postUrl,
+    });
+
+    runtime.logger.log("info", "cli.analytics.post_metrics.done", {
+      profileName: input.profileName,
+      post_url: summary.post.post_url,
+      metric_count: summary.metrics.length,
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...summary,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+ 
+async function runEventsPrepareCreate(
+  input: {
+    profileName: string;
+    name: string;
+    description?: string;
+    startDate?: string;
+    startTime?: string;
+    endDate?: string;
+    endTime?: string;
+    isOnline?: boolean;
+    externalLink?: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.events.prepare_create.start", {
+      profileName: input.profileName,
+      name: input.name,
+    });
+
+    const prepared = runtime.events.prepareCreateEvent({
+      ...input
+    });
+
+    runtime.logger.log("info", "cli.events.prepare_create.done", {
+      profileName: input.profileName,
+      actionId: prepared.preparedActionId,
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      prepared_action_id: prepared.preparedActionId,
+      confirm_token: prepared.confirmToken,
+      expires_at_ms: prepared.expiresAtMs,
+      preview: prepared.preview,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+ 
 
 async function runEventsSearch(
   input: {
@@ -12139,6 +12270,40 @@ export function createCliProgram(): Command {
       },
     );
 
+
+  groupsCommand
+    .command("prepare-create")
+    .description("Prepare to create a new LinkedIn group (two-phase)")
+    .requiredOption("-n, --name <name>", "Name of the group")
+    .requiredOption("-d, --description <description>", "Description of the group")
+    .option("-r, --rules <rules>", "Group rules")
+    .option("-i, --industry <industry>", "Group industry")
+    .option("-l, --location <location>", "Group location")
+    .option("--unlisted", "Make the group unlisted")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-o, --operator-note <note>", "Optional operator note")
+    .action(
+      async (
+        options: { profile: string; name: string; description: string; rules?: string; industry?: string; location?: string; unlisted?: boolean; operatorNote?: string },
+      ) => {
+        await runGroupsPrepareCreate(
+          {
+            profileName: options.profile,
+            name: options.name,
+            description: options.description,
+            ...(options.rules ? { rules: options.rules } : {}),
+            ...(options.industry ? { industry: options.industry } : {}),
+            ...(options.location ? { location: options.location } : {}),
+            ...(options.unlisted ? { isUnlisted: options.unlisted } : {}),
+            ...(options.operatorNote
+              ? { operatorNote: options.operatorNote }
+              : {}),
+          },
+          readCdpUrl(),
+        );
+      },
+    );
+
   groupsCommand
     .command("join")
     .description("Prepare to join a LinkedIn group (two-phase)")
@@ -12213,6 +12378,26 @@ export function createCliProgram(): Command {
       },
     );
 
+  
+  const analyticsCommand = program
+    .command("analytics")
+    .description("View LinkedIn analytics");
+
+  analyticsCommand
+    .command("post-metrics")
+    .description("View post-specific analytics metrics")
+    .argument("<post>", "LinkedIn post URL")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(async (postUrl: string, options: { profile: string }) => {
+      await runAnalyticsPostMetrics(
+        {
+          profileName: options.profile,
+          postUrl,
+        },
+        readCdpUrl(),
+      );
+    });
+
   const eventsCommand = program
     .command("events")
     .description(
@@ -12232,6 +12417,44 @@ export function createCliProgram(): Command {
             profileName: options.profile,
             query: options.query,
             limit: parseInt(options.limit, 10) || 10,
+          },
+          readCdpUrl(),
+        );
+      },
+    );
+
+
+  eventsCommand
+    .command("prepare-create")
+    .description("Prepare to create a new LinkedIn event (two-phase)")
+    .requiredOption("-n, --name <name>", "Name of the event")
+    .option("-d, --description <description>", "Description of the event")
+    .option("--start-date <date>", "Start date")
+    .option("--start-time <time>", "Start time")
+    .option("--end-date <date>", "End date")
+    .option("--end-time <time>", "End time")
+    .option("--online", "Make the event online")
+    .option("--external-link <link>", "External registration link")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option("-o, --operator-note <note>", "Optional operator note")
+    .action(
+      async (
+        options: { profile: string; name: string; description?: string; startDate?: string; startTime?: string; endDate?: string; endTime?: string; online?: boolean; externalLink?: string; operatorNote?: string },
+      ) => {
+        await runEventsPrepareCreate(
+          {
+            profileName: options.profile,
+            name: options.name,
+            ...(options.description ? { description: options.description } : {}),
+            ...(options.startDate ? { startDate: options.startDate } : {}),
+            ...(options.startTime ? { startTime: options.startTime } : {}),
+            ...(options.endDate ? { endDate: options.endDate } : {}),
+            ...(options.endTime ? { endTime: options.endTime } : {}),
+            ...(options.online ? { isOnline: options.online } : {}),
+            ...(options.externalLink ? { externalLink: options.externalLink } : {}),
+            ...(options.operatorNote
+              ? { operatorNote: options.operatorNote }
+              : {}),
           },
           readCdpUrl(),
         );

@@ -31,11 +31,18 @@ import type {
 } from "./twoPhaseCommit.js";
 import { normalizeText, getOrCreatePage, escapeRegExp } from "./shared.js";
 
+export const GROUP_CREATE_ACTION_TYPE = "groups.create";
 export const GROUP_JOIN_ACTION_TYPE = "groups.join";
 export const GROUP_LEAVE_ACTION_TYPE = "groups.leave";
 export const GROUP_POST_ACTION_TYPE = "groups.post";
 
 const GROUP_RATE_LIMIT_CONFIGS = {
+  
+  [GROUP_CREATE_ACTION_TYPE]: {
+    counterKey: "linkedin.groups.create",
+    limit: 10,
+    windowSizeMs: 24 * 60 * 60 * 1000,
+  },
   [GROUP_JOIN_ACTION_TYPE]: {
     counterKey: "linkedin.groups.join",
     windowSizeMs: 24 * 60 * 60 * 1000,
@@ -79,6 +86,18 @@ export interface LinkedInGroupDetail {
   about: string;
   joined_at: string | null;
   membership_state: LinkedInGroupMembershipState;
+}
+
+
+export interface CreateGroupInput {
+  profileName?: string;
+  name: string;
+  description: string;
+  rules?: string;
+  industry?: string;
+  location?: string;
+  isUnlisted?: boolean;
+  operatorNote?: string;
 }
 
 export interface SearchGroupsInput {
@@ -327,6 +346,7 @@ async function scrollSearchResultsIfNeeded(
   return snapshots;
 }
 
+/* eslint-disable no-undef */
 async function extractGroupSearchResults(
   page: Page,
   limit: number
@@ -340,70 +360,82 @@ async function extractGroupSearchResults(
       return match?.[1] ?? "";
     };
 
-    const cards = new Map<string, string>();
-    for (const link of Array.from(globalThis.document.links)) {
-      const href = normalize(link.href);
-      if (!href.includes("/groups/") || !extractGroupIdFromUrl(href)) {
-        continue;
+    const origin = globalThis.window.location.origin;
+    const links = Array.from(
+      globalThis.document.querySelectorAll("main a[href*='/groups/'], ul a[href*='/groups/'], .search-results-container a[href*='/groups/']")
+    ).filter((link): link is HTMLAnchorElement => {
+      const href = normalize(link.getAttribute("href"));
+      return /\/groups\/[A-Za-z0-9-]+/.test(href);
+    });
+
+    const seen = new Set<string>();
+    const uniqueLinks = links.filter((link) => {
+      const href = normalize(link.getAttribute("href")) || normalize(link.href);
+      const idMatch = /\/groups\/([^/?#]+)/.exec(href);
+      const groupKey = normalize(idMatch?.[1]);
+      if (!groupKey || seen.has(groupKey)) {
+        return false;
       }
+      seen.add(groupKey);
+      return true;
+    });
 
-      const text = link.innerText ?? "";
-      if (!normalize(text) || /^more$/iu.test(normalize(text))) {
-        continue;
-      }
+    return uniqueLinks.slice(0, maxGroups).map((link) => {
+      const card = link.closest("li") ?? link.closest("div[data-view-tracking-scope]") ?? link.closest("div.search-result__wrapper") ?? link.parentElement;
+      
+      const rawText = normalize((card as HTMLElement)?.innerText ?? link.innerText ?? "");
+      const lines = rawText
+        .split("\n")
+        .map((line) => normalize(line))
+        .filter((line) => line.length > 0);
+        
+      const visibility =
+        lines.find((line) =>
+          /(?:public|private)(?: listed)? group/iu.test(line)
+        ) ?? "";
+      const memberCount =
+        lines.find((line) => /\b(?:members|medlemmer)\b/iu.test(line)) ?? "";
+      const actionLabel =
+        lines.find((line) => /^(?:join|requested to join)$/iu.test(line)) ?? "";
+        
+      const nameMatch = link.querySelector("span[dir='ltr'] span[aria-hidden='true']") ?? link.querySelector("span[aria-hidden='true']");
+      const nameFromSpan = normalize(nameMatch?.textContent);
+      const name = nameFromSpan || lines[0] || "";
+      
+      const description = normalize(
+        lines
+          .filter(
+            (line) =>
+              line !== name &&
+              line !== visibility &&
+              line !== memberCount &&
+              line !== actionLabel
+          )
+          .join(" ")
+      );
+      const membershipState =
+        /^requested to join$/iu.test(actionLabel)
+          ? "pending"
+          : /^join$/iu.test(actionLabel)
+            ? "joinable"
+            : "unknown";
 
-      const existing = cards.get(href);
-      if (!existing || text.length > existing.length) {
-        cards.set(href, text);
-      }
-    }
+      const href = normalize(link.getAttribute("href")) || normalize(link.href);
+      const groupUrl = href.startsWith("/") ? `${origin}${href}` : href;
 
-    return Array.from(cards.entries())
-      .slice(0, maxGroups)
-      .map(([groupUrl, rawText]) => {
-        const lines = rawText
-          .split("\n")
-          .map((line) => normalize(line))
-          .filter((line) => line.length > 0);
-        const visibility =
-          lines.find((line) =>
-            /(?:public|private)(?: listed)? group/iu.test(line)
-          ) ?? "";
-        const memberCount =
-          lines.find((line) => /\b(?:members|medlemmer)\b/iu.test(line)) ?? "";
-        const actionLabel =
-          lines.find((line) => /^(?:join|requested to join)$/iu.test(line)) ?? "";
-        const name = lines[0] ?? "";
-        const description = normalize(
-          lines
-            .filter(
-              (line) =>
-                line !== name &&
-                line !== visibility &&
-                line !== memberCount &&
-                line !== actionLabel
-            )
-            .join(" ")
-        );
-        const membershipState =
-          /^requested to join$/iu.test(actionLabel)
-            ? "pending"
-            : /^join$/iu.test(actionLabel)
-              ? "joinable"
-              : "unknown";
-
-        return {
-          group_id: extractGroupIdFromUrl(groupUrl),
-          name,
-          group_url: groupUrl,
-          visibility,
-          member_count: memberCount,
-          description,
-          membership_state: membershipState
-        } satisfies GroupSearchSnapshot;
-      });
+      return {
+        group_id: extractGroupIdFromUrl(groupUrl),
+        name,
+        group_url: groupUrl,
+        visibility,
+        member_count: memberCount,
+        description,
+        membership_state: membershipState
+      } satisfies GroupSearchSnapshot;
+    });
   }, limit);
 }
+/* eslint-enable no-undef */
 
 async function extractGroupDetailSnapshot(page: Page): Promise<GroupDetailSnapshot> {
   return page.evaluate(() => {
@@ -825,6 +857,78 @@ async function executePostToGroup(
   );
 }
 
+
+ 
+export class CreateGroupActionExecutor
+  implements ActionExecutor<LinkedInGroupsExecutorRuntime>
+{
+  async execute({
+    runtime,
+    action,
+  }: ActionExecutorInput<LinkedInGroupsExecutorRuntime>): Promise<ActionExecutorResult> {
+    const data = action.payload as unknown as CreateGroupInput;
+    
+    // Check rate limit before executing
+    await consumeRateLimitOrThrow(runtime.rateLimiter, {
+      config: getGroupRateLimitConfig(GROUP_CREATE_ACTION_TYPE),
+      message: createConfirmRateLimitMessage(GROUP_CREATE_ACTION_TYPE)
+    });
+
+    const group = await runtime.profileManager.runWithPersistentContext(
+      data.profileName ?? "default",
+      { headless: false },
+      async (context) => {
+        const page = await context.newPage();
+        try {
+          await page.goto("https://www.linkedin.com/groups/create/", {
+            waitUntil: "domcontentloaded",
+          });
+          
+          await page.locator("input[name='groupName']").waitFor({ state: "visible", timeout: 10000 });
+          await page.locator("input[name='groupName']").fill(data.name);
+          
+          if (data.description) {
+            await page.locator("textarea[name='groupDescription']").fill(data.description);
+          }
+          
+          if (data.rules) {
+            await page.locator("textarea[name='groupRules']").fill(data.rules);
+          }
+          
+          if (data.isUnlisted) {
+            await page.locator("label[for='unlisted-group']").click();
+          }
+          
+          await page.locator("button[type='submit']").click();
+          
+          // Wait for redirect to new group page
+          await page.waitForURL(/\/groups\/\d+/i, { timeout: 15000 });
+          
+          const url = page.url();
+          const groupId = /\/groups\/(\d+)/iu.exec(url)?.[1] ?? "";
+          
+          return {
+            group_id: groupId,
+            name: data.name,
+            group_url: url
+          };
+        } finally {
+          await page.close().catch(() => {});
+        }
+      },
+    );
+
+    return {
+      ok: true,
+      result: {
+        message: `Successfully created LinkedIn group: "${data.name}"`,
+        data: group,
+      },
+      artifacts: [],
+    };
+  }
+}
+
 export class JoinGroupActionExecutor
   implements ActionExecutor<LinkedInGroupsExecutorRuntime>
 {
@@ -890,12 +994,54 @@ export function createGroupActionExecutors(): ActionExecutorRegistry<LinkedInGro
   return {
     [GROUP_JOIN_ACTION_TYPE]: new JoinGroupActionExecutor(),
     [GROUP_LEAVE_ACTION_TYPE]: new LeaveGroupActionExecutor(),
-    [GROUP_POST_ACTION_TYPE]: new PostToGroupActionExecutor()
+    [GROUP_POST_ACTION_TYPE]: new PostToGroupActionExecutor(),
+    [GROUP_CREATE_ACTION_TYPE]: new CreateGroupActionExecutor()
   };
 }
 
 export class LinkedInGroupsService {
   constructor(private readonly runtime: LinkedInGroupsRuntime) {}
+
+
+  prepareCreateGroup(
+    input: CreateGroupInput,
+  ): {
+    preparedActionId: string;
+    confirmToken: string;
+    expiresAtMs: number;
+    preview: Record<string, unknown>;
+  } {
+    const profileName = input.profileName ?? "default";
+    const target = {
+      profile_name: profileName
+    };
+
+    return this.runtime.twoPhaseCommit.prepare({
+      actionType: GROUP_CREATE_ACTION_TYPE,
+      target,
+      payload: {
+        profileName,
+        name: input.name,
+        description: input.description,
+        rules: input.rules,
+        industry: input.industry,
+        location: input.location,
+        isUnlisted: input.isUnlisted,
+      },
+      preview: {
+        summary: `Create LinkedIn group "${input.name}"`,
+        action: "Create Group",
+        group_name: input.name,
+        description: input.description,
+        rate_limit: peekRateLimitPreviewOrThrow(
+          this.runtime.rateLimiter,
+          getGroupRateLimitConfig(GROUP_CREATE_ACTION_TYPE),
+          createPrepareRateLimitMessage(GROUP_CREATE_ACTION_TYPE)
+        )
+      },
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+  }
 
   async searchGroups(input: SearchGroupsInput): Promise<SearchGroupsOutput> {
     const profileName = input.profileName ?? "default";
