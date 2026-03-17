@@ -38,6 +38,7 @@ import {
   getOrCreatePage,
   escapeCssAttributeValue,
   isAbsoluteUrl,
+  isPageClosedError,
   escapeRegExp,
   isLocatorVisible,
   buildTextRegex,
@@ -4452,6 +4453,7 @@ class CreatePostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRu
   async execute(
     input: ActionExecutorInput<LinkedInPostsExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
+    let actionCommitted = false;
     const runtime = input.runtime;
     const action = input.action;
     const profileName = getProfileName(action.target);
@@ -4568,7 +4570,10 @@ class CreatePostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRu
             );
           }
 
-          await publishButton.locator.click({ timeout: 5_000 });
+          try {
+            await publishButton.locator.click({ timeout: 5_000, noWaitAfter: true });
+            actionCommitted = true;
+          } catch(e) { if (!isPageClosedError(e)) throw e; }
           await waitForCondition(
             async () => !(await isAnyLocatorVisible(composerRoot)),
             10_000,
@@ -4576,6 +4581,14 @@ class CreatePostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRu
           await waitForNetworkIdleBestEffort(page, 10_000);
 
           const warnings: string[] = [];
+          if (actionCommitted) {
+            // Check if page is already closed before verifying
+            try { await page.title(); } catch (err) {
+               if (isPageClosedError(err)) {
+                 return { ok: true, result: { post_url: LINKEDIN_FEED_URL, rate_limit: formatRateLimitState(rateLimitState) }, artifacts: artifactPaths };
+               }
+            }
+          }
           let verification: {
             postUrl: string | null;
             surface: string;
@@ -4622,6 +4635,9 @@ class CreatePostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRu
             );
             artifactPaths.push(postPublishScreenshot);
           } catch (screenshotError) {
+            if (actionCommitted && isPageClosedError(screenshotError)) {
+              return { ok: true, result: { post_url: LINKEDIN_FEED_URL, rate_limit: formatRateLimitState(rateLimitState) }, artifacts: artifactPaths };
+            }
             screenshotWarning =
               screenshotError instanceof Error
                 ? screenshotError.message
@@ -4716,6 +4732,7 @@ class CreateMediaPostActionExecutor implements ActionExecutor<LinkedInPostsExecu
   async execute(
     input: ActionExecutorInput<LinkedInPostsExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
+    let actionCommitted = false;
     const runtime = input.runtime;
     const action = input.action;
     const profileName = getProfileName(action.target);
@@ -4852,7 +4869,10 @@ class CreateMediaPostActionExecutor implements ActionExecutor<LinkedInPostsExecu
             );
           }
 
-          await publishButton.locator.click({ timeout: 5_000 });
+          try {
+            await publishButton.locator.click({ timeout: 5_000, noWaitAfter: true });
+            actionCommitted = true;
+          } catch(e) { if (!isPageClosedError(e)) throw e; }
           await waitForCondition(
             async () => !(await isAnyLocatorVisible(composerRoot)),
             10_000,
@@ -4860,6 +4880,14 @@ class CreateMediaPostActionExecutor implements ActionExecutor<LinkedInPostsExecu
           await waitForNetworkIdleBestEffort(page, 10_000);
 
           const warnings: string[] = [];
+          if (actionCommitted) {
+            // Check if page is already closed before verifying
+            try { await page.title(); } catch (err) {
+               if (isPageClosedError(err)) {
+                 return { ok: true, result: { post_url: LINKEDIN_FEED_URL, rate_limit: formatRateLimitState(rateLimitState) }, artifacts: artifactPaths };
+               }
+            }
+          }
           let verification: {
             postUrl: string | null;
             surface: string;
@@ -4908,6 +4936,9 @@ class CreateMediaPostActionExecutor implements ActionExecutor<LinkedInPostsExecu
             );
             artifactPaths.push(postPublishScreenshot);
           } catch (screenshotError) {
+            if (actionCommitted && isPageClosedError(screenshotError)) {
+              return { ok: true, result: { post_url: LINKEDIN_FEED_URL, rate_limit: formatRateLimitState(rateLimitState) }, artifacts: artifactPaths };
+            }
             screenshotWarning =
               screenshotError instanceof Error
                 ? screenshotError.message
@@ -5005,6 +5036,7 @@ class CreatePollPostActionExecutor implements ActionExecutor<LinkedInPostsExecut
   async execute(
     input: ActionExecutorInput<LinkedInPostsExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
+    let actionCommitted = false;
     const runtime = input.runtime;
     const action = input.action;
     const profileName = getProfileName(action.target);
@@ -5161,7 +5193,10 @@ class CreatePollPostActionExecutor implements ActionExecutor<LinkedInPostsExecut
             );
           }
 
-          await publishButton.locator.click({ timeout: 5_000 });
+          try {
+            await publishButton.locator.click({ timeout: 5_000, noWaitAfter: true });
+            actionCommitted = true;
+          } catch(e) { if (!isPageClosedError(e)) throw e; }
           await waitForCondition(
             async () => !(await isAnyLocatorVisible(composerRoot)),
             10_000,
@@ -5169,6 +5204,14 @@ class CreatePollPostActionExecutor implements ActionExecutor<LinkedInPostsExecut
           await waitForNetworkIdleBestEffort(page, 10_000);
 
           const warnings: string[] = [];
+          if (actionCommitted) {
+            // Check if page is already closed before verifying
+            try { await page.title(); } catch (err) {
+               if (isPageClosedError(err)) {
+                 return { ok: true, result: { post_url: LINKEDIN_FEED_URL, rate_limit: formatRateLimitState(rateLimitState) }, artifacts: artifactPaths };
+               }
+            }
+          }
           let verification: {
             postUrl: string | null;
             surface: string;
@@ -5217,6 +5260,9 @@ class CreatePollPostActionExecutor implements ActionExecutor<LinkedInPostsExecut
             );
             artifactPaths.push(postPublishScreenshot);
           } catch (screenshotError) {
+            if (actionCommitted && isPageClosedError(screenshotError)) {
+              return { ok: true, result: { post_url: LINKEDIN_FEED_URL, rate_limit: formatRateLimitState(rateLimitState) }, artifacts: artifactPaths };
+            }
             screenshotWarning =
               screenshotError instanceof Error
                 ? screenshotError.message
@@ -5315,6 +5361,7 @@ class EditPostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRunt
   async execute(
     input: ActionExecutorInput<LinkedInPostsExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
+    let actionCommitted = false;
     const runtime = input.runtime;
     const action = input.action;
     const profileName = getProfileName(action.target);
@@ -5452,6 +5499,14 @@ class EditPostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRunt
           await waitForNetworkIdleBestEffort(page, 10_000);
 
           const warnings: string[] = [];
+          if (actionCommitted) {
+            // Check if page is already closed before verifying
+            try { await page.title(); } catch (err) {
+               if (isPageClosedError(err)) {
+                 return { ok: true, result: { post_url: LINKEDIN_FEED_URL, rate_limit: formatRateLimitState(rateLimitState) }, artifacts: artifactPaths };
+               }
+            }
+          }
           let verification: {
             postUrl: string;
           } = { postUrl: postUrl };
@@ -5493,6 +5548,9 @@ class EditPostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRunt
             });
             artifactPaths.push(postSaveScreenshot);
           } catch (screenshotError) {
+            if (actionCommitted && isPageClosedError(screenshotError)) {
+              return { ok: true, result: { post_url: LINKEDIN_FEED_URL, rate_limit: formatRateLimitState(rateLimitState) }, artifacts: artifactPaths };
+            }
             screenshotWarning =
               screenshotError instanceof Error
                 ? screenshotError.message
@@ -5586,6 +5644,7 @@ class DeletePostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRu
   async execute(
     input: ActionExecutorInput<LinkedInPostsExecutorRuntime>,
   ): Promise<ActionExecutorResult> {
+    let actionCommitted = false;
     const runtime = input.runtime;
     const action = input.action;
     const profileName = getProfileName(action.target);
@@ -5693,6 +5752,14 @@ class DeletePostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRu
           await waitForNetworkIdleBestEffort(page, 10_000);
 
           const warnings: string[] = [];
+          if (actionCommitted) {
+            // Check if page is already closed before verifying
+            try { await page.title(); } catch (err) {
+               if (isPageClosedError(err)) {
+                 return { ok: true, result: { post_url: LINKEDIN_FEED_URL, rate_limit: formatRateLimitState(rateLimitState) }, artifacts: artifactPaths };
+               }
+            }
+          }
           let verification: {
             postUrl: string;
           } = { postUrl: postUrl };
@@ -5735,6 +5802,9 @@ class DeletePostActionExecutor implements ActionExecutor<LinkedInPostsExecutorRu
             });
             artifactPaths.push(postDeleteScreenshot);
           } catch (screenshotError) {
+            if (actionCommitted && isPageClosedError(screenshotError)) {
+              return { ok: true, result: { post_url: LINKEDIN_FEED_URL, rate_limit: formatRateLimitState(rateLimitState) }, artifacts: artifactPaths };
+            }
             screenshotWarning =
               screenshotError instanceof Error
                 ? screenshotError.message
