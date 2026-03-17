@@ -340,68 +340,79 @@ async function extractGroupSearchResults(
       return match?.[1] ?? "";
     };
 
-    const cards = new Map<string, string>();
-    for (const link of Array.from(globalThis.document.links)) {
-      const href = normalize(link.href);
-      if (!href.includes("/groups/") && !extractGroupIdFromUrl(href)) {
-        continue;
+    const origin = globalThis.window.location.origin;
+    const links = Array.from(
+      globalThis.document.querySelectorAll("main a[href*='/groups/'], ul a[href*='/groups/'], .search-results-container a[href*='/groups/']")
+    ).filter((link): link is HTMLAnchorElement => {
+      const href = normalize(link.getAttribute("href"));
+      return /\/groups\/[A-Za-z0-9-]+/.test(href);
+    });
+
+    const seen = new Set<string>();
+    const uniqueLinks = links.filter((link) => {
+      const href = normalize(link.getAttribute("href")) || normalize(link.href);
+      const idMatch = /\/groups\/([^/?#]+)/.exec(href);
+      const groupKey = normalize(idMatch?.[1]);
+      if (!groupKey || seen.has(groupKey)) {
+        return false;
       }
+      seen.add(groupKey);
+      return true;
+    });
 
-      const text = link.innerText ?? "";
-      if (!normalize(text) || /^more$/iu.test(normalize(text))) {
-        continue;
-      }
+    return uniqueLinks.slice(0, maxGroups).map((link) => {
+      const card = link.closest("li") ?? link.closest("div[data-view-tracking-scope]") ?? link.closest("div.search-result__wrapper") ?? link.parentElement;
+      
+      const rawText = normalize((card as HTMLElement)?.innerText ?? link.innerText ?? "");
+      const lines = rawText
+        .split("\n")
+        .map((line) => normalize(line))
+        .filter((line) => line.length > 0);
+        
+      const visibility =
+        lines.find((line) =>
+          /(?:public|private)(?: listed)? group/iu.test(line)
+        ) ?? "";
+      const memberCount =
+        lines.find((line) => /\b(?:members|medlemmer)\b/iu.test(line)) ?? "";
+      const actionLabel =
+        lines.find((line) => /^(?:join|requested to join)$/iu.test(line)) ?? "";
+        
+      const nameMatch = link.querySelector("span[dir='ltr'] span[aria-hidden='true']") ?? link.querySelector("span[aria-hidden='true']");
+      const nameFromSpan = normalize(nameMatch?.textContent);
+      const name = nameFromSpan || lines[0] || "";
+      
+      const description = normalize(
+        lines
+          .filter(
+            (line) =>
+              line !== name &&
+              line !== visibility &&
+              line !== memberCount &&
+              line !== actionLabel
+          )
+          .join(" ")
+      );
+      const membershipState =
+        /^requested to join$/iu.test(actionLabel)
+          ? "pending"
+          : /^join$/iu.test(actionLabel)
+            ? "joinable"
+            : "unknown";
 
-      const existing = cards.get(href);
-      if (!existing || text.length > existing.length) {
-        cards.set(href, text);
-      }
-    }
+      const href = normalize(link.getAttribute("href")) || normalize(link.href);
+      const groupUrl = href.startsWith("/") ? `${origin}${href}` : href;
 
-    return Array.from(cards.entries())
-      .slice(0, maxGroups)
-      .map(([groupUrl, rawText]) => {
-        const lines = rawText
-          .split("\n")
-          .map((line) => normalize(line))
-          .filter((line) => line.length > 0);
-        const visibility =
-          lines.find((line) =>
-            /(?:public|private)(?: listed)? group/iu.test(line)
-          ) ?? "";
-        const memberCount =
-          lines.find((line) => /\b(?:members|medlemmer)\b/iu.test(line)) ?? "";
-        const actionLabel =
-          lines.find((line) => /^(?:join|requested to join)$/iu.test(line)) ?? "";
-        const name = lines[0] ?? "";
-        const description = normalize(
-          lines
-            .filter(
-              (line) =>
-                line !== name &&
-                line !== visibility &&
-                line !== memberCount &&
-                line !== actionLabel
-            )
-            .join(" ")
-        );
-        const membershipState =
-          /^requested to join$/iu.test(actionLabel)
-            ? "pending"
-            : /^join$/iu.test(actionLabel)
-              ? "joinable"
-              : "unknown";
-
-        return {
-          group_id: extractGroupIdFromUrl(groupUrl),
-          name,
-          group_url: groupUrl,
-          visibility,
-          member_count: memberCount,
-          description,
-          membership_state: membershipState
-        } satisfies GroupSearchSnapshot;
-      });
+      return {
+        group_id: extractGroupIdFromUrl(groupUrl),
+        name,
+        group_url: groupUrl,
+        visibility,
+        member_count: memberCount,
+        description,
+        membership_state: membershipState
+      } satisfies GroupSearchSnapshot;
+    });
   }, limit);
 }
 

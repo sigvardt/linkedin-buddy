@@ -297,73 +297,83 @@ async function extractEventSearchResults(
       return match?.[1] ?? "";
     };
 
-    const cards = new Map<string, string>();
-    for (const link of Array.from(globalThis.document.links)) {
-      const href = normalize(link.href);
-      if (!href.includes("/events/") || !extractEventIdFromUrl(href)) {
-        continue;
-      }
+    const origin = globalThis.window.location.origin;
+    const links = Array.from(
+      globalThis.document.querySelectorAll("main a[href*='/events/'], ul a[href*='/events/'], .search-results-container a[href*='/events/']")
+    ).filter((link): link is HTMLAnchorElement => {
+      const href = normalize(link.getAttribute("href"));
+      return /\/events\/[A-Za-z0-9-]+/.test(href);
+    });
 
-      const text = link.innerText ?? "";
-      if (!normalize(text) || /^view$/iu.test(normalize(text))) {
-        continue;
+    const seen = new Set<string>();
+    const uniqueLinks = links.filter((link) => {
+      const href = normalize(link.getAttribute("href")) || normalize(link.href);
+      const idMatch = /\/events\/([^/?#]+)/.exec(href);
+      const eventKey = normalize(idMatch?.[1]);
+      if (!eventKey || seen.has(eventKey)) {
+        return false;
       }
+      seen.add(eventKey);
+      return true;
+    });
 
-      const existing = cards.get(href);
-      if (!existing || text.length > existing.length) {
-        cards.set(href, text);
-      }
-    }
-
-    return Array.from(cards.entries())
-      .slice(0, maxEvents)
-      .map(([eventUrl, rawText]) => {
-        const lines = rawText
-          .split("\n")
-          .map((line) => normalize(line))
-          .filter((line) => line.length > 0);
-        const title = lines[0] ?? "";
-        const dateTime =
-          lines.find((line) =>
-            /\b(?:AM|PM|Today|Tomorrow|Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b/iu.test(line)
-          ) ?? "";
-        const locationAndOrganizer =
-          lines.find(
+    return uniqueLinks.slice(0, maxEvents).map((link) => {
+      const card = link.closest("li") ?? link.closest("div[data-view-tracking-scope]") ?? link.closest("div.search-result__wrapper") ?? link.parentElement;
+      
+      const rawText = normalize((card as HTMLElement)?.innerText ?? link.innerText ?? "");
+      const lines = rawText
+        .split("\n")
+        .map((line) => normalize(line))
+        .filter((line) => line.length > 0);
+        
+      const titleMatch = link.querySelector("span[dir='ltr'] span[aria-hidden='true']") ?? link.querySelector("span[aria-hidden='true']");
+      const titleFromSpan = normalize(titleMatch?.textContent);
+      const title = titleFromSpan || lines[0] || "";
+      
+      const dateTime =
+        lines.find((line) =>
+          /\b(?:AM|PM|Today|Tomorrow|Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b/iu.test(line)
+        ) ?? "";
+      const locationAndOrganizer =
+        lines.find(
+          (line) =>
+            line !== title &&
+            line !== dateTime &&
+            !/^\d[\d.,\s]*(?:attendee|attendees)\b$/iu.test(line)
+        ) ?? "";
+      const [locationPart, organizerPart] = locationAndOrganizer.split(/\s+•\s+By\s+/iu);
+      const attendeeCount =
+        lines.find((line) =>
+          /^\d[\d.,\s]*(?:attendee|attendees)\b$/iu.test(line)
+        ) ?? "";
+      const description = normalize(
+        lines
+          .filter(
             (line) =>
               line !== title &&
               line !== dateTime &&
-              !/^\d[\d.,\s]*(?:attendee|attendees)\b$/iu.test(line)
-          ) ?? "";
-        const [locationPart, organizerPart] = locationAndOrganizer.split(/\s+•\s+By\s+/iu);
-        const attendeeCount =
-          lines.find((line) =>
-            /^\d[\d.,\s]*(?:attendee|attendees)\b$/iu.test(line)
-          ) ?? "";
-        const description = normalize(
-          lines
-            .filter(
-              (line) =>
-                line !== title &&
-                line !== dateTime &&
-                line !== locationAndOrganizer &&
-                line !== attendeeCount
-            )
-            .join(" ")
-        );
-        const location = normalize(locationPart);
+              line !== locationAndOrganizer &&
+              line !== attendeeCount
+          )
+          .join(" ")
+      );
 
-        return {
-          event_id: extractEventIdFromUrl(eventUrl),
-          title,
-          date_time: dateTime,
-          location,
-          organizer: normalize(organizerPart),
-          attendee_count: attendeeCount,
-          description,
-          event_url: eventUrl,
-          is_online: /^online$/iu.test(location)
-        } satisfies EventSearchSnapshot;
-      });
+      const isOnline = /online/iu.test(locationPart ?? locationAndOrganizer);
+      const href = normalize(link.getAttribute("href")) || normalize(link.href);
+      const eventUrl = href.startsWith("/") ? `${origin}${href}` : href;
+
+      return {
+        event_id: extractEventIdFromUrl(eventUrl),
+        title,
+        date_time: dateTime,
+        location: normalize(locationPart ?? ""),
+        organizer: normalize(organizerPart ?? ""),
+        attendee_count: attendeeCount,
+        description,
+        event_url: eventUrl,
+        is_online: isOnline
+      } satisfies EventSearchSnapshot;
+    });
   }, limit);
 }
 
