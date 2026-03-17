@@ -66,6 +66,7 @@ export * from "./selectorLocale.js";
 export * from "./shared.js";
 export * from "./stealth.js";
 export * from "./writeValidation.js";
+export * from "./twoPhaseCommit.js";
+export * from "./updateCheck.js";
 export * from "./webhookDelivery.js";
 export * from "./writeValidationAccounts.js";
-export * from "./twoPhaseCommit.js";

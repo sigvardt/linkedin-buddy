@@ -36,11 +36,14 @@ import {
   importSessionState,
   buildFeedbackHintMessage,
   clearRateLimitState,
+  checkForUpdate,
   createLocalDataDeletionPlan,
   createEmptyFixtureManifest,
   createFeedbackTechnicalContext,
   buildFixtureRouteKey,
   buildLinkedInImagePersonaFromProfileSeed,
+  buildUpdateCommand,
+  detectInstallMethod,
   evaluateDraftQuality,
   FEEDBACK_TYPES,
   formatFeedbackDisplayPath,
@@ -95,6 +98,7 @@ import {
   resolveLegacyRateLimitStateFilePath,
   resolvePrivacyConfig,
   resolveSchedulerConfig,
+  resolveUpdateCheckConfig,
   runLinkedInWriteValidation,
   runReadOnlyLinkedInLiveValidation,
   submitFeedback,
@@ -127,6 +131,7 @@ import {
   type SearchResult,
   type SelectorAuditInput,
   type SelectorAuditReport,
+  type UpdateCheckResult,
   type WebhookDeliveryAttemptStatus,
   type WebhookSubscriptionStatus,
   type FeedbackType,
@@ -251,6 +256,7 @@ const TOTAL_WRITE_VALIDATION_ACTIONS = LINKEDIN_WRITE_VALIDATION_ACTIONS.length;
 let cliEvasionEnabled = true;
 let cliEvasionLevel: string | undefined;
 let cliSelectorLocale: string | undefined;
+let readUpdateCheckEnabled = (): boolean => true;
 let activeCliInvocation:
   | {
       commandName: string;
@@ -1651,6 +1657,34 @@ async function maybeEmitCliFeedbackHint(error?: unknown): Promise<void> {
     writeCliWarning(
       `Could not update feedback hint state: ${asLinkedInBuddyError(trackingError).message}`,
     );
+  }
+}
+
+async function maybeShowUpdateNotification(): Promise<void> {
+  try {
+    if (!readUpdateCheckEnabled()) {
+      return;
+    }
+
+    const config = resolveUpdateCheckConfig({ timeoutMs: 2_000 });
+    if (!config.enabled) {
+      return;
+    }
+
+    const result: UpdateCheckResult = await checkForUpdate(
+      config,
+      packageJson.version,
+    );
+    if (!result.updateAvailable) {
+      return;
+    }
+
+    process.stderr.write(
+      `\n  Update available: ${result.currentVersion} → ${result.latestVersion}\n` +
+        `  Run \`${result.updateCommand}\` to update.\n\n`,
+    );
+  } catch {
+    return;
   }
 }
 
@@ -9597,6 +9631,10 @@ export function createCliProgram(): Command {
     .description("LinkedIn Buddy CLI")
     .version(packageJson.version)
     .option(
+      "--no-update-check",
+      "Disable automatic update check for this command",
+    )
+    .option(
       "--cdp-url <url>",
       "Connect to existing browser via CDP endpoint (e.g., http://127.0.0.1:18800)",
     )
@@ -9635,6 +9673,11 @@ export function createCliProgram(): Command {
       : undefined;
   };
 
+  readUpdateCheckEnabled = function readUpdateCheckEnabled(): boolean {
+    const options = program.opts<{ updateCheck?: boolean }>();
+    return options.updateCheck !== false;
+  };
+
   const readSelectorLocale = (): string | undefined => {
     const options = program.opts<{ selectorLocale?: string }>();
     return typeof options.selectorLocale === "string" &&
@@ -9669,6 +9712,7 @@ export function createCliProgram(): Command {
 
   program.hook("postAction", async () => {
     await maybeEmitCliFeedbackHint();
+    await maybeShowUpdateNotification();
   });
 
   program
@@ -13402,6 +13446,54 @@ export function createCliProgram(): Command {
       }
     });
 
+  program
+    .command("update")
+    .description("Check for updates and optionally install the latest version")
+    .option("--check-only", "Only check for updates without installing", false)
+    .action(async (options: { checkOnly: boolean }) => {
+      const config = resolveUpdateCheckConfig({ cacheTtlMs: 0, timeoutMs: 10_000 });
+      const result: UpdateCheckResult = await checkForUpdate(
+        { ...config, enabled: true },
+        packageJson.version,
+      );
+
+      if (options.checkOnly) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
+      console.log(`Current version: ${result.currentVersion}`);
+      console.log(`Latest version:  ${result.latestVersion}`);
+
+      if (!result.updateAvailable) {
+        console.log("\nYou are already on the latest version.");
+        return;
+      }
+
+      console.log(`\nUpdate available: ${result.currentVersion} → ${result.latestVersion}`);
+
+      const installMethod = detectInstallMethod();
+      const updateCommand = buildUpdateCommand(installMethod);
+
+      if (installMethod === "npx") {
+        console.log(`\nYou are running via npx, which always fetches the latest version.`);
+        console.log(`Simply restart your command to use the latest version.`);
+        return;
+      }
+
+      console.log(`\nRunning: ${updateCommand}`);
+
+      const { execSync } = await import("node:child_process");
+      try {
+        execSync(updateCommand, { stdio: "inherit" });
+        console.log(`\nSuccessfully updated to ${result.latestVersion}.`);
+      } catch {
+        console.error(`\nAutomatic update failed. Run the following command manually:`);
+        console.error(`  ${updateCommand}`);
+        process.exitCode = 1;
+      }
+    });
+
   return program;
 }
 
@@ -13422,6 +13514,7 @@ export async function runCli(argv: string[] = process.argv): Promise<void> {
     cliEvasionEnabled = true;
     cliEvasionLevel = undefined;
     cliSelectorLocale = undefined;
+    readUpdateCheckEnabled = (): boolean => true;
     process.argv = originalArgv;
   }
 }

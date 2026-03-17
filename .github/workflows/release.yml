@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 concurrency:
   group: release
@@ -82,12 +83,20 @@ jobs:
           --mode "$RELEASE_MODE"
           --notes-file "${{ steps.release.outputs.release_notes_path }}"
 
+      - name: Stamp server.json version
+        if: steps.release.outputs.skip != 'true'
+        run: |
+          VERSION="${{ steps.release.outputs.version }}"
+          jq --arg v "$VERSION" \
+            '.version = $v | .packages[0].version = $v' \
+            server.json > server.tmp && mv server.tmp server.json
+
       - name: Create release commit and tag
         if: steps.release.outputs.skip != 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package.json package-lock.json packages/core/package.json packages/cli/package.json packages/mcp/package.json
+          git add package.json package-lock.json packages/core/package.json packages/cli/package.json packages/mcp/package.json server.json
           git commit -m "chore(release): publish ${{ steps.release.outputs.version }} [skip ci]"
           git tag -a "${{ steps.release.outputs.tag }}" -m "Release ${{ steps.release.outputs.tag }}"
 
@@ -123,3 +132,23 @@ jobs:
           make_latest: true
           name: ${{ steps.release.outputs.tag }}
           tag_name: ${{ steps.release.outputs.tag }}
+
+      - name: Publish to MCP Registry
+        if: steps.release.outputs.skip != 'true'
+        continue-on-error: true
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" \
+            | tar xz mcp-publisher
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish
+
+      - name: Notify Smithery
+        if: steps.release.outputs.skip != 'true' && env.SMITHERY_API_KEY != ''
+        env:
+          SMITHERY_API_KEY: ${{ secrets.SMITHERY_API_KEY }}
+        continue-on-error: true
+        run: |
+          curl -sf -X POST "https://api.smithery.ai/servers/linkedin-buddy/releases" \
+            -H "Authorization: Bearer $SMITHERY_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"type":"repo","gitUrl":"https://github.com/${{ github.repository }}","ref":"refs/tags/${{ steps.release.outputs.tag }}"}'
