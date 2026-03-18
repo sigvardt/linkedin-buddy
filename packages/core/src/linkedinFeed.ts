@@ -724,13 +724,15 @@ async function extractFeedPosts(
         const listItems = Array.from(feedRoot.querySelectorAll("[role='listitem']"));
         const postCards = listItems.filter((item) => {
           const componentKey = normalize(item.getAttribute("componentkey"));
-          return /FeedType/i.test(componentKey) || item.hasAttribute("data-urn") || !!item.querySelector("[data-urn]") || !!item.querySelector("a[href*='/feed/update/']") || !!item.querySelector("a[href*='/posts/']");
+          const dataId = normalize(item.getAttribute("data-id"));
+          return /FeedType/i.test(componentKey) || item.hasAttribute("data-urn") || !!item.querySelector("[data-urn]") || !!item.querySelector("a[href*='/feed/update/']") || !!item.querySelector("a[href*='/posts/']") || (!!dataId && dataId.includes("urn:li:activity:"));
         });
 
         const sduiResults: FeedPostSnapshot[] = [];
         for (const card of postCards) {
           const componentKey = normalize(card.getAttribute("componentkey") || card.getAttribute("data-urn") || card.querySelector("[data-urn]")?.getAttribute("data-urn") || (card.querySelector("a[href*='/feed/update/']") as HTMLAnchorElement)?.href || (card.querySelector("a[href*='/posts/']") as HTMLAnchorElement)?.href);
-          const postId = extractSduiPostId(componentKey);
+          const dataId = normalize(card.getAttribute("data-id"));
+          const postId = extractSduiPostId(componentKey) || extractSduiPostId(dataId);
           if (!postId) {
             continue;
           }

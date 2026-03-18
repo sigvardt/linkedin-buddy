@@ -118,11 +118,13 @@ import {
   LINKEDIN_PROFILE_VIEW_EDITABLE_TOOL,
   LINKEDIN_PRIVACY_GET_SETTINGS_TOOL,
   LINKEDIN_PRIVACY_PREPARE_UPDATE_SETTING_TOOL,
+  LINKEDIN_GROUPS_PREPARE_CREATE_TOOL,
   LINKEDIN_GROUPS_PREPARE_JOIN_TOOL,
   LINKEDIN_GROUPS_PREPARE_LEAVE_TOOL,
   LINKEDIN_GROUPS_PREPARE_POST_TOOL,
   LINKEDIN_GROUPS_SEARCH_TOOL,
   LINKEDIN_GROUPS_VIEW_TOOL,
+  LINKEDIN_EVENTS_PREPARE_CREATE_TOOL,
   LINKEDIN_EVENTS_PREPARE_RSVP_TOOL,
   LINKEDIN_EVENTS_SEARCH_TOOL,
   LINKEDIN_EVENTS_VIEW_TOOL,
@@ -2309,6 +2311,99 @@ async function handleGroupsView(args: ToolArgs): Promise<ToolResult> {
       run_id: runtime.runId,
       profile_name: profileName,
       group: groupDetails,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+
+async function handleGroupsPrepareCreate(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const name = readRequiredString(args, "name");
+    const description = readRequiredString(args, "description");
+    const rules = readString(args, "rules", "");
+    const industry = readString(args, "industry", "");
+    const location = readString(args, "location", "");
+    const isUnlisted = readBoolean(args, "isUnlisted", false);
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.groups.prepare_create.start", {
+      profileName,
+      name,
+    });
+
+    const prepared = runtime.groups.prepareCreateGroup({
+      profileName,
+      name,
+      description,
+      ...(rules ? { rules } : {}),
+      ...(industry ? { industry } : {}),
+      ...(location ? { location } : {}),
+      ...(args.isUnlisted !== undefined ? { isUnlisted } : {}),
+      ...(operatorNote ? { operatorNote } : {}),
+    });
+
+    runtime.logger.log("info", "mcp.groups.prepare_create.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId,
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleEventsPrepareCreate(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const name = readRequiredString(args, "name");
+    const description = readString(args, "description", "");
+    const startDate = readString(args, "startDate", "");
+    const startTime = readString(args, "startTime", "");
+    const endDate = readString(args, "endDate", "");
+    const endTime = readString(args, "endTime", "");
+    const isOnline = readBoolean(args, "isOnline", false);
+    const externalLink = readString(args, "externalLink", "");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.events.prepare_create.start", {
+      profileName,
+      name,
+    });
+
+    const prepared = runtime.events.prepareCreateEvent({
+      profileName,
+      name,
+      ...(description ? { description } : {}),
+      ...(startDate ? { startDate } : {}),
+      ...(startTime ? { startTime } : {}),
+      ...(endDate ? { endDate } : {}),
+      ...(endTime ? { endTime } : {}),
+      ...(args.isOnline !== undefined ? { isOnline } : {}),
+      ...(externalLink ? { externalLink } : {}),
+      ...(operatorNote ? { operatorNote } : {}),
+    });
+
+    runtime.logger.log("info", "mcp.events.prepare_create.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId,
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared,
     });
   } finally {
     runtime.close();
@@ -6830,6 +6925,48 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
     },
   },
   {
+    name: LINKEDIN_GROUPS_PREPARE_CREATE_TOOL,
+    description:
+      "Prepare to create a LinkedIn group (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        profileName: { type: "string" },
+        name: { type: "string", description: "Name of the group" },
+        description: { type: "string", description: "Group description" },
+        rules: { type: "string", description: "Group rules" },
+        industry: { type: "string", description: "Group industry" },
+        location: { type: "string", description: "Group location" },
+        isUnlisted: { type: "boolean", description: "Make group unlisted" },
+        operatorNote: { type: "string" },
+      },
+      required: ["name", "description"],
+    },
+  },
+  {
+    name: LINKEDIN_EVENTS_PREPARE_CREATE_TOOL,
+    description:
+      "Prepare to create a LinkedIn event (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        profileName: { type: "string" },
+        name: { type: "string", description: "Name of the event" },
+        description: { type: "string", description: "Event description" },
+        startDate: { type: "string", description: "Event start date" },
+        startTime: { type: "string", description: "Event start time" },
+        endDate: { type: "string", description: "Event end date" },
+        endTime: { type: "string", description: "Event end time" },
+        isOnline: { type: "boolean", description: "Is this an online event" },
+        externalLink: { type: "string", description: "External event link" },
+        operatorNote: { type: "string" },
+      },
+      required: ["name"],
+    },
+  },
+  {
     name: LINKEDIN_GROUPS_PREPARE_JOIN_TOOL,
     description:
       "Prepare to join a LinkedIn group (two-phase: returns confirm token). Use linkedin.actions.confirm to request or complete the join.",
@@ -7413,11 +7550,13 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   [LINKEDIN_JOBS_PREPARE_EASY_APPLY_TOOL]: handleJobsPrepareEasyApply,
   [LINKEDIN_GROUPS_SEARCH_TOOL]: handleGroupsSearch,
   [LINKEDIN_GROUPS_VIEW_TOOL]: handleGroupsView,
+  [LINKEDIN_GROUPS_PREPARE_CREATE_TOOL]: handleGroupsPrepareCreate,
   [LINKEDIN_GROUPS_PREPARE_JOIN_TOOL]: handleGroupsPrepareJoin,
   [LINKEDIN_GROUPS_PREPARE_LEAVE_TOOL]: handleGroupsPrepareLeave,
   [LINKEDIN_GROUPS_PREPARE_POST_TOOL]: handleGroupsPreparePost,
   [LINKEDIN_EVENTS_SEARCH_TOOL]: handleEventsSearch,
   [LINKEDIN_EVENTS_VIEW_TOOL]: handleEventsView,
+  [LINKEDIN_EVENTS_PREPARE_CREATE_TOOL]: handleEventsPrepareCreate,
   [LINKEDIN_EVENTS_PREPARE_RSVP_TOOL]: handleEventsPrepareRsvp,
   [LINKEDIN_ACTIVITY_WATCH_CREATE_TOOL]: handleActivityWatchCreate,
   [LINKEDIN_ACTIVITY_WATCH_LIST_TOOL]: handleActivityWatchList,
