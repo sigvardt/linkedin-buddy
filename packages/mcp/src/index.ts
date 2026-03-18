@@ -142,12 +142,14 @@ export const LINKEDIN_JOBS_PREPARE_EASY_APPLY_TOOL =
   "linkedin.jobs.prepare_easy_apply";
 export const LINKEDIN_GROUPS_SEARCH_TOOL = "linkedin.groups.search";
 export const LINKEDIN_GROUPS_VIEW_TOOL = "linkedin.groups.view";
+export const LINKEDIN_GROUPS_PREPARE_CREATE_TOOL = "linkedin.groups.prepare_create";
 export const LINKEDIN_GROUPS_PREPARE_JOIN_TOOL = "linkedin.groups.prepare_join";
 export const LINKEDIN_GROUPS_PREPARE_LEAVE_TOOL =
   "linkedin.groups.prepare_leave";
 export const LINKEDIN_GROUPS_PREPARE_POST_TOOL = "linkedin.groups.prepare_post";
 export const LINKEDIN_EVENTS_SEARCH_TOOL = "linkedin.events.search";
 export const LINKEDIN_EVENTS_VIEW_TOOL = "linkedin.events.view";
+export const LINKEDIN_EVENTS_PREPARE_CREATE_TOOL = "linkedin.events.prepare_create";
 export const LINKEDIN_EVENTS_PREPARE_RSVP_TOOL = "linkedin.events.prepare_rsvp";
 export const LINKEDIN_ACTIVITY_WATCH_CREATE_TOOL =
   "linkedin.activity_watch.create";
