@@ -576,23 +576,55 @@ async function executeJoinGroup(
 
           const joinRegex = buildLocalizedRegex(
             runtime.selectorLocale,
-            ["Join"],
-            ["Deltag", "Bliv medlem"],
+            ["Join", "Request to join"],
+            ["Deltag", "Bliv medlem", "Anmod om at deltage", "Anmod om at blive medlem"],
             { exact: true }
           );
           const joinButton = page.getByRole("button", {
             name: joinRegex
           }).first();
+          
+          const isJoinButtonVisible = await joinButton.isVisible().catch(() => false);
+          if (!isJoinButtonVisible) {
+            const bodyTextPre = await page.locator("body").innerText().catch(() => "");
+            if (/requested to join/iu.test(bodyTextPre)) {
+              return {
+                ok: true,
+                result: {
+                  status: "group_join_requested",
+                  group_id: groupId,
+                  group_url: groupUrl
+                },
+                artifacts: []
+              };
+            }
+            if (/joined group:|start a post in this group/iu.test(bodyTextPre)) {
+              return {
+                ok: true,
+                result: {
+                  status: "group_joined",
+                  group_id: groupId,
+                  group_url: groupUrl
+                },
+                artifacts: []
+              };
+            }
+            
+            throw new LinkedInBuddyError(
+              "UI_CHANGED_SELECTOR_FAILED",
+              "Could not locate Join button for group.",
+              { group_id: groupId, group_url: groupUrl }
+            );
+          }
+
           await joinButton.click({ timeout: 5_000 });
 
           await waitForCondition(async () => {
-            const joinVisible = await page
-              .getByRole("button", {
-                name: joinRegex
-              })
-              .first()
-              .isVisible()
-              .catch(() => false);
+            if (await isDialogVisible(page)) {
+              return true;
+            }
+
+            const joinVisible = await joinButton.isVisible().catch(() => false);
             if (!joinVisible) {
               return true;
             }
@@ -600,6 +632,17 @@ async function executeJoinGroup(
             const bodyText = await page.locator("body").innerText().catch(() => "");
             return /requested to join|joined group:/iu.test(bodyText);
           }, 8_000);
+
+          if (await isDialogVisible(page)) {
+            // Dismiss the dialog if possible to avoid state bleeding
+            await page.getByRole("button", { name: buildLocalizedRegex(runtime.selectorLocale, ["Close", "Dismiss"], ["Luk", "Afvis"]) }).first().click().catch(() => {});
+            
+            throw new LinkedInBuddyError(
+              "ACTION_PRECONDITION_FAILED",
+              "Group requires answering questions to join.",
+              { group_id: groupId, group_url: groupUrl }
+            );
+          }
 
           const bodyText = await page.locator("body").innerText().catch(() => "");
           const status = /requested to join/iu.test(bodyText)
