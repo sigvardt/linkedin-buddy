@@ -32,6 +32,7 @@ import {
 } from "./rateLimiter.js";
 import type { LinkedInSelectorLocale } from "./selectorLocale.js";
 import { getLinkedInSelectorPhrases } from "./selectorLocale.js";
+import { dismissLinkedInOverlaysIfPresent } from "./overlayDismissal.js";
 import {
   normalizeText,
   isRecord,
@@ -4165,7 +4166,10 @@ async function dismissAddToProfileWizardIfPresent(
   return true;
 }
 
-export async function navigateToOwnProfile(page: Page): Promise<void> {
+export async function navigateToOwnProfile(
+  page: Page,
+  options?: { dismissOverlays?: { selectorLocale: LinkedInSelectorLocale; logger?: Pick<JsonEventLogger, "log"> } }
+): Promise<void> {
   const attemptedUrl = resolveProfileUrl("me");
   try {
     await page.goto(attemptedUrl, { waitUntil: "domcontentloaded" });
@@ -4195,6 +4199,14 @@ export async function navigateToOwnProfile(page: Page): Promise<void> {
 
   await waitForNetworkIdleBestEffort(page);
   await waitForProfilePageReady(page);
+
+  if (options?.dismissOverlays) {
+    await dismissLinkedInOverlaysIfPresent(
+      page,
+      options.dismissOverlays.selectorLocale,
+      options.dismissOverlays.logger
+    );
+  }
 }
 
 async function getTopCardRoot(page: Page): Promise<Locator> {
@@ -5433,7 +5445,7 @@ async function closeProfileEditorSurface(
 ): Promise<void> {
   if (surface.kind === "page") {
     if (isProfileIntroEditHref(page.url()) || isProfileSectionEditHref(page.url())) {
-      await navigateToOwnProfile(page);
+      await navigateToOwnProfile(page, { dismissOverlays: { selectorLocale } });
     }
     return;
   }
@@ -7353,7 +7365,7 @@ async function executeAddProfileSkill(
             `Failed to add the LinkedIn skill "${skillName}".`
           ),
         execute: async () => {
-          await navigateToOwnProfile(page);
+          await navigateToOwnProfile(page, { dismissOverlays: { selectorLocale: runtime.selectorLocale, logger: runtime.logger } });
           await addSkill(page, runtime.selectorLocale, skillName);
 
           return {
@@ -7429,7 +7441,7 @@ async function executeReorderProfileSkills(
             "Failed to reorder LinkedIn skills."
           ),
         execute: async () => {
-          await navigateToOwnProfile(page);
+          await navigateToOwnProfile(page, { dismissOverlays: { selectorLocale: runtime.selectorLocale, logger: runtime.logger } });
           await reorderSkills(page, runtime.selectorLocale, skillNames);
 
           return {
@@ -7799,7 +7811,7 @@ async function executeUploadProfileMedia(
             `Failed to execute LinkedIn profile ${kind} upload.`
           ),
         execute: async () => {
-          await navigateToOwnProfile(page);
+          await navigateToOwnProfile(page, { dismissOverlays: { selectorLocale: runtime.selectorLocale, logger: runtime.logger } });
           const dialog = await openProfileMediaAndUpload(
             page,
             runtime.selectorLocale,
@@ -7905,7 +7917,7 @@ async function executeAddFeaturedItem(
             `Failed to add a ${kind} item to the LinkedIn Featured section.`
           ),
         execute: async () => {
-          await navigateToOwnProfile(page);
+          await navigateToOwnProfile(page, { dismissOverlays: { selectorLocale: runtime.selectorLocale, logger: runtime.logger } });
 
           if (kind === "link") {
             await addFeaturedLink(page, runtime.selectorLocale, url ?? "", title, description);
@@ -8011,7 +8023,7 @@ async function executeRemoveFeaturedItem(
             "Failed to remove a LinkedIn Featured item."
           ),
         execute: async () => {
-          await navigateToOwnProfile(page);
+          await navigateToOwnProfile(page, { dismissOverlays: { selectorLocale: runtime.selectorLocale, logger: runtime.logger } });
           await removeFeaturedItem(page, runtime.selectorLocale, match);
 
           const kind = decodedItem?.kind ?? inferFeaturedItemKind(match.url ?? null, match.rawText ?? match.title ?? "");
@@ -8099,7 +8111,7 @@ async function executeReorderFeaturedItems(
             "Failed to reorder LinkedIn Featured items."
           ),
         execute: async () => {
-          await navigateToOwnProfile(page);
+          await navigateToOwnProfile(page, { dismissOverlays: { selectorLocale: runtime.selectorLocale, logger: runtime.logger } });
           await reorderFeaturedItems(page, runtime.selectorLocale, itemIds);
 
           return {
@@ -8174,7 +8186,7 @@ async function executeUpdateProfileIntro(
             "Failed to execute LinkedIn profile intro update."
           ),
         execute: async () => {
-          await navigateToOwnProfile(page);
+          await navigateToOwnProfile(page, { dismissOverlays: { selectorLocale: runtime.selectorLocale, logger: runtime.logger } });
           const surface = await openIntroEditSurface(page, runtime.selectorLocale);
 
           for (const definition of PROFILE_INTRO_FIELD_DEFINITIONS) {
@@ -8257,7 +8269,7 @@ async function executeUpdateProfileSettings(
             "Failed to execute LinkedIn profile settings update."
           ),
         execute: async () => {
-          await navigateToOwnProfile(page);
+          await navigateToOwnProfile(page, { dismissOverlays: { selectorLocale: runtime.selectorLocale, logger: runtime.logger } });
           const surface = await openIntroEditSurface(page, runtime.selectorLocale);
 
           for (const definition of PROFILE_SETTINGS_FIELD_DEFINITIONS) {
@@ -8456,7 +8468,7 @@ async function executeUpsertProfileSectionItem(
             `Failed to execute LinkedIn ${section} section upsert.`
           ),
         execute: async () => {
-          await navigateToOwnProfile(page);
+          await navigateToOwnProfile(page, { dismissOverlays: { selectorLocale: runtime.selectorLocale, logger: runtime.logger } });
 
           let surface: ProfileEditorSurface;
           if (section === "about") {
@@ -8565,7 +8577,7 @@ async function executeRemoveProfileSectionItem(
             `Failed to execute LinkedIn ${section} section removal.`
           ),
         execute: async () => {
-          await navigateToOwnProfile(page);
+          await navigateToOwnProfile(page, { dismissOverlays: { selectorLocale: runtime.selectorLocale, logger: runtime.logger } });
 
           if (section === "about") {
             const surface = await openSectionEditSurface(page, section, runtime.selectorLocale);
@@ -8968,7 +8980,7 @@ export class LinkedInProfileService {
         },
         async (context) => {
           const page = await getOrCreatePage(context);
-          await navigateToOwnProfile(page);
+          await navigateToOwnProfile(page, { dismissOverlays: { selectorLocale: this.runtime.selectorLocale, logger: this.runtime.logger } });
           await scrollLinkedInPageToBottom(page);
 
           const profile = await extractProfileData(page, this.runtime.selectorLocale);
