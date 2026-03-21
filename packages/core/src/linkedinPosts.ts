@@ -1983,12 +1983,12 @@ function createVisibilityOptionCandidates(
   const labelRegex = buildLinkedInSelectorPhraseRegex(
     visibilityPhraseKey,
     selectorLocale,
-    { exact: true },
+    { exact: false },
   );
   const labelRegexHint = formatLinkedInSelectorRegexHint(
     visibilityPhraseKey,
     selectorLocale,
-    { exact: true },
+    { exact: false },
   );
 
   return [
