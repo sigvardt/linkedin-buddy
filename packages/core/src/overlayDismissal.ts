@@ -37,7 +37,8 @@ const BLOCKING_OVERLAY_SELECTORS = [
   ".msg-overlay-conversation-bubble",
   // Generic blocking dialogs (checked LAST — only dismissed when they are
   // clearly blocking, i.e. [aria-modal='true'] without expected action content)
-  "[aria-modal='true'][role='dialog']"
+  "[aria-modal='true'][role='dialog']",
+  "dialog[open]"
 ] as const;
 
 /**
@@ -161,7 +162,7 @@ export async function dismissLinkedInOverlaysIfPresent(
 
     // For generic dialog overlays, skip if they contain action content
     // (forms, textareas, content-editable) — those are expected write surfaces.
-    if (selector === "[aria-modal='true'][role='dialog']") {
+    if (selector === "[aria-modal='true'][role='dialog']" || selector === "dialog[open]") {
       if (await isExpectedActionDialog(overlay)) {
         continue;
       }
