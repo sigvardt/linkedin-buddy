@@ -29,7 +29,9 @@ describe("Events E2E", () => {
     const first = result.results[0]!;
     expect(first.event_id.length).toBeGreaterThan(0);
     expect(first.title.length).toBeGreaterThan(0);
+    expect(first.title.length).toBeLessThan(200);
     expect(typeof first.date_time).toBe("string");
+    expect(first.date_time.length).toBeLessThan(100);
     expect(typeof first.location).toBe("string");
     expect(typeof first.organizer).toBe("string");
     expect(typeof first.attendee_count).toBe("string");

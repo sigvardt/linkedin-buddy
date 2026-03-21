@@ -129,6 +129,8 @@ describe("Search E2E", () => {
     expect(first).toBeDefined();
     if (first) {
       expect(first.title.length).toBeGreaterThan(0);
+      expect(first.title.length).toBeLessThan(200);
+      expect(first.date.length).toBeLessThan(100);
     }
   });
 

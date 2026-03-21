@@ -2295,7 +2295,7 @@ export class LinkedInSearchService {
 
             return Array.from(globalThis.document.querySelectorAll("main li, div.search-results-container ul > li, ul.reusable-search__entity-result-list > li"))
               .map((card) => {
-                const lines = normalize((card as HTMLElement).innerText)
+                const lines = ((card as HTMLElement).innerText || "")
                   .split("\n")
                   .map((line) => normalize(line))
                   .filter(Boolean);
