@@ -344,7 +344,7 @@ async function extractEventSearchResults(
     return uniqueLinks.slice(0, maxEvents).map((link) => {
       const card = link.closest("li") ?? link.closest("div[data-view-tracking-scope]") ?? link.closest("div.search-result__wrapper") ?? link.parentElement;
       
-      const rawText = normalize((card as HTMLElement)?.innerText ?? link.innerText ?? "");
+      const rawText = (card as HTMLElement)?.innerText ?? link.innerText ?? "";
       const lines = rawText
         .split("\n")
         .map((line) => normalize(line))
