@@ -436,13 +436,13 @@ export class LinkedInSearchService {
             };
 
             const splitLines = (value: string): string[] =>
-              normalize(value)
+              (value ?? "")
                 .split("\n")
                 .map((line) => normalize(line))
                 .filter(Boolean);
 
             const getCardLines = (card: Element): string[] => {
-              const raw = normalize((card as HTMLElement).innerText || card.textContent || "");
+              const raw = (card as HTMLElement).innerText || card.textContent || "";
               if (!raw) {
                 return [];
               }
@@ -508,12 +508,30 @@ export class LinkedInSearchService {
               link: HTMLAnchorElement | null
             ): Record<string, string> => {
               const lines = getCardLines(card);
-              const nameFromSpan = normalize(
-                (
-                  link?.querySelector("span[dir='ltr'] span[aria-hidden='true']") ??
-                  link?.querySelector("span[aria-hidden='true']")
-                )?.textContent
-              );
+              let nameFromSpan = pickText(card, [
+                ".entity-result__title-text a[href*='/in/'] span[dir='ltr'] span[aria-hidden='true']",
+                ".entity-result__title-text a[href*='/in/'] span[aria-hidden='true']",
+                ".entity-result__title-text span[dir='ltr'] span[aria-hidden='true']",
+                "a[data-field='entity_result_universal_name'] span[dir='ltr'] span[aria-hidden='true']",
+                "a[data-field='entity_result_universal_name'] span[aria-hidden='true']",
+                ".app-aware-link span[dir='ltr'] span[aria-hidden='true']"
+              ]);
+
+              if (!nameFromSpan) {
+                nameFromSpan = normalize(
+                  (
+                    link?.querySelector("span[dir='ltr'] span[aria-hidden='true']") ??
+                    link?.querySelector("span[aria-hidden='true']")
+                  )?.textContent
+                );
+              }
+
+              if (nameFromSpan && (nameFromSpan.includes(" View ") || nameFromSpan.length > 80)) {
+                nameFromSpan = lines[0] || "";
+                if (nameFromSpan.includes(" View ")) {
+                  nameFromSpan = nameFromSpan.split(" View ")[0] ?? "";
+                }
+              }
               const profileUrl = toAbsoluteHref(
                 normalize(link?.getAttribute("href")) || normalize(link?.href)
               );
@@ -819,13 +837,13 @@ export class LinkedInSearchService {
               return "";
             };
             const splitLines = (value: string): string[] =>
-              normalize(value)
+              (value ?? "")
                 .split("\n")
                 .map((line) => normalize(line))
                 .filter(Boolean);
 
             const getCardLines = (card: Element): string[] => {
-              const raw = normalize((card as HTMLElement).innerText || card.textContent || "");
+              const raw = (card as HTMLElement).innerText || card.textContent || "";
               if (!raw) {
                 return [];
               }
@@ -884,12 +902,19 @@ export class LinkedInSearchService {
                 "";
               const subtitleParts = subtitleRaw.split("•").map((part) => normalize(part));
               const logoElement = card.querySelector("img") as HTMLImageElement | null;
-              const nameFromSpan = normalize(
+              let nameFromSpan = normalize(
                 (
                   link?.querySelector("span[dir='ltr'] span[aria-hidden='true']") ??
                   link?.querySelector("span[aria-hidden='true']")
                 )?.textContent
               );
+
+              if (nameFromSpan && (nameFromSpan.includes(" View ") || nameFromSpan.length > 80)) {
+                nameFromSpan = lines[0] || "";
+                if (nameFromSpan.includes(" View ")) {
+                  nameFromSpan = nameFromSpan.split(" View ")[0] ?? "";
+                }
+              }
 
               return {
                 name: nameFromSpan || lines[0] || "",
@@ -1173,13 +1198,13 @@ export class LinkedInSearchService {
               return "";
             };
             const splitLines = (value: string): string[] =>
-              normalize(value)
+              (value ?? "")
                 .split("\n")
                 .map((line) => normalize(line))
                 .filter(Boolean);
 
             const getCardLines = (card: Element): string[] => {
-              const raw = normalize((card as HTMLElement).innerText || card.textContent || "");
+              const raw = (card as HTMLElement).innerText || card.textContent || "";
               if (!raw) {
                 return [];
               }
@@ -1743,12 +1768,19 @@ export class LinkedInSearchService {
                 }
 
                 const paragraphs = Array.from(card.querySelectorAll("p"));
-                const nameFromSpan = normalize(
+                let nameFromSpan = normalize(
                   (
                     link.querySelector("span[dir='ltr'] span[aria-hidden='true']") ??
                     link.querySelector("span[aria-hidden='true']")
                   )?.textContent
                 );
+
+                if (nameFromSpan && (nameFromSpan.includes(" View ") || nameFromSpan.length > 80)) {
+                  nameFromSpan = normalize((paragraphs[0]?.innerText ?? "").split("\n")[0]);
+                  if (nameFromSpan.includes(" View ")) {
+                    nameFromSpan = nameFromSpan.split(" View ")[0] ?? "";
+                  }
+                }
                 const memberParagraph = paragraphs.find((paragraph) =>
                   /member/i.test(normalize((paragraph as HTMLElement).innerText))
                 );
