@@ -751,15 +751,31 @@ const PROFILE_MEDIA_LABELS = {
 
 export const PROFILE_MEDIA_STRUCTURAL_SELECTORS = {
   photo: [
+    "[aria-label*='profile photo' i]",
+    "[aria-label*='Profilbillede' i]",
     "button.profile-photo-edit__edit-btn",
     ".profile-photo-edit button",
     ".pv-top-card__photo-wrapper .profile-photo-edit button",
-    ".pv-top-card__edit-photo button"
+    ".pv-top-card__edit-photo button",
+    ".pv-top-card-profile-picture__container button",
+    ".pv-top-card-profile-picture__container [role='button']",
+    ".pv-top-card-profile-picture__edit-button",
+    ".pv-top-card-profile-picture__image"
   ],
   banner: [
+    "[aria-label*='background photo' i]",
+    "[aria-label*='cover image' i]",
+    "[aria-label*='Baggrundsbillede' i]",
+    "[aria-label*='forsidebillede' i]",
+    "[data-control-name='edit_profile_background_image']",
     ".profile-topcard-background-image-edit__icon button",
     ".profile-topcard-background-image-edit__button button",
-    "[id^='cover-photo-dropdown-button-trigger-']"
+    "[id^='cover-photo-dropdown-button-trigger-']",
+    ".profile-background-image__edit-button",
+    ".profile-background-image__image-container button",
+    ".profile-background-image button",
+    ".profile-background-image [role='button']",
+    ".profile-background-image__image"
   ]
 } as const;
 
