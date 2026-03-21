@@ -10,6 +10,8 @@ const profileCliMocks = vi.hoisted(() => ({
   loggerLog: vi.fn(),
   prepareUpdatePublicProfile: vi.fn(),
   prepareUpdateSettings: vi.fn(),
+  prepareUploadBanner: vi.fn(),
+  prepareUploadPhoto: vi.fn(),
   prepareRemoveSectionItem: vi.fn(),
   prepareUpdateIntro: vi.fn(),
   prepareUpsertSectionItem: vi.fn(),
@@ -51,6 +53,8 @@ describe("CLI profile commands", () => {
         prepareUpdatePublicProfile: profileCliMocks.prepareUpdatePublicProfile,
         prepareUpdateSettings: profileCliMocks.prepareUpdateSettings,
         prepareUpdateIntro: profileCliMocks.prepareUpdateIntro,
+        prepareUploadBanner: profileCliMocks.prepareUploadBanner,
+        prepareUploadPhoto: profileCliMocks.prepareUploadPhoto,
         prepareUpsertSectionItem: profileCliMocks.prepareUpsertSectionItem,
         prepareRemoveSectionItem: profileCliMocks.prepareRemoveSectionItem
       },
@@ -107,6 +111,18 @@ describe("CLI profile commands", () => {
       confirmToken: "ct_public_profile",
       expiresAtMs: 1,
       preview: { summary: "Update public profile" }
+    });
+    profileCliMocks.prepareUploadPhoto.mockResolvedValue({
+      preparedActionId: "pa_upload_photo",
+      confirmToken: "ct_upload_photo",
+      expiresAtMs: 1,
+      preview: { summary: "Upload LinkedIn profile photo" }
+    });
+    profileCliMocks.prepareUploadBanner.mockResolvedValue({
+      preparedActionId: "pa_upload_banner",
+      confirmToken: "ct_upload_banner",
+      expiresAtMs: 1,
+      preview: { summary: "Upload LinkedIn profile banner" }
     });
     profileCliMocks.prepareUpsertSectionItem.mockReturnValue({
       preparedActionId: "pa_about",
@@ -237,6 +253,56 @@ describe("CLI profile commands", () => {
     expect(profileCliMocks.prepareUpdatePublicProfile).toHaveBeenCalledWith({
       profileName: "smoke",
       vanityName: "avery-cole-example"
+    });
+  });
+
+  it("prepares a profile photo upload", async () => {
+    await runCli([
+      "node",
+      "linkedin",
+      "profile",
+      "prepare-upload-photo",
+      "--profile",
+      "smoke",
+      "--file",
+      "photo.jpg"
+    ]);
+
+    const output = JSON.parse(stdoutChunks.join("\n")) as {
+      confirmToken: string;
+      preview: { summary: string };
+    };
+
+    expect(output.confirmToken).toBe("ct_upload_photo");
+    expect(output.preview.summary).toBe("Upload LinkedIn profile photo");
+    expect(profileCliMocks.prepareUploadPhoto).toHaveBeenCalledWith({
+      profileName: "smoke",
+      filePath: "photo.jpg"
+    });
+  });
+
+  it("prepares a profile banner upload", async () => {
+    await runCli([
+      "node",
+      "linkedin",
+      "profile",
+      "prepare-upload-banner",
+      "--profile",
+      "smoke",
+      "--file",
+      "banner.jpg"
+    ]);
+
+    const output = JSON.parse(stdoutChunks.join("\n")) as {
+      confirmToken: string;
+      preview: { summary: string };
+    };
+
+    expect(output.confirmToken).toBe("ct_upload_banner");
+    expect(output.preview.summary).toBe("Upload LinkedIn profile banner");
+    expect(profileCliMocks.prepareUploadBanner).toHaveBeenCalledWith({
+      profileName: "smoke",
+      filePath: "banner.jpg"
     });
   });
 
@@ -385,6 +451,8 @@ describe("CLI profile apply-spec --continue-on-error", () => {
         prepareUpdatePublicProfile: profileCliMocks.prepareUpdatePublicProfile,
         prepareUpdateSettings: profileCliMocks.prepareUpdateSettings,
         prepareUpdateIntro: profileCliMocks.prepareUpdateIntro,
+        prepareUploadBanner: profileCliMocks.prepareUploadBanner,
+        prepareUploadPhoto: profileCliMocks.prepareUploadPhoto,
         prepareUpsertSectionItem: profileCliMocks.prepareUpsertSectionItem,
         prepareRemoveSectionItem: profileCliMocks.prepareRemoveSectionItem
       },
@@ -443,6 +511,18 @@ describe("CLI profile apply-spec --continue-on-error", () => {
       confirmToken: "ct_public_profile",
       expiresAtMs: 1,
       preview: { summary: "Update public profile" }
+    });
+    profileCliMocks.prepareUploadPhoto.mockResolvedValue({
+      preparedActionId: "pa_upload_photo",
+      confirmToken: "ct_upload_photo",
+      expiresAtMs: 1,
+      preview: { summary: "Upload LinkedIn profile photo" }
+    });
+    profileCliMocks.prepareUploadBanner.mockResolvedValue({
+      preparedActionId: "pa_upload_banner",
+      confirmToken: "ct_upload_banner",
+      expiresAtMs: 1,
+      preview: { summary: "Upload LinkedIn profile banner" }
     });
     profileCliMocks.prepareUpsertSectionItem.mockReturnValue({
       preparedActionId: "pa_about",

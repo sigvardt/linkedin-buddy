@@ -7282,6 +7282,79 @@ async function runProfilePrepareUpdatePublicProfile(
   }
 }
 
+async function runProfilePrepareUploadPhoto(
+  input: {
+    profileName: string;
+    filePath: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.profile.prepare_upload_photo.start", {
+      profileName: input.profileName,
+      filePath: input.filePath,
+    });
+
+    const prepared = await runtime.profile.prepareUploadPhoto({
+      profileName: input.profileName,
+      filePath: input.filePath,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
+    });
+
+    runtime.logger.log("info", "cli.profile.prepare_upload_photo.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId,
+    });
+
+    printPrepareResult({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function runProfilePrepareUploadBanner(
+  input: {
+    profileName: string;
+    filePath: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.profile.prepare_upload_banner.start", {
+      profileName: input.profileName,
+      filePath: input.filePath,
+    });
+
+    const prepared = await runtime.profile.prepareUploadBanner({
+      profileName: input.profileName,
+      filePath: input.filePath,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
+    });
+
+    runtime.logger.log("info", "cli.profile.prepare_upload_banner.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId,
+    });
+
+    printPrepareResult({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared,
+    });
+  } finally {
+    runtime.close();
+  }
+}
 function summarizeProfileSeedUnsupportedFields(
   unsupportedFields: readonly ProfileSeedUnsupportedField[],
 ): string {
@@ -13245,6 +13318,62 @@ export function createCliProgram(): Command {
           {
             profileName: options.profile,
             vanityName,
+            ...(options.operatorNote
+              ? { operatorNote: options.operatorNote }
+              : {}),
+          },
+          readCdpUrl(),
+        );
+      },
+    );
+
+  profileCommand
+    .command("prepare-upload-photo")
+    .description("Prepare to upload a LinkedIn profile photo (two-phase)")
+    .requiredOption("--file <path>", "Path to the local image file")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option(
+      "--operator-note <note>",
+      "Optional note attached to the prepared action",
+    )
+    .action(
+      async (options: {
+        file: string;
+        operatorNote?: string;
+        profile: string;
+      }) => {
+        await runProfilePrepareUploadPhoto(
+          {
+            profileName: options.profile,
+            filePath: options.file,
+            ...(options.operatorNote
+              ? { operatorNote: options.operatorNote }
+              : {}),
+          },
+          readCdpUrl(),
+        );
+      },
+    );
+
+  profileCommand
+    .command("prepare-upload-banner")
+    .description("Prepare to upload a LinkedIn profile banner (two-phase)")
+    .requiredOption("--file <path>", "Path to the local image file")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option(
+      "--operator-note <note>",
+      "Optional note attached to the prepared action",
+    )
+    .action(
+      async (options: {
+        file: string;
+        operatorNote?: string;
+        profile: string;
+      }) => {
+        await runProfilePrepareUploadBanner(
+          {
+            profileName: options.profile,
+            filePath: options.file,
             ...(options.operatorNote
               ? { operatorNote: options.operatorNote }
               : {}),
