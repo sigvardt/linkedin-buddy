@@ -651,8 +651,9 @@ export class CreateEventActionExecutor
             waitUntil: "domcontentloaded",
           });
 
-          await page.locator("input[name='eventName']").waitFor({ state: "visible", timeout: 10000 });
-          await page.locator("input[name='eventName']").fill(data.name);
+          const nameLocator = page.locator("input[name='eventName']").or(page.getByLabel(/Event name/i)).or(page.getByRole("textbox", { name: /Event name/i })).first();
+          await nameLocator.waitFor({ state: "visible", timeout: 10000 });
+          await nameLocator.fill(data.name);
 
           // We'd fill out the rest here, but for brevity we'll just skip
           // Date pickers are complex and the UI is very dynamic.
