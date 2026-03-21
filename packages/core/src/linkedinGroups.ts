@@ -884,8 +884,9 @@ export class CreateGroupActionExecutor
             waitUntil: "domcontentloaded",
           });
           
-          await page.locator("input[name='groupName']").waitFor({ state: "visible", timeout: 10000 });
-          await page.locator("input[name='groupName']").fill(data.name);
+          const nameLocator = page.locator("input[name='groupName']").or(page.getByLabel(/Group name/i)).or(page.getByRole("textbox", { name: /Group name/i })).first();
+          await nameLocator.waitFor({ state: "visible", timeout: 10000 });
+          await nameLocator.fill(data.name);
           
           if (data.description) {
             await page.locator("textarea[name='groupDescription']").fill(data.description);
