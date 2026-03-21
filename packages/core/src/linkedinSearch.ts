@@ -1792,8 +1792,28 @@ export class LinkedInSearchService {
                     .split("\n")
                     .map((line) => normalize(line))
                     .filter(Boolean);
+                  let h3Text = pickText(card, [
+                    "h3 span[dir='ltr'] span[aria-hidden='true']",
+                    "h3 span[aria-hidden='true']",
+                    "h3",
+                    ".entity-result__title-text a span[dir='ltr'] span[aria-hidden='true']",
+                    ".entity-result__title-text a span[aria-hidden='true']",
+                    ".entity-result__title-text a"
+                  ]);
+
+                  let memberSpanText = "";
+                  const spans = Array.from(card.querySelectorAll("span"));
+                  for (const s of spans) {
+                    const text = normalize(s.textContent);
+                    if (/member/i.test(text) && text.length < 50) {
+                      memberSpanText = text;
+                      break;
+                    }
+                  }
+
                   return {
                     name:
+                      h3Text ||
                       normalize(
                         (
                           link?.querySelector("span[dir='ltr'] span[aria-hidden='true']") ??
@@ -1801,7 +1821,7 @@ export class LinkedInSearchService {
                         )?.textContent
                       ) || lines[0] || "",
                     group_type: lines[1] || "",
-                    member_count: lines.find((line) => /member/i.test(line)) ?? "",
+                    member_count: memberSpanText || (lines.find((line) => /member/i.test(line)) ?? ""),
                     description: lines[2] || lines[3] || "",
                     group_url: toAbsoluteHref(
                       normalize(link?.getAttribute("href")) || normalize(link?.href)
@@ -1827,25 +1847,44 @@ export class LinkedInSearchService {
               const nameLink = card.querySelector(
                 "a[data-test-app-aware-link]"
               );
-              const name = nameLink
-                ? normalize(nameLink.textContent)
-                : pickText(card, [
-                    "a[href*='/groups/'] span[dir='ltr'] span[aria-hidden='true']",
-                    "a[data-test-app-aware-link] span[dir='ltr'] span[aria-hidden='true']",
-                    "a[data-test-app-aware-link] span[aria-hidden='true']",
-                    "a[href*='/groups/'] span[aria-hidden='true']",
-                    "a[href*='/groups/']"
-                  ]);
+              
+              // We prioritize specific h3 and span elements to avoid extracting the entire card's text
+              // if nameLink wraps the whole card
+              let name = pickText(card, [
+                "h3 span[dir='ltr'] span[aria-hidden='true']",
+                "h3 span[aria-hidden='true']",
+                "h3",
+                ".entity-result__title-text a span[dir='ltr'] span[aria-hidden='true']",
+                ".entity-result__title-text a span[aria-hidden='true']",
+                ".entity-result__title-text a",
+                "a[href*='/groups/'] span[dir='ltr'] span[aria-hidden='true']",
+                "a[data-test-app-aware-link] span[dir='ltr'] span[aria-hidden='true']",
+                "a[data-test-app-aware-link] span[aria-hidden='true']",
+                "a[href*='/groups/'] span[aria-hidden='true']"
+              ]);
+              
+              if (!name && nameLink) {
+                // If we fall back to nameLink.textContent, it might contain the whole card text.
+                // We do a safer extraction if possible
+                name = normalize(nameLink.textContent);
+              }
+
+              let memberCount = pickText(card, [
+                ".entity-result__primary-subtitle span[dir='ltr'] span[aria-hidden='true']",
+                ".entity-result__primary-subtitle span[aria-hidden='true']",
+                ".entity-result__primary-subtitle",
+                "div.t-14.t-black.t-normal span[aria-hidden='true']",
+                "div.t-14.t-black.t-normal"
+              ]);
+              
+              if (!memberCount) {
+                memberCount = pickSiblingText(card, "a[data-test-app-aware-link], a[href*='/groups/']", 0);
+              }
 
               return {
                 name,
                 group_type: "",
-                member_count:
-                  pickSiblingText(card, "a[data-test-app-aware-link], a[href*='/groups/']", 0) ||
-                  pickText(card, [
-                    "div.t-14.t-black.t-normal",
-                    ".entity-result__primary-subtitle"
-                  ]),
+                member_count: memberCount,
                 description: pickText(card, [
                   "p[class*='entity-result__summary']",
                   "[class*='entity-result__summary']",
@@ -1866,10 +1905,27 @@ export class LinkedInSearchService {
                   .map((line) => normalize(line))
                   .filter(Boolean);
                 const link = card.querySelector("a[href*='/groups/']") as HTMLAnchorElement | null;
+                
+                const h3Text = pickText(card, [
+                  "h3 span[dir='ltr'] span[aria-hidden='true']",
+                  "h3 span[aria-hidden='true']",
+                  "h3"
+                ]);
+                
+                let memberSpanText = "";
+                const spans = Array.from(card.querySelectorAll("span"));
+                for (const s of spans) {
+                  const text = normalize(s.textContent);
+                  if (/member/i.test(text) && text.length < 50) {
+                    memberSpanText = text;
+                    break;
+                  }
+                }
+                
                 return {
-                  name: lines[0] ?? "",
+                  name: h3Text || (lines[0] ?? ""),
                   group_type: lines[1] ?? "",
-                  member_count: lines.find((line) => /member/i.test(line)) ?? "",
+                  member_count: memberSpanText || (lines.find((line) => /member/i.test(line)) ?? ""),
                   description: lines[2] ?? "",
                   group_url: toAbsoluteHref(
                     normalize(link?.getAttribute("href")) || normalize(link?.href)
