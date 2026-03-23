@@ -140,6 +140,7 @@ import {
   LINKEDIN_ARTICLE_PREPARE_CREATE_TOOL,
   LINKEDIN_ARTICLE_PREPARE_PUBLISH_TOOL,
   LINKEDIN_NEWSLETTER_LIST_TOOL,
+  LINKEDIN_NEWSLETTER_LIST_EDITIONS_TOOL,
   LINKEDIN_NEWSLETTER_PREPARE_UPDATE_TOOL,
   LINKEDIN_NEWSLETTER_PREPARE_CREATE_TOOL,
   LINKEDIN_NEWSLETTER_PREPARE_PUBLISH_ISSUE_TOOL,
@@ -3926,6 +3927,36 @@ async function handleNewsletterPrepareCreate(
   }
 }
 
+
+
+async function handleNewsletterListEditions(args: ToolArgs): Promise<ToolResult> {
+  return withPublishingRuntime(async (runtime) => {
+    runtime.logger.log("info", "mcp.newsletter.list_editions.start", {
+      newsletter: args.newsletter
+    });
+    
+    const newsletter = readRequiredString(args, "newsletter");
+
+    const result = await runtime.newsletters.listEditions({
+      profileName: readOptionalString(args, "profileName"),
+      newsletter
+    });
+
+    runtime.logger.log("info", "mcp.newsletter.list_editions.done", {
+      count: result.count
+    });
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(result, null, 2)
+        }
+      ]
+    };
+  });
+}
+
 async function handleNewsletterPrepareUpdate(
   args: ToolArgs
 ): Promise<ToolResult> {
@@ -7625,6 +7656,7 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   [LINKEDIN_NEWSLETTER_PREPARE_PUBLISH_ISSUE_TOOL]:
     handleNewsletterPreparePublishIssue,
   [LINKEDIN_NEWSLETTER_LIST_TOOL]: handleNewsletterList,
+  [LINKEDIN_NEWSLETTER_LIST_EDITIONS_TOOL]: handleNewsletterListEditions,
   [LINKEDIN_NOTIFICATIONS_LIST_TOOL]: handleNotificationsList,
   [LINKEDIN_NOTIFICATIONS_MARK_READ_TOOL]: handleNotificationsMarkRead,
   [LINKEDIN_NOTIFICATIONS_DISMISS_TOOL]: handleNotificationsDismiss,
