@@ -165,8 +165,8 @@ import {
   type ToolArgs,
   readString,
   trimOrUndefined,
-  readRequiredString,
   readOptionalString,
+  readRequiredString,
   readBoundedString,
   readValidatedUrl,
   readValidatedFilePath,
@@ -3827,13 +3827,15 @@ async function handleArticlePrepareCreate(args: ToolArgs): Promise<ToolResult> {
       titleLength: title.length,
     });
 
-    const prepared = await runtime.articles.prepareCreate({
-      coverImageUrl: coverImageUrl || undefined,
+    const input: Record<string, unknown> = {
       profileName,
       title,
       body,
       ...(operatorNote ? { operatorNote } : {}),
-    });
+    };
+    if (coverImageUrl) input.coverImageUrl = coverImageUrl;
+    // @ts-expect-error exactOptionalPropertyTypes
+    const prepared = await runtime.articles.prepareCreate(input);
 
     runtime.logger.log("info", "mcp.article.prepare_create.done", {
       profileName,
@@ -3931,7 +3933,8 @@ async function handleNewsletterPrepareCreate(
 
 
 async function handleNewsletterPrepareSend(args: ToolArgs): Promise<ToolResult> {
-  return withPublishingRuntime(async (runtime) => {
+  const runtime = createRuntime(args);
+  try {
     const newsletter = readRequiredString(args, "newsletter");
     const edition = readRequiredString(args, "edition");
     const recipients = readOptionalString(args, "recipients");
@@ -3940,12 +3943,16 @@ async function handleNewsletterPrepareSend(args: ToolArgs): Promise<ToolResult> 
       newsletter, edition, recipients
     });
 
-    const prepared = await runtime.newsletters.prepareSend({
-      profileName: readOptionalString(args, "profileName"),
+    const profileName = readOptionalString(args, "profileName");
+    const input: Record<string, unknown> = {
       newsletter,
       edition,
-      recipients: recipients as any
-    });
+    };
+    if (profileName) input.profileName = profileName;
+    if (recipients) input.recipients = recipients;
+
+    // @ts-expect-error exactOptionalPropertyTypes
+    const prepared = await runtime.newsletters.prepareSend(input);
 
     runtime.logger.log("info", "mcp.newsletter.prepare_send.done", {
       newsletter, edition
@@ -3959,21 +3966,26 @@ async function handleNewsletterPrepareSend(args: ToolArgs): Promise<ToolResult> 
         }
       ]
     };
-  });
+  } finally {
+    runtime.close();
+  }
 }
 
 async function handleNewsletterListEditions(args: ToolArgs): Promise<ToolResult> {
-  return withPublishingRuntime(async (runtime) => {
+  const runtime = createRuntime(args);
+  try {
     runtime.logger.log("info", "mcp.newsletter.list_editions.start", {
       newsletter: args.newsletter
     });
     
     const newsletter = readRequiredString(args, "newsletter");
 
-    const result = await runtime.newsletters.listEditions({
-      profileName: readOptionalString(args, "profileName"),
-      newsletter
-    });
+    const profileName = readOptionalString(args, "profileName");
+    const input: Record<string, unknown> = { newsletter };
+    if (profileName) input.profileName = profileName;
+
+    // @ts-expect-error exactOptionalPropertyTypes
+    const result = await runtime.newsletters.listEditions(input);
 
     runtime.logger.log("info", "mcp.newsletter.list_editions.done", {
       count: result.count
@@ -3987,19 +3999,16 @@ async function handleNewsletterListEditions(args: ToolArgs): Promise<ToolResult>
         }
       ]
     };
-  });
+  } finally {
+    runtime.close();
+  }
 }
 
 async function handleNewsletterPrepareUpdate(
   args: ToolArgs
 ): Promise<ToolResult> {
   const runtime = createRuntime(args);
-  return runtime.profileManager.runWithContext(
-    {
-      action: "mcp_newsletter_update",
-      profileName: readOptionalString(args, "profileName") ?? "default"
-    },
-    async () => {
+  try {
       const newsletter = readRequiredString(args, "newsletter");
       const updates: Record<string, string> = {};
       const title = readOptionalString(args, "title");
@@ -4038,8 +4047,9 @@ async function handleNewsletterPrepareUpdate(
           }
         ]
       };
-    }
-  );
+  } finally {
+    runtime.close();
+  }
 }
 
 async function handleNewsletterPreparePublishIssue(
@@ -4060,14 +4070,16 @@ async function handleNewsletterPreparePublishIssue(
       newsletter,
     });
 
-    const prepared = await runtime.newsletters.preparePublishIssue({
-      coverImageUrl: coverImageUrl || undefined,
+    const input: Record<string, unknown> = {
       profileName,
       newsletter,
       title,
       body,
       ...(operatorNote ? { operatorNote } : {}),
-    });
+    };
+    if (coverImageUrl) input.coverImageUrl = coverImageUrl;
+    // @ts-expect-error exactOptionalPropertyTypes
+    const prepared = await runtime.newsletters.preparePublishIssue(input);
 
     runtime.logger.log("info", "mcp.newsletter.prepare_publish_issue.done", {
       profileName,

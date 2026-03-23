@@ -73,7 +73,7 @@ const PUBLISHING_RATE_LIMIT_CONFIGS = {
   [SEND_NEWSLETTER_ACTION_TYPE]: {
     counterKey: "linkedin.newsletter.send",
     limit: 10,
-    windowMs: 24 * 60 * 60 * 1000
+    windowSizeMs: 24 * 60 * 60 * 1000
   },
   [PUBLISH_NEWSLETTER_ISSUE_ACTION_TYPE]: {
     counterKey: "linkedin.newsletter.publish_issue",
@@ -2521,8 +2521,10 @@ export class LinkedInNewslettersService {
 
   async prepareSend(input: PrepareSendNewsletterInput): Promise<PreparedActionResult> {
     const profileName = input.profileName || "default";
-    const newsletter = getRequiredStringField(input, "newsletter");
-    const edition = getRequiredStringField(input, "edition");
+    const newsletter = input.newsletter;
+    if (!newsletter) throw new Error("Newsletter is required");
+    const edition = input.edition;
+    if (!edition) throw new Error("Edition is required");
     const recipients = input.recipients || "all";
     
     const tracePath = `linkedin/trace-newsletter-send-prepare-${Date.now()}.zip`;
@@ -2553,29 +2555,44 @@ export class LinkedInNewslettersService {
           await page.screenshot({ path: screenshotPath, fullPage: true });
           artifactPaths.push(screenshotPath);
 
-          const preparedActionId = this.runtime.actionRegistry.prepare({
+          const target = {
+            profile_name: profileName,
+            content_type: "newsletter"
+          };
+
+          const actionParams: {
+            actionType: string;
+            target: Record<string, unknown>;
+            payload: Record<string, unknown>;
+            preview: Record<string, unknown>;
+            operatorNote?: string;
+          } = {
             actionType: SEND_NEWSLETTER_ACTION_TYPE,
-            target: { type: "profile", profileName },
+            target,
             payload: {
               newsletter,
               edition,
               recipients
             },
-            context: {
-              action: "prepare_send_newsletter",
-              newsletter,
-              edition,
-              recipients
-            },
-            summary: `Send LinkedIn newsletter edition "${edition}" of "${newsletter}"`,
-            operatorNote: input.operatorNote
-          });
-
-          return {
-            preparedActionId,
-            confirmToken: this.runtime.twoPhaseCommit.issueToken(preparedActionId),
-            artifacts: artifactPaths
+            preview: {
+              summary: `Send LinkedIn newsletter edition "${edition}" of "${newsletter}"`,
+              target,
+              outbound: {
+                newsletter,
+                edition,
+                recipients
+              },
+              artifacts: artifactPaths.map((path) => ({
+                type: path.endsWith(".zip") ? "trace" : "screenshot",
+                path
+              }))
+            }
           };
+          if (input.operatorNote) {
+            actionParams.operatorNote = input.operatorNote;
+          }
+
+          return preparePublishingAction(this.runtime, actionParams);
         } catch (error) {
           const failureScreenshot =
             `linkedin/screenshot-newsletter-send-prepare-error-${Date.now()}.png`;
@@ -2604,7 +2621,6 @@ export class LinkedInNewslettersService {
 
   async listEditions(input: ListNewsletterEditionsInput): Promise<ListNewsletterEditionsOutput> {
     const profileName = input.profileName || "default";
-    const newsletter = input.newsletter;
 
     await this.runtime.auth.ensureAuthenticated({
       profileName,
