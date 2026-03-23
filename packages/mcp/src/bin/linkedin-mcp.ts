@@ -140,6 +140,9 @@ import {
   LINKEDIN_ARTICLE_PREPARE_CREATE_TOOL,
   LINKEDIN_ARTICLE_PREPARE_PUBLISH_TOOL,
   LINKEDIN_NEWSLETTER_LIST_TOOL,
+  LINKEDIN_NEWSLETTER_LIST_EDITIONS_TOOL,
+  LINKEDIN_NEWSLETTER_PREPARE_SEND_TOOL,
+  LINKEDIN_NEWSLETTER_PREPARE_UPDATE_TOOL,
   LINKEDIN_NEWSLETTER_PREPARE_CREATE_TOOL,
   LINKEDIN_NEWSLETTER_PREPARE_PUBLISH_ISSUE_TOOL,
   LINKEDIN_NOTIFICATIONS_MARK_READ_TOOL,
@@ -162,6 +165,7 @@ import {
   type ToolArgs,
   readString,
   trimOrUndefined,
+  readOptionalString,
   readRequiredString,
   readBoundedString,
   readValidatedUrl,
@@ -3815,6 +3819,7 @@ async function handleArticlePrepareCreate(args: ToolArgs): Promise<ToolResult> {
     const profileName = readString(args, "profileName", "default");
     const title = readRequiredString(args, "title");
     const body = readRequiredString(args, "body");
+    const coverImageUrl = readString(args, "coverImageUrl", "");
     const operatorNote = readString(args, "operatorNote", "");
 
     runtime.logger.log("info", "mcp.article.prepare_create.start", {
@@ -3822,12 +3827,15 @@ async function handleArticlePrepareCreate(args: ToolArgs): Promise<ToolResult> {
       titleLength: title.length,
     });
 
-    const prepared = await runtime.articles.prepareCreate({
+    const input: Record<string, unknown> = {
       profileName,
       title,
       body,
       ...(operatorNote ? { operatorNote } : {}),
-    });
+    };
+    if (coverImageUrl) input.coverImageUrl = coverImageUrl;
+    // @ts-expect-error exactOptionalPropertyTypes
+    const prepared = await runtime.articles.prepareCreate(input);
 
     runtime.logger.log("info", "mcp.article.prepare_create.done", {
       profileName,
@@ -3922,6 +3930,128 @@ async function handleNewsletterPrepareCreate(
   }
 }
 
+
+
+async function handleNewsletterPrepareSend(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+  try {
+    const newsletter = readRequiredString(args, "newsletter");
+    const edition = readRequiredString(args, "edition");
+    const recipients = readOptionalString(args, "recipients");
+    
+    runtime.logger.log("info", "mcp.newsletter.prepare_send.start", {
+      newsletter, edition, recipients
+    });
+
+    const profileName = readOptionalString(args, "profileName");
+    const input: Record<string, unknown> = {
+      newsletter,
+      edition,
+    };
+    if (profileName) input.profileName = profileName;
+    if (recipients) input.recipients = recipients;
+
+    // @ts-expect-error exactOptionalPropertyTypes
+    const prepared = await runtime.newsletters.prepareSend(input);
+
+    runtime.logger.log("info", "mcp.newsletter.prepare_send.done", {
+      newsletter, edition
+    });
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(prepared, null, 2)
+        }
+      ]
+    };
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleNewsletterListEditions(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+  try {
+    runtime.logger.log("info", "mcp.newsletter.list_editions.start", {
+      newsletter: args.newsletter
+    });
+    
+    const newsletter = readRequiredString(args, "newsletter");
+
+    const profileName = readOptionalString(args, "profileName");
+    const input: Record<string, unknown> = { newsletter };
+    if (profileName) input.profileName = profileName;
+
+    // @ts-expect-error exactOptionalPropertyTypes
+    const result = await runtime.newsletters.listEditions(input);
+
+    runtime.logger.log("info", "mcp.newsletter.list_editions.done", {
+      count: result.count
+    });
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(result, null, 2)
+        }
+      ]
+    };
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleNewsletterPrepareUpdate(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+  try {
+      const newsletter = readRequiredString(args, "newsletter");
+      const updates: Record<string, string> = {};
+      const title = readOptionalString(args, "title");
+      if (title) updates.title = title;
+      
+      const description = readOptionalString(args, "description");
+      if (description) updates.description = description;
+      
+      const cadence = readOptionalString(args, "cadence");
+      if (cadence) updates.cadence = cadence;
+      
+      const photoUrl = readOptionalString(args, "photoUrl");
+      if (photoUrl) updates.photoUrl = photoUrl;
+
+      runtime.logger.log("info", "mcp.newsletter.prepare_update.start", {
+        newsletter,
+        updates
+      });
+
+      const prepared = await runtime.newsletters.prepareUpdate({
+        newsletter,
+        updates,
+        operatorNote: `via MCP tool: ${LINKEDIN_NEWSLETTER_PREPARE_UPDATE_TOOL}`
+      });
+
+      runtime.logger.log("info", "mcp.newsletter.prepare_update.done", {
+        newsletter,
+        updates
+      });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(prepared, null, 2)
+          }
+        ]
+      };
+  } finally {
+    runtime.close();
+  }
+}
+
 async function handleNewsletterPreparePublishIssue(
   args: ToolArgs,
 ): Promise<ToolResult> {
@@ -3932,6 +4062,7 @@ async function handleNewsletterPreparePublishIssue(
     const newsletter = readRequiredString(args, "newsletter");
     const title = readRequiredString(args, "title");
     const body = readRequiredString(args, "body");
+    const coverImageUrl = readString(args, "coverImageUrl", "");
     const operatorNote = readString(args, "operatorNote", "");
 
     runtime.logger.log("info", "mcp.newsletter.prepare_publish_issue.start", {
@@ -3939,13 +4070,16 @@ async function handleNewsletterPreparePublishIssue(
       newsletter,
     });
 
-    const prepared = await runtime.newsletters.preparePublishIssue({
+    const input: Record<string, unknown> = {
       profileName,
       newsletter,
       title,
       body,
       ...(operatorNote ? { operatorNote } : {}),
-    });
+    };
+    if (coverImageUrl) input.coverImageUrl = coverImageUrl;
+    // @ts-expect-error exactOptionalPropertyTypes
+    const prepared = await runtime.newsletters.preparePublishIssue(input);
 
     runtime.logger.log("info", "mcp.newsletter.prepare_publish_issue.done", {
       profileName,
@@ -6456,7 +6590,40 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
     },
   },
   {
-    name: LINKEDIN_NEWSLETTER_PREPARE_PUBLISH_ISSUE_TOOL,
+      name: LINKEDIN_NEWSLETTER_PREPARE_UPDATE_TOOL,
+      description:
+        "Prepare an update to an existing LinkedIn newsletter series (two-phase: returns confirm token). Use linkedin.actions.confirm to save the updates.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          newsletter: {
+            type: "string",
+            description: "Title of the newsletter to update."
+          },
+          title: {
+            type: "string",
+            description: "New newsletter title."
+          },
+          description: {
+            type: "string",
+            description: "New newsletter description."
+          },
+          cadence: {
+            type: "string",
+            enum: [...LINKEDIN_NEWSLETTER_CADENCE_TYPES],
+            description: "New newsletter publish cadence."
+          },
+          photoUrl: {
+            type: "string",
+            description: "Absolute path to a local image file to use as the new cover photo."
+          }
+        },
+        required: ["newsletter"],
+        additionalProperties: false
+      }
+    },
+    {
+      name: LINKEDIN_NEWSLETTER_PREPARE_PUBLISH_ISSUE_TOOL,
     description:
       "Prepare a new LinkedIn newsletter issue (two-phase: returns confirm token). Use linkedin.actions.confirm to publish the issue.",
     inputSchema: {
@@ -7414,6 +7581,57 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
       }),
     },
   },
+
+  {
+    name: LINKEDIN_NEWSLETTER_PREPARE_SEND_TOOL,
+    description: "Prepare to send/share a specific LinkedIn newsletter edition (two-phase: returns confirm token). Use linkedin.actions.confirm to send it.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["newsletter", "edition"],
+      properties: {
+        profileName: {
+          type: "string",
+          description: "Optional profile to use. Defaults to the primary authenticated profile."
+        },
+        newsletter: {
+          type: "string",
+          description: "Newsletter title."
+        },
+        edition: {
+          type: "string",
+          description: "Edition title to send/share."
+        },
+        recipients: {
+          type: "string",
+          description: "Optional recipients. 'all' or specific segment."
+        }
+      }
+    }
+  },
+  {
+    name: LINKEDIN_NEWSLETTER_LIST_EDITIONS_TOOL,
+    description: "List newsletter editions with performance statistics.",
+    inputSchema: {
+      type: "object",
+      required: ["newsletter"],
+      properties: {
+        profileName: {
+          type: "string",
+          description: "Optional profile to use."
+        },
+        newsletter: {
+          type: "string",
+          description: "Newsletter title to list editions for."
+        },
+        includeStats: {
+          type: "boolean",
+          description: "Include open/click stats (takes longer)."
+        }
+      },
+      additionalProperties: false
+    }
+  },
 ];
 
 const TOOL_DEFINITION_BY_NAME = new Map(
@@ -7530,9 +7748,12 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   [LINKEDIN_ARTICLE_PREPARE_CREATE_TOOL]: handleArticlePrepareCreate,
   [LINKEDIN_ARTICLE_PREPARE_PUBLISH_TOOL]: handleArticlePreparePublish,
   [LINKEDIN_NEWSLETTER_PREPARE_CREATE_TOOL]: handleNewsletterPrepareCreate,
+  [LINKEDIN_NEWSLETTER_PREPARE_UPDATE_TOOL]: handleNewsletterPrepareUpdate,
   [LINKEDIN_NEWSLETTER_PREPARE_PUBLISH_ISSUE_TOOL]:
     handleNewsletterPreparePublishIssue,
   [LINKEDIN_NEWSLETTER_LIST_TOOL]: handleNewsletterList,
+  [LINKEDIN_NEWSLETTER_LIST_EDITIONS_TOOL]: handleNewsletterListEditions,
+  [LINKEDIN_NEWSLETTER_PREPARE_SEND_TOOL]: handleNewsletterPrepareSend,
   [LINKEDIN_NOTIFICATIONS_LIST_TOOL]: handleNotificationsList,
   [LINKEDIN_NOTIFICATIONS_MARK_READ_TOOL]: handleNotificationsMarkRead,
   [LINKEDIN_NOTIFICATIONS_DISMISS_TOOL]: handleNotificationsDismiss,

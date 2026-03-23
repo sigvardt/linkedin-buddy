@@ -416,3 +416,12 @@ export function readTargetProfileName(
   }
   return undefined;
 }
+
+export function readOptionalString(args: ToolArgs, key: string): string | undefined {
+  const value = args[key];
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") {
+    throw new Error(`Argument '${key}' must be a string`);
+  }
+  return value.trim() || undefined;
+}
