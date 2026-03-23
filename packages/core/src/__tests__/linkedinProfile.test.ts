@@ -1039,6 +1039,7 @@ describe("profile action type constants", () => {
       "projects",
       "volunteer_experience",
       "honors_awards",
+      "skills"
     ]);
     expect(LINKEDIN_PROFILE_SECTION_TYPES).not.toContain("featured");
     expect(LINKEDIN_PROFILE_FEATURED_ITEM_KINDS).toEqual([
