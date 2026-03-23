@@ -7,6 +7,7 @@ import {
   statSync
 } from "node:fs";
 import path from "node:path";
+import { imageSizeFromFile } from "image-size/fromFile";
 import {
   errors as playwrightErrors,
   type BrowserContext,
@@ -144,6 +145,7 @@ export const REMOVE_PROFILE_SECTION_ITEM_ACTION_TYPE =
 export const UPLOAD_PROFILE_PHOTO_ACTION_TYPE = "profile.upload_photo";
 export const REMOVE_PROFILE_PHOTO_ACTION_TYPE = "profile.remove_photo";
 export const UPLOAD_PROFILE_BANNER_ACTION_TYPE = "profile.upload_banner";
+export const REMOVE_PROFILE_BANNER_ACTION_TYPE = "profile.remove_banner";
 export const ADD_PROFILE_FEATURED_ACTION_TYPE = "profile.featured_add";
 export const REMOVE_PROFILE_FEATURED_ACTION_TYPE = "profile.featured_remove";
 export const REORDER_PROFILE_FEATURED_ACTION_TYPE = "profile.featured_reorder";
@@ -194,6 +196,11 @@ const PROFILE_RATE_LIMIT_CONFIGS = {
   },
   [UPLOAD_PROFILE_BANNER_ACTION_TYPE]: {
     counterKey: "linkedin.profile.upload_banner",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 5
+  },
+  [REMOVE_PROFILE_BANNER_ACTION_TYPE]: {
+    counterKey: "linkedin.profile.remove_banner",
     windowSizeMs: 24 * 60 * 60 * 1000,
     limit: 5
   },
@@ -412,6 +419,11 @@ export interface PrepareUploadProfileMediaInput {
 }
 
 export interface PrepareRemoveProfilePhotoInput {
+  profileName?: string;
+  operatorNote?: string;
+}
+
+export interface PrepareRemoveBannerInput {
   profileName?: string;
   operatorNote?: string;
 }
@@ -7435,6 +7447,51 @@ async function writeRecommendation(
   );
 }
 
+async function openProfileMediaEditor(
+  page: Page,
+  selectorLocale: LinkedInSelectorLocale,
+  kind: "photo" | "banner"
+): Promise<Locator | null> {
+  const topCardRoot = await getTopCardRoot(page);
+  const openCandidates: LocatorCandidate[] = [
+    ...createActionCandidates(
+      topCardRoot,
+      getProfileMediaActionLabels(kind, selectorLocale),
+      `profile-${kind}`
+    ),
+    ...createActionCandidates(
+      topCardRoot,
+      getProfileMediaActionLabels(kind, selectorLocale),
+      `profile-${kind}-link`,
+      "link"
+    ),
+    ...createCssLocatorCandidates(
+      topCardRoot,
+      PROFILE_MEDIA_STRUCTURAL_SELECTORS[kind],
+      `profile-${kind}-structural`
+    ),
+    {
+      key: `profile-${kind}-generic`,
+      locator: topCardRoot
+        .locator("button, a, [role='button']")
+        .filter({ hasText: buildTextRegex(getProfileMediaActionLabels(kind, selectorLocale)) })
+    }
+  ];
+
+  const resolved = await findFirstVisibleLocator(openCandidates);
+  if (!resolved) {
+    throw new LinkedInBuddyError(
+      "TARGET_NOT_FOUND",
+      `Could not find the LinkedIn profile ${kind} editor controls.`
+    );
+  }
+
+  await resolved.locator.first().click();
+  await page.waitForTimeout(500);
+
+  return (await getVisibleDialogOrNull(page)) ?? null;
+}
+
 async function openProfileMediaAndUpload(
   page: Page,
   selectorLocale: LinkedInSelectorLocale,
@@ -8256,6 +8313,81 @@ async function executeRemoveProfilePhoto(
             result: {
               status: "profile_photo_removed",
               media_kind: "photo"
+            },
+            artifacts: []
+          };
+        }
+      });
+    }
+  );
+}
+
+async function executeRemoveProfileMedia(
+  runtime: LinkedInProfileExecutorRuntime,
+  actionId: string,
+  target: Record<string, unknown>,
+  kind: "photo" | "banner"
+): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
+  const profileName = String(target.profile_name ?? "default");
+
+  return runtime.profileManager.runWithContext(
+    {
+      cdpUrl: runtime.cdpUrl,
+      profileName,
+      headless: true
+    },
+    async (context) => {
+      const page = await getOrCreatePage(context);
+      return executeConfirmActionWithArtifacts({
+        runtime,
+        context,
+        page,
+        actionId,
+        dismissOverlays: {
+          selectorLocale: runtime.selectorLocale,
+          logger: runtime.logger
+        },
+        actionType: REMOVE_PROFILE_BANNER_ACTION_TYPE,
+        profileName,
+        targetUrl: resolveProfileUrl("me"),
+        metadata: {
+          profile_name: profileName,
+          media_kind: kind
+        },
+        errorDetails: {
+          profile_name: profileName,
+          media_kind: kind
+        },
+        beforeExecute: createProfileRateLimitGuard(
+          runtime,
+          REMOVE_PROFILE_BANNER_ACTION_TYPE,
+          actionId,
+          profileName,
+          { media_kind: kind }
+        ),
+        mapError: (error) =>
+          asLinkedInBuddyError(
+            error,
+            "UNKNOWN",
+            `Failed to execute LinkedIn profile ${kind} removal.`
+          ),
+        execute: async () => {
+          await navigateToOwnProfile(page, { dismissOverlays: { selectorLocale: runtime.selectorLocale, logger: runtime.logger } });
+          const dialog = await openProfileMediaEditor(page, runtime.selectorLocale, kind);
+          
+          if (dialog) {
+            await clickDeleteInDialog(page, dialog, runtime.selectorLocale);
+          } else {
+            throw new LinkedInBuddyError("TARGET_NOT_FOUND", "No media to remove.");
+          }
+
+          await waitForNetworkIdleBestEffort(page);
+
+          return {
+            ok: true,
+            result: {
+              status: `profile_${kind}_removed`,
+              media_kind: kind
             },
             artifacts: []
           };
@@ -9175,6 +9307,22 @@ export class UploadProfileBannerActionExecutor
   }
 }
 
+export class RemoveProfileBannerActionExecutor
+  implements ActionExecutor<LinkedInProfileExecutorRuntime>
+{
+  async execute(
+    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>
+  ): Promise<ActionExecutorResult> {
+    const { result, artifacts } = await executeRemoveProfileMedia(
+      input.runtime,
+      input.action.id,
+      input.action.target,
+      "banner"
+    );
+    return { ok: true, result, artifacts };
+  }
+}
+
 export class AddProfileFeaturedItemActionExecutor
   implements ActionExecutor<LinkedInProfileExecutorRuntime>
 {
@@ -9336,6 +9484,7 @@ export function createProfileActionExecutors(): Record<
     [UPLOAD_PROFILE_PHOTO_ACTION_TYPE]: new UploadProfilePhotoActionExecutor(),
     [REMOVE_PROFILE_PHOTO_ACTION_TYPE]: new RemoveProfilePhotoActionExecutor(),
     [UPLOAD_PROFILE_BANNER_ACTION_TYPE]: new UploadProfileBannerActionExecutor(),
+    [REMOVE_PROFILE_BANNER_ACTION_TYPE]: new RemoveProfileBannerActionExecutor(),
     [ADD_PROFILE_FEATURED_ACTION_TYPE]: new AddProfileFeaturedItemActionExecutor(),
     [REMOVE_PROFILE_FEATURED_ACTION_TYPE]:
       new RemoveProfileFeaturedItemActionExecutor(),
@@ -9714,6 +9863,30 @@ export class LinkedInProfileService {
     });
   }
 
+  async prepareRemoveBanner(
+    input: PrepareRemoveBannerInput
+  ): Promise<PreparedActionResult> {
+    const profileName = input.profileName ?? "default";
+
+    const target = {
+      profile_name: profileName,
+      media_kind: "banner"
+    };
+
+    const preview = {
+      summary: "Remove LinkedIn profile banner",
+      target
+    };
+
+    return this.prepareRateLimitedAction({
+      actionType: REMOVE_PROFILE_BANNER_ACTION_TYPE,
+      target,
+      payload: {},
+      preview,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+  }
+
   async prepareUploadBanner(
     input: PrepareUploadProfileMediaInput
   ): Promise<PreparedActionResult> {
@@ -9725,6 +9898,27 @@ export class LinkedInProfileService {
       PROFILE_IMAGE_UPLOAD_EXTENSIONS,
       "profile-banner"
     );
+
+    if (upload.size_bytes > 8 * 1024 * 1024) {
+      throw new LinkedInBuddyError(
+        "ACTION_PRECONDITION_FAILED",
+        `Profile banner file size must be less than 8MB. Got ${(upload.size_bytes / 1024 / 1024).toFixed(2)}MB.`
+      );
+    }
+
+    try {
+      const dimensions = await imageSizeFromFile(upload.absolute_path);
+      if (dimensions && dimensions.width && dimensions.height) {
+        if (dimensions.width < 1584 || dimensions.height < 396) {
+          throw new LinkedInBuddyError(
+            "ACTION_PRECONDITION_FAILED",
+            `Profile banner dimensions must be at least 1584x396. Got ${dimensions.width}x${dimensions.height}.`
+          );
+        }
+      }
+    } catch {
+      // If image-size fails (e.g. unknown format), ignore and let LinkedIn handle it
+    }
 
     const target = {
       profile_name: profileName,

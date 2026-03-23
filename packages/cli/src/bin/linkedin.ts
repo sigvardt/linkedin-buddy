@@ -7319,6 +7319,40 @@ async function runProfilePrepareUploadPhoto(
   }
 }
 
+async function runProfilePrepareRemoveBanner(
+  input: {
+    profileName: string;
+    operatorNote?: string;
+  },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.profile.prepare_remove_banner.start", {
+      profileName: input.profileName,
+    });
+
+    const prepared = await runtime.profile.prepareRemoveBanner({
+      profileName: input.profileName,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {}),
+    });
+
+    runtime.logger.log("info", "cli.profile.prepare_remove_banner.done", {
+      profileName: input.profileName,
+      preparedActionId: prepared.preparedActionId,
+    });
+
+    printPrepareResult({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...prepared,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 async function runProfilePrepareUploadBanner(
   input: {
     profileName: string;
@@ -13374,6 +13408,31 @@ export function createCliProgram(): Command {
           {
             profileName: options.profile,
             filePath: options.file,
+            ...(options.operatorNote
+              ? { operatorNote: options.operatorNote }
+              : {}),
+          },
+          readCdpUrl(),
+        );
+      },
+    );
+
+  profileCommand
+    .command("prepare-remove-banner")
+    .description("Prepare to remove a LinkedIn profile banner (two-phase)")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .option(
+      "--operator-note <note>",
+      "Optional note attached to the prepared action",
+    )
+    .action(
+      async (options: {
+        operatorNote?: string;
+        profile: string;
+      }) => {
+        await runProfilePrepareRemoveBanner(
+          {
+            profileName: options.profile,
             ...(options.operatorNote
               ? { operatorNote: options.operatorNote }
               : {}),

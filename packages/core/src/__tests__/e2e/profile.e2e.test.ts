@@ -232,6 +232,15 @@ describe("Profile E2E", () => {
     expectRateLimitPreview(prepared.preview, "linkedin.profile.upload_banner");
   }, 60_000);
 
+  it("prepareRemoveBanner returns valid preview", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
+    const runtime = e2e.runtime();
+    const prepared = await runtime.profile.prepareRemoveBanner({});
+
+    expectPreparedAction(prepared);
+    expectRateLimitPreview(prepared.preview, "linkedin.profile.remove_banner");
+  }, 60_000);
+
   it("prepareFeaturedAdd for link returns valid preview", async (context) => {
     skipIfE2EUnavailable(e2e, context);
     const runtime = e2e.runtime();

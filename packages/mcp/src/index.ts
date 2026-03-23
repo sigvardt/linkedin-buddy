@@ -45,6 +45,8 @@ export const LINKEDIN_PROFILE_PREPARE_REMOVE_PHOTO_TOOL =
   "linkedin.profile.prepare_remove_photo";
 export const LINKEDIN_PROFILE_PREPARE_UPLOAD_BANNER_TOOL =
   "linkedin.profile.prepare_upload_banner";
+export const LINKEDIN_PROFILE_PREPARE_REMOVE_BANNER_TOOL =
+  "linkedin.profile.prepare_remove_banner";
 export const LINKEDIN_PROFILE_PREPARE_FEATURED_ADD_TOOL =
   "linkedin.profile.prepare_featured_add";
 export const LINKEDIN_PROFILE_PREPARE_FEATURED_REMOVE_TOOL =
