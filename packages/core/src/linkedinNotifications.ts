@@ -948,7 +948,7 @@ async function loadNotificationSnapshots(
 ): Promise<NotificationSnapshot[]> {
   const isMatch = (n: NotificationSnapshot) => {
     if (!types || types.length === 0) return true;
-    return types.includes(n.type) || (n.extracted_data && types.includes(n.extracted_data.notification_category));
+    return types.includes(n.type) || (n.extracted_data && types.includes(n.extracted_data.notification_category as string));
   };
 
   const maxScrolls = 20;
@@ -1755,7 +1755,7 @@ export class LinkedInNotificationsService {
             if (notification.extracted_data) {
               mapped.extracted_data = notification.extracted_data;
             }
-            return mapped as LinkedInNotification;
+            return mapped as unknown as LinkedInNotification;
           });
         },
       );

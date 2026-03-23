@@ -1780,7 +1780,7 @@ async function handleNotificationsList(args: ToolArgs): Promise<ToolResult> {
     const notifications = await runtime.notifications.listNotifications({
       profileName,
       limit,
-      types,
+      ...(types && types.length > 0 ? { types } : {}),
     });
 
     runtime.logger.log("info", "mcp.notifications.list.done", {

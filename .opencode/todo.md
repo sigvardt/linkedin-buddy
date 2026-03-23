@@ -17,6 +17,6 @@
 
 ## M3: Verification & Integration
 ### T3.1: Testing & Quality Gates | agent:Reviewer | depends:M2
-- [ ] S3.1.1: Run unit tests and e2e tests for notifications | size:M
-- [ ] S3.1.2: Run lint and typecheck | size:S
-- [ ] S3.1.3: Wait for CI and create PR | size:S
+- [x] S3.1.1: Run unit tests and e2e tests for notifications | size:M
+- [x] S3.1.2: Run lint and typecheck | size:S
+- [x] S3.1.3: Wait for CI and create PR | size:S
