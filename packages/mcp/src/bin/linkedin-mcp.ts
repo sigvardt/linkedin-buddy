@@ -140,6 +140,7 @@ import {
   LINKEDIN_ARTICLE_PREPARE_CREATE_TOOL,
   LINKEDIN_ARTICLE_PREPARE_PUBLISH_TOOL,
   LINKEDIN_NEWSLETTER_LIST_TOOL,
+  LINKEDIN_NEWSLETTER_PREPARE_UPDATE_TOOL,
   LINKEDIN_NEWSLETTER_PREPARE_CREATE_TOOL,
   LINKEDIN_NEWSLETTER_PREPARE_PUBLISH_ISSUE_TOOL,
   LINKEDIN_NOTIFICATIONS_MARK_READ_TOOL,
@@ -163,6 +164,7 @@ import {
   readString,
   trimOrUndefined,
   readRequiredString,
+  readOptionalString,
   readBoundedString,
   readValidatedUrl,
   readValidatedFilePath,
@@ -3924,6 +3926,58 @@ async function handleNewsletterPrepareCreate(
   }
 }
 
+async function handleNewsletterPrepareUpdate(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+  return runtime.profileManager.runWithContext(
+    {
+      action: "mcp_newsletter_update",
+      profileName: readOptionalString(args, "profileName") ?? "default"
+    },
+    async () => {
+      const newsletter = readRequiredString(args, "newsletter");
+      const updates: Record<string, string> = {};
+      const title = readOptionalString(args, "title");
+      if (title) updates.title = title;
+      
+      const description = readOptionalString(args, "description");
+      if (description) updates.description = description;
+      
+      const cadence = readOptionalString(args, "cadence");
+      if (cadence) updates.cadence = cadence;
+      
+      const photoUrl = readOptionalString(args, "photoUrl");
+      if (photoUrl) updates.photoUrl = photoUrl;
+
+      runtime.logger.log("info", "mcp.newsletter.prepare_update.start", {
+        newsletter,
+        updates
+      });
+
+      const prepared = await runtime.newsletters.prepareUpdate({
+        newsletter,
+        updates,
+        operatorNote: `via MCP tool: ${LINKEDIN_NEWSLETTER_PREPARE_UPDATE_TOOL}`
+      });
+
+      runtime.logger.log("info", "mcp.newsletter.prepare_update.done", {
+        newsletter,
+        updates
+      });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(prepared, null, 2)
+          }
+        ]
+      };
+    }
+  );
+}
+
 async function handleNewsletterPreparePublishIssue(
   args: ToolArgs,
 ): Promise<ToolResult> {
@@ -6460,7 +6514,40 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
     },
   },
   {
-    name: LINKEDIN_NEWSLETTER_PREPARE_PUBLISH_ISSUE_TOOL,
+      name: LINKEDIN_NEWSLETTER_PREPARE_UPDATE_TOOL,
+      description:
+        "Prepare an update to an existing LinkedIn newsletter series (two-phase: returns confirm token). Use linkedin.actions.confirm to save the updates.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          newsletter: {
+            type: "string",
+            description: "Title of the newsletter to update."
+          },
+          title: {
+            type: "string",
+            description: "New newsletter title."
+          },
+          description: {
+            type: "string",
+            description: "New newsletter description."
+          },
+          cadence: {
+            type: "string",
+            enum: [...LINKEDIN_NEWSLETTER_CADENCE_TYPES],
+            description: "New newsletter publish cadence."
+          },
+          photoUrl: {
+            type: "string",
+            description: "Absolute path to a local image file to use as the new cover photo."
+          }
+        },
+        required: ["newsletter"],
+        additionalProperties: false
+      }
+    },
+    {
+      name: LINKEDIN_NEWSLETTER_PREPARE_PUBLISH_ISSUE_TOOL,
     description:
       "Prepare a new LinkedIn newsletter issue (two-phase: returns confirm token). Use linkedin.actions.confirm to publish the issue.",
     inputSchema: {
@@ -7534,6 +7621,7 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   [LINKEDIN_ARTICLE_PREPARE_CREATE_TOOL]: handleArticlePrepareCreate,
   [LINKEDIN_ARTICLE_PREPARE_PUBLISH_TOOL]: handleArticlePreparePublish,
   [LINKEDIN_NEWSLETTER_PREPARE_CREATE_TOOL]: handleNewsletterPrepareCreate,
+  [LINKEDIN_NEWSLETTER_PREPARE_UPDATE_TOOL]: handleNewsletterPrepareUpdate,
   [LINKEDIN_NEWSLETTER_PREPARE_PUBLISH_ISSUE_TOOL]:
     handleNewsletterPreparePublishIssue,
   [LINKEDIN_NEWSLETTER_LIST_TOOL]: handleNewsletterList,
