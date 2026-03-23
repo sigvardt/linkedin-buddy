@@ -27,7 +27,8 @@ const SECTION_KEY_ALIASES = new Map<string, LinkedInProfileSectionType>([
   ["volunteerexperience", "volunteer_experience"],
   ["volunteer_experience", "volunteer_experience"],
   ["honorsawards", "honors_awards"],
-  ["honors_awards", "honors_awards"]
+  ["honors_awards", "honors_awards"],
+  ["skills", "skills"]
 ]);
 
 const INTRO_FIELD_KEYS = new Set(["firstName", "lastName", "headline", "location"]);
@@ -45,7 +46,8 @@ const SECTION_IDENTITY_FIELDS: Record<Exclude<LinkedInProfileSectionType, "about
   languages: ["name"],
   projects: ["title"],
   volunteer_experience: ["role", "organization"],
-  honors_awards: ["title", "issuer"]
+  honors_awards: ["title", "issuer"],
+  skills: ["name"]
 };
 
 type SeedSectionType = Exclude<LinkedInProfileSectionType, "about">;
@@ -119,12 +121,12 @@ export function parseProfileSeedSpec(input: unknown): ProfileSeedSpec {
       continue;
     }
 
-    if (rawKey === "skills") {
+    if (rawKey === "recommendations") {
       if (Array.isArray(rawValue) && rawValue.length > 0) {
         unsupportedFields.push({
-          path: "skills",
-          reason: "Skills are not exposed by the current LinkedIn profile edit automation.",
-          issueNumber: 228
+          path: "recommendations",
+          reason: "Recommendations are not exposed by the current LinkedIn profile edit automation.",
+          issueNumber: 0
         });
       }
       continue;
@@ -636,6 +638,8 @@ function describeSectionValues(
       return joinSummaryParts(values.role, values.organization);
     case "honors_awards":
       return joinSummaryParts(values.title, values.issuer);
+    case "skills":
+      return readString(values.name);
   }
 }
 
@@ -652,6 +656,8 @@ function describeSectionItem(
     case "honors_awards":
       return joinSummaryParts(item.primary_text, item.secondary_text);
     case "projects":
+      return readString(item.primary_text);
+    case "skills":
       return readString(item.primary_text);
   }
 }

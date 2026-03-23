@@ -1407,14 +1407,13 @@ async function handleProfilePrepareRemoveSkill(
 
     runtime.logger.log("info", "mcp.profile.prepare_remove_skill.done", {
       profileName,
-      actionId: prepared.action.id,
+      preparedActionId: prepared.preparedActionId,
     });
 
     return toToolResult({
       run_id: runtime.runId,
       profile_name: profileName,
-      confirm_token: prepared.confirmToken,
-      preview: prepared.preview,
+      ...prepared,
     });
   } catch (error) {
     return toErrorResult(error);

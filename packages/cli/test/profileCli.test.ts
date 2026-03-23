@@ -319,7 +319,7 @@ describe("CLI profile commands", () => {
             customProfileUrl: "avery-automation"
           },
           about: "Building production LLM systems.",
-          skills: ["TypeScript", "Python"]
+          recommendations: ["TypeScript", "Python"]
         },
         null,
         2
@@ -358,9 +358,9 @@ describe("CLI profile commands", () => {
     ]);
     expect(output.unsupported_fields).toEqual([
       {
-        path: "skills",
-        reason: "Skills are not exposed by the current LinkedIn profile edit automation.",
-        issueNumber: 228
+        path: "recommendations",
+        reason: "Recommendations are not exposed by the current LinkedIn profile edit automation.",
+        issueNumber: 0
       }
     ]);
     expect(profileCliMocks.prepareUpdateIntro).toHaveBeenCalledWith(
@@ -401,7 +401,7 @@ describe("CLI profile commands", () => {
           intro: {
             headline: "Automation Engineer at Example Labs"
           },
-          skills: ["TypeScript"]
+          recommendations: ["TypeScript"]
         },
         null,
         2
@@ -420,7 +420,7 @@ describe("CLI profile commands", () => {
         specPath,
         "--yes"
       ])
-    ).rejects.toThrow("Profile seed spec includes unsupported fields: skills (#228)");
+    ).rejects.toThrow("Profile seed spec includes unsupported fields: recommendations (#0)");
 
     expect(profileCliMocks.prepareUpdateIntro).not.toHaveBeenCalled();
     expect(profileCliMocks.confirmByToken).not.toHaveBeenCalled();
