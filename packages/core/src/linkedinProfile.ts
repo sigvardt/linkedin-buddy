@@ -97,6 +97,7 @@ export const UPSERT_PROFILE_SECTION_ITEM_ACTION_TYPE =
 export const REMOVE_PROFILE_SECTION_ITEM_ACTION_TYPE =
   "profile.remove_section_item";
 export const UPLOAD_PROFILE_PHOTO_ACTION_TYPE = "profile.upload_photo";
+export const REMOVE_PROFILE_PHOTO_ACTION_TYPE = "profile.remove_photo";
 export const UPLOAD_PROFILE_BANNER_ACTION_TYPE = "profile.upload_banner";
 export const ADD_PROFILE_FEATURED_ACTION_TYPE = "profile.featured_add";
 export const REMOVE_PROFILE_FEATURED_ACTION_TYPE = "profile.featured_remove";
@@ -137,6 +138,11 @@ const PROFILE_RATE_LIMIT_CONFIGS = {
   },
   [UPLOAD_PROFILE_PHOTO_ACTION_TYPE]: {
     counterKey: "linkedin.profile.upload_photo",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 5
+  },
+  [REMOVE_PROFILE_PHOTO_ACTION_TYPE]: {
+    counterKey: "linkedin.profile.remove_photo",
     windowSizeMs: 24 * 60 * 60 * 1000,
     limit: 5
   },
@@ -350,6 +356,11 @@ export interface PrepareRemoveSectionItemInput {
 export interface PrepareUploadProfileMediaInput {
   profileName?: string;
   filePath: string;
+  operatorNote?: string;
+}
+
+export interface PrepareRemoveProfilePhotoInput {
+  profileName?: string;
   operatorNote?: string;
 }
 
@@ -6918,10 +6929,29 @@ async function executeUploadProfileMedia(
           );
 
           if (dialog) {
+            // Wait for the crop dialog to fully render
+            await page.waitForTimeout(2000);
             await clickSaveInDialog(page, dialog, runtime.selectorLocale);
           }
 
           await waitForNetworkIdleBestEffort(page);
+
+          let mediaUrl: string | undefined;
+          try {
+            if (kind === "photo") {
+              const img = page.locator(".pv-top-card-profile-picture__image, .profile-photo-edit__preview, .presence-entity__image, img[alt*='Profile photo']").first();
+              if (await img.isVisible()) {
+                mediaUrl = await img.getAttribute("src") ?? undefined;
+              }
+            } else if (kind === "banner") {
+              const img = page.locator(".profile-background-image__image, img.profile-background-image").first();
+              if (await img.isVisible()) {
+                mediaUrl = await img.getAttribute("src") ?? undefined;
+              }
+            }
+          } catch {
+            // Ignore scraping errors
+          }
 
           return {
             ok: true,
@@ -6932,7 +6962,132 @@ async function executeUploadProfileMedia(
                   : "profile_banner_uploaded",
               media_kind: kind,
               file_name: upload.file_name,
-              artifact_path: upload.relative_path
+              artifact_path: upload.relative_path,
+              media_url: mediaUrl
+            },
+            artifacts: []
+          };
+        }
+      });
+    }
+  );
+}
+
+async function openProfilePhotoForDelete(
+  page: Page,
+  selectorLocale: LinkedInSelectorLocale
+): Promise<Locator | null> {
+  const topCardRoot = await getTopCardRoot(page);
+  const openCandidates: LocatorCandidate[] = [
+    ...createActionCandidates(
+      topCardRoot,
+      getProfileMediaActionLabels("photo", selectorLocale),
+      "profile-photo"
+    ),
+    ...createActionCandidates(
+      topCardRoot,
+      getProfileMediaActionLabels("photo", selectorLocale),
+      "profile-photo-link",
+      "link"
+    ),
+    ...createCssLocatorCandidates(
+      topCardRoot,
+      PROFILE_MEDIA_STRUCTURAL_SELECTORS["photo"],
+      "profile-photo-structural"
+    ),
+    {
+      key: "profile-photo-generic",
+      locator: topCardRoot
+        .locator("button, a, [role='button']")
+        .filter({ hasText: buildTextRegex(getProfileMediaActionLabels("photo", selectorLocale)) })
+    }
+  ];
+
+  for (const candidate of openCandidates) {
+    if (!(await isLocatorVisible(candidate.locator))) {
+      continue;
+    }
+
+    await candidate.locator.first().click({ timeout: 5000 });
+    await page.waitForTimeout(1000);
+
+    const dialog = await getVisibleDialogOrNull(page);
+    if (dialog) {
+      return dialog;
+    }
+  }
+
+  throw new LinkedInBuddyError(
+    "TARGET_NOT_FOUND",
+    "Could not find the LinkedIn profile photo controls for removal."
+  );
+}
+
+async function executeRemoveProfilePhoto(
+  runtime: LinkedInProfileExecutorRuntime,
+  actionId: string,
+  target: Record<string, unknown>
+): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
+  const profileName = String(target.profile_name ?? "default");
+
+  return runtime.profileManager.runWithContext(
+    {
+      cdpUrl: runtime.cdpUrl,
+      profileName,
+      headless: true
+    },
+    async (context) => {
+      const page = await getOrCreatePage(context);
+      return executeConfirmActionWithArtifacts({
+        runtime,
+        context,
+        page,
+        actionId,
+        actionType: REMOVE_PROFILE_PHOTO_ACTION_TYPE,
+        profileName,
+        targetUrl: resolveProfileUrl("me"),
+        metadata: {
+          profile_name: profileName,
+          media_kind: "photo"
+        },
+        errorDetails: {
+          profile_name: profileName,
+          media_kind: "photo"
+        },
+        beforeExecute: createProfileRateLimitGuard(
+          runtime,
+          REMOVE_PROFILE_PHOTO_ACTION_TYPE,
+          actionId,
+          profileName,
+          { media_kind: "photo" }
+        ),
+        mapError: (error) =>
+          asLinkedInBuddyError(
+            error,
+            "UNKNOWN",
+            "Failed to execute LinkedIn profile photo removal."
+          ),
+        execute: async () => {
+          await navigateToOwnProfile(page);
+          const dialog = await openProfilePhotoForDelete(page, runtime.selectorLocale);
+          if (dialog) {
+            await clickDeleteInDialog(page, dialog, runtime.selectorLocale);
+            await page.waitForTimeout(1000);
+            
+            // On LinkedIn, a second confirmation dialog might appear
+            const confirmDialog = await getVisibleDialogOrNull(page);
+            if (confirmDialog) {
+               await clickDeleteInDialog(page, confirmDialog, runtime.selectorLocale);
+            }
+          }
+
+          await waitForNetworkIdleBestEffort(page);
+
+          return {
+            ok: true,
+            result: {
+              status: "profile_photo_removed",
+              media_kind: "photo"
             },
             artifacts: []
           };
@@ -7788,6 +7943,21 @@ export class UploadProfilePhotoActionExecutor
   }
 }
 
+export class RemoveProfilePhotoActionExecutor
+  implements ActionExecutor<LinkedInProfileExecutorRuntime>
+{
+  async execute(
+    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>
+  ): Promise<ActionExecutorResult> {
+    const { result, artifacts } = await executeRemoveProfilePhoto(
+      input.runtime,
+      input.action.id,
+      input.action.target
+    );
+    return { ok: true, result, artifacts };
+  }
+}
+
 export class UploadProfileBannerActionExecutor
   implements ActionExecutor<LinkedInProfileExecutorRuntime>
 {
@@ -7947,6 +8117,7 @@ export function createProfileActionExecutors(): Record<
     [REMOVE_PROFILE_SECTION_ITEM_ACTION_TYPE]:
       new RemoveProfileSectionItemActionExecutor(),
     [UPLOAD_PROFILE_PHOTO_ACTION_TYPE]: new UploadProfilePhotoActionExecutor(),
+    [REMOVE_PROFILE_PHOTO_ACTION_TYPE]: new RemoveProfilePhotoActionExecutor(),
     [UPLOAD_PROFILE_BANNER_ACTION_TYPE]: new UploadProfileBannerActionExecutor(),
     [ADD_PROFILE_FEATURED_ACTION_TYPE]: new AddProfileFeaturedItemActionExecutor(),
     [REMOVE_PROFILE_FEATURED_ACTION_TYPE]:
@@ -8294,6 +8465,29 @@ export class LinkedInProfileService {
       payload: {
         upload
       },
+      preview,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+  }
+
+  prepareRemovePhoto(
+    input: PrepareRemoveProfilePhotoInput
+  ): PreparedActionResult {
+    const profileName = input.profileName ?? "default";
+
+    const target = {
+      profile_name: profileName,
+      media_kind: "photo"
+    };
+    const preview = {
+      summary: "Remove LinkedIn profile photo",
+      target
+    };
+
+    return this.prepareRateLimitedAction({
+      actionType: REMOVE_PROFILE_PHOTO_ACTION_TYPE,
+      target,
+      payload: {},
       preview,
       ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
     });

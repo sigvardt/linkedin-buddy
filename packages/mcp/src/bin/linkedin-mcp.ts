@@ -107,6 +107,7 @@ import {
   LINKEDIN_PROFILE_PREPARE_REMOVE_SECTION_ITEM_TOOL,
   LINKEDIN_PROFILE_PREPARE_UPLOAD_BANNER_TOOL,
   LINKEDIN_PROFILE_PREPARE_UPLOAD_PHOTO_TOOL,
+  LINKEDIN_PROFILE_PREPARE_REMOVE_PHOTO_TOOL,
   LINKEDIN_PROFILE_PREPARE_UPDATE_INTRO_TOOL,
   LINKEDIN_PROFILE_PREPARE_UPDATE_PUBLIC_PROFILE_TOOL,
   LINKEDIN_PROFILE_PREPARE_UPDATE_SETTINGS_TOOL,
@@ -1110,6 +1111,39 @@ async function handleProfilePrepareUploadPhoto(
     });
 
     runtime.logger.log("info", "mcp.profile.prepare_upload_photo.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId,
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleProfilePrepareRemovePhoto(
+  args: ToolArgs,
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.profile.prepare_remove_photo.start", {
+      profileName,
+    });
+
+    const prepared = await runtime.profile.prepareRemovePhoto({
+      profileName,
+      ...(operatorNote ? { operatorNote } : {}),
+    });
+
+    runtime.logger.log("info", "mcp.profile.prepare_remove_photo.done", {
       profileName,
       preparedActionId: prepared.preparedActionId,
     });
@@ -4885,6 +4919,27 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
     },
   },
   {
+    name: LINKEDIN_PROFILE_PREPARE_REMOVE_PHOTO_TOOL,
+    description:
+      "Prepare a LinkedIn profile photo removal (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: [],
+      properties: withCdpSchemaProperties({
+        profileName: {
+          type: "string",
+          description:
+            "Persistent Playwright profile name. Defaults to default.",
+        },
+        operatorNote: {
+          type: "string",
+          description: "Optional note attached to the prepared action.",
+        },
+      }),
+    },
+  },
+  {
     name: LINKEDIN_PROFILE_PREPARE_UPLOAD_BANNER_TOOL,
     description:
       "Prepare a LinkedIn profile banner upload (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
@@ -7242,6 +7297,7 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   [LINKEDIN_PROFILE_PREPARE_REMOVE_SECTION_ITEM_TOOL]:
     handleProfilePrepareRemoveSectionItem,
   [LINKEDIN_PROFILE_PREPARE_UPLOAD_PHOTO_TOOL]: handleProfilePrepareUploadPhoto,
+  [LINKEDIN_PROFILE_PREPARE_REMOVE_PHOTO_TOOL]: handleProfilePrepareRemovePhoto,
   [LINKEDIN_PROFILE_PREPARE_UPLOAD_BANNER_TOOL]:
     handleProfilePrepareUploadBanner,
   [LINKEDIN_PROFILE_PREPARE_FEATURED_ADD_TOOL]: handleProfilePrepareFeaturedAdd,

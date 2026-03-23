@@ -39,6 +39,8 @@ export const LINKEDIN_PROFILE_PREPARE_REMOVE_SECTION_ITEM_TOOL =
   "linkedin.profile.prepare_remove_section_item";
 export const LINKEDIN_PROFILE_PREPARE_UPLOAD_PHOTO_TOOL =
   "linkedin.profile.prepare_upload_photo";
+export const LINKEDIN_PROFILE_PREPARE_REMOVE_PHOTO_TOOL =
+  "linkedin.profile.prepare_remove_photo";
 export const LINKEDIN_PROFILE_PREPARE_UPLOAD_BANNER_TOOL =
   "linkedin.profile.prepare_upload_banner";
 export const LINKEDIN_PROFILE_PREPARE_FEATURED_ADD_TOOL =
