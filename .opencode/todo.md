@@ -2,8 +2,8 @@
 
 ## M1: Analysis & Infrastructure
 ### T1.1: Identify Notification Types & Extracted Data | agent:Planner
-- [ ] S1.1.1: Document parsing logic for the 9 specified notification types | size:M
-- [ ] S1.1.2: Define updated `LinkedInNotification` interface with `extracted_data` | size:S
+- [x] S1.1.1: Document parsing logic for the 9 specified notification types | size:M
+- [x] S1.1.2: Define updated `LinkedInNotification` interface with `extracted_data` | size:S
 
 ## M2: Implementation
 ### T2.1: Implement Data Extraction (Rich Data) | agent:Worker | depends:T1.1
