@@ -3815,6 +3815,7 @@ async function handleArticlePrepareCreate(args: ToolArgs): Promise<ToolResult> {
     const profileName = readString(args, "profileName", "default");
     const title = readRequiredString(args, "title");
     const body = readRequiredString(args, "body");
+    const coverImageUrl = readString(args, "coverImageUrl", "");
     const operatorNote = readString(args, "operatorNote", "");
 
     runtime.logger.log("info", "mcp.article.prepare_create.start", {
@@ -3823,6 +3824,7 @@ async function handleArticlePrepareCreate(args: ToolArgs): Promise<ToolResult> {
     });
 
     const prepared = await runtime.articles.prepareCreate({
+      coverImageUrl: coverImageUrl || undefined,
       profileName,
       title,
       body,
@@ -3932,6 +3934,7 @@ async function handleNewsletterPreparePublishIssue(
     const newsletter = readRequiredString(args, "newsletter");
     const title = readRequiredString(args, "title");
     const body = readRequiredString(args, "body");
+    const coverImageUrl = readString(args, "coverImageUrl", "");
     const operatorNote = readString(args, "operatorNote", "");
 
     runtime.logger.log("info", "mcp.newsletter.prepare_publish_issue.start", {
@@ -3940,6 +3943,7 @@ async function handleNewsletterPreparePublishIssue(
     });
 
     const prepared = await runtime.newsletters.preparePublishIssue({
+      coverImageUrl: coverImageUrl || undefined,
       profileName,
       newsletter,
       title,

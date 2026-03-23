@@ -1,3 +1,4 @@
+import { fillRichText, insertCoverImage } from "./linkedinArticleEditorHelpers.js";
 import {
   errors as playwrightErrors,
   type BrowserContext,
@@ -109,6 +110,8 @@ export const NEWSLETTER_ISSUE_TITLE_MAX_LENGTH = 150;
 export const NEWSLETTER_ISSUE_BODY_MAX_LENGTH = 125_000;
 
 export interface PrepareCreateArticleInput {
+  coverImageUrl?: string;
+
   profileName?: string;
   title: string;
   body: string;
@@ -130,6 +133,8 @@ export interface PrepareCreateNewsletterInput {
 }
 
 export interface PreparePublishNewsletterIssueInput {
+  coverImageUrl?: string;
+
   profileName?: string;
   newsletter: string;
   title: string;
@@ -1392,6 +1397,7 @@ async function openPublishingEditor(
 }
 
 async function fillDraftTitleAndBody(
+  coverImageUrl: string | undefined,
   page: Page,
   selectorLocale: LinkedInSelectorLocale,
   title: string,
@@ -1412,7 +1418,11 @@ async function fillDraftTitleAndBody(
   );
 
   await fillEditable(titleLocator.locator, title);
-  await fillEditable(bodyLocator.locator, body);
+  if (coverImageUrl) {
+    await insertCoverImage(page, coverImageUrl);
+  }
+
+  await fillRichText(page, body);
 
   return {
     titleKey: titleLocator.key,
@@ -2411,6 +2421,8 @@ class CreateArticleActionExecutor
     const profileName = getProfileName(action.target);
     const title = getRequiredStringField(action.payload, "title", action.id, "payload");
     const body = getRequiredStringField(action.payload, "body", action.id, "payload");
+    const coverImageUrl = action.payload?.coverImageUrl as string | undefined;
+
     const tracePath = `linkedin/trace-article-confirm-${Date.now()}.zip`;
     const artifactPaths: string[] = [tracePath];
 
@@ -2455,6 +2467,7 @@ class CreateArticleActionExecutor
           );
           currentPage = editor.page;
           const fields = await fillDraftTitleAndBody(
+            coverImageUrl,
             currentPage,
             runtime.selectorLocale,
             title,
@@ -2821,6 +2834,8 @@ class PublishNewsletterIssueActionExecutor
     );
     const title = getRequiredStringField(action.payload, "title", action.id, "payload");
     const body = getRequiredStringField(action.payload, "body", action.id, "payload");
+    const coverImageUrl = action.payload?.coverImageUrl as string | undefined;
+
     const tracePath = `linkedin/trace-newsletter-issue-confirm-${Date.now()}.zip`;
     const artifactPaths: string[] = [tracePath];
 
@@ -2873,6 +2888,7 @@ class PublishNewsletterIssueActionExecutor
             artifactPaths
           );
           const fields = await fillDraftTitleAndBody(
+            coverImageUrl,
             currentPage,
             runtime.selectorLocale,
             title,
