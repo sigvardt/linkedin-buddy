@@ -1769,15 +1769,18 @@ async function handleNotificationsList(args: ToolArgs): Promise<ToolResult> {
   try {
     const profileName = readString(args, "profileName", "default");
     const limit = readPositiveNumber(args, "limit", 20);
+    const types = args.types as string[] | undefined;
 
     runtime.logger.log("info", "mcp.notifications.list.start", {
       profileName,
       limit,
+      types,
     });
 
     const notifications = await runtime.notifications.listNotifications({
       profileName,
       limit,
+      types,
     });
 
     runtime.logger.log("info", "mcp.notifications.list.done", {
@@ -6691,6 +6694,14 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
           type: "number",
           description:
             "Maximum number of notifications to return. Defaults to 20.",
+        },
+        types: {
+          type: "array",
+          items: {
+            type: "string",
+          },
+          description:
+            "Optional array of notification types or categories to filter by (e.g. ['mention', 'profile_views', 'job_alert']).",
         },
       }),
     },

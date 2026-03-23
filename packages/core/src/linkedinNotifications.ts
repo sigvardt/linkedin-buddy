@@ -30,11 +30,13 @@ export interface LinkedInNotification {
   timestamp: string;
   link: string;
   is_read: boolean;
+  extracted_data?: Record<string, unknown> | undefined;
 }
 
 export interface ListNotificationsInput {
   profileName?: string;
   limit?: number;
+  types?: string[];
 }
 
 export interface MarkNotificationReadInput {
@@ -155,6 +157,7 @@ interface NotificationSnapshot {
   link: string;
   is_read: boolean;
   card_index: number;
+  extracted_data?: Record<string, unknown>;
 }
 
 interface NotificationSnapshotCandidate {
@@ -165,6 +168,7 @@ interface NotificationSnapshotCandidate {
   link: string;
   is_read: boolean;
   card_index: number;
+  extracted_data?: Record<string, unknown>;
 }
 
 interface NotificationCardMatch {
@@ -289,9 +293,10 @@ function hashNotificationFingerprint(input: {
   // content stripping keep IDs stable across separate page loads.
   const normalizedLink =
     normalizeNotificationLink(input.link) || normalizeText(input.link);
-  const fingerprint = [normalizedLink, stripVolatileContent(input.message)].join(
-    "\u001f",
-  );
+  const fingerprint = [
+    normalizedLink,
+    stripVolatileContent(input.message),
+  ].join("\u001f");
   return `notif_${createHash("sha256").update(fingerprint).digest("hex").slice(0, 16)}`;
 }
 
@@ -587,6 +592,124 @@ async function extractNotificationSnapshots(
         return "";
       };
 
+      const extractStructuredData = (
+        message: string,
+      ): Record<string, unknown> | undefined => {
+        const data: Record<string, unknown> = {};
+        let matched = false;
+        const text = message.replace(/\s+/g, " ").trim();
+
+        const postAnalyticsMatch =
+          text.match(
+            /Your post (?:has|got|was seen by) ([\d,]+) (?:views|impressions|times)/i,
+          ) || text.match(/([\d,]+) people viewed your post/i);
+        if (postAnalyticsMatch) {
+          data.views = parseInt(
+            (postAnalyticsMatch[1] || "0").replace(/,/g, ""),
+            10,
+          );
+          matched = true;
+        }
+
+        const profileViewsMatch =
+          text.match(/([\d,]+) people viewed your profile/i) ||
+          text.match(/Your profile was viewed by ([\d,]+) people/i) ||
+          text.match(/You appeared in ([\d,]+) searches/i);
+        if (
+          profileViewsMatch &&
+          !text.match(/You appeared in ([\d,]+) searches/i)
+        ) {
+          data.profile_views = parseInt(
+            (profileViewsMatch[1] || "0").replace(/,/g, ""),
+            10,
+          );
+          matched = true;
+        }
+
+        const searchMatch = text.match(/You appeared in ([\d,]+) searches/i);
+        if (searchMatch) {
+          data.search_appearances = parseInt(
+            (searchMatch[1] || "0").replace(/,/g, ""),
+            10,
+          );
+          matched = true;
+        }
+
+        const mentionMatch = text.match(/^(.*?)\s+mentioned you/i);
+        if (mentionMatch) {
+          data.mentioned_by = (mentionMatch[1] || "").trim();
+          matched = true;
+        }
+
+        const connectionMatch =
+          text.match(/^(.*?)\s+sent you a connection request/i) ||
+          text.match(/^(.*?)\s+wants to connect/i) ||
+          text.match(/^(.*?)\s+accepted your connection/i);
+        if (connectionMatch) {
+          data.sender = (connectionMatch[1] || "").trim();
+          matched = true;
+        }
+
+        const newsletterMatch =
+          text.match(/([\d,]+)\s+people subscribed to/i) ||
+          text.match(/^(.*?)\s+subscribed to/i);
+        if (newsletterMatch) {
+          const num = parseInt(
+            (newsletterMatch[1] || "").replace(/,/g, ""),
+            10,
+          );
+          if (!isNaN(num)) {
+            data.subscriber_count = num;
+          } else {
+            data.subscriber = (newsletterMatch[1] || "").trim();
+          }
+          matched = true;
+        }
+
+        const jobAlertMatch =
+          text.match(/([\d,]+)\s+new jobs? for "(.*?)"/i) ||
+          text.match(/new jobs? for "(.*?)"/i) ||
+          text.match(/([\d,]+)\s+new jobs? for (.*)/i);
+        if (jobAlertMatch) {
+          if (jobAlertMatch.length === 3) {
+            data.job_count = parseInt(
+              (jobAlertMatch[1] || "0").replace(/,/g, ""),
+              10,
+            );
+            data.job_title = (jobAlertMatch[2] || "").trim();
+          } else if (jobAlertMatch[1]) {
+            if (!isNaN(parseInt(jobAlertMatch[1], 10))) {
+              data.job_count = parseInt(
+                (jobAlertMatch[1] || "0").replace(/,/g, ""),
+                10,
+              );
+              data.job_title = jobAlertMatch[2]
+                ? (jobAlertMatch[2] || "").trim()
+                : "";
+            } else {
+              data.job_title = (jobAlertMatch[1] || "").trim();
+            }
+          }
+          matched = true;
+        }
+
+        const companyPostMatch =
+          text.match(/^(.*?)\s+posted:/i) ||
+          text.match(/^(.*?)\s+shared a post:/i);
+        if (companyPostMatch) {
+          data.company_name = (companyPostMatch[1] || "").trim();
+          matched = true;
+        }
+
+        const trendingMatch = text.match(/^Trending:\s+(.*)/i);
+        if (trendingMatch) {
+          data.topic = (trendingMatch[1] || "").trim();
+          matched = true;
+        }
+
+        return matched ? data : undefined;
+      };
+
       const readClassName = (node: Element | null | undefined): string => {
         if (!node) {
           return "";
@@ -766,6 +889,9 @@ async function extractNotificationSnapshots(
           link,
           is_read: inferReadState(card),
           card_index: i,
+          ...(extractStructuredData(message)
+            ? { extracted_data: extractStructuredData(message) as Record<string, unknown> }
+            : {}),
         });
 
         if (notifications.length >= maxNotifications) {
@@ -800,6 +926,9 @@ async function extractNotificationSnapshots(
         link,
         is_read: Boolean(candidate.is_read),
         card_index: Math.max(0, Math.floor(candidate.card_index)),
+        ...(candidate.extracted_data
+          ? { extracted_data: candidate.extracted_data as Record<string, unknown> }
+          : {}),
       } satisfies NotificationSnapshot;
     })
     .filter(
@@ -815,16 +944,38 @@ async function extractNotificationSnapshots(
 async function loadNotificationSnapshots(
   page: Page,
   limit: number,
+  types?: string[]
 ): Promise<NotificationSnapshot[]> {
-  let notifications = await extractNotificationSnapshots(page, limit);
+  const isMatch = (n: NotificationSnapshot) => {
+    if (!types || types.length === 0) return true;
+    return types.includes(n.type) || (n.extracted_data && types.includes(n.extracted_data.notification_category));
+  };
 
-  for (let i = 0; i < 6 && notifications.length < limit; i += 1) {
-    await scrollLinkedInPageToBottom(page);
-    await page.waitForTimeout(800);
-    notifications = await extractNotificationSnapshots(page, limit);
+  const maxScrolls = 20;
+  let scrollCount = 0;
+  let previousCount = 0;
+  let allNotifications: NotificationSnapshot[] = [];
+  let matchedCount = 0;
+
+  while (matchedCount < limit && scrollCount < maxScrolls) {
+    // Extract more to ensure we can find filtered items
+    const extractLimit = Math.max(limit, 200);
+    allNotifications = await extractNotificationSnapshots(page, extractLimit);
+    matchedCount = allNotifications.filter(isMatch).length;
+
+    if (allNotifications.length === previousCount) {
+      break; // No new items loaded
+    }
+    previousCount = allNotifications.length;
+
+    if (matchedCount < limit) {
+      await scrollLinkedInPageToBottom(page);
+      await page.waitForTimeout(800);
+      scrollCount += 1;
+    }
   }
 
-  return notifications.slice(0, Math.max(1, limit));
+  return allNotifications.filter(isMatch).slice(0, Math.max(1, limit));
 }
 
 async function findNotificationCard(
@@ -841,12 +992,16 @@ async function findNotificationCard(
   function toMatch(snapshot: NotificationSnapshot): NotificationCardMatch {
     return {
       snapshot,
-      locator: page.locator(NOTIFICATION_CARD_SELECTOR).nth(snapshot.card_index),
+      locator: page
+        .locator(NOTIFICATION_CARD_SELECTOR)
+        .nth(snapshot.card_index),
     };
   }
 
   // Strategy 1: Exact ID match (native LinkedIn IDs or current-algorithm hashes).
-  const exactMatch = snapshots.find((candidate) => candidate.id === normalizedId);
+  const exactMatch = snapshots.find(
+    (candidate) => candidate.id === normalizedId,
+  );
   if (exactMatch) {
     return toMatch(exactMatch);
   }
@@ -1178,7 +1333,9 @@ async function readNotificationPreferencePageState(
           const href = normalize(anchor.href || anchor.getAttribute("href"));
           const text = normalize(anchor.textContent);
           const match =
-            /^(.+?)\s+((?:On|Off|Push|In-app|Email)(?:[\s,]+(?:and\s+)?(?:On|Off|Push|In-app|Email))*)$/iu.exec(text);
+            /^(.+?)\s+((?:On|Off|Push|In-app|Email)(?:[\s,]+(?:and\s+)?(?:On|Off|Push|In-app|Email))*)$/iu.exec(
+              text,
+            );
           return {
             title: normalize(match?.[1] ?? text),
             slug: href.replace(/\/+$/u, "").split("/").pop() ?? "",
@@ -1584,9 +1741,10 @@ export class LinkedInNotificationsService {
         async (context) => {
           const page = await getOrCreatePage(context);
           await openNotificationsPage(page);
-          const notifications = await loadNotificationSnapshots(page, limit);
+          const notifications = await loadNotificationSnapshots(page, limit, input.types);
+
           return notifications.map((notification) => {
-            return {
+            const mapped: Record<string, unknown> = {
               id: notification.id,
               type: notification.type,
               message: notification.message,
@@ -1594,6 +1752,10 @@ export class LinkedInNotificationsService {
               link: notification.link,
               is_read: notification.is_read,
             };
+            if (notification.extracted_data) {
+              mapped.extracted_data = notification.extracted_data;
+            }
+            return mapped as LinkedInNotification;
           });
         },
       );
