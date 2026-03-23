@@ -76,7 +76,7 @@ describe("profile seed planner", () => {
           issueYear: "2024",
         },
       ],
-      skills: ["TypeScript", "Python"],
+      recommendations: ["TypeScript", "Python"],
     });
 
     expect(spec.intro).toMatchObject({
@@ -89,10 +89,10 @@ describe("profile seed planner", () => {
     expect(spec.sections.certifications).toHaveLength(1);
     expect(spec.unsupportedFields).toEqual([
       {
-        path: "skills",
+        path: "recommendations",
         reason:
-          "Skills are not exposed by the current LinkedIn profile edit automation.",
-        issueNumber: 228,
+          "Recommendations are not exposed by the current LinkedIn profile edit automation.",
+        issueNumber: 0,
       },
     ]);
   });

@@ -103,6 +103,8 @@ import {
   LINKEDIN_PROFILE_PREPARE_FEATURED_REMOVE_TOOL,
   LINKEDIN_PROFILE_PREPARE_FEATURED_REORDER_TOOL,
   LINKEDIN_PROFILE_PREPARE_ADD_SKILL_TOOL,
+  LINKEDIN_PROFILE_PREPARE_REMOVE_SKILL_TOOL,
+  LINKEDIN_PROFILE_READ_SKILLS_TOOL,
   LINKEDIN_PROFILE_PREPARE_REORDER_SKILLS_TOOL,
   LINKEDIN_PROFILE_PREPARE_ENDORSE_SKILL_TOOL,
   LINKEDIN_PROFILE_PREPARE_REQUEST_RECOMMENDATION_TOOL,
@@ -1380,6 +1382,82 @@ async function handleProfilePrepareAddSkill(
       profile_name: profileName,
       ...prepared,
     });
+  } finally {
+    runtime.close();
+  }
+}
+
+
+async function handleProfilePrepareRemoveSkill(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const skillName = readRequiredString(args, "skillName");
+    const operatorNote = readString(args, "operatorNote", "");
+
+    runtime.logger.log("info", "mcp.profile.prepare_remove_skill.start", {
+      profileName,
+      skillName,
+    });
+
+    const prepared = runtime.profile.prepareRemoveSkill({
+      profileName,
+      skillName,
+      ...(operatorNote ? { operatorNote } : {}),
+    });
+
+    runtime.logger.log("info", "mcp.profile.prepare_remove_skill.done", {
+      profileName,
+      preparedActionId: prepared.preparedActionId,
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...prepared,
+    });
+  } catch (error) {
+    return toErrorResult(error);
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleProfileReadSkills(
+  args: ToolArgs
+): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const target = readString(args, "target", "me");
+
+    runtime.logger.log("info", "mcp.profile.read_skills.start", {
+      profileName,
+      target,
+    });
+
+    const skills = await runtime.profile.readSkills({
+      profileName,
+      target,
+    });
+
+    runtime.logger.log("info", "mcp.profile.read_skills.done", {
+      profileName,
+      target,
+      count: skills.length,
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      skills,
+    });
+  } catch (error) {
+    return toErrorResult(error);
   } finally {
     runtime.close();
   }
@@ -5356,6 +5434,50 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
     },
   },
   {
+    name: LINKEDIN_PROFILE_PREPARE_REMOVE_SKILL_TOOL,
+    description:
+      "Prepare to remove one skill from the logged-in member's LinkedIn profile (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["skillName"],
+      properties: withCdpSchemaProperties({
+        profileName: {
+          type: "string",
+          description: "Persistent Playwright profile name. Defaults to default.",
+        },
+        skillName: {
+          type: "string",
+          description: "Skill name to remove from the profile.",
+        },
+        operatorNote: {
+          type: "string",
+          description: "Optional note attached to the prepared action.",
+        },
+      }),
+    },
+  },
+  {
+    name: LINKEDIN_PROFILE_READ_SKILLS_TOOL,
+    description:
+      "Read all skills from a LinkedIn profile.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: withCdpSchemaProperties({
+        profileName: {
+          type: "string",
+          description: "Persistent Playwright profile name. Defaults to default.",
+        },
+        target: {
+          type: "string",
+          description:
+            "Target profile username or URL to read skills from. Defaults to 'me' (the authenticated member).",
+        },
+      }),
+    },
+  },
+  {
     name: LINKEDIN_PROFILE_PREPARE_REORDER_SKILLS_TOOL,
     description:
       "Prepare to reorder Skills on the logged-in member's LinkedIn profile (two-phase: returns confirm token). Use linkedin.actions.confirm to execute.",
@@ -7695,6 +7817,9 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   [LINKEDIN_PROFILE_PREPARE_FEATURED_REORDER_TOOL]:
     handleProfilePrepareFeaturedReorder,
   [LINKEDIN_PROFILE_PREPARE_ADD_SKILL_TOOL]: handleProfilePrepareAddSkill,
+  [LINKEDIN_PROFILE_PREPARE_REMOVE_SKILL_TOOL]:
+    handleProfilePrepareRemoveSkill,
+  [LINKEDIN_PROFILE_READ_SKILLS_TOOL]: handleProfileReadSkills,
   [LINKEDIN_PROFILE_PREPARE_REORDER_SKILLS_TOOL]:
     handleProfilePrepareReorderSkills,
   [LINKEDIN_PROFILE_PREPARE_ENDORSE_SKILL_TOOL]:

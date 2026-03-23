@@ -97,6 +97,10 @@ export interface LinkedInHonorAward {
   description: string;
 }
 
+export interface LinkedInSkill {
+  name: string;
+}
+
 export interface LinkedInProfile {
   profile_url: string;
   vanity_name: string | null;
@@ -112,6 +116,7 @@ export interface LinkedInProfile {
   projects: LinkedInProject[];
   volunteer_experience: LinkedInVolunteerExperience[];
   honors_awards: LinkedInHonorAward[];
+  skills: LinkedInSkill[];
 }
 
 export interface ViewProfileInput {
@@ -142,6 +147,7 @@ export const ADD_PROFILE_FEATURED_ACTION_TYPE = "profile.featured_add";
 export const REMOVE_PROFILE_FEATURED_ACTION_TYPE = "profile.featured_remove";
 export const REORDER_PROFILE_FEATURED_ACTION_TYPE = "profile.featured_reorder";
 export const ADD_PROFILE_SKILL_ACTION_TYPE = "profile.skill_add";
+export const REMOVE_PROFILE_SKILL_ACTION_TYPE = "profile.skill_remove";
 export const REORDER_PROFILE_SKILLS_ACTION_TYPE = "profile.skills_reorder";
 export const ENDORSE_PROFILE_SKILL_ACTION_TYPE = "profile.skill_endorse";
 export const REQUEST_PROFILE_RECOMMENDATION_ACTION_TYPE =
@@ -205,6 +211,11 @@ const PROFILE_RATE_LIMIT_CONFIGS = {
     windowSizeMs: 24 * 60 * 60 * 1000,
     limit: 10
   },
+  [REMOVE_PROFILE_SKILL_ACTION_TYPE]: {
+    counterKey: "linkedin.profile.skill_remove",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 10
+  },
   [REORDER_PROFILE_SKILLS_ACTION_TYPE]: {
     counterKey: "linkedin.profile.skills_reorder",
     windowSizeMs: 24 * 60 * 60 * 1000,
@@ -235,7 +246,8 @@ export const LINKEDIN_PROFILE_SECTION_TYPES = [
   "languages",
   "projects",
   "volunteer_experience",
-  "honors_awards"
+  "honors_awards",
+  "skills"
 ] as const;
 
 export const LINKEDIN_PROFILE_FEATURED_ITEM_KINDS = [
@@ -417,6 +429,12 @@ export interface PrepareFeaturedReorderInput {
 }
 
 export interface PrepareAddSkillInput {
+  profileName?: string;
+  skillName: string;
+  operatorNote?: string;
+}
+
+export interface PrepareRemoveSkillInput {
   profileName?: string;
   skillName: string;
   operatorNote?: string;
@@ -638,7 +656,8 @@ const PROFILE_SECTION_EDIT_URL_SLUGS: Readonly<
   languages: ["language"],
   projects: ["project"],
   volunteer_experience: ["volunteer", "volunteerExperience", "volunteer-experience"],
-  honors_awards: ["honor", "honorsAward", "honors-award"]
+  honors_awards: ["honor", "honorsAward", "honors-award"],
+  skills: ["skill"]
 };
 
 /**
@@ -916,6 +935,10 @@ const PROFILE_SECTION_LABELS: Record<
   honors_awards: {
     en: ["Honors & awards", "Honours & awards", "Awards"],
     da: ["Udmærkelser og priser", "Priser"]
+  },
+  skills: {
+    en: ["Skills"],
+    da: ["Kompetencer", "Færdigheder"]
   }
 };
 
@@ -1256,6 +1279,13 @@ const PROFILE_SECTION_FIELD_DEFINITIONS: Record<
       key: "description",
       aliases: ["description", "Description", "Beskrivelse"],
       control: "textarea"
+    }
+  ],
+  skills: [
+    {
+      key: "name",
+      aliases: ["name", "Name", "Navn"],
+      control: "text"
     }
   ]
 };
@@ -2166,7 +2196,8 @@ async function extractProfileData(
       languages: [],
       projects: [],
       volunteer_experience: [],
-      honors_awards: []
+      honors_awards: [],
+      skills: []
     };
 
     const pickText = (
@@ -2661,6 +2692,17 @@ async function extractProfileData(
         })
         .filter((item) => item.title || item.issuer || item.date || item.description);
 
+      const skillsSection = findSectionRoot("skills", sectionLabels.skills);
+      const skills = collectSectionItems(skillsSection)
+        .map((item) => {
+          const name = pickText(
+            [".t-bold span[aria-hidden='true']", ".t-bold", "[data-field='skill']", "[data-field='name']"],
+            item
+          );
+          return { name };
+        })
+        .filter((item) => item.name);
+
       return {
         profile_url: globalThis.window.location.href,
         vanity_name: vanityName,
@@ -2675,7 +2717,8 @@ async function extractProfileData(
         languages,
         projects,
         volunteer_experience,
-        honors_awards
+        honors_awards,
+        skills
       };
     } catch {
       return emptyProfile;
@@ -2691,7 +2734,8 @@ async function extractProfileData(
       "volunteer_experience",
       selectorLocale
     ),
-    honors_awards: getLinkedInSelectorPhrases("honors_awards", selectorLocale)
+    honors_awards: getLinkedInSelectorPhrases("honors_awards", selectorLocale),
+    skills: getSkillActionLabels("section", selectorLocale)
   });
 
   return {
@@ -2751,6 +2795,9 @@ async function extractProfileData(
       issuer: normalizeText(item.issuer),
       date: normalizeText(item.date),
       description: normalizeText(item.description)
+    })),
+    skills: extracted.skills.map((item) => ({
+      name: normalizeText(item.name)
     }))
   };
 }
@@ -6926,6 +6973,136 @@ async function addSkill(
   await clickSaveInProfileEditorSurface(page, surface, selectorLocale);
 }
 
+
+async function removeSkill(
+  page: Page,
+  selectorLocale: LinkedInSelectorLocale,
+  skillName: string
+): Promise<void> {
+  const surface = await openSkillsEditSurface(page, selectorLocale);
+  const dialog = surface.root;
+
+  const locatedRow = await findMatchingSkillRow(dialog, skillName);
+  if (!locatedRow) {
+    throw new LinkedInBuddyError(
+      "TARGET_NOT_FOUND",
+      "Could not find the requested skill to remove in the edit dialog.",
+      {
+        skill_name: skillName
+      }
+    );
+  }
+
+  const deleteLabels = getUiActionLabels("delete", selectorLocale);
+  const deleteCandidates = createActionCandidates(
+    locatedRow.row,
+    deleteLabels,
+    "skill-remove"
+  );
+  
+  const resolvedDelete = await findFirstVisibleLocator(deleteCandidates);
+  if (resolvedDelete) {
+    await resolvedDelete.locator.first().click();
+  } else {
+    const editLabels = getUiActionLabels("edit", selectorLocale);
+    const editCandidates = createActionCandidates(
+      locatedRow.row,
+      editLabels,
+      "skill-edit-item"
+    );
+    const resolvedEdit = await findFirstVisibleLocator(editCandidates);
+    if (!resolvedEdit) {
+      throw new LinkedInBuddyError(
+        "TARGET_NOT_FOUND",
+        "Could not find a delete or edit control for the requested skill.",
+        { skill_name: skillName }
+      );
+    }
+    
+    await resolvedEdit.locator.first().click();
+    await page.waitForTimeout(1000);
+    await waitForNetworkIdleBestEffort(page);
+    
+    const editDialog = (await getVisibleDialogOrNull(page)) ?? page.locator("main");
+    
+    const innerDeleteCandidates = createActionCandidates(
+      editDialog,
+      deleteLabels,
+      "skill-inner-remove"
+    );
+    const innerResolvedDelete = await findFirstVisibleLocator(innerDeleteCandidates);
+    if (!innerResolvedDelete) {
+      throw new LinkedInBuddyError(
+        "TARGET_NOT_FOUND",
+        "Could not find the delete button in the edit skill dialog.",
+        { skill_name: skillName }
+      );
+    }
+    
+    await innerResolvedDelete.locator.first().click();
+  }
+  
+  await page.waitForTimeout(1000);
+  await waitForNetworkIdleBestEffort(page);
+  const activeDialog = await getVisibleDialogOrNull(page);
+  
+  if (activeDialog) {
+    const confirmCandidates = createActionCandidates(
+      activeDialog,
+      [...deleteLabels, ...getUiActionLabels("save", selectorLocale)],
+      "skill-remove-confirm"
+    );
+    const confirmResolved = await findFirstVisibleLocator(confirmCandidates);
+    if (confirmResolved) {
+      await confirmResolved.locator.first().click();
+      await page.waitForTimeout(1000);
+      await waitForNetworkIdleBestEffort(page);
+    }
+  }
+  
+  const mainSurfaceStillOpen = await surface.root.isVisible().catch(() => false);
+  if (mainSurfaceStillOpen) {
+    try {
+      await clickSaveInProfileEditorSurface(page, surface, selectorLocale);
+    } catch {
+      await closeProfileEditorSurface(page, surface, selectorLocale);
+    }
+  }
+}
+
+async function readProfileSkills(
+  page: Page,
+  selectorLocale: LinkedInSelectorLocale
+): Promise<string[]> {
+  const skillsRoot = await findSkillsSectionRoot(page, selectorLocale);
+  if (!skillsRoot) {
+    return [];
+  }
+
+  const expandedSurface = await maybeOpenSkillsListSurface(page, skillsRoot, selectorLocale);
+  const rootToExtract = expandedSurface ?? skillsRoot;
+
+  const rows = getCollectionItemLocator(rootToExtract);
+  const rowCount = await rows.count();
+  const skills: string[] = [];
+
+  for (let index = 0; index < rowCount; index += 1) {
+    const row = rows.nth(index);
+    const candidateSkillName = await readSkillRowName(row);
+    if (candidateSkillName) {
+      skills.push(candidateSkillName);
+    }
+  }
+
+  if (expandedSurface && expandedSurface !== skillsRoot) {
+    await page.keyboard.press("Escape").catch(() => undefined);
+    await waitForNetworkIdleBestEffort(page);
+  }
+
+  return skills;
+}
+
+
 async function openSkillsEditSurface(
   page: Page,
   selectorLocale: LinkedInSelectorLocale
@@ -7388,6 +7565,79 @@ async function executeAddProfileSkill(
             ok: true,
             result: {
               status: "profile_skill_added",
+              skill_name: skillName
+            },
+            artifacts: []
+          };
+        }
+      });
+    }
+  );
+}
+
+
+async function executeRemoveProfileSkill(
+  runtime: LinkedInProfileExecutorRuntime,
+  actionId: string,
+  target: Record<string, unknown>,
+  payload: Record<string, unknown>
+): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
+  const profileName = String(target.profile_name ?? "default");
+  const skillName = normalizeSkillName(
+    typeof payload.skill_name === "string" ? payload.skill_name : undefined
+  );
+
+  return runtime.profileManager.runWithContext(
+    {
+      cdpUrl: runtime.cdpUrl,
+      profileName,
+      headless: true
+    },
+    async (context) => {
+      const page = await getOrCreatePage(context);
+      return executeConfirmActionWithArtifacts({
+        runtime,
+        context,
+        page,
+        actionId,
+        dismissOverlays: {
+          selectorLocale: runtime.selectorLocale,
+          logger: runtime.logger
+        },
+        actionType: REMOVE_PROFILE_SKILL_ACTION_TYPE,
+        profileName,
+        targetUrl: resolveProfileUrl("me"),
+        metadata: {
+          profile_name: profileName,
+          skill_name: skillName
+        },
+        errorDetails: {
+          profile_name: profileName,
+          skill_name: skillName
+        },
+        beforeExecute: createProfileRateLimitGuard(
+          runtime,
+          REMOVE_PROFILE_SKILL_ACTION_TYPE,
+          actionId,
+          profileName,
+          {
+            skill_name: skillName
+          }
+        ),
+        mapError: (error) =>
+          asLinkedInBuddyError(
+            error,
+            "UNKNOWN",
+            `Failed to remove the LinkedIn skill "${skillName}".`
+          ),
+        execute: async () => {
+          await navigateToOwnProfile(page, { dismissOverlays: { selectorLocale: runtime.selectorLocale, logger: runtime.logger } });
+          await removeSkill(page, runtime.selectorLocale, skillName);
+
+          return {
+            ok: true,
+            result: {
+              status: "profile_skill_removed",
               skill_name: skillName
             },
             artifacts: []
@@ -8819,6 +9069,23 @@ export class AddProfileSkillActionExecutor
   }
 }
 
+
+export class RemoveProfileSkillActionExecutor
+  implements ActionExecutor<LinkedInProfileExecutorRuntime>
+{
+  async execute(
+    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>
+  ): Promise<ActionExecutorResult> {
+    const { result, artifacts } = await executeRemoveProfileSkill(
+      input.runtime,
+      input.action.id,
+      input.action.target,
+      input.action.payload
+    );
+    return { ok: true, result, artifacts };
+  }
+}
+
 export class ReorderProfileSkillsActionExecutor
   implements ActionExecutor<LinkedInProfileExecutorRuntime>
 {
@@ -8904,6 +9171,7 @@ export function createProfileActionExecutors(): Record<
     [REORDER_PROFILE_FEATURED_ACTION_TYPE]:
       new ReorderProfileFeaturedItemsActionExecutor(),
     [ADD_PROFILE_SKILL_ACTION_TYPE]: new AddProfileSkillActionExecutor(),
+    [REMOVE_PROFILE_SKILL_ACTION_TYPE]: new RemoveProfileSkillActionExecutor(),
     [REORDER_PROFILE_SKILLS_ACTION_TYPE]:
       new ReorderProfileSkillsActionExecutor(),
     [ENDORSE_PROFILE_SKILL_ACTION_TYPE]: new EndorseProfileSkillActionExecutor(),
@@ -9423,6 +9691,57 @@ export class LinkedInProfileService {
       },
       preview,
       ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+  }
+
+
+  async readSkills(input: ViewProfileInput): Promise<string[]> {
+    const profileName = input.profileName ?? "default";
+    const targetUrl = resolveProfileUrl(input.target);
+
+    await this.runtime.auth.ensureAuthenticated({
+      profileName,
+      cdpUrl: this.runtime.cdpUrl
+    });
+
+    return this.runtime.profileManager.runWithContext(
+      {
+        cdpUrl: this.runtime.cdpUrl,
+        profileName,
+        headless: true
+      },
+      async (context) => {
+        const page = await getOrCreatePage(context);
+        await page.goto(targetUrl, { waitUntil: "domcontentloaded" });
+        await waitForNetworkIdleBestEffort(page);
+        await waitForProfilePageReady(page);
+
+        return readProfileSkills(page, this.runtime.selectorLocale);
+      }
+    );
+  }
+
+
+  prepareRemoveSkill(input: PrepareRemoveSkillInput): PreparedActionResult {
+    const target = {
+      profile_name: input.profileName ?? "default"
+    };
+    const skillName = normalizeSkillName(input.skillName);
+
+    const preview = {
+      summary: `Remove "${skillName}" from LinkedIn profile skills`,
+      target,
+      skill_name: skillName
+    };
+
+    return this.prepareRateLimitedAction({
+      actionType: REMOVE_PROFILE_SKILL_ACTION_TYPE,
+      target,
+      payload: {
+        skill_name: skillName
+      },
+      preview,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote as string } : {})
     });
   }
 
