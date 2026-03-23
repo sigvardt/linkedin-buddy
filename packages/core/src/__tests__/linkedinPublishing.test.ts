@@ -14,6 +14,7 @@ import {
   NEWSLETTER_TITLE_MAX_LENGTH,
   PUBLISH_ARTICLE_ACTION_TYPE,
   PUBLISH_NEWSLETTER_ISSUE_ACTION_TYPE,
+  SEND_NEWSLETTER_ACTION_TYPE,
   createPublishingActionExecutors,
 } from "../linkedinPublishing.js";
 import { createBlockedRateLimiterStub } from "./rateLimiterTestUtils.js";
@@ -82,6 +83,7 @@ describe("createPublishingActionExecutors", () => {
       CREATE_NEWSLETTER_ACTION_TYPE,
       UPDATE_NEWSLETTER_ACTION_TYPE,
       PUBLISH_NEWSLETTER_ISSUE_ACTION_TYPE,
+      SEND_NEWSLETTER_ACTION_TYPE,
     ]);
     expect(typeof executors[CREATE_ARTICLE_ACTION_TYPE]?.execute).toBe(
       "function",

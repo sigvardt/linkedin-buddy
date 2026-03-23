@@ -141,6 +141,7 @@ import {
   LINKEDIN_ARTICLE_PREPARE_PUBLISH_TOOL,
   LINKEDIN_NEWSLETTER_LIST_TOOL,
   LINKEDIN_NEWSLETTER_LIST_EDITIONS_TOOL,
+  LINKEDIN_NEWSLETTER_PREPARE_SEND_TOOL,
   LINKEDIN_NEWSLETTER_PREPARE_UPDATE_TOOL,
   LINKEDIN_NEWSLETTER_PREPARE_CREATE_TOOL,
   LINKEDIN_NEWSLETTER_PREPARE_PUBLISH_ISSUE_TOOL,
@@ -3929,6 +3930,38 @@ async function handleNewsletterPrepareCreate(
 
 
 
+async function handleNewsletterPrepareSend(args: ToolArgs): Promise<ToolResult> {
+  return withPublishingRuntime(async (runtime) => {
+    const newsletter = readRequiredString(args, "newsletter");
+    const edition = readRequiredString(args, "edition");
+    const recipients = readOptionalString(args, "recipients");
+    
+    runtime.logger.log("info", "mcp.newsletter.prepare_send.start", {
+      newsletter, edition, recipients
+    });
+
+    const prepared = await runtime.newsletters.prepareSend({
+      profileName: readOptionalString(args, "profileName"),
+      newsletter,
+      edition,
+      recipients: recipients as any
+    });
+
+    runtime.logger.log("info", "mcp.newsletter.prepare_send.done", {
+      newsletter, edition
+    });
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(prepared, null, 2)
+        }
+      ]
+    };
+  });
+}
+
 async function handleNewsletterListEditions(args: ToolArgs): Promise<ToolResult> {
   return withPublishingRuntime(async (runtime) => {
     runtime.logger.log("info", "mcp.newsletter.list_editions.start", {
@@ -7538,6 +7571,33 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
   },
 
   {
+    name: LINKEDIN_NEWSLETTER_PREPARE_SEND_TOOL,
+    description: "Prepare to send/share a specific LinkedIn newsletter edition (two-phase: returns confirm token). Use linkedin.actions.confirm to send it.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["newsletter", "edition"],
+      properties: {
+        profileName: {
+          type: "string",
+          description: "Optional profile to use. Defaults to the primary authenticated profile."
+        },
+        newsletter: {
+          type: "string",
+          description: "Newsletter title."
+        },
+        edition: {
+          type: "string",
+          description: "Edition title to send/share."
+        },
+        recipients: {
+          type: "string",
+          description: "Optional recipients. 'all' or specific segment."
+        }
+      }
+    }
+  },
+  {
     name: LINKEDIN_NEWSLETTER_LIST_EDITIONS_TOOL,
     description: "List newsletter editions with performance statistics.",
     inputSchema: {
@@ -7681,6 +7741,7 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
     handleNewsletterPreparePublishIssue,
   [LINKEDIN_NEWSLETTER_LIST_TOOL]: handleNewsletterList,
   [LINKEDIN_NEWSLETTER_LIST_EDITIONS_TOOL]: handleNewsletterListEditions,
+  [LINKEDIN_NEWSLETTER_PREPARE_SEND_TOOL]: handleNewsletterPrepareSend,
   [LINKEDIN_NOTIFICATIONS_LIST_TOOL]: handleNotificationsList,
   [LINKEDIN_NOTIFICATIONS_MARK_READ_TOOL]: handleNotificationsMarkRead,
   [LINKEDIN_NOTIFICATIONS_DISMISS_TOOL]: handleNotificationsDismiss,

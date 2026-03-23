@@ -123,6 +123,7 @@ export const LINKEDIN_NEWSLETTER_PREPARE_PUBLISH_ISSUE_TOOL =
   "linkedin.newsletter.prepare_publish_issue";
 export const LINKEDIN_NEWSLETTER_LIST_TOOL = "linkedin.newsletter.list";
 export const LINKEDIN_NEWSLETTER_LIST_EDITIONS_TOOL = "linkedin.newsletter.list_editions";
+export const LINKEDIN_NEWSLETTER_PREPARE_SEND_TOOL = "linkedin.newsletter.prepare_send";
 export const LINKEDIN_NEWSLETTER_PREPARE_UPDATE_TOOL = "linkedin.newsletter.prepare_update";
 export const LINKEDIN_NOTIFICATIONS_LIST_TOOL = "linkedin.notifications.list";
 export const LINKEDIN_NOTIFICATIONS_MARK_READ_TOOL =
