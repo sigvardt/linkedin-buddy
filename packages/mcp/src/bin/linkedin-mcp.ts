@@ -7536,6 +7536,30 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
       }),
     },
   },
+
+  {
+    name: LINKEDIN_NEWSLETTER_LIST_EDITIONS_TOOL,
+    description: "List newsletter editions with performance statistics.",
+    inputSchema: {
+      type: "object",
+      required: ["newsletter"],
+      properties: {
+        profileName: {
+          type: "string",
+          description: "Optional profile to use."
+        },
+        newsletter: {
+          type: "string",
+          description: "Newsletter title to list editions for."
+        },
+        includeStats: {
+          type: "boolean",
+          description: "Include open/click stats (takes longer)."
+        }
+      },
+      additionalProperties: false
+    }
+  },
 ];
 
 const TOOL_DEFINITION_BY_NAME = new Map(
