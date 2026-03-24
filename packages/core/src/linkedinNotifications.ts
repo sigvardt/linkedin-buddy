@@ -881,6 +881,8 @@ async function extractNotificationSnapshots(
             "[data-test-time-ago]",
           ]) || normalize(card.querySelector("time")?.getAttribute("datetime"));
 
+        const extractedData = extractStructuredData(message);
+
         notifications.push({
           raw_id: readRawNotificationId(card),
           type: inferType(card),
@@ -889,9 +891,7 @@ async function extractNotificationSnapshots(
           link,
           is_read: inferReadState(card),
           card_index: i,
-          ...(extractStructuredData(message)
-            ? { extracted_data: extractStructuredData(message) as Record<string, unknown> }
-            : {}),
+          ...(extractedData ? { extracted_data: extractedData } : {}),
         });
 
         if (notifications.length >= maxNotifications) {
@@ -948,7 +948,7 @@ async function loadNotificationSnapshots(
 ): Promise<NotificationSnapshot[]> {
   const isMatch = (n: NotificationSnapshot) => {
     if (!types || types.length === 0) return true;
-    return types.includes(n.type) || (n.extracted_data && types.includes(n.extracted_data.notification_category as string));
+    return types.includes(n.type);
   };
 
   const maxScrolls = 20;
@@ -1743,8 +1743,8 @@ export class LinkedInNotificationsService {
           await openNotificationsPage(page);
           const notifications = await loadNotificationSnapshots(page, limit, input.types);
 
-          return notifications.map((notification) => {
-            const mapped: Record<string, unknown> = {
+          return notifications.map((notification): LinkedInNotification => {
+            const result: LinkedInNotification = {
               id: notification.id,
               type: notification.type,
               message: notification.message,
@@ -1753,9 +1753,9 @@ export class LinkedInNotificationsService {
               is_read: notification.is_read,
             };
             if (notification.extracted_data) {
-              mapped.extracted_data = notification.extracted_data;
+              result.extracted_data = notification.extracted_data;
             }
-            return mapped as unknown as LinkedInNotification;
+            return result;
           });
         },
       );
@@ -2095,6 +2095,133 @@ export class LinkedInNotificationsService {
   }
 }
 
+/**
+ * Extract structured data from a notification message string.
+ *
+ * This is a standalone mirror of the browser-inline `extractStructuredData()`
+ * inside `page.evaluate()`. The browser version must remain self-contained
+ * (Playwright serialization), so this module-level copy exists for testing.
+ *
+ * Keep both versions in sync when modifying regex patterns.
+ */
+function extractNotificationStructuredData(
+  message: string,
+): Record<string, unknown> | undefined {
+  const data: Record<string, unknown> = {};
+  let matched = false;
+  const text = message.replace(/\s+/g, " ").trim();
+
+  const postAnalyticsMatch =
+    text.match(
+      /Your post (?:has|got|was seen by) ([\d,]+) (?:views|impressions|times)/i,
+    ) || text.match(/([\d,]+) people viewed your post/i);
+  if (postAnalyticsMatch) {
+    data.views = parseInt(
+      (postAnalyticsMatch[1] || "0").replace(/,/g, ""),
+      10,
+    );
+    matched = true;
+  }
+
+  const profileViewsMatch =
+    text.match(/([\d,]+) people viewed your profile/i) ||
+    text.match(/Your profile was viewed by ([\d,]+) people/i) ||
+    text.match(/You appeared in ([\d,]+) searches/i);
+  if (
+    profileViewsMatch &&
+    !text.match(/You appeared in ([\d,]+) searches/i)
+  ) {
+    data.profile_views = parseInt(
+      (profileViewsMatch[1] || "0").replace(/,/g, ""),
+      10,
+    );
+    matched = true;
+  }
+
+  const searchMatch = text.match(/You appeared in ([\d,]+) searches/i);
+  if (searchMatch) {
+    data.search_appearances = parseInt(
+      (searchMatch[1] || "0").replace(/,/g, ""),
+      10,
+    );
+    matched = true;
+  }
+
+  const mentionMatch = text.match(/^(.*?)\s+mentioned you/i);
+  if (mentionMatch) {
+    data.mentioned_by = (mentionMatch[1] || "").trim();
+    matched = true;
+  }
+
+  const connectionMatch =
+    text.match(/^(.*?)\s+sent you a connection request/i) ||
+    text.match(/^(.*?)\s+wants to connect/i) ||
+    text.match(/^(.*?)\s+accepted your connection/i);
+  if (connectionMatch) {
+    data.sender = (connectionMatch[1] || "").trim();
+    matched = true;
+  }
+
+  const newsletterMatch =
+    text.match(/([\d,]+)\s+people subscribed to/i) ||
+    text.match(/^(.*?)\s+subscribed to/i);
+  if (newsletterMatch) {
+    const num = parseInt(
+      (newsletterMatch[1] || "").replace(/,/g, ""),
+      10,
+    );
+    if (!isNaN(num)) {
+      data.subscriber_count = num;
+    } else {
+      data.subscriber = (newsletterMatch[1] || "").trim();
+    }
+    matched = true;
+  }
+
+  const jobAlertMatch =
+    text.match(/([\d,]+)\s+new jobs? for "(.*?)"/i) ||
+    text.match(/new jobs? for "(.*?)"/i) ||
+    text.match(/([\d,]+)\s+new jobs? for (.*)/i);
+  if (jobAlertMatch) {
+    if (jobAlertMatch.length === 3) {
+      data.job_count = parseInt(
+        (jobAlertMatch[1] || "0").replace(/,/g, ""),
+        10,
+      );
+      data.job_title = (jobAlertMatch[2] || "").trim();
+    } else if (jobAlertMatch[1]) {
+      if (!isNaN(parseInt(jobAlertMatch[1], 10))) {
+        data.job_count = parseInt(
+          (jobAlertMatch[1] || "0").replace(/,/g, ""),
+          10,
+        );
+        data.job_title = jobAlertMatch[2]
+          ? (jobAlertMatch[2] || "").trim()
+          : "";
+      } else {
+        data.job_title = (jobAlertMatch[1] || "").trim();
+      }
+    }
+    matched = true;
+  }
+
+  const companyPostMatch =
+    text.match(/^(.*?)\s+posted:/i) ||
+    text.match(/^(.*?)\s+shared a post:/i);
+  if (companyPostMatch) {
+    data.company_name = (companyPostMatch[1] || "").trim();
+    matched = true;
+  }
+
+  const trendingMatch = text.match(/^Trending:\s+(.*)/i);
+  if (trendingMatch) {
+    data.topic = (trendingMatch[1] || "").trim();
+    matched = true;
+  }
+
+  return matched ? data : undefined;
+}
+
 /** @internal Exported for testing — normalizes notification link URLs for stable comparison. */
 export { normalizeNotificationLink as _normalizeNotificationLink };
 /** @internal Exported for testing — strips volatile numeric content from messages. */
@@ -2103,3 +2230,5 @@ export { stripVolatileContent as _stripVolatileContent };
 export { hashNotificationFingerprint as _hashNotificationFingerprint };
 /** @internal Exported for testing — pre-normalization fingerprint algorithm. */
 export { legacyHashNotificationFingerprint as _legacyHashNotificationFingerprint };
+/** @internal Exported for testing — extracts structured data from notification messages. */
+export { extractNotificationStructuredData as _extractNotificationStructuredData };
