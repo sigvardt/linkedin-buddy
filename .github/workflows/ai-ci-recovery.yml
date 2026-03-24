@@ -2,13 +2,17 @@ name: AI CI Failure Recovery
 
 on:
   workflow_run:
-    workflows: ["CI"]
+    workflows: ["CI", "Secret Scan"]
     types: [completed]
 
 permissions:
   issues: write
   contents: read
   pull-requests: write
+
+concurrency:
+  group: ai-recovery-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
 
 jobs:
   recover:
@@ -48,8 +52,52 @@ jobs:
           # Write to file to avoid shell escaping issues
           echo "$ERROR_LOG" > /tmp/error_log.txt
 
-      - name: Post failure context and relabel for retry
+      - name: Check circuit breaker
+        id: circuit_breaker
         if: steps.extract.outputs.issue_number != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ISSUE_NUM="${{ steps.extract.outputs.issue_number }}"
+          REPO="${{ github.repository }}"
+
+          # Count recovery attempt markers in issue comments
+          ATTEMPT_COUNT=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}/comments" \
+            --paginate --jq '[.[] | select(.body | contains("<!-- ai-recovery-attempt -->"))] | length')
+
+          echo "attempt_count=$ATTEMPT_COUNT" >> "$GITHUB_OUTPUT"
+
+          if [ "$ATTEMPT_COUNT" -ge 10 ]; then
+            echo "tripped=true" >> "$GITHUB_OUTPUT"
+            echo "🛑 Circuit breaker tripped: $ATTEMPT_COUNT attempts on issue #$ISSUE_NUM"
+
+            # Remove ALL AI lifecycle labels, add ai-blocked
+            gh issue edit "$ISSUE_NUM" --repo "$REPO" \
+              --remove-label "ai-task" \
+              --remove-label "ai-in-progress" \
+              --remove-label "ai-review-ready" \
+              --remove-label "ai-debugging" \
+              --add-label "ai-blocked" 2>/dev/null || true
+
+            # Post circuit breaker comment
+            cat > /tmp/circuit-breaker.md << 'CB_EOF'
+          <!-- circuit-breaker-tripped -->
+          ## 🛑 Circuit Breaker Tripped — Human Intervention Required
+
+          This issue has failed **10+ recovery attempts** and has been blocked.
+
+          The AI was unable to resolve the CI/scan failures after repeated retries.
+          A human must investigate, fix the underlying issue, and remove the `ai-blocked` label to resume.
+          CB_EOF
+            sed -i '' 's/^          //' /tmp/circuit-breaker.md
+            gh issue comment "$ISSUE_NUM" --repo "$REPO" --body-file /tmp/circuit-breaker.md
+          else
+            echo "tripped=false" >> "$GITHUB_OUTPUT"
+            echo "Recovery attempt $((ATTEMPT_COUNT + 1))/10 for issue #$ISSUE_NUM"
+          fi
+
+      - name: Post failure context and relabel for retry
+        if: steps.extract.outputs.issue_number != '' && steps.circuit_breaker.outputs.tripped != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -60,17 +108,19 @@ jobs:
           REPO="${{ github.repository }}"
           RUN_URL="${{ github.event.workflow_run.html_url }}"
           ERROR_LOG=$(cat /tmp/error_log.txt)
+          ATTEMPT_NUM=$(( ${{ steps.circuit_breaker.outputs.attempt_count }} + 1 ))
 
-          # Keep the PR open — the AI will fix the issue on the existing branch
-          # Just relabel the issue so the orchestrator picks it up
+          # Atomic label swap: remove ai-review-ready BEFORE adding ai-task to prevent deadlock
           gh issue edit "$ISSUE_NUM" --repo "$REPO" \
             --remove-label "ai-in-progress" \
             --remove-label "ai-review-ready" \
             --add-label "ai-task,ai-debugging" 2>/dev/null || true
 
-          # Post detailed failure context so the AI knows exactly what to fix
+          # Post detailed failure context with recovery attempt marker
           cat > /tmp/comment.md << COMMENT_EOF
-          ## ⚠️ CI Failure — Fix Needed
+          <!-- ai-recovery-attempt: ${ATTEMPT_NUM}/10 -->
+          <!-- ai-recovery-attempt -->
+          ## ⚠️ CI/Scan Failure — Fix Needed (Attempt ${ATTEMPT_NUM}/10)
 
           **Branch:** \`$BRANCH\` (PR #$PR_NUM still open — fix on existing branch, don't start fresh)
           **Failed jobs:** $FAILED_JOBS
@@ -85,6 +135,6 @@ jobs:
           COMMENT_EOF
 
           # Trim leading whitespace from heredoc
-          sed -i 's/^          //' /tmp/comment.md
+          sed -i '' 's/^          //' /tmp/comment.md
 
           gh issue comment "$ISSUE_NUM" --repo "$REPO" --body-file /tmp/comment.md
