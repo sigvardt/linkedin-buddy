@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { deflateSync } from "node:zlib";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   expectPreparedAction,
@@ -11,6 +12,49 @@ import { setupE2ESuite, skipIfE2EUnavailable } from "./setup.js";
 // Minimal valid 1x1 transparent PNG (67 bytes)
 const MINIMAL_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQABNl7BcQAAAABJRU5ErkJggg==";
+
+/** Create a minimal valid PNG buffer with the given dimensions (1-bit grayscale, all white). */
+function createMinimalPngBuffer(width: number, height: number): Buffer {
+  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+  function crc32(buf: Buffer): number {
+    let crc = 0xffffffff;
+    for (let i = 0; i < buf.length; i++) {
+      crc ^= buf[i]!;
+      for (let j = 0; j < 8; j++) {
+        crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+      }
+    }
+    return (crc ^ 0xffffffff) >>> 0;
+  }
+
+  function chunk(type: string, data: Buffer): Buffer {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length, 0);
+    const tag = Buffer.from(type, "ascii");
+    const body = Buffer.concat([tag, data]);
+    const crcBuf = Buffer.alloc(4);
+    crcBuf.writeUInt32BE(crc32(body), 0);
+    return Buffer.concat([len, body, crcBuf]);
+  }
+
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 1; // bit depth
+  ihdr[9] = 0; // color type: grayscale
+
+  const rowBytes = Math.ceil(width / 8);
+  const raw = Buffer.alloc((1 + rowBytes) * height, 0xff);
+  for (let y = 0; y < height; y++) raw[y * (1 + rowBytes)] = 0; // filter = None
+
+  return Buffer.concat([
+    signature,
+    chunk("IHDR", ihdr),
+    chunk("IDAT", deflateSync(raw)),
+    chunk("IEND", Buffer.alloc(0))
+  ]);
+}
 
 // Featured item ID prefix used by the profile module
 const FEATURED_ITEM_ID_PREFIX = "pfi_";
@@ -36,11 +80,14 @@ describe("Profile E2E", () => {
   const e2e = setupE2ESuite();
   let tempDir: string;
   let tempPngPath: string;
+  let tempBannerPath: string;
 
   beforeAll(() => {
     tempDir = mkdtempSync(path.join(os.tmpdir(), "profile-e2e-"));
     tempPngPath = path.join(tempDir, "test-photo.png");
     writeFileSync(tempPngPath, Buffer.from(MINIMAL_PNG_BASE64, "base64"));
+    tempBannerPath = path.join(tempDir, "test-banner.png");
+    writeFileSync(tempBannerPath, createMinimalPngBuffer(1584, 396));
   });
 
   afterAll(() => {
@@ -225,7 +272,7 @@ describe("Profile E2E", () => {
     skipIfE2EUnavailable(e2e, context);
     const runtime = e2e.runtime();
     const prepared = await runtime.profile.prepareUploadBanner({
-      filePath: tempPngPath
+      filePath: tempBannerPath
     });
 
     expectPreparedAction(prepared);
