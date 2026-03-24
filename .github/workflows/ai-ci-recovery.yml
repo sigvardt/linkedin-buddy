@@ -61,9 +61,10 @@ jobs:
           ISSUE_NUM="${{ steps.extract.outputs.issue_number }}"
           REPO="${{ github.repository }}"
 
-          # Count recovery attempt markers in issue comments
+          # Count recovery attempt markers in issue comments (awk sums across pages)
           ATTEMPT_COUNT=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}/comments" \
-            --paginate --jq '[.[] | select(.body | contains("<!-- ai-recovery-attempt -->"))] | length')
+            --paginate --jq '[.[] | select(.body | contains("<!-- ai-recovery-attempt -->"))] | length' \
+            2>/dev/null | awk '{sum+=$1} END {print sum+0}')
 
           echo "attempt_count=$ATTEMPT_COUNT" >> "$GITHUB_OUTPUT"
 

@@ -69,7 +69,8 @@ jobs:
 
               if [ -n "$issue_num" ] && [ "$issue_num" != "$branch" ]; then
                 REBASE_ATTEMPTS=$(gh api "repos/${{ github.repository }}/issues/${issue_num}/comments" \
-                  --paginate --jq '[.[] | select(.body | contains("<!-- ai-rebase-attempt -->"))] | length' 2>/dev/null || echo "0")
+                  --paginate --jq '[.[] | select(.body | contains("<!-- ai-rebase-attempt -->"))] | length' \
+                  2>/dev/null | awk '{sum+=$1} END {print sum+0}')
 
                 if [ "$REBASE_ATTEMPTS" -ge 10 ]; then
                   echo "🛑 Circuit breaker: issue #$issue_num has $REBASE_ATTEMPTS rebase failures"
