@@ -46,6 +46,14 @@ jobs:
           echo "$prs" | while read -r number branch; do
             echo "::group::Rebasing PR #$number ($branch)"
 
+            # Skip PRs with auto-merge pending (force-push would cancel it)
+            AUTO_MERGE=$(gh pr view "$number" --repo "${{ github.repository }}" --json autoMergeRequest --jq '.autoMergeRequest != null')
+            if [ "$AUTO_MERGE" = "true" ]; then
+              echo "⏭️ PR #$number has auto-merge pending — skipping rebase"
+              echo "::endgroup::"
+              continue
+            fi
+
             git fetch origin "$branch"
             git checkout -B "$branch" "origin/$branch"
 
@@ -60,6 +68,28 @@ jobs:
               issue_num=$(echo "$branch" | sed -E 's|^ai/issue-([0-9]+).*|\1|')
 
               if [ -n "$issue_num" ] && [ "$issue_num" != "$branch" ]; then
+                REBASE_ATTEMPTS=$(gh api "repos/${{ github.repository }}/issues/${issue_num}/comments" \
+                  --paginate --jq '[.[] | select(.body | contains("<!-- ai-rebase-attempt -->"))] | length' \
+                  2>/dev/null | awk '{sum+=$1} END {print sum+0}')
+
+                if [ "$REBASE_ATTEMPTS" -ge 10 ]; then
+                  echo "🛑 Circuit breaker: issue #$issue_num has $REBASE_ATTEMPTS rebase failures"
+                  gh issue edit "$issue_num" \
+                    --remove-label "ai-task,ai-in-progress,ai-review-ready,ai-debugging" \
+                    --add-label "ai-blocked" 2>/dev/null || true
+
+                  {
+                    echo "<!-- circuit-breaker-tripped -->"
+                    echo "## 🛑 Circuit Breaker Tripped — Human Intervention Required"
+                    echo ""
+                    echo "This issue has failed **$REBASE_ATTEMPTS rebase attempts** and has been blocked."
+                    echo "A human must investigate the persistent merge conflicts and remove \`ai-blocked\` to resume."
+                  } > /tmp/circuit-breaker.md
+                  gh issue comment "$issue_num" --body-file /tmp/circuit-breaker.md
+                  echo "::endgroup::"
+                  continue
+                fi
+
                 # Keep the PR open — the AI will resolve conflicts on the existing branch
                 # Just relabel the issue so the orchestrator picks it up
                 gh issue edit "$issue_num" \
@@ -73,7 +103,9 @@ jobs:
 
                 # Post context so the AI knows exactly what to fix
                 {
-                  echo "## ⚠️ Merge Conflicts — Fix Needed"
+                  echo "<!-- ai-rebase-attempt: $((REBASE_ATTEMPTS + 1))/10 -->"
+                  echo "<!-- ai-rebase-attempt -->"
+                  echo "## ⚠️ Merge Conflicts — Fix Needed (Attempt $((REBASE_ATTEMPTS + 1))/10)"
                   echo ""
                   echo "**Branch:** \`$branch\` (PR #$number still open — resolve conflicts on existing branch, don't start fresh)"
                   echo ""

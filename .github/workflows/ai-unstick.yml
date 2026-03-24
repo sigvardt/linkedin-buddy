@@ -1,0 +1,85 @@
+name: AI Unstick Deadlocked Issues
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: 'Specific issue number to unstick (leave empty for all stuck issues)'
+        required: false
+        default: ''
+
+permissions:
+  issues: write
+
+jobs:
+  unstick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Find and unstick deadlocked issues
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_ISSUE: ${{ inputs.issue_number }}
+        run: |
+          REPO="${{ github.repository }}"
+          UNSTUCK=0
+          SKIPPED=0
+
+          if [ -n "$INPUT_ISSUE" ]; then
+            # Specific issue mode
+            ISSUES="$INPUT_ISSUE"
+            echo "Targeting specific issue: #$INPUT_ISSUE"
+          else
+            # Find all deadlocked issues: have both ai-review-ready AND ai-debugging
+            ISSUES=$(gh issue list --repo "$REPO" \
+              --label "ai-review-ready" --label "ai-debugging" \
+              --state open --json number --jq '.[].number' 2>/dev/null)
+            if [ -z "$ISSUES" ]; then
+              echo "No stuck issues found — nothing to do"
+              exit 0
+            fi
+            echo "Found stuck issues: $ISSUES"
+          fi
+
+          for ISSUE_NUM in $ISSUES; do
+            echo ""
+            echo "=== Processing issue #$ISSUE_NUM ==="
+
+            # Verify the issue exists and check current labels
+            CURRENT_LABELS=$(gh issue view "$ISSUE_NUM" --repo "$REPO" \
+              --json labels --jq '[.labels[].name]' 2>/dev/null)
+            if [ $? -ne 0 ]; then
+              echo "Issue #$ISSUE_NUM not found — skipping"
+              SKIPPED=$((SKIPPED + 1))
+              continue
+            fi
+            echo "Current labels: $CURRENT_LABELS"
+
+            # Remove ai-review-ready FIRST (critical: this is the exclude label in ai-task-auto-label)
+            gh issue edit "$ISSUE_NUM" --repo "$REPO" \
+              --remove-label "ai-review-ready" 2>/dev/null || true
+
+            # Remove ai-in-progress if present
+            gh issue edit "$ISSUE_NUM" --repo "$REPO" \
+              --remove-label "ai-in-progress" 2>/dev/null || true
+
+            # Add ai-task (the orchestrator pickup label)
+            # Keep ai-debugging (signals this is a retry)
+            gh issue edit "$ISSUE_NUM" --repo "$REPO" \
+              --add-label "ai-task" 2>/dev/null || true
+
+            # Post unstick comment
+            gh issue comment "$ISSUE_NUM" --repo "$REPO" \
+              --body "<!-- ai-unstick --> 🔧 Labels reset by ai-unstick workflow. Removed \`ai-review-ready\`, added \`ai-task\`. Issue is now eligible for orchestrator pickup."
+
+            # Verify final state
+            FINAL_LABELS=$(gh issue view "$ISSUE_NUM" --repo "$REPO" \
+              --json labels --jq '[.labels[].name]' 2>/dev/null)
+            echo "Final labels: $FINAL_LABELS"
+
+            UNSTUCK=$((UNSTUCK + 1))
+          done
+
+          echo ""
+          echo "=== Summary ==="
+          echo "Unstuck: $UNSTUCK issues"
+          echo "Skipped: $SKIPPED issues"

@@ -1,0 +1,109 @@
+name: AI Success Cleanup
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  pull-requests: read
+  issues: write
+  contents: write
+
+concurrency:
+  group: ai-cleanup-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    if: startsWith(github.event.pull_request.head.ref, 'ai/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract issue number
+        id: extract
+        run: |
+          BRANCH="${{ github.event.pull_request.head.ref }}"
+          ISSUE_NUM=$(echo "$BRANCH" | sed -E 's|^ai/issue-([0-9]+).*|\1|')
+          PR_NUM="${{ github.event.pull_request.number }}"
+
+          if [ -z "$ISSUE_NUM" ] || [ "$ISSUE_NUM" = "$BRANCH" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Could not extract issue number from branch: $BRANCH"
+            exit 0
+          fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "issue_number=$ISSUE_NUM" >> "$GITHUB_OUTPUT"
+          echo "pr_number=$PR_NUM" >> "$GITHUB_OUTPUT"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "Extracted: issue #$ISSUE_NUM, PR #$PR_NUM, branch $BRANCH"
+
+      - name: Handle merged PR
+        if: >-
+          steps.extract.outputs.skip != 'true' &&
+          github.event.pull_request.merged == true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUM: ${{ steps.extract.outputs.issue_number }}
+          PR_NUM: ${{ steps.extract.outputs.pr_number }}
+          BRANCH: ${{ steps.extract.outputs.branch }}
+        run: |
+          REPO="${{ github.repository }}"
+
+          # Remove all AI workflow labels from the issue
+          for LABEL in ai-review-ready ai-in-progress ai-task ai-debugging; do
+            gh issue edit "$ISSUE_NUM" --repo "$REPO" --remove-label "$LABEL" 2>/dev/null || true
+          done
+          echo "Labels cleaned for issue #$ISSUE_NUM"
+
+          # Delete the AI branch
+          gh api "repos/$REPO/git/refs/heads/$BRANCH" --method DELETE 2>/dev/null || true
+          echo "Branch $BRANCH deleted"
+
+          # Post success comment
+          gh issue comment "$ISSUE_NUM" --repo "$REPO" \
+            --body "<!-- ai-lifecycle-complete --> ✅ AI lifecycle complete. PR #$PR_NUM merged. Branch \`$BRANCH\` deleted. Labels cleaned."
+
+          echo "Merge cleanup complete for issue #$ISSUE_NUM"
+
+      - name: Handle closed without merge
+        if: >-
+          steps.extract.outputs.skip != 'true' &&
+          github.event.pull_request.merged == false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUM: ${{ steps.extract.outputs.issue_number }}
+          PR_NUM: ${{ steps.extract.outputs.pr_number }}
+          BRANCH: ${{ steps.extract.outputs.branch }}
+        run: |
+          REPO="${{ github.repository }}"
+
+          # Check circuit breaker: count prior close-without-merge events
+          CLOSE_COUNT=$(gh api "repos/$REPO/issues/$ISSUE_NUM/comments" --paginate \
+            --jq '[.[].body | select(. != null) | select(contains("<!-- ai-pr-closed -->"))] | length' \
+            2>/dev/null | awk '{sum+=$1} END {print sum+0}')
+
+          if [ "$CLOSE_COUNT" -ge 3 ]; then
+            echo "Circuit breaker: $CLOSE_COUNT close-without-merge events — blocking"
+
+            # Remove all AI labels, add ai-blocked
+            for LABEL in ai-review-ready ai-in-progress ai-task ai-debugging; do
+              gh issue edit "$ISSUE_NUM" --repo "$REPO" --remove-label "$LABEL" 2>/dev/null || true
+            done
+            gh issue edit "$ISSUE_NUM" --repo "$REPO" --add-label "ai-blocked" 2>/dev/null || true
+
+            gh issue comment "$ISSUE_NUM" --repo "$REPO" \
+              --body "<!-- ai-pr-closed --> <!-- circuit-breaker-tripped --> 🛑 PR #$PR_NUM closed without merge. This issue has had $CLOSE_COUNT PRs closed without merge — circuit breaker tripped. \`ai-blocked\` applied. Human review required."
+          else
+            # Relabel for retry
+            for LABEL in ai-review-ready ai-in-progress; do
+              gh issue edit "$ISSUE_NUM" --repo "$REPO" --remove-label "$LABEL" 2>/dev/null || true
+            done
+            gh issue edit "$ISSUE_NUM" --repo "$REPO" \
+              --add-label "ai-task" --add-label "ai-debugging" 2>/dev/null || true
+
+            gh issue comment "$ISSUE_NUM" --repo "$REPO" \
+              --body "<!-- ai-pr-closed --> PR #$PR_NUM closed without merge (attempt $((CLOSE_COUNT + 1))/3). Issue relabeled for retry."
+          fi
+
+          # Do NOT delete branch — may be needed for debugging
+          echo "Close cleanup complete for issue #$ISSUE_NUM (close count: $CLOSE_COUNT)"

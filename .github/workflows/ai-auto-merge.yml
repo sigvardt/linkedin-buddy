@@ -1,0 +1,130 @@
+name: AI Auto-Merge
+
+on:
+  check_suite:
+    types: [completed]
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  pull-requests: write
+  contents: write
+  checks: read
+
+concurrency:
+  group: ai-auto-merge-${{ github.event.pull_request.number || github.event.check_suite.id || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Identify PR
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ github.event_name }}" = "check_suite" ]; then
+            BRANCH="${{ github.event.check_suite.head_branch }}"
+            if [[ ! "$BRANCH" =~ ^ai/ ]]; then
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              echo "Not an AI branch: $BRANCH"
+              exit 0
+            fi
+            # Find PR for this branch
+            PR_NUM=$(gh pr list --repo "${{ github.repository }}" \
+              --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+            if [ -z "$PR_NUM" ]; then
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              echo "No open PR for branch: $BRANCH"
+              exit 0
+            fi
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            BRANCH="${{ github.event.pull_request.head.ref }}"
+            if [[ ! "$BRANCH" =~ ^ai/ ]]; then
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              echo "Not an AI branch: $BRANCH"
+              exit 0
+            fi
+            PR_NUM="${{ github.event.pull_request.number }}"
+          else
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Manual dispatch — use with gh workflow run"
+            exit 0
+          fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "pr_number=$PR_NUM" >> "$GITHUB_OUTPUT"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "Found AI PR #$PR_NUM on branch $BRANCH"
+
+      - name: Check workflow file guard
+        if: steps.pr.outputs.skip != 'true'
+        id: guard
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUM: ${{ steps.pr.outputs.pr_number }}
+        run: |
+          # Block PRs that modify workflow files
+          CHANGED_WORKFLOWS=$(gh pr diff "$PR_NUM" --repo "${{ github.repository }}" \
+            --name-only | grep -c '^\.github/workflows/' || true)
+          if [ "$CHANGED_WORKFLOWS" -gt 0 ]; then
+            echo "blocked=true" >> "$GITHUB_OUTPUT"
+            echo "::error::AI PRs cannot modify workflow files"
+            gh pr comment "$PR_NUM" --repo "${{ github.repository }}" \
+              --body "<!-- ai-auto-merge-blocked --> ⛔ Auto-merge blocked: This PR modifies \`.github/workflows/\` files. AI PRs are not allowed to change workflow files. A human must review and merge this PR manually."
+            exit 0
+          fi
+          echo "blocked=false" >> "$GITHUB_OUTPUT"
+
+      - name: Check PR body for close keyword
+        if: steps.pr.outputs.skip != 'true' && steps.guard.outputs.blocked != 'true'
+        id: body
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUM: ${{ steps.pr.outputs.pr_number }}
+        run: |
+          PR_BODY=$(gh pr view "$PR_NUM" --repo "${{ github.repository }}" \
+            --json body --jq '.body // ""')
+          ISSUE_NUM=$(echo "${{ steps.pr.outputs.branch }}" | sed -E 's|^ai/issue-([0-9]+).*|\1|')
+
+          if [ -z "$ISSUE_NUM" ] || [ "$ISSUE_NUM" = "${{ steps.pr.outputs.branch }}" ]; then
+            echo "valid=true" >> "$GITHUB_OUTPUT"
+            echo "Could not extract issue number — skipping body check"
+            exit 0
+          fi
+
+          if echo "$PR_BODY" | grep -iE "(Closes|Fixes|Resolves)\s+#${ISSUE_NUM}" > /dev/null 2>&1; then
+            echo "valid=true" >> "$GITHUB_OUTPUT"
+            echo "PR body contains close keyword for issue #$ISSUE_NUM"
+          else
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+            echo "Missing close keyword — ai-pr-body-check should fix this"
+          fi
+
+      - name: Enable auto-merge
+        if: >-
+          steps.pr.outputs.skip != 'true' &&
+          steps.guard.outputs.blocked != 'true' &&
+          steps.body.outputs.valid != 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUM: ${{ steps.pr.outputs.pr_number }}
+        run: |
+          # Check if auto-merge is already enabled
+          EXISTING=$(gh pr view "$PR_NUM" --repo "${{ github.repository }}" \
+            --json autoMergeRequest --jq '.autoMergeRequest != null')
+          if [ "$EXISTING" = "true" ]; then
+            echo "Auto-merge already enabled for PR #$PR_NUM"
+            exit 0
+          fi
+
+          gh pr merge "$PR_NUM" \
+            --repo "${{ github.repository }}" \
+            --squash --auto
+
+          gh pr comment "$PR_NUM" --repo "${{ github.repository }}" \
+            --body "<!-- ai-auto-merge --> 🤖 Auto-merge enabled (squash). Will merge when all required checks pass."
+
+          echo "Auto-merge enabled for PR #$PR_NUM"

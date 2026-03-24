@@ -1,0 +1,59 @@
+name: AI PR Body Check
+
+on:
+  pull_request:
+    types: [opened, edited, reopened]
+  workflow_dispatch:
+
+permissions:
+  pull-requests: write
+  contents: read
+
+concurrency:
+  group: ai-pr-body-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  check-pr-body:
+    if: startsWith(github.event.pull_request.head.ref, 'ai/issue-')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Extract issue number from branch
+        id: extract
+        run: |
+          ISSUE_NUM=$(echo "${{ github.event.pull_request.head.ref }}" | sed -E 's|^ai/issue-([0-9]+).*|\1|')
+          echo "issue_num=$ISSUE_NUM" >> $GITHUB_OUTPUT
+
+      - name: Check PR body for close keywords
+        id: check
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          ISSUE_NUM: ${{ steps.extract.outputs.issue_num }}
+        run: |
+          if [ -z "$PR_BODY" ]; then
+            echo "has_close_keyword=false" >> $GITHUB_OUTPUT
+          elif echo "$PR_BODY" | grep -iqE "(closes|fixes|resolves)\s+#${ISSUE_NUM}"; then
+            echo "has_close_keyword=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_close_keyword=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Prepend close keyword if missing
+        if: steps.check.outputs.has_close_keyword == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          PR_NUM="${{ github.event.pull_request.number }}"
+          ISSUE_NUM="${{ steps.extract.outputs.issue_num }}"
+
+          if [ -z "$PR_BODY" ]; then
+            NEW_BODY="Closes #${ISSUE_NUM}"
+          else
+            NEW_BODY=$(printf "Closes #%s\n\n%s" "$ISSUE_NUM" "$PR_BODY")
+          fi
+
+          gh pr edit "$PR_NUM" --repo "${{ github.repository }}" --body "$NEW_BODY"
+          gh pr comment "$PR_NUM" --repo "${{ github.repository }}" \
+            --body "<!-- ai-pr-body-fix --> Auto-added \"Closes #${ISSUE_NUM}\" to PR body (was missing)."
