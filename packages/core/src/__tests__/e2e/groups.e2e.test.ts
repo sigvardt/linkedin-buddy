@@ -13,7 +13,30 @@ import {
 describe("Groups E2E", () => {
   const e2e = setupE2ESuite();
 
-  it("searchGroups returns results with populated fields", async (context) => {
+    it("listGroups returns current groups", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
+    const runtime = e2e.runtime();
+    const result = await runtime.groups.listGroups({
+      limit: 5,
+    });
+
+    expect(result.count).toBeGreaterThanOrEqual(0);
+    if (result.count > 0) {
+      expect(result.results.length).toBeGreaterThan(0);
+      const first = result.results[0]!;
+      expect(first.name.length).toBeGreaterThan(0);
+      expect(first.group_url).toContain("/groups/");
+      expect(first.group_id.length).toBeGreaterThan(0);
+      expect(typeof first.member_count).toBe("string");
+      expect(typeof first.visibility).toBe("string");
+      expect(typeof first.description).toBe("string");
+      expect(["member", "joinable", "pending", "unknown"]).toContain(
+        first.membership_state,
+      );
+    }
+  });
+
+it("searchGroups returns results with populated fields", async (context) => {
     skipIfE2EUnavailable(e2e, context);
     const runtime = e2e.runtime();
     const result = await runtime.groups.searchGroups({
@@ -124,7 +147,25 @@ describe("Groups E2E", () => {
       .toThrow(/text is required/i);
   });
 
-  it("MCP groups.search returns results", async (context) => {
+    it("MCP groups.list returns results", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
+    const result = await callMcpTool(MCP_TOOL_NAMES.groupsList, {
+      limit: 5,
+    });
+
+    expect(result.isError).toBe(false);
+    expect(result.payload).toHaveProperty("count");
+    expect(Number(result.payload.count)).toBeGreaterThanOrEqual(0);
+    const results = result.payload.results;
+    expect(Array.isArray(results)).toBe(true);
+    if (Array.isArray(results) && results.length > 0) {
+      const firstResult = (results as Record<string, unknown>[])[0]!;
+      expect(typeof firstResult.name).toBe("string");
+      expect(typeof firstResult.group_url).toBe("string");
+    }
+  });
+
+it("MCP groups.search returns results", async (context) => {
     skipIfE2EUnavailable(e2e, context);
     const result = await callMcpTool(MCP_TOOL_NAMES.groupsSearch, {
       query: "software engineering",
@@ -191,7 +232,20 @@ describe("Groups E2E", () => {
     expect(typeof result.payload.confirmToken).toBe("string");
   });
 
-  it("CLI groups search returns results", async (context) => {
+    it("CLI groups list returns results", async (context) => {
+    skipIfE2EUnavailable(e2e, context);
+    const result = await runCliCommand(
+      ["groups", "list", "--limit", "5"],
+      { timeoutMs: 30_000 },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const output = getLastJsonObject(result.stdout);
+    expect(Number(output.count)).toBeGreaterThanOrEqual(0);
+    expect(Array.isArray(output.results)).toBe(true);
+  });
+
+it("CLI groups search returns results", async (context) => {
     skipIfE2EUnavailable(e2e, context);
     const result = await runCliCommand(
       ["groups", "search", "--query", "software engineering", "--limit", "5"],

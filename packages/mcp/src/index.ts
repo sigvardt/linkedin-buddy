@@ -150,6 +150,7 @@ export const LINKEDIN_JOBS_ALERTS_LIST_TOOL = "linkedin.jobs.alerts.list";
 export const LINKEDIN_JOBS_ALERTS_REMOVE_TOOL = "linkedin.jobs.alerts.remove";
 export const LINKEDIN_JOBS_PREPARE_EASY_APPLY_TOOL =
   "linkedin.jobs.prepare_easy_apply";
+export const LINKEDIN_GROUPS_LIST_TOOL = "linkedin.groups.list";
 export const LINKEDIN_GROUPS_SEARCH_TOOL = "linkedin.groups.search";
 export const LINKEDIN_GROUPS_VIEW_TOOL = "linkedin.groups.view";
 export const LINKEDIN_GROUPS_PREPARE_CREATE_TOOL = "linkedin.groups.prepare_create";
