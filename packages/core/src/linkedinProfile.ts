@@ -8320,6 +8320,10 @@ async function executeRemoveProfilePhoto(
         context,
         page,
         actionId,
+        dismissOverlays: {
+          selectorLocale: runtime.selectorLocale,
+          logger: runtime.logger
+        },
         actionType: REMOVE_PROFILE_PHOTO_ACTION_TYPE,
         profileName,
         targetUrl: resolveProfileUrl("me"),
@@ -8345,7 +8349,7 @@ async function executeRemoveProfilePhoto(
             "Failed to execute LinkedIn profile photo removal."
           ),
         execute: async () => {
-          await navigateToOwnProfile(page);
+          await navigateToOwnProfile(page, { dismissOverlays: { selectorLocale: runtime.selectorLocale, logger: runtime.logger } });
           const dialog = await openProfilePhotoForDelete(page, runtime.selectorLocale);
           if (dialog) {
             await clickDeleteInDialog(page, dialog, runtime.selectorLocale);
@@ -8399,7 +8403,7 @@ async function executeRemoveProfileMedia(
           selectorLocale: runtime.selectorLocale,
           logger: runtime.logger
         },
-        actionType: REMOVE_PROFILE_BANNER_ACTION_TYPE,
+        actionType: kind === "photo" ? REMOVE_PROFILE_PHOTO_ACTION_TYPE : REMOVE_PROFILE_BANNER_ACTION_TYPE,
         profileName,
         targetUrl: resolveProfileUrl("me"),
         metadata: {
@@ -8412,7 +8416,7 @@ async function executeRemoveProfileMedia(
         },
         beforeExecute: createProfileRateLimitGuard(
           runtime,
-          REMOVE_PROFILE_BANNER_ACTION_TYPE,
+          kind === "photo" ? REMOVE_PROFILE_PHOTO_ACTION_TYPE : REMOVE_PROFILE_BANNER_ACTION_TYPE,
           actionId,
           profileName,
           { media_kind: kind }
@@ -8429,6 +8433,13 @@ async function executeRemoveProfileMedia(
           
           if (dialog) {
             await clickDeleteInDialog(page, dialog, runtime.selectorLocale);
+            await page.waitForTimeout(1000);
+
+            // On LinkedIn, a second confirmation dialog might appear
+            const confirmDialog = await getVisibleDialogOrNull(page);
+            if (confirmDialog) {
+              await clickDeleteInDialog(page, confirmDialog, runtime.selectorLocale);
+            }
           } else {
             throw new LinkedInBuddyError("TARGET_NOT_FOUND", "No media to remove.");
           }
@@ -9915,9 +9926,9 @@ export class LinkedInProfileService {
     });
   }
 
-  async prepareRemoveBanner(
+  prepareRemoveBanner(
     input: PrepareRemoveBannerInput
-  ): Promise<PreparedActionResult> {
+  ): PreparedActionResult {
     const profileName = input.profileName ?? "default";
 
     const target = {
@@ -9968,7 +9979,8 @@ export class LinkedInProfileService {
           );
         }
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof LinkedInBuddyError) throw error;
       // If image-size fails (e.g. unknown format), ignore and let LinkedIn handle it
     }
 
