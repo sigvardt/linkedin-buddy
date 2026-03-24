@@ -750,6 +750,8 @@ const PROFILE_MEDIA_LABELS = {
   banner: {
     en: [
       "Background photo",
+      "Add background image",
+      "Cover photo",
       "Cover image",
       "Banner",
       "Add a cover image",
@@ -758,9 +760,10 @@ const PROFILE_MEDIA_LABELS = {
     ],
     da: [
       "Baggrundsbillede",
+      "Tilføj baggrundsbillede",
       "Forsidebillede",
-      "Banner",
       "Tilføj forsidebillede",
+      "Banner",
       "Skift forsidebillede",
       "Rediger forsidebillede"
     ]
@@ -773,6 +776,10 @@ const PROFILE_MEDIA_LABELS = {
       "Update photo",
       "Update image",
       "Add photo",
+      "Add cover image",
+      "Edit cover image",
+      "Change cover image",
+      "Upload single photo",
       "Change photo",
       "Edit photo",
       "Select photo",
@@ -780,9 +787,13 @@ const PROFILE_MEDIA_LABELS = {
     ],
     da: [
       "Upload billede",
+      "Upload et enkelt billede",
       "Upload medie",
       "Opdater billede",
       "Tilføj billede",
+      "Tilføj forsidebillede",
+      "Skift forsidebillede",
+      "Rediger forsidebillede",
       "Skift billede",
       "Rediger billede",
       "Vælg billede"
@@ -806,7 +817,9 @@ export const PROFILE_MEDIA_STRUCTURAL_SELECTORS = {
   ],
   banner: [
     "[aria-label*='background photo' i]",
+    "[aria-label*='background image' i]",
     "[aria-label*='cover image' i]",
+    "[aria-label*='cover photo' i]",
     "[aria-label*='Baggrundsbillede' i]",
     "[aria-label*='forsidebillede' i]",
     "[data-control-name='edit_profile_background_image']",
@@ -5603,7 +5616,7 @@ async function clickDeleteInDialog(
     getUiActionLabels("delete", selectorLocale),
     "dialog-delete"
   );
-  const resolvedDelete = await findFirstVisibleLocator(deleteCandidates);
+  const resolvedDelete = await waitForFirstVisibleLocator(deleteCandidates, 5000);
   if (!resolvedDelete) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
@@ -5611,21 +5624,25 @@ async function clickDeleteInDialog(
     );
   }
 
-  await resolvedDelete.locator.first().click();
+  await resolvedDelete.locator.first().click({ force: true });
   await page.waitForTimeout(500);
 
-  const confirmDeleteCandidates: LocatorCandidate[] = [
-    ...createActionCandidates(page, getUiActionLabels("delete", selectorLocale), "confirm-delete"),
-    {
-      key: "confirm-delete-generic",
-      locator: page
-        .locator("dialog[open] button, dialog[open] [role='button'], [role='dialog'] button, [role='dialog'] [role='button']")
-        .filter({ hasText: buildTextRegex(getUiActionLabels("delete", selectorLocale)) })
+  const confirmDialog = await getVisibleDialogOrNull(page);
+  if (confirmDialog) {
+    const confirmDeleteCandidates: LocatorCandidate[] = [
+      ...createActionCandidates(confirmDialog, getUiActionLabels("delete", selectorLocale), "confirm-delete"),
+      {
+        key: "confirm-delete-generic",
+        locator: confirmDialog
+          .locator("button, [role='button']")
+          .filter({ hasText: buildTextRegex(getUiActionLabels("delete", selectorLocale)) })
+      }
+    ];
+    
+    const resolvedConfirmDelete = await waitForFirstVisibleLocator(confirmDeleteCandidates, 5000);
+    if (resolvedConfirmDelete) {
+      await resolvedConfirmDelete.locator.first().click({ force: true });
     }
-  ];
-  const resolvedConfirmDelete = await findFirstVisibleLocator(confirmDeleteCandidates);
-  if (resolvedConfirmDelete) {
-    await resolvedConfirmDelete.locator.first().click();
   }
 
   await page.locator(PROFILE_DIALOG_ROOT_SELECTOR).last().waitFor({ state: "hidden", timeout: 10_000 }).catch(
@@ -6164,14 +6181,15 @@ async function openSectionEditSurface(
 }
 
 async function getVisibleDialogOrNull(page: Page): Promise<Locator | null> {
-  // Prefer dialog[open] — most reliable for LinkedIn's current UI.
-  const openDialog = page.locator("dialog[open]").last();
-  if (await isLocatorVisible(openDialog)) {
-    return openDialog;
+  const dialogs = page.locator("dialog[open], [role='dialog'], [role='menu']");
+  const count = Math.min(await dialogs.count().catch(() => 0), 10);
+  for (let i = count - 1; i >= 0; i--) {
+    const dialog = dialogs.nth(i);
+    if (await isLocatorVisible(dialog)) {
+      return dialog;
+    }
   }
-  // Fallback for older LinkedIn pages that still use role="dialog".
-  const roleDialog = page.locator("[role='dialog']").last();
-  return (await isLocatorVisible(roleDialog)) ? roleDialog : null;
+  return null;
 }
 
 async function findVisibleFileInput(root: Page | Locator): Promise<Locator | null> {
@@ -6215,14 +6233,21 @@ async function clickLocatorForUpload(
 
   if (fileChooser) {
     await fileChooser.setFiles(filePath);
+    await page.waitForTimeout(500); // Give dialog a moment
     return {
       surface: await getVisibleDialogOrNull(page),
       uploaded: true
     };
   }
 
-  const overlay = page.locator("[role='dialog'], [role='menu']").last();
-  if (await isLocatorVisible(overlay)) {
+  // Wait a bit for React to render new dialogs/menus
+  let overlay = await getVisibleDialogOrNull(page);
+  if (!overlay) {
+    await page.waitForTimeout(1000);
+    overlay = await getVisibleDialogOrNull(page);
+  }
+
+  if (overlay) {
     const input = await findVisibleFileInput(overlay);
     if (input) {
       await input.setInputFiles(filePath);
@@ -6290,12 +6315,11 @@ async function uploadFileFromSurface(
     }
   ];
 
-  for (const candidate of candidates) {
-    if (!(await isLocatorVisible(candidate.locator))) {
-      continue;
-    }
+  // Wait for the buttons to appear inside the surface (React lazy loading)
+  const resolvedCandidate = await waitForFirstVisibleLocator(candidates, 5000);
 
-    const result = await clickLocatorForUpload(page, candidate.locator, filePath);
+  if (resolvedCandidate) {
+    const result = await clickLocatorForUpload(page, resolvedCandidate.locator, filePath);
     if (result.uploaded || result.surface) {
       return result;
     }
@@ -7478,7 +7502,7 @@ async function openProfileMediaEditor(
     }
   ];
 
-  const resolved = await findFirstVisibleLocator(openCandidates);
+  const resolved = await waitForFirstVisibleLocator(openCandidates, 5000);
   if (!resolved) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
@@ -7489,7 +7513,28 @@ async function openProfileMediaEditor(
   await resolved.locator.first().click();
   await page.waitForTimeout(500);
 
-  return (await getVisibleDialogOrNull(page)) ?? null;
+  let surface = await getVisibleDialogOrNull(page);
+  
+  if (surface && await surface.getAttribute("role") === "menu") {
+    // Navigate through the menu to the actual editor dialog
+    const menuCandidates = [
+      ...createActionCandidates(surface, getProfileMediaActionLabels(kind, selectorLocale), "menu-item-button"),
+      ...createActionCandidates(surface, getProfileMediaActionLabels(kind, selectorLocale), "menu-item-link", "link"),
+      {
+        key: "menu-item-generic",
+        locator: surface.locator("button, a, [role='button'], [role='menuitem']").filter({ hasText: buildTextRegex(getProfileMediaActionLabels(kind, selectorLocale)) })
+      }
+    ];
+    
+    const menuResolved = await waitForFirstVisibleLocator(menuCandidates, 5000);
+    if (menuResolved) {
+      await menuResolved.locator.first().click({ force: true });
+      await page.waitForTimeout(1000);
+      surface = await getVisibleDialogOrNull(page);
+    }
+  }
+
+  return surface ?? null;
 }
 
 async function openProfileMediaAndUpload(
@@ -7526,26 +7571,33 @@ async function openProfileMediaAndUpload(
     }
   ];
 
-  for (const candidate of openCandidates) {
-    if (!(await isLocatorVisible(candidate.locator))) {
-      continue;
-    }
-
-    const result = await clickLocatorForUpload(page, candidate.locator, upload.absolute_path);
+  const resolved = await waitForFirstVisibleLocator(openCandidates, 5000);
+  if (resolved) {
+    const result = await clickLocatorForUpload(page, resolved.locator, upload.absolute_path);
     if (result.uploaded) {
       return (await getVisibleDialogOrNull(page)) ?? result.surface;
     }
 
-    const followUpSurface = result.surface ?? topCardRoot;
-    const followUpUpload = await uploadFileFromSurface(
-      page,
-      followUpSurface,
-      upload.absolute_path,
-      getProfileMediaActionLabels("upload", selectorLocale),
-      `profile-${kind}-upload`
-    );
-    if (followUpUpload.uploaded) {
-      return (await getVisibleDialogOrNull(page)) ?? followUpUpload.surface;
+    let currentSurface = result.surface ?? topCardRoot;
+    
+    // Retry up to 5 times to navigate nested dialogs/menus
+    for (let attempts = 0; attempts < 5; attempts++) {
+      const followUpUpload = await uploadFileFromSurface(
+        page,
+        currentSurface,
+        upload.absolute_path,
+        getProfileMediaActionLabels("upload", selectorLocale),
+        `profile-${kind}-upload-attempt-${attempts}`
+      );
+      
+      if (followUpUpload.uploaded) {
+        return (await getVisibleDialogOrNull(page)) ?? followUpUpload.surface;
+      }
+      
+      if (!followUpUpload.surface || followUpUpload.surface === currentSurface) {
+        break; // No new surface opened
+      }
+      currentSurface = followUpUpload.surface;
     }
   }
 
