@@ -126,6 +126,7 @@ import {
   LINKEDIN_GROUPS_PREPARE_JOIN_TOOL,
   LINKEDIN_GROUPS_PREPARE_LEAVE_TOOL,
   LINKEDIN_GROUPS_PREPARE_POST_TOOL,
+  LINKEDIN_GROUPS_LIST_TOOL,
   LINKEDIN_GROUPS_SEARCH_TOOL,
   LINKEDIN_GROUPS_VIEW_TOOL,
   LINKEDIN_EVENTS_PREPARE_CREATE_TOOL,
@@ -2394,6 +2395,38 @@ async function handleJobsPrepareEasyApply(args: ToolArgs): Promise<ToolResult> {
       run_id: runtime.runId,
       profile_name: profileName,
       ...prepared,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
+async function handleGroupsList(args: ToolArgs): Promise<ToolResult> {
+  const runtime = createRuntime(args);
+
+  try {
+    const profileName = readString(args, "profileName", "default");
+    const limit = readPositiveNumber(args, "limit", 10);
+
+    runtime.logger.log("info", "mcp.groups.list.start", {
+      profileName,
+      limit,
+    });
+
+    const result = await runtime.groups.listGroups({
+      profileName,
+      limit,
+    });
+
+    runtime.logger.log("info", "mcp.groups.list.done", {
+      profileName,
+      count: result.count,
+    });
+
+    return toToolResult({
+      run_id: runtime.runId,
+      profile_name: profileName,
+      ...result,
     });
   } finally {
     runtime.close();
@@ -7276,6 +7309,24 @@ export const LINKEDIN_MCP_TOOL_DEFINITIONS: LinkedInMcpToolDefinition[] = [
     },
   },
   {
+    name: LINKEDIN_GROUPS_LIST_TOOL,
+    description: "List the LinkedIn groups the authenticated profile is a member of.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: withCdpSchemaProperties({
+        profileName: {
+          type: "string",
+          description: "The named session profile to use."
+        },
+        limit: {
+          type: "number",
+          description: "Maximum number of groups to return (default: 10)."
+        }
+      })
+    }
+  },
+  {
     name: LINKEDIN_GROUPS_SEARCH_TOOL,
     description: withSelectorAuditHint(
       "Search LinkedIn groups by keyword and return matching communities.",
@@ -8007,6 +8058,7 @@ const TOOL_HANDLERS: Record<string, ToolHandler> = {
   [LINKEDIN_JOBS_ALERTS_CREATE_TOOL]: handleJobsAlertsCreate,
   [LINKEDIN_JOBS_ALERTS_REMOVE_TOOL]: handleJobsAlertsRemove,
   [LINKEDIN_JOBS_PREPARE_EASY_APPLY_TOOL]: handleJobsPrepareEasyApply,
+  [LINKEDIN_GROUPS_LIST_TOOL]: handleGroupsList,
   [LINKEDIN_GROUPS_SEARCH_TOOL]: handleGroupsSearch,
   [LINKEDIN_GROUPS_VIEW_TOOL]: handleGroupsView,
   [LINKEDIN_GROUPS_PREPARE_CREATE_TOOL]: handleGroupsPrepareCreate,

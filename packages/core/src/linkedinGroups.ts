@@ -97,7 +97,19 @@ export interface CreateGroupInput {
   industry?: string;
   location?: string;
   isUnlisted?: boolean;
+  logoPath?: string;
+  coverImagePath?: string;
   operatorNote?: string;
+}
+
+export interface ListGroupsInput {
+  profileName?: string;
+  limit?: number;
+}
+
+export interface ListGroupsOutput {
+  results: LinkedInGroupsSearchResult[];
+  count: number;
 }
 
 export interface SearchGroupsInput {
@@ -919,7 +931,7 @@ export class CreateGroupActionExecutor
 
     const group = await runtime.profileManager.runWithPersistentContext(
       data.profileName ?? "default",
-      { headless: false },
+      { headless: true },
       async (context) => {
         const page = await context.newPage();
         try {
@@ -942,6 +954,47 @@ export class CreateGroupActionExecutor
           if (data.isUnlisted) {
             await page.locator("label[for='unlisted-group']").click();
           }
+          
+          if (data.industry) {
+            const industryLocator = page.locator("input[placeholder*='Industry']").or(page.getByLabel(/Industry/i)).first();
+            await industryLocator.fill(data.industry);
+            await page.waitForTimeout(1000);
+            await page.keyboard.press("ArrowDown");
+            await page.keyboard.press("Enter");
+          }
+          
+          if (data.location) {
+            const locationLocator = page.locator("input[placeholder*='Location']").or(page.getByLabel(/Location/i)).first();
+            await locationLocator.fill(data.location);
+            await page.waitForTimeout(1000);
+            await page.keyboard.press("ArrowDown");
+            await page.keyboard.press("Enter");
+          }
+          
+          if (data.logoPath) {
+            const fileChooserPromise = page.waitForEvent('filechooser');
+            const logoButton = page.locator("button[aria-label*='logo']").or(page.getByRole("button", { name: /logo/i })).first();
+            if (await logoButton.isVisible().catch(() => false)) {
+                await logoButton.click();
+                const fileChooser = await fileChooserPromise;
+                await fileChooser.setFiles(data.logoPath);
+                await page.waitForTimeout(1000);
+                await page.getByRole("button", { name: /Apply|Save/i }).first().click().catch(() => {});
+            }
+          }
+          
+          if (data.coverImagePath) {
+            const fileChooserPromise = page.waitForEvent('filechooser');
+            const coverButton = page.locator("button[aria-label*='cover image']").or(page.getByRole("button", { name: /cover image/i })).first();
+            if (await coverButton.isVisible().catch(() => false)) {
+                await coverButton.click();
+                const fileChooser = await fileChooserPromise;
+                await fileChooser.setFiles(data.coverImagePath);
+                await page.waitForTimeout(1000);
+                await page.getByRole("button", { name: /Apply|Save/i }).first().click().catch(() => {});
+            }
+          }
+          
           
           await page.locator("button[type='submit']").click();
           
@@ -1071,6 +1124,8 @@ export class LinkedInGroupsService {
         industry: input.industry,
         location: input.location,
         isUnlisted: input.isUnlisted,
+        logoPath: input.logoPath,
+        coverImagePath: input.coverImagePath,
       },
       preview: {
         summary: `Create LinkedIn group "${input.name}"`,
@@ -1085,6 +1140,73 @@ export class LinkedInGroupsService {
       },
       ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
     });
+  }
+
+  
+  async listGroups(input: ListGroupsInput): Promise<ListGroupsOutput> {
+    const profileName = input.profileName ?? "default";
+    const limit = readSearchLimit(input.limit);
+
+    await this.runtime.auth.ensureAuthenticated({
+      profileName
+    });
+
+    try {
+      const snapshots = await this.runtime.profileManager.runWithPersistentContext(
+        profileName,
+        { headless: true },
+        async (context) => {
+          const page = await getOrCreatePage(context);
+          await page.goto("https://www.linkedin.com/groups/", {
+            waitUntil: "domcontentloaded"
+          });
+          await waitForNetworkIdleBestEffort(page);
+          
+          const selectors = [
+            ".groups-list",
+            "ul.groups-list",
+            ".scaffold-layout__main",
+            "main"
+          ];
+          for (const selector of selectors) {
+            try {
+              await page.locator(selector).first().waitFor({
+                state: "visible",
+                timeout: 5_000
+              });
+              break;
+            } catch {
+              // Try next
+            }
+          }
+          return scrollSearchResultsIfNeeded(page, extractGroupSearchResults, limit);
+        }
+      );
+
+      const results = snapshots
+        .map((snapshot) => ({
+          group_id: normalizeText(snapshot.group_id),
+          name: normalizeText(snapshot.name),
+          group_url: normalizeText(snapshot.group_url),
+          visibility: normalizeText(snapshot.visibility),
+          member_count: normalizeText(snapshot.member_count),
+          description: normalizeText(snapshot.description),
+          membership_state: snapshot.membership_state
+        }))
+        .filter((result) => result.name.length > 0 || result.group_url.length > 0)
+        .slice(0, limit);
+
+      return {
+        results,
+        count: results.length
+      };
+    } catch (error) {
+      throw asLinkedInBuddyError(
+        error,
+        "UNKNOWN",
+        "Failed to list LinkedIn groups."
+      );
+    }
   }
 
   async searchGroups(input: SearchGroupsInput): Promise<SearchGroupsOutput> {

@@ -8741,6 +8741,41 @@ async function runNotificationsPreferencesPrepareUpdate(
   }
 }
 
+async function runGroupsList(
+  input: {
+    profileName: string;
+    limit: number;
+  },
+  cdpUrl?: string,
+): Promise<void> {
+  const runtime = createRuntime(cdpUrl);
+
+  try {
+    runtime.logger.log("info", "cli.groups.list.start", {
+      profileName: input.profileName,
+      limit: input.limit,
+    });
+
+    const result = await runtime.groups.listGroups({
+      profileName: input.profileName,
+      limit: input.limit,
+    });
+
+    runtime.logger.log("info", "cli.groups.list.done", {
+      profileName: input.profileName,
+      count: result.count,
+    });
+
+    printJson({
+      run_id: runtime.runId,
+      profile_name: input.profileName,
+      ...result,
+    });
+  } finally {
+    runtime.close();
+  }
+}
+
 async function runGroupsSearch(
   input: {
     profileName: string;
@@ -12342,6 +12377,23 @@ export function createCliProgram(): Command {
     );
 
   groupsCommand
+    .command("list")
+    .description("List LinkedIn groups you are a member of")
+    .option("-l, --limit <limit>", "Maximum number of groups to return", "10")
+    .option("-p, --profile <profile>", "Profile name", "default")
+    .action(
+      async (options: { profile: string; limit: string }) => {
+        await runGroupsList(
+          {
+            profileName: options.profile,
+            limit: parseInt(options.limit, 10)
+          },
+          readCdpUrl()
+        );
+      }
+    );
+
+  groupsCommand
     .command("search")
     .description("Search LinkedIn groups by keyword")
     .requiredOption("-q, --query <query>", "Search keywords for LinkedIn groups")
@@ -12387,11 +12439,13 @@ export function createCliProgram(): Command {
     .option("-i, --industry <industry>", "Group industry")
     .option("-l, --location <location>", "Group location")
     .option("--unlisted", "Make the group unlisted")
+    .option("--logo-path <path>", "Path to logo image")
+    .option("--cover-image-path <path>", "Path to cover image")
     .option("-p, --profile <profile>", "Profile name", "default")
     .option("-o, --operator-note <note>", "Optional operator note")
     .action(
       async (
-        options: { profile: string; name: string; description: string; rules?: string; industry?: string; location?: string; unlisted?: boolean; operatorNote?: string },
+        options: { profile: string; name: string; description: string; rules?: string; industry?: string; location?: string; unlisted?: boolean; operatorNote?: string; logoPath?: string; coverImagePath?: string },
       ) => {
         await runGroupsPrepareCreate(
           {
@@ -12402,6 +12456,8 @@ export function createCliProgram(): Command {
             ...(options.industry ? { industry: options.industry } : {}),
             ...(options.location ? { location: options.location } : {}),
             ...(options.unlisted ? { isUnlisted: options.unlisted } : {}),
+            ...(options.logoPath ? { logoPath: options.logoPath } : {}),
+            ...(options.coverImagePath ? { coverImagePath: options.coverImagePath } : {}),
             ...(options.operatorNote
               ? { operatorNote: options.operatorNote }
               : {}),
