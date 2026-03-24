@@ -49,6 +49,7 @@
   "dependencies": {
     "better-sqlite3": "^12.8.0",
     "fflate": "^0.8.2",
+    "image-size": "^2.0.2",
     "playwright-core": "npm:patchright-core@^1.58.0",
     "playwright-extra": "^4.3.6",
     "pngjs": "^7.0.0",

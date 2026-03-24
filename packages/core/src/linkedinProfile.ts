@@ -7,6 +7,7 @@ import {
   statSync
 } from "node:fs";
 import path from "node:path";
+import { imageSizeFromFile } from "image-size/fromFile";
 import {
   errors as playwrightErrors,
   type BrowserContext,
@@ -144,6 +145,7 @@ export const REMOVE_PROFILE_SECTION_ITEM_ACTION_TYPE =
 export const UPLOAD_PROFILE_PHOTO_ACTION_TYPE = "profile.upload_photo";
 export const REMOVE_PROFILE_PHOTO_ACTION_TYPE = "profile.remove_photo";
 export const UPLOAD_PROFILE_BANNER_ACTION_TYPE = "profile.upload_banner";
+export const REMOVE_PROFILE_BANNER_ACTION_TYPE = "profile.remove_banner";
 export const ADD_PROFILE_FEATURED_ACTION_TYPE = "profile.featured_add";
 export const REMOVE_PROFILE_FEATURED_ACTION_TYPE = "profile.featured_remove";
 export const REORDER_PROFILE_FEATURED_ACTION_TYPE = "profile.featured_reorder";
@@ -194,6 +196,11 @@ const PROFILE_RATE_LIMIT_CONFIGS = {
   },
   [UPLOAD_PROFILE_BANNER_ACTION_TYPE]: {
     counterKey: "linkedin.profile.upload_banner",
+    windowSizeMs: 24 * 60 * 60 * 1000,
+    limit: 5
+  },
+  [REMOVE_PROFILE_BANNER_ACTION_TYPE]: {
+    counterKey: "linkedin.profile.remove_banner",
     windowSizeMs: 24 * 60 * 60 * 1000,
     limit: 5
   },
@@ -412,6 +419,11 @@ export interface PrepareUploadProfileMediaInput {
 }
 
 export interface PrepareRemoveProfilePhotoInput {
+  profileName?: string;
+  operatorNote?: string;
+}
+
+export interface PrepareRemoveBannerInput {
   profileName?: string;
   operatorNote?: string;
 }
@@ -738,6 +750,8 @@ const PROFILE_MEDIA_LABELS = {
   banner: {
     en: [
       "Background photo",
+      "Add background image",
+      "Cover photo",
       "Cover image",
       "Banner",
       "Add a cover image",
@@ -746,9 +760,10 @@ const PROFILE_MEDIA_LABELS = {
     ],
     da: [
       "Baggrundsbillede",
+      "Tilføj baggrundsbillede",
       "Forsidebillede",
-      "Banner",
       "Tilføj forsidebillede",
+      "Banner",
       "Skift forsidebillede",
       "Rediger forsidebillede"
     ]
@@ -761,6 +776,10 @@ const PROFILE_MEDIA_LABELS = {
       "Update photo",
       "Update image",
       "Add photo",
+      "Add cover image",
+      "Edit cover image",
+      "Change cover image",
+      "Upload single photo",
       "Change photo",
       "Edit photo",
       "Select photo",
@@ -768,9 +787,13 @@ const PROFILE_MEDIA_LABELS = {
     ],
     da: [
       "Upload billede",
+      "Upload et enkelt billede",
       "Upload medie",
       "Opdater billede",
       "Tilføj billede",
+      "Tilføj forsidebillede",
+      "Skift forsidebillede",
+      "Rediger forsidebillede",
       "Skift billede",
       "Rediger billede",
       "Vælg billede"
@@ -794,7 +817,9 @@ export const PROFILE_MEDIA_STRUCTURAL_SELECTORS = {
   ],
   banner: [
     "[aria-label*='background photo' i]",
+    "[aria-label*='background image' i]",
     "[aria-label*='cover image' i]",
+    "[aria-label*='cover photo' i]",
     "[aria-label*='Baggrundsbillede' i]",
     "[aria-label*='forsidebillede' i]",
     "[data-control-name='edit_profile_background_image']",
@@ -5591,7 +5616,7 @@ async function clickDeleteInDialog(
     getUiActionLabels("delete", selectorLocale),
     "dialog-delete"
   );
-  const resolvedDelete = await findFirstVisibleLocator(deleteCandidates);
+  const resolvedDelete = await waitForFirstVisibleLocator(deleteCandidates, 5000);
   if (!resolvedDelete) {
     throw new LinkedInBuddyError(
       "TARGET_NOT_FOUND",
@@ -5599,21 +5624,25 @@ async function clickDeleteInDialog(
     );
   }
 
-  await resolvedDelete.locator.first().click();
+  await resolvedDelete.locator.first().click({ force: true });
   await page.waitForTimeout(500);
 
-  const confirmDeleteCandidates: LocatorCandidate[] = [
-    ...createActionCandidates(page, getUiActionLabels("delete", selectorLocale), "confirm-delete"),
-    {
-      key: "confirm-delete-generic",
-      locator: page
-        .locator("dialog[open] button, dialog[open] [role='button'], [role='dialog'] button, [role='dialog'] [role='button']")
-        .filter({ hasText: buildTextRegex(getUiActionLabels("delete", selectorLocale)) })
+  const confirmDialog = await getVisibleDialogOrNull(page);
+  if (confirmDialog) {
+    const confirmDeleteCandidates: LocatorCandidate[] = [
+      ...createActionCandidates(confirmDialog, getUiActionLabels("delete", selectorLocale), "confirm-delete"),
+      {
+        key: "confirm-delete-generic",
+        locator: confirmDialog
+          .locator("button, [role='button']")
+          .filter({ hasText: buildTextRegex(getUiActionLabels("delete", selectorLocale)) })
+      }
+    ];
+    
+    const resolvedConfirmDelete = await waitForFirstVisibleLocator(confirmDeleteCandidates, 5000);
+    if (resolvedConfirmDelete) {
+      await resolvedConfirmDelete.locator.first().click({ force: true });
     }
-  ];
-  const resolvedConfirmDelete = await findFirstVisibleLocator(confirmDeleteCandidates);
-  if (resolvedConfirmDelete) {
-    await resolvedConfirmDelete.locator.first().click();
   }
 
   await page.locator(PROFILE_DIALOG_ROOT_SELECTOR).last().waitFor({ state: "hidden", timeout: 10_000 }).catch(
@@ -6152,14 +6181,15 @@ async function openSectionEditSurface(
 }
 
 async function getVisibleDialogOrNull(page: Page): Promise<Locator | null> {
-  // Prefer dialog[open] — most reliable for LinkedIn's current UI.
-  const openDialog = page.locator("dialog[open]").last();
-  if (await isLocatorVisible(openDialog)) {
-    return openDialog;
+  const dialogs = page.locator("dialog[open], [role='dialog'], [role='menu']");
+  const count = Math.min(await dialogs.count().catch(() => 0), 10);
+  for (let i = count - 1; i >= 0; i--) {
+    const dialog = dialogs.nth(i);
+    if (await isLocatorVisible(dialog)) {
+      return dialog;
+    }
   }
-  // Fallback for older LinkedIn pages that still use role="dialog".
-  const roleDialog = page.locator("[role='dialog']").last();
-  return (await isLocatorVisible(roleDialog)) ? roleDialog : null;
+  return null;
 }
 
 async function findVisibleFileInput(root: Page | Locator): Promise<Locator | null> {
@@ -6203,14 +6233,21 @@ async function clickLocatorForUpload(
 
   if (fileChooser) {
     await fileChooser.setFiles(filePath);
+    await page.waitForTimeout(500); // Give dialog a moment
     return {
       surface: await getVisibleDialogOrNull(page),
       uploaded: true
     };
   }
 
-  const overlay = page.locator("[role='dialog'], [role='menu']").last();
-  if (await isLocatorVisible(overlay)) {
+  // Wait a bit for React to render new dialogs/menus
+  let overlay = await getVisibleDialogOrNull(page);
+  if (!overlay) {
+    await page.waitForTimeout(1000);
+    overlay = await getVisibleDialogOrNull(page);
+  }
+
+  if (overlay) {
     const input = await findVisibleFileInput(overlay);
     if (input) {
       await input.setInputFiles(filePath);
@@ -6278,12 +6315,11 @@ async function uploadFileFromSurface(
     }
   ];
 
-  for (const candidate of candidates) {
-    if (!(await isLocatorVisible(candidate.locator))) {
-      continue;
-    }
+  // Wait for the buttons to appear inside the surface (React lazy loading)
+  const resolvedCandidate = await waitForFirstVisibleLocator(candidates, 5000);
 
-    const result = await clickLocatorForUpload(page, candidate.locator, filePath);
+  if (resolvedCandidate) {
+    const result = await clickLocatorForUpload(page, resolvedCandidate.locator, filePath);
     if (result.uploaded || result.surface) {
       return result;
     }
@@ -7435,6 +7471,72 @@ async function writeRecommendation(
   );
 }
 
+async function openProfileMediaEditor(
+  page: Page,
+  selectorLocale: LinkedInSelectorLocale,
+  kind: "photo" | "banner"
+): Promise<Locator | null> {
+  const topCardRoot = await getTopCardRoot(page);
+  const openCandidates: LocatorCandidate[] = [
+    ...createActionCandidates(
+      topCardRoot,
+      getProfileMediaActionLabels(kind, selectorLocale),
+      `profile-${kind}`
+    ),
+    ...createActionCandidates(
+      topCardRoot,
+      getProfileMediaActionLabels(kind, selectorLocale),
+      `profile-${kind}-link`,
+      "link"
+    ),
+    ...createCssLocatorCandidates(
+      topCardRoot,
+      PROFILE_MEDIA_STRUCTURAL_SELECTORS[kind],
+      `profile-${kind}-structural`
+    ),
+    {
+      key: `profile-${kind}-generic`,
+      locator: topCardRoot
+        .locator("button, a, [role='button']")
+        .filter({ hasText: buildTextRegex(getProfileMediaActionLabels(kind, selectorLocale)) })
+    }
+  ];
+
+  const resolved = await waitForFirstVisibleLocator(openCandidates, 5000);
+  if (!resolved) {
+    throw new LinkedInBuddyError(
+      "TARGET_NOT_FOUND",
+      `Could not find the LinkedIn profile ${kind} editor controls.`
+    );
+  }
+
+  await resolved.locator.first().click();
+  await page.waitForTimeout(500);
+
+  let surface = await getVisibleDialogOrNull(page);
+  
+  if (surface && await surface.getAttribute("role") === "menu") {
+    // Navigate through the menu to the actual editor dialog
+    const menuCandidates = [
+      ...createActionCandidates(surface, getProfileMediaActionLabels(kind, selectorLocale), "menu-item-button"),
+      ...createActionCandidates(surface, getProfileMediaActionLabels(kind, selectorLocale), "menu-item-link", "link"),
+      {
+        key: "menu-item-generic",
+        locator: surface.locator("button, a, [role='button'], [role='menuitem']").filter({ hasText: buildTextRegex(getProfileMediaActionLabels(kind, selectorLocale)) })
+      }
+    ];
+    
+    const menuResolved = await waitForFirstVisibleLocator(menuCandidates, 5000);
+    if (menuResolved) {
+      await menuResolved.locator.first().click({ force: true });
+      await page.waitForTimeout(1000);
+      surface = await getVisibleDialogOrNull(page);
+    }
+  }
+
+  return surface ?? null;
+}
+
 async function openProfileMediaAndUpload(
   page: Page,
   selectorLocale: LinkedInSelectorLocale,
@@ -7469,26 +7571,33 @@ async function openProfileMediaAndUpload(
     }
   ];
 
-  for (const candidate of openCandidates) {
-    if (!(await isLocatorVisible(candidate.locator))) {
-      continue;
-    }
-
-    const result = await clickLocatorForUpload(page, candidate.locator, upload.absolute_path);
+  const resolved = await waitForFirstVisibleLocator(openCandidates, 5000);
+  if (resolved) {
+    const result = await clickLocatorForUpload(page, resolved.locator, upload.absolute_path);
     if (result.uploaded) {
       return (await getVisibleDialogOrNull(page)) ?? result.surface;
     }
 
-    const followUpSurface = result.surface ?? topCardRoot;
-    const followUpUpload = await uploadFileFromSurface(
-      page,
-      followUpSurface,
-      upload.absolute_path,
-      getProfileMediaActionLabels("upload", selectorLocale),
-      `profile-${kind}-upload`
-    );
-    if (followUpUpload.uploaded) {
-      return (await getVisibleDialogOrNull(page)) ?? followUpUpload.surface;
+    let currentSurface = result.surface ?? topCardRoot;
+    
+    // Retry up to 5 times to navigate nested dialogs/menus
+    for (let attempts = 0; attempts < 5; attempts++) {
+      const followUpUpload = await uploadFileFromSurface(
+        page,
+        currentSurface,
+        upload.absolute_path,
+        getProfileMediaActionLabels("upload", selectorLocale),
+        `profile-${kind}-upload-attempt-${attempts}`
+      );
+      
+      if (followUpUpload.uploaded) {
+        return (await getVisibleDialogOrNull(page)) ?? followUpUpload.surface;
+      }
+      
+      if (!followUpUpload.surface || followUpUpload.surface === currentSurface) {
+        break; // No new surface opened
+      }
+      currentSurface = followUpUpload.surface;
     }
   }
 
@@ -8256,6 +8365,81 @@ async function executeRemoveProfilePhoto(
             result: {
               status: "profile_photo_removed",
               media_kind: "photo"
+            },
+            artifacts: []
+          };
+        }
+      });
+    }
+  );
+}
+
+async function executeRemoveProfileMedia(
+  runtime: LinkedInProfileExecutorRuntime,
+  actionId: string,
+  target: Record<string, unknown>,
+  kind: "photo" | "banner"
+): Promise<{ result: Record<string, unknown>; artifacts: string[] }> {
+  const profileName = String(target.profile_name ?? "default");
+
+  return runtime.profileManager.runWithContext(
+    {
+      cdpUrl: runtime.cdpUrl,
+      profileName,
+      headless: true
+    },
+    async (context) => {
+      const page = await getOrCreatePage(context);
+      return executeConfirmActionWithArtifacts({
+        runtime,
+        context,
+        page,
+        actionId,
+        dismissOverlays: {
+          selectorLocale: runtime.selectorLocale,
+          logger: runtime.logger
+        },
+        actionType: REMOVE_PROFILE_BANNER_ACTION_TYPE,
+        profileName,
+        targetUrl: resolveProfileUrl("me"),
+        metadata: {
+          profile_name: profileName,
+          media_kind: kind
+        },
+        errorDetails: {
+          profile_name: profileName,
+          media_kind: kind
+        },
+        beforeExecute: createProfileRateLimitGuard(
+          runtime,
+          REMOVE_PROFILE_BANNER_ACTION_TYPE,
+          actionId,
+          profileName,
+          { media_kind: kind }
+        ),
+        mapError: (error) =>
+          asLinkedInBuddyError(
+            error,
+            "UNKNOWN",
+            `Failed to execute LinkedIn profile ${kind} removal.`
+          ),
+        execute: async () => {
+          await navigateToOwnProfile(page, { dismissOverlays: { selectorLocale: runtime.selectorLocale, logger: runtime.logger } });
+          const dialog = await openProfileMediaEditor(page, runtime.selectorLocale, kind);
+          
+          if (dialog) {
+            await clickDeleteInDialog(page, dialog, runtime.selectorLocale);
+          } else {
+            throw new LinkedInBuddyError("TARGET_NOT_FOUND", "No media to remove.");
+          }
+
+          await waitForNetworkIdleBestEffort(page);
+
+          return {
+            ok: true,
+            result: {
+              status: `profile_${kind}_removed`,
+              media_kind: kind
             },
             artifacts: []
           };
@@ -9175,6 +9359,22 @@ export class UploadProfileBannerActionExecutor
   }
 }
 
+export class RemoveProfileBannerActionExecutor
+  implements ActionExecutor<LinkedInProfileExecutorRuntime>
+{
+  async execute(
+    input: ActionExecutorInput<LinkedInProfileExecutorRuntime>
+  ): Promise<ActionExecutorResult> {
+    const { result, artifacts } = await executeRemoveProfileMedia(
+      input.runtime,
+      input.action.id,
+      input.action.target,
+      "banner"
+    );
+    return { ok: true, result, artifacts };
+  }
+}
+
 export class AddProfileFeaturedItemActionExecutor
   implements ActionExecutor<LinkedInProfileExecutorRuntime>
 {
@@ -9336,6 +9536,7 @@ export function createProfileActionExecutors(): Record<
     [UPLOAD_PROFILE_PHOTO_ACTION_TYPE]: new UploadProfilePhotoActionExecutor(),
     [REMOVE_PROFILE_PHOTO_ACTION_TYPE]: new RemoveProfilePhotoActionExecutor(),
     [UPLOAD_PROFILE_BANNER_ACTION_TYPE]: new UploadProfileBannerActionExecutor(),
+    [REMOVE_PROFILE_BANNER_ACTION_TYPE]: new RemoveProfileBannerActionExecutor(),
     [ADD_PROFILE_FEATURED_ACTION_TYPE]: new AddProfileFeaturedItemActionExecutor(),
     [REMOVE_PROFILE_FEATURED_ACTION_TYPE]:
       new RemoveProfileFeaturedItemActionExecutor(),
@@ -9714,6 +9915,30 @@ export class LinkedInProfileService {
     });
   }
 
+  async prepareRemoveBanner(
+    input: PrepareRemoveBannerInput
+  ): Promise<PreparedActionResult> {
+    const profileName = input.profileName ?? "default";
+
+    const target = {
+      profile_name: profileName,
+      media_kind: "banner"
+    };
+
+    const preview = {
+      summary: "Remove LinkedIn profile banner",
+      target
+    };
+
+    return this.prepareRateLimitedAction({
+      actionType: REMOVE_PROFILE_BANNER_ACTION_TYPE,
+      target,
+      payload: {},
+      preview,
+      ...(input.operatorNote ? { operatorNote: input.operatorNote } : {})
+    });
+  }
+
   async prepareUploadBanner(
     input: PrepareUploadProfileMediaInput
   ): Promise<PreparedActionResult> {
@@ -9725,6 +9950,27 @@ export class LinkedInProfileService {
       PROFILE_IMAGE_UPLOAD_EXTENSIONS,
       "profile-banner"
     );
+
+    if (upload.size_bytes > 8 * 1024 * 1024) {
+      throw new LinkedInBuddyError(
+        "ACTION_PRECONDITION_FAILED",
+        `Profile banner file size must be less than 8MB. Got ${(upload.size_bytes / 1024 / 1024).toFixed(2)}MB.`
+      );
+    }
+
+    try {
+      const dimensions = await imageSizeFromFile(upload.absolute_path);
+      if (dimensions && dimensions.width && dimensions.height) {
+        if (dimensions.width < 1584 || dimensions.height < 396) {
+          throw new LinkedInBuddyError(
+            "ACTION_PRECONDITION_FAILED",
+            `Profile banner dimensions must be at least 1584x396. Got ${dimensions.width}x${dimensions.height}.`
+          );
+        }
+      }
+    } catch {
+      // If image-size fails (e.g. unknown format), ignore and let LinkedIn handle it
+    }
 
     const target = {
       profile_name: profileName,
