@@ -1,6 +1,8 @@
 name: AI Unstick Deadlocked Issues
 
 on:
+  schedule:
+    - cron: '*/30 * * * *'
   workflow_dispatch:
     inputs:
       issue_number:
@@ -8,78 +10,190 @@ on:
         required: false
         default: ''
 
+concurrency:
+  group: ai-unstick
+  cancel-in-progress: false
+
 permissions:
   issues: write
+  pull-requests: read
+  contents: read
 
 jobs:
   unstick:
     runs-on: ubuntu-latest
     steps:
-      - name: Find and unstick deadlocked issues
+      - name: Find and unstick stalled issues
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          INPUT_ISSUE: ${{ inputs.issue_number }}
+          INPUT_ISSUE: ${{ github.event.inputs.issue_number || '' }}
         run: |
           REPO="${{ github.repository }}"
           UNSTUCK=0
+          BLOCKED=0
           SKIPPED=0
+          PROCESSED=""
+          THRESHOLD_DATE=$(date -u -d '40 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
+          SINCE_DATE=$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ)
 
-          if [ -n "$INPUT_ISSUE" ]; then
-            # Specific issue mode
-            ISSUES="$INPUT_ISSUE"
-            echo "Targeting specific issue: #$INPUT_ISSUE"
-          else
-            # Find all deadlocked issues: have both ai-review-ready AND ai-debugging
-            ISSUES=$(gh issue list --repo "$REPO" \
-              --label "ai-review-ready" --label "ai-debugging" \
-              --state open --json number --jq '.[].number' 2>/dev/null)
-            if [ -z "$ISSUES" ]; then
-              echo "No stuck issues found — nothing to do"
-              exit 0
+          was_processed() {
+            case " $PROCESSED " in
+              *" $1 "*)
+                return 0
+                ;;
+              *)
+                return 1
+                ;;
+            esac
+          }
+
+          mark_processed() {
+            if ! was_processed "$1"; then
+              PROCESSED="$PROCESSED $1"
             fi
-            echo "Found stuck issues: $ISSUES"
-          fi
+          }
 
-          for ISSUE_NUM in $ISSUES; do
-            echo ""
-            echo "=== Processing issue #$ISSUE_NUM ==="
+          reset_issue() {
+            ISSUE_NUM="$1"
+            REASON="$2"
 
-            # Verify the issue exists and check current labels
-            CURRENT_LABELS=$(gh issue view "$ISSUE_NUM" --repo "$REPO" \
-              --json labels --jq '[.labels[].name]' 2>/dev/null)
-            if [ $? -ne 0 ]; then
-              echo "Issue #$ISSUE_NUM not found — skipping"
+            if ! gh issue view "$ISSUE_NUM" --repo "$REPO" --json number --jq '.number' >/dev/null 2>&1; then
+              echo "Issue #$ISSUE_NUM not found - skipping"
               SKIPPED=$((SKIPPED + 1))
-              continue
+              return
             fi
-            echo "Current labels: $CURRENT_LABELS"
 
-            # Remove ai-review-ready FIRST (critical: this is the exclude label in ai-task-auto-label)
+            RESET_COUNT=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}/comments" \
+              --paginate \
+              --jq "[.[] | select(.created_at >= \"${SINCE_DATE}\") | select(.body | contains(\"<!-- ai-stall-reset -->\"))] | length" 2>/dev/null || printf "0")
+
+            if [ -z "$RESET_COUNT" ]; then
+              RESET_COUNT=0
+            fi
+
+            if [ "$RESET_COUNT" -ge 3 ]; then
+              echo "Circuit breaker tripped for #$ISSUE_NUM ($RESET_COUNT reset attempts in last 24h)"
+              gh issue edit "$ISSUE_NUM" --repo "$REPO" \
+                --remove-label "ai-task" --remove-label "ai-in-progress" \
+                --remove-label "ai-review-ready" --remove-label "ai-debugging" \
+                --add-label "ai-blocked" 2>/dev/null || true
+
+              gh issue comment "$ISSUE_NUM" --repo "$REPO" \
+                --body "<!-- ai-stall-circuit-breaker --> ⛔ Circuit breaker tripped after $RESET_COUNT stall resets in the last 24 hours. Removed AI lifecycle labels and added \`ai-blocked\`. Reason: $REASON"
+
+              BLOCKED=$((BLOCKED + 1))
+              return
+            fi
+
             gh issue edit "$ISSUE_NUM" --repo "$REPO" \
-              --remove-label "ai-review-ready" 2>/dev/null || true
+              --remove-label "ai-review-ready" --remove-label "ai-in-progress" \
+              --remove-label "ai-debugging" --add-label "ai-task" 2>/dev/null || true
 
-            # Remove ai-in-progress if present
-            gh issue edit "$ISSUE_NUM" --repo "$REPO" \
-              --remove-label "ai-in-progress" 2>/dev/null || true
-
-            # Add ai-task (the orchestrator pickup label)
-            # Keep ai-debugging (signals this is a retry)
-            gh issue edit "$ISSUE_NUM" --repo "$REPO" \
-              --add-label "ai-task" 2>/dev/null || true
-
-            # Post unstick comment
             gh issue comment "$ISSUE_NUM" --repo "$REPO" \
-              --body "<!-- ai-unstick --> 🔧 Labels reset by ai-unstick workflow. Removed \`ai-review-ready\`, added \`ai-task\`. Issue is now eligible for orchestrator pickup."
-
-            # Verify final state
-            FINAL_LABELS=$(gh issue view "$ISSUE_NUM" --repo "$REPO" \
-              --json labels --jq '[.labels[].name]' 2>/dev/null)
-            echo "Final labels: $FINAL_LABELS"
+              --body "<!-- ai-stall-reset --> 🔧 Stall reset by ai-unstick. Reason: $REASON. Action: removed \`ai-review-ready\`, \`ai-in-progress\`, \`ai-debugging\`; added \`ai-task\`."
 
             UNSTUCK=$((UNSTUCK + 1))
-          done
+          }
 
-          echo ""
+          if [ -n "$INPUT_ISSUE" ]; then
+            echo "Manual mode: targeting issue #$INPUT_ISSUE"
+            reset_issue "$INPUT_ISSUE" "manual workflow_dispatch reset request"
+          else
+            echo "Automated mode: evaluating stuck-state strategies"
+
+            STRATEGY1=$(gh issue list --repo "$REPO" \
+              --label "ai-review-ready" --label "ai-debugging" \
+              --state open --json number --jq '.[].number' 2>/dev/null)
+
+            for ISSUE_NUM in $STRATEGY1; do
+              if was_processed "$ISSUE_NUM"; then
+                continue
+              fi
+              reset_issue "$ISSUE_NUM" "strategy1: issue has both ai-review-ready and ai-debugging"
+              mark_processed "$ISSUE_NUM"
+            done
+
+            STRATEGY2=$(gh issue list --repo "$REPO" \
+              --label "ai-in-progress" --label "ai-debugging" \
+              --state open --json number --jq '.[].number' 2>/dev/null)
+
+            for ISSUE_NUM in $STRATEGY2; do
+              if was_processed "$ISSUE_NUM"; then
+                continue
+              fi
+              reset_issue "$ISSUE_NUM" "strategy2: issue has both ai-in-progress and ai-debugging"
+              mark_processed "$ISSUE_NUM"
+            done
+
+            STRATEGY3=$(gh issue list --repo "$REPO" \
+              --label "ai-in-progress" \
+              --state open --json number --jq '.[].number' 2>/dev/null)
+
+            for ISSUE_NUM in $STRATEGY3; do
+              if was_processed "$ISSUE_NUM"; then
+                continue
+              fi
+
+              LATEST_COMMENT_DATE=$(gh issue view "$ISSUE_NUM" --repo "$REPO" \
+                --json comments --jq '.comments | map(.createdAt) | sort | last // ""' 2>/dev/null)
+
+              PR_NUMBER=$(gh pr list --repo "$REPO" \
+                --search "head:ai/issue-${ISSUE_NUM}" --state open \
+                --json number --jq '.[0].number // ""' 2>/dev/null)
+
+              LATEST_COMMIT_DATE=""
+              if [ -n "$PR_NUMBER" ]; then
+                LATEST_COMMIT_DATE=$(gh pr view "$PR_NUMBER" --repo "$REPO" \
+                  --json commits --jq '.commits | map(.committedDate) | sort | last // ""' 2>/dev/null)
+              fi
+
+              RECENT_COMMENT=0
+              RECENT_COMMIT=0
+
+              if [ -n "$LATEST_COMMENT_DATE" ] && [ "$LATEST_COMMENT_DATE" \> "$THRESHOLD_DATE" ]; then
+                RECENT_COMMENT=1
+              fi
+
+              if [ -n "$LATEST_COMMIT_DATE" ] && [ "$LATEST_COMMIT_DATE" \> "$THRESHOLD_DATE" ]; then
+                RECENT_COMMIT=1
+              fi
+
+              if [ "$RECENT_COMMENT" -eq 1 ] || [ "$RECENT_COMMIT" -eq 1 ]; then
+                echo "Skipping #$ISSUE_NUM - recent activity detected"
+                SKIPPED=$((SKIPPED + 1))
+                continue
+              fi
+
+              reset_issue "$ISSUE_NUM" "strategy3: ai-in-progress stalled over 40 minutes (no recent comment or PR commit activity)"
+              mark_processed "$ISSUE_NUM"
+            done
+
+            STRATEGY4=$(gh issue list --repo "$REPO" \
+              --label "ai-review-ready" \
+              --state open --json number --jq '.[].number' 2>/dev/null)
+
+            for ISSUE_NUM in $STRATEGY4; do
+              if was_processed "$ISSUE_NUM"; then
+                continue
+              fi
+
+              PR_COUNT=$(gh pr list --repo "$REPO" \
+                --search "head:ai/issue-${ISSUE_NUM}" --state open \
+                --json number --jq 'length' 2>/dev/null || printf "0")
+
+              if [ "$PR_COUNT" -gt 0 ]; then
+                echo "Skipping #$ISSUE_NUM - open PR found"
+                SKIPPED=$((SKIPPED + 1))
+                continue
+              fi
+
+              reset_issue "$ISSUE_NUM" "strategy4: ai-review-ready issue has no associated open PR"
+              mark_processed "$ISSUE_NUM"
+            done
+          fi
+
+          echo
           echo "=== Summary ==="
           echo "Unstuck: $UNSTUCK issues"
+          echo "Blocked: $BLOCKED issues"
           echo "Skipped: $SKIPPED issues"
