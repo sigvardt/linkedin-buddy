@@ -8549,6 +8549,7 @@ async function runNotificationsList(
   input: {
     profileName: string;
     limit: number;
+    types?: string[];
   },
   cdpUrl?: string,
 ): Promise<void> {
@@ -8558,11 +8559,13 @@ async function runNotificationsList(
     runtime.logger.log("info", "cli.notifications.list.start", {
       profileName: input.profileName,
       limit: input.limit,
+      types: input.types,
     });
 
     const notifications = await runtime.notifications.listNotifications({
       profileName: input.profileName,
       limit: input.limit,
+      ...(input.types ? { types: input.types } : {}),
     });
 
     runtime.logger.log("info", "cli.notifications.list.done", {
@@ -12889,11 +12892,13 @@ export function createCliProgram(): Command {
     .description("List your LinkedIn notifications")
     .option("-p, --profile <profile>", "Profile name", "default")
     .option("-l, --limit <limit>", "Max notifications to return", "20")
-    .action(async (options: { profile: string; limit: string }) => {
+    .option("-t, --types <types...>", "Filter by notification types")
+    .action(async (options: { profile: string; limit: string; types?: string[] }) => {
       await runNotificationsList(
         {
           profileName: options.profile,
           limit: coercePositiveInt(options.limit, "limit"),
+          ...(options.types ? { types: options.types } : {}),
         },
         readCdpUrl(),
       );

@@ -1,30 +1,22 @@
-# Mission Tasks for Issue #609 - Newsletters & Articles: make it production-grade
+# Mission: Notifications: make it production-grade (#613)
 
-## Phase 1: Support Rich Text and Images in Articles
-- [ ] Investigate how LinkedIn rich text editor works (contenteditable vs specific DOM structure)
-- [ ] Add support for cover image URL in `PrepareCreateArticleInput` and `PrepareCreateNewsletterInput`
-- [ ] Add support for HTML/Markdown body parsing and inserting rich text
+## M1: Analysis & Infrastructure
+### T1.1: Identify Notification Types & Extracted Data | agent:Planner
+- [x] S1.1.1: Document parsing logic for the 9 specified notification types | size:M
+- [x] S1.1.2: Define updated `LinkedInNotification` interface with `extracted_data` | size:S
 
-## Phase 2: Newsletter Metadata Editing
-- [ ] Create `PrepareUpdateNewsletterInput` interface
-- [ ] Implement `prepareUpdate` in `LinkedInNewslettersService`
-- [ ] Implement `UpdateNewsletterActionExecutor`
-- [ ] Register tool in MCP `linkedin.newsletter.prepare_update`
-- [ ] Add CLI command for updating newsletter
+## M2: Implementation
+### T2.1: Implement Data Extraction (Rich Data) | agent:Worker | depends:T1.1
+- [x] S2.1.1: Update `extractNotificationSnapshots` to extract structured data for all required types | size:L
+- [x] S2.1.2: Add parsing utilities for metrics (view counts, names, etc) | size:M
 
-## Phase 3: Newsletter Editions List and Stats
-- [ ] Update `list` method in `LinkedInNewslettersService` to fetch stats (subscribers, views)
-- [ ] Add new interface `ListNewsletterEditionsInput` and `listEditions` method to list individual editions for a newsletter
-- [ ] Register `linkedin.newsletter.list_editions` tool in MCP
-- [ ] Add CLI command for listing editions
+### T2.2: Implement Type Filtering & Pagination | agent:Worker | depends:T2.1
+- [x] S2.2.1: Add `types` filtering to `ListNotificationsInput` and `listNotifications` method | size:S
+- [x] S2.2.2: Add `types` parameter to MCP tool `notifications_list` | size:S
+- [x] S2.2.3: Update pagination logic in `loadNotificationSnapshots` to support fetching longer feeds without fixed scroll limits | size:M
 
-## Phase 4: Share Newsletter
-- [ ] Investigate how sharing works for newsletters (Share button -> modal -> post)
-- [ ] Implement `prepareShare` in `LinkedInNewslettersService`
-- [ ] Implement `ShareNewsletterActionExecutor`
-- [ ] Register MCP tool and CLI command
-
-## Phase 5: Testing and Polish
-- [ ] Add unit tests for new methods in `linkedinPublishing.test.ts`
-- [ ] Run e2e tests
-- [ ] Address edge cases: draft vs published, editing after publish, newsletter with zero editions
+## M3: Verification & Integration
+### T3.1: Testing & Quality Gates | agent:Reviewer | depends:M2
+- [x] S3.1.1: Run unit tests and e2e tests for notifications | size:M
+- [x] S3.1.2: Run lint and typecheck | size:S
+- [x] S3.1.3: Wait for CI and create PR | size:S

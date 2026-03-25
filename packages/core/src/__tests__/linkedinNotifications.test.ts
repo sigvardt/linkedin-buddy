@@ -4,6 +4,7 @@ import {
   LINKEDIN_NOTIFICATION_PREFERENCE_CHANNELS,
   _hashNotificationFingerprint as hashNotificationFingerprint,
   _legacyHashNotificationFingerprint as legacyHashNotificationFingerprint,
+  _extractNotificationStructuredData as extractNotificationStructuredData,
   _normalizeNotificationLink as normalizeNotificationLink,
   _stripVolatileContent as stripVolatileContent,
   LinkedInNotificationsService,
@@ -1081,5 +1082,124 @@ describe("legacyHashNotificationFingerprint", () => {
       message: "Test",
     });
     expect(id).toMatch(/^notif_[0-9a-f]{16}$/);
+  });
+});
+
+describe("extractNotificationStructuredData", () => {
+  it("extracts post analytics from 'Your post has ... views'", () => {
+    expect(extractNotificationStructuredData("Your post has 1,234 views")).toEqual({
+      views: 1234,
+    });
+  });
+
+  it("extracts post analytics from 'people viewed your post'", () => {
+    expect(extractNotificationStructuredData("500 people viewed your post")).toEqual({
+      views: 500,
+    });
+  });
+
+  it("extracts profile views from 'people viewed your profile'", () => {
+    expect(extractNotificationStructuredData("42 people viewed your profile")).toEqual({
+      profile_views: 42,
+    });
+  });
+
+  it("extracts profile views from 'Your profile was viewed by ... people'", () => {
+    expect(
+      extractNotificationStructuredData("Your profile was viewed by 100 people"),
+    ).toEqual({
+      profile_views: 100,
+    });
+  });
+
+  it("extracts search appearances", () => {
+    expect(extractNotificationStructuredData("You appeared in 15 searches")).toEqual({
+      search_appearances: 15,
+    });
+  });
+
+  it("extracts mention sender", () => {
+    expect(extractNotificationStructuredData("John Smith mentioned you")).toEqual({
+      mentioned_by: "John Smith",
+    });
+  });
+
+  it("extracts connection sender from connection request", () => {
+    expect(
+      extractNotificationStructuredData("Jane Doe sent you a connection request"),
+    ).toEqual({
+      sender: "Jane Doe",
+    });
+  });
+
+  it("extracts connection sender from accepted connection", () => {
+    expect(extractNotificationStructuredData("Bob accepted your connection")).toEqual({
+      sender: "Bob",
+    });
+  });
+
+  it("extracts newsletter subscriber count", () => {
+    expect(extractNotificationStructuredData("1,500 people subscribed to")).toEqual({
+      subscriber_count: 1500,
+    });
+  });
+
+  it("extracts newsletter subscriber name", () => {
+    expect(extractNotificationStructuredData("Alice subscribed to")).toEqual({
+      subscriber: "Alice",
+    });
+  });
+
+  it("extracts job alert count and title", () => {
+    expect(
+      extractNotificationStructuredData('5 new jobs for "Software Engineer"'),
+    ).toEqual({
+      job_count: 5,
+      job_title: "Software Engineer",
+    });
+  });
+
+  it("extracts single job alert title", () => {
+    expect(extractNotificationStructuredData('new job for "Designer"')).toEqual({
+      job_title: "Designer",
+    });
+  });
+
+  it("extracts company name from posted notification", () => {
+    expect(extractNotificationStructuredData("Google posted:")).toEqual({
+      company_name: "Google",
+    });
+  });
+
+  it("extracts company name from shared post notification", () => {
+    expect(extractNotificationStructuredData("Microsoft shared a post:")).toEqual({
+      company_name: "Microsoft",
+    });
+  });
+
+  it("extracts trending topic", () => {
+    expect(
+      extractNotificationStructuredData("Trending: AI advances in 2025"),
+    ).toEqual({
+      topic: "AI advances in 2025",
+    });
+  });
+
+  it("returns undefined when message does not match known parsers", () => {
+    expect(
+      extractNotificationStructuredData("Someone liked your comment"),
+    ).toBeUndefined();
+  });
+
+  it("returns undefined for empty string", () => {
+    expect(extractNotificationStructuredData("")).toBeUndefined();
+  });
+
+  it("normalizes excessive whitespace before parsing", () => {
+    expect(
+      extractNotificationStructuredData("   John   Smith   mentioned\n\t you   "),
+    ).toEqual({
+      mentioned_by: "John Smith",
+    });
   });
 });
