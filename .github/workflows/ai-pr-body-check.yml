@@ -7,7 +7,7 @@ on:
 
 permissions:
   pull-requests: write
-  contents: read
+  contents: write
 
 concurrency:
   group: ai-pr-body-${{ github.event.pull_request.number }}
@@ -57,3 +57,33 @@ jobs:
           gh pr edit "$PR_NUM" --repo "${{ github.repository }}" --body "$NEW_BODY"
           gh pr comment "$PR_NUM" --repo "${{ github.repository }}" \
             --body "<!-- ai-pr-body-fix --> Auto-added \"Closes #${ISSUE_NUM}\" to PR body (was missing)."
+
+      - name: Ensure auto-merge is enabled
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUM="${{ github.event.pull_request.number }}"
+          REPO="${{ github.repository }}"
+
+          # Re-read the PR body (may have been updated by previous step)
+          PR_BODY=$(gh pr view "$PR_NUM" --repo "$REPO" --json body --jq '.body // ""')
+          if ! echo "$PR_BODY" | grep -iqE "(closes|fixes|resolves)\s+#[0-9]+"; then
+            echo "No close keyword in PR body — skipping auto-merge"
+            exit 0
+          fi
+
+          # Check if auto-merge is already enabled
+          AUTO_MERGE=$(gh pr view "$PR_NUM" --repo "$REPO" --json autoMergeRequest --jq '.autoMergeRequest // empty')
+          if [ -n "$AUTO_MERGE" ]; then
+            echo "Auto-merge already enabled — skipping"
+            exit 0
+          fi
+
+          # Enable auto-merge with squash strategy
+          if gh pr merge --auto --squash "$PR_NUM" --repo "$REPO" 2>/dev/null; then
+            echo "Auto-merge enabled for PR #$PR_NUM"
+            gh pr comment "$PR_NUM" --repo "$REPO" \
+              --body "<!-- ai-auto-merge-enabled --> Auto-merge enabled by body-check workflow."
+          else
+            echo "::warning::Failed to enable auto-merge for PR #$PR_NUM (may already be enabled or not eligible)"
+          fi

@@ -55,6 +55,15 @@ jobs:
           done
           echo "Labels cleaned for issue #$ISSUE_NUM"
 
+          # Explicitly close the issue (safety net if "Closes #N" auto-close didn't trigger)
+          ISSUE_STATE=$(gh issue view "$ISSUE_NUM" --repo "$REPO" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
+          if [ "$ISSUE_STATE" = "OPEN" ]; then
+            gh issue close "$ISSUE_NUM" --repo "$REPO" 2>/dev/null || true
+            echo "Issue #$ISSUE_NUM explicitly closed"
+          else
+            echo "Issue #$ISSUE_NUM already closed (state: $ISSUE_STATE)"
+          fi
+
           # Delete the AI branch
           gh api "repos/$REPO/git/refs/heads/$BRANCH" --method DELETE 2>/dev/null || true
           echo "Branch $BRANCH deleted"
