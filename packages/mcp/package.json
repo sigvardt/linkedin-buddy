@@ -44,6 +44,6 @@
   },
   "dependencies": {
     "@linkedin-buddy/core": "0.1.0",
-    "@modelcontextprotocol/sdk": "^1.27.1"
+    "@modelcontextprotocol/sdk": "^1.28.0"
   }
 }
