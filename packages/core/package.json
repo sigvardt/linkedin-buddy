@@ -47,7 +47,7 @@
     "postinstall": "patchright-core install chromium"
   },
   "dependencies": {
-    "better-sqlite3": "^12.8.0",
+    "better-sqlite3": "^12.9.0",
     "fflate": "^0.8.2",
     "image-size": "^2.0.2",
     "playwright-core": "npm:patchright-core@^1.58.0",
